@@ -22,12 +22,12 @@ defmodule Mutare.Ecto.RepoAggregate do
   @agg_position 1
   @swaps %{sum: :avg, avg: :sum, min: :max, max: :min}
 
-  @doc "Aggregate-swap mutations for a `Repo.aggregate/3` node, or `[]`."
-  @spec mutations(Macro.t(), Mutare.Mutator.context()) :: [Macro.t()]
+  @doc "Aggregate-swap mutations for a `Repo.aggregate/3` node as `{:aggregate, node}` pairs, or `[]`."
+  @spec mutations(Macro.t(), Mutare.Mutator.context()) :: [{:aggregate, Macro.t()}]
   def mutations(node, %{opts: opts, pipe_mode: pipe_mode}) do
     with repo when not is_nil(repo) <- repo_key(opts),
          {^repo, :aggregate, args, rebuild} <- Calls.resolved_call(node) do
-      swap(args, rebuild, pipe_mode)
+      for mutated <- swap(args, rebuild, pipe_mode), do: {:aggregate, mutated}
     else
       _ -> []
     end

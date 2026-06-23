@@ -29,11 +29,11 @@ defmodule Mutare.Ecto.Clause do
   @bound_macros ~w(limit offset)a
   @select_macros ~w(select select_merge)a
 
-  @doc "Standalone/pipe clause-macro mutations for `node`, or `[]`."
-  @spec mutations(Macro.t()) :: [Macro.t()]
+  @doc "Standalone/pipe clause-macro mutations for `node` as `{family, node}` pairs, or `[]`."
+  @spec mutations(Macro.t()) :: [{atom(), Macro.t()}]
   def mutations({:order_by, meta, args}) when is_list(args) and args != [] do
     {init, [ordering]} = Enum.split(args, -1)
-    for flipped <- Ordering.flips(ordering), do: {:order_by, meta, init ++ [flipped]}
+    for flipped <- Ordering.flips(ordering), do: {:ordering, {:order_by, meta, init ++ [flipped]}}
   end
 
   def mutations({macro, meta, args})
@@ -42,14 +42,14 @@ defmodule Mutare.Ecto.Clause do
 
     case AST.int_value(value) do
       nil -> []
-      n -> for bumped <- bumps(n), do: {macro, meta, init ++ [AST.int_literal(bumped)]}
+      n -> for bumped <- bumps(n), do: {:bound, {macro, meta, init ++ [AST.int_literal(bumped)]}}
     end
   end
 
   def mutations({macro, meta, args})
       when macro in @select_macros and is_list(args) and args != [] do
     {init, [expr]} = Enum.split(args, -1)
-    for swapped <- Aggregate.swaps(expr), do: {macro, meta, init ++ [swapped]}
+    for swapped <- Aggregate.swaps(expr), do: {:aggregate, {macro, meta, init ++ [swapped]}}
   end
 
   def mutations(_node), do: []

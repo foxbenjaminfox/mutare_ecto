@@ -18,45 +18,50 @@ defmodule Mutare.Ecto.Query do
       to its own value mutation — only a literal integer is bumped here.
     * **JoinType** — swap a join's kind by rewriting its clause *key*: `join`/`inner_join`
       ↔ `left_join`. "Does any test exercise rows the join's cardinality changes?" An inner
-      join drops rows a left join keeps, so the swap is a strong, killable mutation. Restricted
-      to the **portable** pair (every adapter supports `INNER`/`LEFT`); `RIGHT`/`FULL`/`CROSS`
-      and lateral joins are dialect-specific and gated in Milestone 4.
+      join drops rows a left join keeps, so the swap is a strong, killable mutation. The
+      **portable** pair (every adapter supports `INNER`/`LEFT`) is always offered; the
+      `LEFT`↔`RIGHT` pair is **dialect-gated** (`:postgres`/`:mysql` — SQLite lacks `RIGHT`).
     * **Aggregate (in `select`)** — swap an aggregate inside a `select`/`select_merge` clause
       value (`sum`↔`avg`, `min`↔`max`), via the shared `Mutare.Ecto.Aggregate` walker. "Does
       any test pin which aggregate the column is reduced by?"
 
-  A `from` node is `{:from, meta, [source, clauses]}` where `clauses` is a keyword list (in
-  Sourceror form, each key wrapped as `{:__block__, [format: :keyword], [atom]}`). `from/1`
-  (`from(Post)`, no clauses) yields nothing.
+  Each mutation is returned as `{family, node}` so the caller can filter by `families:`; `opts`
+  carries `dialects:` for the join gate. A `from` node is `{:from, meta, [source, clauses]}`
+  where `clauses` is a keyword list (in Sourceror form, each key wrapped as
+  `{:__block__, [format: :keyword], [atom]}`). `from/1` (`from(Post)`, no clauses) yields nothing.
   """
 
-  alias Mutare.Ecto.{Aggregate, AST, Ordering}
+  alias Mutare.Ecto.{Aggregate, AST, Config, Ordering}
+
+  @type family :: atom()
 
   @droppable ~w(where having or_where or_having)a
   @bound_keys ~w(limit offset)a
   @select_keys ~w(select select_merge)a
 
-  # JoinType: each join-clause key's portable kind swaps. `join` is the keyword-form default
-  # inner join. `RIGHT`/`FULL`/`CROSS`/lateral joins are non-portable (e.g. SQLite lacks
-  # `RIGHT`) and excluded from the core, leaving `INNER`↔`LEFT` — the broadly-safe pair.
-  @join_flips %{
-    join: [:left_join],
-    inner_join: [:left_join],
-    left_join: [:inner_join]
-  }
+  # JoinType: each join-clause key's kind swaps. `join` is the keyword-form default inner join.
+  # The portable pair (`INNER`↔`LEFT`) is always offered; the `LEFT`↔`RIGHT` pair is added only
+  # under a dialect that supports `RIGHT JOIN` (`@right_join_dialects`) — SQLite does not.
+  @portable_join_flips %{join: [:left_join], inner_join: [:left_join], left_join: [:inner_join]}
+  @right_join_flips %{left_join: [:right_join], right_join: [:left_join]}
+  @right_join_dialects [:postgres, :mysql]
 
-  @doc "Whole-`from` mutations for a `from(...)` node, or `[]`."
-  @spec mutations(Macro.t()) :: [Macro.t()]
-  def mutations({:from, meta, [source, clauses]}) when is_list(clauses) do
-    drops(meta, source, clauses, @droppable) ++
-      drops(meta, source, clauses, @bound_keys) ++
-      order_flips(meta, source, clauses) ++
-      bound_bumps(meta, source, clauses) ++
-      join_swaps(meta, source, clauses) ++
-      select_swaps(meta, source, clauses)
+  @doc "Whole-`from` mutations for a `from(...)` node as `{family, node}` pairs, or `[]`."
+  @spec mutations(Macro.t(), keyword()) :: [{family(), Macro.t()}]
+  def mutations(node, opts \\ [])
+
+  def mutations({:from, meta, [source, clauses]}, opts) when is_list(clauses) do
+    tag(:filter_drop, drops(meta, source, clauses, @droppable)) ++
+      tag(:bound, drops(meta, source, clauses, @bound_keys)) ++
+      tag(:ordering, order_flips(meta, source, clauses)) ++
+      tag(:bound, bound_bumps(meta, source, clauses)) ++
+      tag(:join_type, join_swaps(meta, source, clauses, opts)) ++
+      tag(:aggregate, select_swaps(meta, source, clauses))
   end
 
-  def mutations(_node), do: []
+  def mutations(_node, _opts), do: []
+
+  defp tag(family, nodes), do: Enum.map(nodes, &{family, &1})
 
   # Remove each clause whose key is in `keys`, keeping the others — so the query still
   # compiles (it reuses the surviving clauses). Used for both the filter drops (where/having)
@@ -91,17 +96,26 @@ defmodule Mutare.Ecto.Query do
   defp bumps(n) when n > 0, do: [n + 1, n - 1]
   defp bumps(n), do: [n + 1]
 
-  # Swap each join clause's *kind* by rewriting its key (`join`/`inner_join` ↔ `left_join`),
-  # keeping the join's value (`c in assoc(p, :x)`). One mutant per portable target.
-  defp join_swaps(meta, source, clauses) do
+  # Swap each join clause's *kind* by rewriting its key (`join`/`inner_join` ↔ `left_join`, plus
+  # `left_join`↔`right_join` under a `RIGHT`-capable dialect), keeping the join's value
+  # (`c in assoc(p, :x)`). One mutant per enabled target.
+  defp join_swaps(meta, source, clauses, opts) do
+    flips = join_flips(opts)
+
     clauses
     |> Enum.with_index()
     |> Enum.flat_map(fn {pair, index} ->
-      for to <- Map.get(@join_flips, clause_key(pair), []) do
+      for to <- Map.get(flips, clause_key(pair), []) do
         {:from, meta,
          [source, List.replace_at(clauses, index, put_key(pair, AST.keyword_key(to)))]}
       end
     end)
+  end
+
+  defp join_flips(opts) do
+    if Config.dialect_enabled?(opts, @right_join_dialects),
+      do: Map.merge(@portable_join_flips, @right_join_flips, fn _k, a, b -> a ++ b end),
+      else: @portable_join_flips
   end
 
   # Swap each aggregate inside a `select`/`select_merge` clause value — one mutant per aggregate

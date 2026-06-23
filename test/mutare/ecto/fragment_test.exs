@@ -8,12 +8,22 @@ defmodule Mutare.Ecto.FragmentTest do
   # weaving, routing) is `Mutare.Ecto.HostTest`'s job; here we pin exactly which single-point
   # variants the catalog offers for each family, reasoned in SQL's three-valued logic.
 
-  # Every mutant of `code` as rendered source, as a set (order-independent).
-  defp mutants(code) do
+  # Every mutant of `code` as rendered source, as a set (order-independent). `opts` carries
+  # `dialects:` (so a dialect-gated swap like `like`↔`ilike` can be exercised).
+  defp mutants(code, opts \\ []) do
     code
     |> Sourceror.parse_string!()
-    |> Fragment.mutants()
-    |> Enum.map(&Sourceror.to_string/1)
+    |> Fragment.mutants(opts)
+    |> Enum.map(fn {_family, node} -> Sourceror.to_string(node) end)
+    |> MapSet.new()
+  end
+
+  # The families tagged on `code`'s mutants, as a set.
+  defp families(code, opts \\ []) do
+    code
+    |> Sourceror.parse_string!()
+    |> Fragment.mutants(opts)
+    |> Enum.map(fn {family, _node} -> family end)
     |> MapSet.new()
   end
 
@@ -65,9 +75,27 @@ defmodule Mutare.Ecto.FragmentTest do
       assert mutants("u.role not in ^roles") == MapSet.new(["u.role in ^roles"])
     end
 
-    test "like/ilike case-sensitivity swap" do
-      assert mutants("like(u.name, ^q)") == MapSet.new(["ilike(u.name, ^q)"])
-      assert mutants("ilike(u.name, ^q)") == MapSet.new(["like(u.name, ^q)"])
+    test "like/ilike case-sensitivity swap is dialect-gated (Postgres)" do
+      # Without a dialect, the ilike swap is not offered (the portable default).
+      assert mutants("like(u.name, ^q)") == MapSet.new([])
+      assert mutants("ilike(u.name, ^q)") == MapSet.new([])
+
+      # Under :postgres, the swap fires both ways.
+      assert mutants("like(u.name, ^q)", dialects: [:postgres]) ==
+               MapSet.new(["ilike(u.name, ^q)"])
+
+      assert mutants("ilike(u.name, ^q)", dialects: [:postgres]) ==
+               MapSet.new(["like(u.name, ^q)"])
+    end
+  end
+
+  describe "family tags" do
+    test "each mutant is tagged with the SQL family that produced it" do
+      assert families("u.age > 18") == MapSet.new([:comparison, :fragment_literal])
+      assert families("u.a and u.b") == MapSet.new([:connective])
+      assert families("is_nil(u.x)") == MapSet.new([:null_predicate])
+      assert families("u.role in ^r") == MapSet.new([:membership])
+      assert families("like(u.x, ^q)", dialects: [:postgres]) == MapSet.new([:membership])
     end
   end
 

@@ -15,9 +15,38 @@ defmodule Mutare.Ecto do
 
   This module is a thin front for a family of sub-mutators, dispatched by the node it
   sees: `Mutare.Ecto.RepoAggregate`, `Mutare.Ecto.Changeset`, `Mutare.Ecto.Query` (whole-`from`
-  mutations), and `Mutare.Ecto.Host` (localized in-fragment `where`/`having` mutations, via the
-  SQL catalog in `Mutare.Ecto.Fragment`). All mutations are recorded under the single family name
-  `:ecto`. See `DESIGN.md` for the surface map and the SQL-semantics boundary.
+  mutations), `Mutare.Ecto.Clause` (standalone/pipe clause macros), and `Mutare.Ecto.Host`
+  (localized in-fragment `where`/`having` mutations, via the SQL catalog in `Mutare.Ecto.Fragment`).
+
+  ## Configuration
+
+  Beyond the required `repo:`, each entry takes:
+
+    * `families:` — narrow the SQL catalog to a subset (default `:all`). Every family is
+      independently toggleable; see `families/0` for the full set. Combined with `:as` (which
+      renames the family in the report), this both narrows a run and lets a sub-family be
+      **reported under its own name**:
+
+          {Mutare.Ecto, repo: R, families: [:comparison], as: :ecto_comparison}
+
+    * `dialects:` — gate dialect-specific mutations (default `[]`, the portable core). `:postgres`
+      enables `like`↔`ilike`; `:postgres`/`:mysql` enable the `LEFT`↔`RIGHT` join swap (SQLite
+      lacks `RIGHT JOIN`).
+
+    * `as:` — rename the recorded family (a core convention; `:as` is consumed by Mutare and never
+      reaches the plugin). List the plugin twice with different `repo:`/`as:` to cover **multiple
+      repos**, or with different `families:`/`as:` to split the catalog into separately-named
+      report families.
+
+  **Equivalence-sensitive families.** `equivalence_sensitive_families/0` returns the families
+  (`:comparison`, `:connective`, `:null_predicate`) whose survivors may be *legitimately* unkillable
+  without a `NULL`/boundary fixture — honest signal, distinct from a plain test gap. Run them under
+  their own `:as` name to surface that in the report:
+
+      {Mutare.Ecto, repo: R, families: Mutare.Ecto.equivalence_sensitive_families(), as: :ecto_boundary_null}
+
+  Without a `families:`/`as:` split every mutation is recorded under `:ecto`. See `DESIGN.md` for
+  the surface map and the SQL-semantics boundary.
 
   ## Macro routing
 
@@ -28,11 +57,11 @@ defmodule Mutare.Ecto do
       broken schema, not a mutant.
     * the `from` opener and the `where`/`having` family route via the `:routing` classifier
       (`macro_routing/1`), so a binding-referencing condition is delivered through the plugin's
-      **selector host** (`host/2` — Ecto's `^`/`dynamic` injection), while plain data is left to
-      core. The whole-`from` mutations (clause drop, order-direction flip) ride `mutate/1` over
-      the same routed node.
-    * the remaining query macros (`order_by`, `select`, `limit`, …) are `:skip`ped pending later
-      milestones.
+      **selector host** (`host/2` — Ecto's `^`/`dynamic` injection), while keyword-shorthand data
+      is routed to core's literal families (`{:keyword, …}`/`:pinned`). The whole-`from` mutations
+      (clause/bound drop, order/join swaps, select aggregates) ride `mutate/2` over the routed node.
+    * the standalone/pipe clause macros (`order_by`, `limit`, `offset`, `select`, …) are `:skip`ped
+      so core leaves them raw, but their `mutate/2` mutations still fire (`Mutare.Ecto.Clause`).
 
   Resolution of these macros relies on Mutare's `use`-expansion (so the
   `use Ecto.Schema`-injected `import Ecto.Schema`, and a `use MyAppWeb, :live_view`-bundled
@@ -42,7 +71,7 @@ defmodule Mutare.Ecto do
 
   @behaviour Mutare.Mutator
 
-  alias Mutare.Ecto.{Changeset, Clause, Host, Query, RepoAggregate}
+  alias Mutare.Ecto.{Changeset, Clause, Config, Host, Query, RepoAggregate}
 
   # Query macros routed through the plugin's **selector host** (`c:Mutare.Mutator.host/2`) — the
   # `from` opener and the standalone/pipe condition macros — via the `:routing` classifier, which
@@ -63,6 +92,19 @@ defmodule Mutare.Ecto do
 
   @impl Mutare.Mutator
   def name, do: :ecto
+
+  @doc "Every SQL family the plugin can emit — the `families: :all` set, for a `families:` subset."
+  @spec families() :: [atom()]
+  defdelegate families, to: Config, as: :all_families
+
+  @doc """
+  The families whose survivors may be legitimately unkillable without a `NULL`/boundary fixture
+  (`:comparison`, `:connective`, `:null_predicate`) — their equivalence reasoning is SQL's
+  three-valued logic. Run them under their own `:as` name to surface "kill requires boundary/NULL
+  data" in the report (see the "Configuration" section).
+  """
+  @spec equivalence_sensitive_families() :: [atom()]
+  defdelegate equivalence_sensitive_families, to: Config
 
   @impl Mutare.Mutator
   def macros do
@@ -87,24 +129,23 @@ defmodule Mutare.Ecto do
   @impl Mutare.Mutator
   defdelegate host(node, context), to: Host
 
-  # Whole-node query mutations need no context (no opts, no pipe shape), so they live in
-  # `mutate/1`: a `from(...)` node yields its whole-query mutations (`Query`), and a standalone/
-  # pipe `order_by`/`limit`/`offset` node yields its ordering/bound mutations (`Clause`). The
-  # mutated position is the last argument in both call shapes, so neither needs the pipe mode.
+  # Every node mutation runs through `mutate/2` (not `mutate/1`), because all of them now read
+  # `context.opts` — the `families:` filter (every family is independently toggleable) and the
+  # `dialects:` gate (so a non-portable mutation only fires under a supporting adapter). The
+  # sub-mutators return `{family, node}` pairs; the configured Repo (RepoAggregate) and pipe
+  # shape (Changeset) come from the same context.
   @impl Mutare.Mutator
-  def mutate(node) do
-    case Query.mutations(node) ++ Clause.mutations(node) do
-      [] -> :skip
-      mutations -> mutations
-    end
-  end
+  def mutate(_node), do: :skip
 
-  # Call-shaped mutations need the context (the configured Repo, and the pipe shape that
-  # decides where an argument sits): RepoAggregate reads `context.opts[:repo]`, Changeset
-  # reads `context.pipe_mode`.
   @impl Mutare.Mutator
-  def mutate(node, context) do
-    case RepoAggregate.mutations(node, context) ++ Changeset.mutations(node, context) do
+  def mutate(node, %{opts: opts} = context) do
+    tagged =
+      Query.mutations(node, opts) ++
+        Clause.mutations(node) ++
+        RepoAggregate.mutations(node, context) ++
+        Changeset.mutations(node, context)
+
+    case for {family, mutated} <- tagged, Config.family_enabled?(opts, family), do: mutated do
       [] -> :skip
       mutations -> mutations
     end

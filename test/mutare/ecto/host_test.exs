@@ -181,7 +181,7 @@ defmodule Mutare.Ecto.HostTest do
       assert_compiles(src)
     end
 
-    test "like/ilike is woven and compiles" do
+    test "like/ilike is woven and compiles (Postgres dialect)" do
       src = """
       defmodule M do
         import Ecto.Query
@@ -189,8 +189,15 @@ defmodule Mutare.Ecto.HostTest do
       end
       """
 
-      assert Enum.any?(hosted(src), fn {_o, mutated} -> mutated == "ilike(u.name, ^pat)" end)
-      assert_compiles(src)
+      pg = [mutators: [{Mutare.Ecto, repo: MyApp.Repo, dialects: [:postgres]}]]
+
+      hosted_pg =
+        src
+        |> ecto_diffs(pg)
+        |> Enum.reject(fn {original, _m} -> String.starts_with?(original, "from(") end)
+
+      assert Enum.any?(hosted_pg, fn {_o, mutated} -> mutated == "ilike(u.name, ^pat)" end)
+      assert_compiles(src, pg)
     end
 
     test "an in-fragment integer literal bump is woven and compiles" do

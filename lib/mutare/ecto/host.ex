@@ -45,7 +45,7 @@ defmodule Mutare.Ecto.Host do
   `:routing` extensions); see `c:Mutare.Mutator.macro_routing/1`.
   """
 
-  alias Mutare.Ecto.{AST, Fragment}
+  alias Mutare.Ecto.{AST, Config, Fragment}
 
   # The clause keys whose value is a boolean condition the catalog mutates — in the `from`
   # keyword list and as standalone `Ecto.Query` macros.
@@ -184,18 +184,18 @@ defmodule Mutare.Ecto.Host do
   bindingless source, a shorthand value, a condition with no catalog operators).
   """
   @spec host(Macro.t(), Mutare.Mutator.context()) :: [map()]
-  def host({:from, _meta, [source, clauses]}, _context) when is_list(clauses) do
+  def host({:from, _meta, [source, clauses]}, context) when is_list(clauses) do
     case from_bindings(source, clauses) do
       [] -> []
-      bindings -> from_targets(clauses, bindings)
+      bindings -> from_targets(clauses, bindings, opts(context))
     end
   end
 
-  def host({macro, _meta, args}, _context) when macro in @condition_macros and is_list(args) do
+  def host({macro, _meta, args}, context) when macro in @condition_macros and is_list(args) do
     with index when not is_nil(index) <- condition_index(args),
          bindings = binding_vars(Enum.at(args, index - 1)),
          condition = Enum.at(args, index),
-         [_ | _] = mutants <- catalog(condition, bindings) do
+         [_ | _] = mutants <- catalog(condition, bindings, opts(context)) do
       [target(condition, mutants, bindings, condition_splice(index))]
     else
       _ -> []
@@ -204,17 +204,20 @@ defmodule Mutare.Ecto.Host do
 
   def host(_node, _context), do: []
 
+  defp opts(%{opts: opts}) when is_list(opts), do: opts
+  defp opts(_context), do: []
+
   # === from ==================================================================
 
   # One target per `where`/`having` clause whose value the catalog mutates. The clause index is
   # captured so the splice replaces *its own* clause (multiple targets fold over the node, each
   # replacing a distinct position — `List.replace_at` keeps the list length, so indices stay valid).
-  defp from_targets(clauses, bindings) do
+  defp from_targets(clauses, bindings, opts) do
     clauses
     |> Enum.with_index()
     |> Enum.flat_map(fn {{key, value}, index} ->
       with true <- AST.atom_value(key) in @condition_keys,
-           [_ | _] = mutants <- catalog(value, bindings) do
+           [_ | _] = mutants <- catalog(value, bindings, opts) do
         [target(value, mutants, bindings, from_clause_splice(index, key))]
       else
         _ -> []
@@ -222,11 +225,18 @@ defmodule Mutare.Ecto.Host do
     end)
   end
 
-  # The full set of logical mutants for a `where`/`having` condition: the SQL-operator/predicate
-  # catalog (`Fragment.mutants/1`) plus the binding-reorder swaps the declared bindings admit
-  # (`Fragment.binding_reorders/2`). Both ride the same `dynamic([bindings], _)` wrap.
-  defp catalog(condition, bindings) do
-    Fragment.mutants(condition) ++ Fragment.binding_reorders(condition, binding_names(bindings))
+  # The enabled logical mutants for a `where`/`having` condition: the SQL-operator/predicate
+  # catalog (`Fragment.mutants/2`, dialect-gated by `opts`) plus the binding-reorder swaps the
+  # declared bindings admit, each tagged with its family and filtered to the configured
+  # `families:`. Both ride the same `dynamic([bindings], _)` wrap.
+  defp catalog(condition, bindings, opts) do
+    reorders =
+      for node <- Fragment.binding_reorders(condition, binding_names(bindings)),
+          do: {:binding_reorder, node}
+
+    for {family, node} <- Fragment.mutants(condition, opts) ++ reorders,
+        Config.family_enabled?(opts, family),
+        do: node
   end
 
   defp binding_names(bindings), do: Enum.map(bindings, fn {name, _meta, _ctx} -> name end)

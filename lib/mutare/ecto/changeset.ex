@@ -30,12 +30,15 @@ defmodule Mutare.Ecto.Changeset do
     check_constraint exclusion_constraint
   )a
 
-  @doc "Validation-drop mutations for an `Ecto.Changeset` validator/constraint call, or `[]`."
-  @spec mutations(Macro.t(), Mutare.Mutator.context()) :: [Macro.t()]
+  @doc "Validation-drop mutations for an `Ecto.Changeset` call as `{:validation_drop, node}` pairs, or `[]`."
+  @spec mutations(Macro.t(), Mutare.Mutator.context()) :: [{:validation_drop, Macro.t()}]
   def mutations(node, %{pipe_mode: pipe_mode}) do
     case Calls.resolved_call(node) do
-      {@changeset_key, fun, args, _rebuild} when fun in @droppable -> drop(pipe_mode, args)
-      _ -> []
+      {@changeset_key, fun, args, _rebuild} when fun in @droppable ->
+        for mutated <- drop(pipe_mode, args), do: {:validation_drop, mutated}
+
+      _ ->
+        []
     end
   end
 

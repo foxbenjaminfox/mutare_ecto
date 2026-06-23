@@ -31,8 +31,9 @@ in `DESIGN.md`.
 
 ## Status
 
-Milestones 1, 2, and 3 are implemented (the query catalog, including the keyword-shorthand
-split — see the end of this section).
+All four milestones are implemented: the Repo/changeset/schema surface (1), the selector
+host (2), the full query catalog (3), and configuration — `families:`, `dialects:`, multi-repo,
+per-family naming, and equivalence reporting (4).
 
 **Bucket 1 + 2 (Milestone 1)** — plain calls and the schema skip, against Mutare's
 existing plumbing:
@@ -98,5 +99,29 @@ the two existing delivery paths (no new core machinery):
   dependency now carries them. (A shorthand clause *mixed into a binding* `from` stays `:hosted`
   and isn't split — a documented edge; see `DESIGN.md`.)
 
-Still to come (see `DESIGN.md`, Milestone 4): SQL-equivalence reporting, dialect gating
-(the non-portable joins, `ilike`, …), multi-repo, and per-family naming.
+**Configuration (Milestone 4)** — each `{Mutare.Ecto, …}` entry is tunable:
+
+- **`families:`** — narrow the SQL catalog to a subset (default `:all`); every family
+  (`:comparison`, `:null_predicate`, `:bound`, …) is independently toggleable. An unknown family
+  name fails loudly. See `Mutare.Ecto.families/0`.
+- **`dialects:`** — gate dialect-specific mutations (default `[]`, the portable core): `:postgres`
+  enables `like`↔`ilike`; `:postgres`/`:mysql` enable the `LEFT`↔`RIGHT` join swap (SQLite lacks
+  `RIGHT JOIN`).
+- **Per-family naming + multiple repos** — list the plugin more than once with different
+  `families:`/`as:` (to report a sub-family under its own name) or `repo:`/`as:` (to cover several
+  repos); `:as` renames the recorded family.
+- **Equivalence reporting** — `Mutare.Ecto.equivalence_sensitive_families/0` lists the families
+  (`:comparison`, `:connective`, `:null_predicate`) whose survivors may be legitimately unkillable
+  without a `NULL`/boundary fixture. Run them under their own `:as` name to surface that in the
+  report. (The catalog is SQL-native, so it emits no Elixir-equivalent mutations to inflate the
+  denominator in the first place.)
+
+      # .mutare.exs — split the boundary/NULL families out under their own report name
+      [
+        mutators: [
+          :all,
+          {Mutare.Ecto, repo: MyApp.Repo, dialects: [:postgres],
+           families: Mutare.Ecto.equivalence_sensitive_families(), as: :ecto_boundary_null},
+          {Mutare.Ecto, repo: MyApp.Repo, dialects: [:postgres]}
+        ]
+      ]
