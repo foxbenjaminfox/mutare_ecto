@@ -9,6 +9,9 @@ defmodule Mutare.Ecto.Clause do
       `Mutare.Ecto.Ordering` catalog.
     * **Bound** — `limit(q, 10)` / `q |> offset(5)`: bump the literal value by `±1`
       (non-negative only).
+    * **Aggregate** — `select(q, [u], sum(u.amount))` / `q |> select_merge(%{n: max(u.x)})`:
+      swap an aggregate (`sum`↔`avg`, `min`↔`max`), via the shared `Mutare.Ecto.Aggregate`
+      walker.
 
   These macros are registered `:skip` (so core never descends a binding/expression into them),
   but a `:skip` macro node is still offered to every mutator's `mutate/1` — exactly like a
@@ -21,9 +24,10 @@ defmodule Mutare.Ecto.Clause do
   pipe-mode bookkeeping is required.
   """
 
-  alias Mutare.Ecto.{AST, Ordering}
+  alias Mutare.Ecto.{Aggregate, AST, Ordering}
 
   @bound_macros ~w(limit offset)a
+  @select_macros ~w(select select_merge)a
 
   @doc "Standalone/pipe clause-macro mutations for `node`, or `[]`."
   @spec mutations(Macro.t()) :: [Macro.t()]
@@ -40,6 +44,12 @@ defmodule Mutare.Ecto.Clause do
       nil -> []
       n -> for bumped <- bumps(n), do: {macro, meta, init ++ [AST.int_literal(bumped)]}
     end
+  end
+
+  def mutations({macro, meta, args})
+      when macro in @select_macros and is_list(args) and args != [] do
+    {init, [expr]} = Enum.split(args, -1)
+    for swapped <- Aggregate.swaps(expr), do: {macro, meta, init ++ [swapped]}
   end
 
   def mutations(_node), do: []

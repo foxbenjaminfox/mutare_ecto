@@ -145,4 +145,31 @@ defmodule Mutare.Ecto.QueryTest do
              end)
     end
   end
+
+  describe "Aggregate (in select)" do
+    test "swaps an aggregate inside a from select clause" do
+      src = """
+      defmodule Posts do
+        import Ecto.Query
+        def q, do: from(p in "posts", select: sum(p.views))
+      end
+      """
+
+      assert Enum.any?(ecto_diffs(src), fn {_o, mutated} -> mutated =~ "avg(p.views)" end)
+      assert_compiles(src)
+    end
+
+    test "reaches an aggregate nested in a map select" do
+      src = """
+      defmodule Posts do
+        import Ecto.Query
+        def q, do: from(p in "posts", select: %{total: sum(p.views), peak: max(p.views)})
+      end
+      """
+
+      mutated = Enum.map(ecto_diffs(src), fn {_o, m} -> m end)
+      assert Enum.any?(mutated, &(&1 =~ "avg(p.views)"))
+      assert Enum.any?(mutated, &(&1 =~ "min(p.views)"))
+    end
+  end
 end

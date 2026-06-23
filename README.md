@@ -76,10 +76,13 @@ the two existing delivery paths (no new core machinery):
   `RIGHT`/`FULL`/`CROSS` are dialect-gated in Milestone 4).
 - **Ordering (standalone/pipe)** — flip a sort direction in the composable form too
   (`order_by(q, [u], asc: u.name)`, `q |> order_by(desc: u.name)`), alongside the
-  whole-`from` `order_by` flip already shipped. Both `limit`/`offset` and `order_by`
-  standalone forms ride `mutate/1` over the (otherwise `:skip`ped) macro node — no host
+  whole-`from` `order_by` flip already shipped. The `limit`/`offset`/`order_by`/`select`
+  standalone forms all ride `mutate/1` over the (otherwise `:skip`ped) macro node — no host
   needed, since the call is itself an expression the in-place selector can wrap whole.
+- **Aggregate (in `select`)** — swap an aggregate (`sum`↔`avg`, `min`↔`max`) wherever it
+  appears in a `select`/`select_merge` expression — a bare call, or one nested in a map,
+  tuple, or keyword list. Both the whole-`from` keyword form and the standalone/pipe form.
+  (`count` is left alone, as in `RepoAggregate`.)
 
-Still to come (see `DESIGN.md`, Milestones 3–4): aggregate-in-`select`, binding-reorder,
-the keyword-shorthand shape split, the `nil`-pair exclusion, and SQL-equivalence reporting
-+ dialect gating.
+Still to come (see `DESIGN.md`, Milestones 3–4): binding-reorder, the keyword-shorthand
+shape split, the `nil`-pair exclusion, and SQL-equivalence reporting + dialect gating.

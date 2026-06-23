@@ -21,16 +21,20 @@ defmodule Mutare.Ecto.Query do
       join drops rows a left join keeps, so the swap is a strong, killable mutation. Restricted
       to the **portable** pair (every adapter supports `INNER`/`LEFT`); `RIGHT`/`FULL`/`CROSS`
       and lateral joins are dialect-specific and gated in Milestone 4.
+    * **Aggregate (in `select`)** — swap an aggregate inside a `select`/`select_merge` clause
+      value (`sum`↔`avg`, `min`↔`max`), via the shared `Mutare.Ecto.Aggregate` walker. "Does
+      any test pin which aggregate the column is reduced by?"
 
   A `from` node is `{:from, meta, [source, clauses]}` where `clauses` is a keyword list (in
   Sourceror form, each key wrapped as `{:__block__, [format: :keyword], [atom]}`). `from/1`
   (`from(Post)`, no clauses) yields nothing.
   """
 
-  alias Mutare.Ecto.{AST, Ordering}
+  alias Mutare.Ecto.{Aggregate, AST, Ordering}
 
   @droppable ~w(where having or_where or_having)a
   @bound_keys ~w(limit offset)a
+  @select_keys ~w(select select_merge)a
 
   # JoinType: each join-clause key's portable kind swaps. `join` is the keyword-form default
   # inner join. `RIGHT`/`FULL`/`CROSS`/lateral joins are non-portable (e.g. SQLite lacks
@@ -48,7 +52,8 @@ defmodule Mutare.Ecto.Query do
       drops(meta, source, clauses, @bound_keys) ++
       order_flips(meta, source, clauses) ++
       bound_bumps(meta, source, clauses) ++
-      join_swaps(meta, source, clauses)
+      join_swaps(meta, source, clauses) ++
+      select_swaps(meta, source, clauses)
   end
 
   def mutations(_node), do: []
@@ -95,6 +100,22 @@ defmodule Mutare.Ecto.Query do
       for to <- Map.get(@join_flips, clause_key(pair), []) do
         {:from, meta,
          [source, List.replace_at(clauses, index, put_key(pair, AST.keyword_key(to)))]}
+      end
+    end)
+  end
+
+  # Swap each aggregate inside a `select`/`select_merge` clause value — one mutant per aggregate
+  # position (`Mutare.Ecto.Aggregate`).
+  defp select_swaps(meta, source, clauses) do
+    clauses
+    |> Enum.with_index()
+    |> Enum.flat_map(fn {pair, index} ->
+      if clause_key(pair) in @select_keys do
+        for swapped <- Aggregate.swaps(clause_value(pair)) do
+          {:from, meta, [source, List.replace_at(clauses, index, put_value(pair, swapped))]}
+        end
+      else
+        []
       end
     end)
   end

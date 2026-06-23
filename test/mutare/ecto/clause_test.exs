@@ -111,4 +111,30 @@ defmodule Mutare.Ecto.ClauseTest do
       assert_compiles(src)
     end
   end
+
+  describe "Aggregate (standalone / pipe select)" do
+    test "swaps an aggregate in the pipe select form" do
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q(query), do: query |> select([u], sum(u.amount))
+      end
+      """
+
+      assert Enum.any?(ecto_diffs(src), fn {_o, mutated} -> mutated =~ "avg(u.amount)" end)
+      assert_compiles(src)
+    end
+
+    test "swaps an aggregate inside a select_merge map" do
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q(query), do: query |> select_merge([u], %{peak: max(u.x)})
+      end
+      """
+
+      assert Enum.any?(ecto_diffs(src), fn {_o, mutated} -> mutated =~ "min(u.x)" end)
+      assert_compiles(src)
+    end
+  end
 end
