@@ -1,0 +1,6 @@
+%{
+  "decimal": {:hex, :decimal, "3.1.1", "430d87b04011ce6cbd4fd205be758311a81f87d552d40904abd00f015935b1d0", [:mix], [], "hexpm", "c5f25f2ced74a0587d03e6023f595db8e924c9d3922c8c8ffd9edfc4498cf1f6"},
+  "ecto": {:hex, :ecto, "3.14.0", "2fa64521eebfcb2670d907a86e4ad947290e9933706bb315e6fb5c21b172cb26", [:mix], [{:decimal, "~> 3.0", [hex: :decimal, repo: "hexpm", optional: false]}, {:jason, "~> 1.0", [hex: :jason, repo: "hexpm", optional: true]}, {:telemetry, "~> 0.4 or ~> 1.0", [hex: :telemetry, repo: "hexpm", optional: false]}], "hexpm", "130d69ffb4285f9ce4792b65dfbb994fd13ea4cbc3cbea2524b199aa3de84af3"},
+  "sourceror": {:hex, :sourceror, "1.12.2", "85bfd48159f020c0cbfc72f289f11456fdc05dc43719b6f2589fb969faefa113", [:mix], [], "hexpm", "da37d3da09c5b890528802c7056a8f585a061973820d7656b6e3649c14f0e9cb"},
+  "telemetry": {:hex, :telemetry, "1.4.2", "a0cb522801dffb1c49fe6e30561badffc7b6d0e180db1300df759faa22062855", [:rebar3], [], "hexpm", "928f6495066506077862c0d1646609eed891a4326bee3126ba54b60af61febb1"},
+}
