@@ -16,6 +16,25 @@ defmodule Mutare.Ecto.AST do
   @spec atom_literal(atom()) :: Macro.t()
   def atom_literal(atom) when is_atom(atom), do: {:__block__, [], [atom]}
 
+  @doc "The integer value of an integer literal node (Sourceror-wrapped or bare), or `nil`."
+  @spec int_value(Macro.t()) :: integer() | nil
+  def int_value({:__block__, _meta, [int]}) when is_integer(int), do: int
+  def int_value(int) when is_integer(int), do: int
+  def int_value(_node), do: nil
+
+  @doc """
+  A fresh integer literal node that renders the new value. Carries a `:token` (the integer's
+  text) because Elixir's formatter fetches it for every integer literal — unlike an atom, a
+  clean-meta integer block raises when Sourceror can't synthesize one in an embedded position.
+  A negative integer is the canonical unary-minus-over-literal shape (`{:-, [], [5]}` for `-5`),
+  matching how Elixir and `Mutare.AST.literal/1` represent it — so it renders and recompiles.
+  """
+  @spec int_literal(integer()) :: Macro.t()
+  def int_literal(int) when is_integer(int) and int < 0, do: {:-, [], [int_literal(-int)]}
+
+  def int_literal(int) when is_integer(int),
+    do: {:__block__, [token: Integer.to_string(int)], [int]}
+
   @doc "A fresh keyword-list **key** node (`format: :keyword`), so it renders as `key:`."
   @spec keyword_key(atom()) :: Macro.t()
   def keyword_key(atom) when is_atom(atom), do: {:__block__, [format: :keyword], [atom]}

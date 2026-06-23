@@ -31,7 +31,8 @@ in `DESIGN.md`.
 
 ## Status
 
-Milestones 1 and 2 are implemented.
+Milestones 1 and 2 are implemented; Milestone 3 (the rest of the query catalog) is
+in progress.
 
 **Bucket 1 + 2 (Milestone 1)** — plain calls and the schema skip, against Mutare's
 existing plumbing:
@@ -58,6 +59,21 @@ This required Mutare core's *foreign-semantics DSL host* extensions (the
 mutator-supplied selector host + `:hosted`/`:routing` macro routing); the pinned
 [Mutare](../mutare) dependency now carries them.
 
-Still to come (see `DESIGN.md`, Milestones 3–4): the rest of the query catalog
-(ordering, bounds, membership, join-type, aggregate-in-select), the keyword-shorthand
-shape split, the `nil`-pair exclusion, and SQL-equivalence reporting + dialect gating.
+**Full query catalog (Milestone 3, in progress)** — more of the SQL catalog, landing in
+the two existing delivery paths (no new core machinery):
+
+- **Membership** — in a `where`/`having` fragment, `x in ^list` ↔ `x not in ^list`
+  (polarity) and `like` ↔ `ilike` (case-sensitivity), delivered through the selector host.
+- **FragmentLiteral** — a non-pinned integer literal *written into* a fragment
+  (`u.age > 18` → `19`/`17`/`0`): the library owns these because they are part of the SQL
+  the query runs, not interpolated Elixir, so core never sees them. Boundary `±1` plus the
+  zero sentinel, deduped.
+- **Bound** — whole-`from`: drop a `limit`/`offset` clause, and bump its literal value by
+  `±1` (non-negative only).
+- **JoinType** — whole-`from`: swap a join's kind by rewriting its clause key,
+  `join`/`inner_join` ↔ `left_join` (the portable `INNER`/`LEFT` pair;
+  `RIGHT`/`FULL`/`CROSS` are dialect-gated in Milestone 4).
+
+Still to come (see `DESIGN.md`, Milestones 3–4): the standalone/pipe forms of ordering
+and bounds, aggregate-in-`select`, binding-reorder, the keyword-shorthand shape split, the
+`nil`-pair exclusion, and SQL-equivalence reporting + dialect gating.

@@ -51,9 +51,10 @@ defmodule Mutare.Ecto do
   @hosted_macros ~w(from where or_where having or_having)a
 
   # The remaining `Ecto.Query` macros, routed `:skip` so core neither mutates a query expression
-  # in place (poison) nor descends a binding/source. Their localized mutations (ordering, bounds,
-  # membership, nested `dynamic`, …) arrive in later milestones; `from`'s whole-query mutations
-  # (clause drop, order-direction flip) still ride `mutate/1` over the routed `from` node.
+  # in place (poison) nor descends a binding/source. Their *standalone/pipe* localized mutations
+  # (`order_by(q, …)`, nested `dynamic`, …) arrive in later milestones; the `from`-keyword forms of
+  # the whole-query mutations (clause/bound drop, order-direction flip, limit/offset bump) already
+  # ride `mutate/1` over the routed `from` node.
   @skipped_macros ~w(
     select select_merge order_by group_by distinct
     limit offset join preload lock with_cte

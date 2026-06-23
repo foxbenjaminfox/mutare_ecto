@@ -164,6 +164,51 @@ defmodule Mutare.Ecto.HostTest do
     end
   end
 
+  describe "the catalog families deliver through the host" do
+    test "membership polarity (in / not in) is woven and compiles" do
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q(roles), do: from(u in User, where: u.role in ^roles, select: u.id)
+      end
+      """
+
+      assert Enum.any?(hosted(src), fn {original, mutated} ->
+               original == "u.role in ^roles" and mutated == "u.role not in ^roles"
+             end)
+
+      assert metamutant(src) =~ "dynamic([u]"
+      assert_compiles(src)
+    end
+
+    test "like/ilike is woven and compiles" do
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q(pat), do: from(u in User, where: like(u.name, ^pat), select: u.id)
+      end
+      """
+
+      assert Enum.any?(hosted(src), fn {_o, mutated} -> mutated == "ilike(u.name, ^pat)" end)
+      assert_compiles(src)
+    end
+
+    test "an in-fragment integer literal bump is woven and compiles" do
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q, do: from(u in User, where: u.age > 18, select: u.id)
+      end
+      """
+
+      mutated = Enum.map(hosted(src), fn {_o, m} -> m end)
+      assert "u.age > 19" in mutated
+      assert "u.age > 17" in mutated
+      assert "u.age >= 18" in mutated
+      assert_compiles(src)
+    end
+  end
+
   describe "the recorded diff is a clean logical change" do
     test "neither side leaks the dynamic / ^ / case scaffolding the host weaves" do
       src = """

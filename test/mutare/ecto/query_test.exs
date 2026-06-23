@@ -50,4 +50,99 @@ defmodule Mutare.Ecto.QueryTest do
 
     assert ecto_diffs(src) == []
   end
+
+  describe "Bound (limit/offset)" do
+    test "drops a limit clause and bumps its value by ±1" do
+      src = """
+      defmodule Posts do
+        import Ecto.Query
+        def q, do: from(p in "posts", limit: 10, select: p.id)
+      end
+      """
+
+      diffs = ecto_diffs(src)
+
+      # The whole-`from` drop removes the limit (the surviving query keeps select).
+      assert Enum.any?(diffs, fn {_o, mutated} ->
+               mutated =~ "from" and not (mutated =~ "limit")
+             end)
+
+      # And the literal bound bumps off-by-one both ways.
+      assert Enum.any?(diffs, fn {_o, mutated} -> mutated =~ "limit: 11" end)
+      assert Enum.any?(diffs, fn {_o, mutated} -> mutated =~ "limit: 9" end)
+    end
+
+    test "bumps an offset and clamps the lower bound non-negative" do
+      src = """
+      defmodule Posts do
+        import Ecto.Query
+        def q, do: from(p in "posts", offset: 0, select: p.id)
+      end
+      """
+
+      diffs = ecto_diffs(src)
+
+      assert Enum.any?(diffs, fn {_o, mutated} -> mutated =~ "offset: 1" end)
+      # offset: -1 is invalid SQL — never offered.
+      refute Enum.any?(diffs, fn {_o, mutated} -> mutated =~ "offset: -1" end)
+    end
+
+    test "leaves a pinned limit's value to core (no literal bump)" do
+      src = """
+      defmodule Posts do
+        import Ecto.Query
+        def q(n), do: from(p in "posts", limit: ^n, select: p.id)
+      end
+      """
+
+      # No integer literal in the bound, so only the drop fires — no bump mutant.
+      refute Enum.any?(ecto_diffs(src), fn {_o, mutated} ->
+               mutated =~ "limit:" and mutated =~ ~r/limit: \d/
+             end)
+
+      assert_compiles(src)
+    end
+  end
+
+  describe "JoinType" do
+    test "swaps a default (inner) join to a left join" do
+      src = """
+      defmodule Posts do
+        import Ecto.Query
+        def q do
+          from p in Post,
+            join: c in assoc(p, :comments),
+            on: c.post_id == p.id,
+            select: p.id
+        end
+      end
+      """
+
+      diffs = ecto_diffs(src)
+
+      assert Enum.any?(diffs, fn {_o, mutated} -> mutated =~ "left_join: c in assoc" end)
+      # The portable core stays inner↔left — no non-portable right/full/cross.
+      refute Enum.any?(diffs, fn {_o, mutated} -> mutated =~ "right_join" end)
+
+      assert_compiles(src)
+    end
+
+    test "swaps an explicit left join back to inner" do
+      src = """
+      defmodule Posts do
+        import Ecto.Query
+        def q do
+          from p in Post,
+            left_join: c in assoc(p, :comments),
+            on: c.post_id == p.id,
+            select: p.id
+        end
+      end
+      """
+
+      assert Enum.any?(ecto_diffs(src), fn {_o, mutated} ->
+               mutated =~ "inner_join: c in assoc"
+             end)
+    end
+  end
 end

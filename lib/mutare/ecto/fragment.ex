@@ -10,7 +10,7 @@ defmodule Mutare.Ecto.Fragment do
   The catalog reuses **none** of Mutare's built-in mutators (see `DESIGN.md`, "The semantic
   boundary"): the operators look like Elixir's but the equivalence reasoning is SQL's
   three-valued logic, so a borrowed Elixir-semantics mutator would silently drop genuinely
-  killable mutants. The Milestone-2 families:
+  killable mutants. The families:
 
     * **Comparison** — `>`↔`>=`, `<`↔`<=`, `==`↔`!=`. Boundary and equality coverage. The
       `==`/`!=` swap interacts with `NULL` (it changes which `NULL` rows are excluded) — a
@@ -20,15 +20,29 @@ defmodule Mutare.Ecto.Fragment do
     * **NullPredicate** — `is_nil(x)`↔`not is_nil(x)`. The uniquely-SQL family with no Elixir
       analog worth borrowing; treated as one unit so `not is_nil(x)` flips back to `is_nil(x)`
       rather than producing a double-negation.
+    * **Membership** — `x in ^list`↔`x not in ^list` (polarity, a unit like NullPredicate) and
+      `like`↔`ilike` (case-sensitivity; an atom-form swap). `ilike` is Postgres-specific —
+      compile-safe everywhere, dialect-gated only at execution; the `dialects:` gate is
+      Milestone 4.
+    * **FragmentLiteral** — a *non-pinned* integer literal written into the fragment
+      (`u.age > 18` → `19`/`17`/`0`). The library owns these so it can keep them SQL-safe:
+      they are part of the SQL the query runs, not interpolated Elixir, so core never sees
+      them (the clause is raw/`:hosted`). Boundary (`n±1`) plus the zero sentinel, deduped
+      and never equal to the original — the same boundary convention as core's `Literal`, but
+      decided here under SQL semantics.
 
-  Pinned interpolations (`^min_age`), field references (`u.age`), and literals are left
-  untouched: a `^value` is ordinary Elixir bound upstream and mutated there by core's literal
-  families — the catalog targets only the SQL-evaluated *operators and structure* (see
-  `DESIGN.md`, "Pinned values are core's").
+  Pinned interpolations (`^min_age`), field references (`u.age`), and *string* literals are
+  left untouched: a `^value` is ordinary Elixir bound upstream and mutated there by core's
+  literal families — the catalog targets only the SQL-evaluated *operators and structure* (see
+  `DESIGN.md`, "Pinned values are core's"), plus the in-fragment integer literals core can't
+  reach.
   """
 
-  # Comparison + Connective: each operator's single SQL-meaningful swap. `:count`-style
-  # arity-changing or NULL-equivalent rewrites are deliberately absent (see DESIGN.md).
+  alias Mutare.Ecto.AST
+
+  # Comparison + Connective + the `like`/`ilike` half of Membership: each operator's single
+  # SQL-meaningful swap. `:count`-style arity-changing or NULL-equivalent rewrites are
+  # deliberately absent (see DESIGN.md).
   @op_swaps %{
     :> => :>=,
     :>= => :>,
@@ -37,7 +51,9 @@ defmodule Mutare.Ecto.Fragment do
     :== => :!=,
     :!= => :==,
     :and => :or,
-    :or => :and
+    :or => :and,
+    :like => :ilike,
+    :ilike => :like
   }
 
   @doc """
@@ -57,6 +73,25 @@ defmodule Mutare.Ecto.Fragment do
   # `is_nil(x)` → `not is_nil(x)`. A unit too: its argument is a column reference with no
   # catalog operators, so there is nothing to descend into. Clean meta on the fresh `not`.
   defp do_mutants({:is_nil, _meta, [_arg]} = node), do: [{:not, [], [node]}]
+
+  # Membership polarity, as a unit (mirrors NullPredicate). `x not in ^list` → `x in ^list`:
+  # flip the whole predicate, no descent (its operands — a field and a pinned list — carry no
+  # catalog target; the list's *value* is core's).
+  defp do_mutants({:not, _meta, [{:in, _, [_l, _r]} = inner]}), do: [inner]
+
+  # `x in ^list` → `x not in ^list`. A unit too. Clean meta on the fresh `not`.
+  defp do_mutants({:in, _meta, [_l, _r]} = node), do: [{:not, [], [node]}]
+
+  # FragmentLiteral: an integer literal written into the fragment (Sourceror-wrapped). Boundary
+  # (`n±1`) plus the zero sentinel, deduped and never equal to `n` — owned here so it stays
+  # SQL-safe (core can't reach it: the clause is raw). String/atom literals are left alone
+  # (their mutation is not SQL-meaningful here); a *pinned* `^value` never reaches this clause.
+  defp do_mutants({:__block__, _meta, [int]}) when is_integer(int) do
+    [int + 1, int - 1, 0]
+    |> Enum.uniq()
+    |> Enum.reject(&(&1 == int))
+    |> Enum.map(&AST.int_literal/1)
+  end
 
   # An operator/connective (atom form): offer its own swap (if any), then descend into its
   # operands so a nested comparison/connective is mutated too (`is_nil(u.x) and u.y > 1`).
