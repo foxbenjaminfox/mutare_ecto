@@ -38,10 +38,11 @@ defmodule Mutare.Ecto do
       repos**, or with different `families:`/`as:` to split the catalog into separately-named
       report families.
 
-  **Equivalence-sensitive families.** `equivalence_sensitive_families/0` returns the families
-  (`:comparison`, `:connective`, `:null_predicate`) whose survivors may be *legitimately* unkillable
-  without a `NULL`/boundary fixture — honest signal, distinct from a plain test gap. Run them under
-  their own `:as` name to surface that in the report:
+  **Equivalence-sensitive families.** Mutants of `:comparison`, `:connective`, and `:null_predicate`
+  (whose equivalence reasoning is SQL's three-valued logic) carry a **report note** — a survivor
+  reads `… SURVIVED  — kill may require NULL/boundary data` — so it is recognised as honest signal,
+  not a plain test gap. `equivalence_sensitive_families/0` returns that set; with the `:as`
+  convention you can additionally *group* them under their own report name:
 
       {Mutare.Ecto, repo: R, families: Mutare.Ecto.equivalence_sensitive_families(), as: :ecto_boundary_null}
 

@@ -26,6 +26,10 @@ defmodule Mutare.Ecto.Config do
   # their own report name via the `:as` convention (see `Mutare.Ecto.equivalence_sensitive_families/0`).
   @equivalence_sensitive ~w(comparison connective null_predicate)a
 
+  # The advisory recorded on an equivalence-sensitive mutant's `Mutare.Site` (and shown in the
+  # report) — honest signal that a survivor may need a fixture to kill, distinct from a test gap.
+  @equivalence_note "kill may require NULL/boundary data (SQL three-valued logic)"
+
   @doc "Every family the plugin can emit (the `:all` set)."
   @spec all_families() :: [atom()]
   def all_families, do: @families
@@ -33,6 +37,14 @@ defmodule Mutare.Ecto.Config do
   @doc "The families whose survivors may need a `NULL`/boundary fixture to kill (see the report note)."
   @spec equivalence_sensitive_families() :: [atom()]
   def equivalence_sensitive_families, do: @equivalence_sensitive
+
+  @doc """
+  The report note for a `family`'s mutants — a string for an equivalence-sensitive family
+  (surfaced on each such mutant's Site), or `nil` for an ordinary family (a bare mutant).
+  """
+  @spec equivalence_note(atom()) :: String.t() | nil
+  def equivalence_note(family) when family in @equivalence_sensitive, do: @equivalence_note
+  def equivalence_note(_family), do: nil
 
   @doc """
   The families enabled by `opts` — the configured `families:` list, or all of them when it is

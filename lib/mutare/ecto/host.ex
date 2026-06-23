@@ -228,7 +228,8 @@ defmodule Mutare.Ecto.Host do
   # The enabled logical mutants for a `where`/`having` condition: the SQL-operator/predicate
   # catalog (`Fragment.mutants/2`, dialect-gated by `opts`) plus the binding-reorder swaps the
   # declared bindings admit, each tagged with its family and filtered to the configured
-  # `families:`. Both ride the same `dynamic([bindings], _)` wrap.
+  # `families:`. Both ride the same `dynamic([bindings], _)` wrap. An equivalence-sensitive family
+  # carries a `%{node:, note:}` so the report flags "kill may require NULL/boundary data".
   defp catalog(condition, bindings, opts) do
     reorders =
       for node <- Fragment.binding_reorders(condition, binding_names(bindings)),
@@ -236,7 +237,16 @@ defmodule Mutare.Ecto.Host do
 
     for {family, node} <- Fragment.mutants(condition, opts) ++ reorders,
         Config.family_enabled?(opts, family),
-        do: node
+        do: noted(family, node)
+  end
+
+  # Wrap a mutant in `%{node:, note:}` when its family is equivalence-sensitive, so the note rides
+  # onto the Site; otherwise a bare node (no note). Both forms are accepted by the host contract.
+  defp noted(family, node) do
+    case Config.equivalence_note(family) do
+      nil -> node
+      note -> %{node: node, note: note}
+    end
   end
 
   defp binding_names(bindings), do: Enum.map(bindings, fn {name, _meta, _ctx} -> name end)

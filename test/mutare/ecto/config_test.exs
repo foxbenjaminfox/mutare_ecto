@@ -116,6 +116,32 @@ defmodule Mutare.Ecto.ConfigTest do
         ecto_diffs(src, ecto(families: [:bogus]))
       end
     end
+
+    test "an equivalence-sensitive mutant carries the report note; an ordinary one does not" do
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q(roles), do: from(u in User, where: u.x == u.y and u.role in ^roles, select: u.id)
+      end
+      """
+
+      {_meta, sites, _next} =
+        Mutare.transform_string(src,
+          mutators: [{Mutare.Ecto, repo: MyApp.Repo}],
+          expand_uses: true
+        )
+
+      # The comparison swap (== → !=) is equivalence-sensitive → the note rides onto the Site
+      # and into the survivor header.
+      comparison = Enum.find(sites, &(&1.mutated_code =~ "!=" and &1.mutator == :ecto))
+      assert comparison.note == "kill may require NULL/boundary data (SQL three-valued logic)"
+      assert Mutare.Report.header(comparison) =~ "SURVIVED  — kill may require NULL/boundary data"
+
+      # The membership polarity flip (in → not in) is not equivalence-sensitive → no note.
+      membership = Enum.find(sites, &(&1.mutated_code =~ "not in" and &1.mutator == :ecto))
+      assert membership.note == nil
+      assert Mutare.Report.header(membership) =~ ~r/SURVIVED$/
+    end
   end
 
   describe "multiple repos" do

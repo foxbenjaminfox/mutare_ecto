@@ -110,11 +110,14 @@ the two existing delivery paths (no new core machinery):
 - **Per-family naming + multiple repos** — list the plugin more than once with different
   `families:`/`as:` (to report a sub-family under its own name) or `repo:`/`as:` (to cover several
   repos); `:as` renames the recorded family.
-- **Equivalence reporting** — `Mutare.Ecto.equivalence_sensitive_families/0` lists the families
-  (`:comparison`, `:connective`, `:null_predicate`) whose survivors may be legitimately unkillable
-  without a `NULL`/boundary fixture. Run them under their own `:as` name to surface that in the
-  report. (The catalog is SQL-native, so it emits no Elixir-equivalent mutations to inflate the
-  denominator in the first place.)
+- **Equivalence reporting** — mutants of the families whose survivors may be legitimately
+  unkillable without a `NULL`/boundary fixture (`:comparison`, `:connective`, `:null_predicate` —
+  SQL's three-valued logic) carry a **report note**: a survivor reads
+  `… SURVIVED  — kill may require NULL/boundary data` (and the JSON report's `description`), so it's
+  not mistaken for a plain test gap. This rides a Mutare core `Site` note threaded from the host.
+  `Mutare.Ecto.equivalence_sensitive_families/0` plus the `:as` convention additionally lets you
+  *group* them under their own report name. (The catalog is SQL-native, so it emits no
+  Elixir-equivalent mutations to inflate the denominator in the first place.)
 
       # .mutare.exs — split the boundary/NULL families out under their own report name
       [
