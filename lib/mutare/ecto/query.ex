@@ -27,7 +27,7 @@ defmodule Mutare.Ecto.Query do
   (`from(Post)`, no clauses) yields nothing.
   """
 
-  alias Mutare.Ecto.AST
+  alias Mutare.Ecto.{AST, Ordering}
 
   @droppable ~w(where having or_where or_having)a
   @bound_keys ~w(limit offset)a
@@ -39,15 +39,6 @@ defmodule Mutare.Ecto.Query do
     join: [:left_join],
     inner_join: [:left_join],
     left_join: [:inner_join]
-  }
-
-  @direction_flips %{
-    asc: :desc,
-    desc: :asc,
-    asc_nulls_first: :desc_nulls_last,
-    desc_nulls_last: :asc_nulls_first,
-    asc_nulls_last: :desc_nulls_first,
-    desc_nulls_first: :asc_nulls_last
   }
 
   @doc "Whole-`from` mutations for a `from(...)` node, or `[]`."
@@ -108,12 +99,14 @@ defmodule Mutare.Ecto.Query do
     end)
   end
 
+  # Flip each `order_by` clause's directions, reusing the shared ordering catalog — one mutant
+  # per flippable direction key (`Mutare.Ecto.Ordering`).
   defp order_flips(meta, source, clauses) do
     clauses
     |> Enum.with_index()
     |> Enum.flat_map(fn {pair, index} ->
       if clause_key(pair) == :order_by do
-        for flipped <- flip_orderings(clause_value(pair)) do
+        for flipped <- Ordering.flips(clause_value(pair)) do
           {:from, meta, [source, List.replace_at(clauses, index, put_value(pair, flipped))]}
         end
       else
@@ -121,34 +114,6 @@ defmodule Mutare.Ecto.Query do
       end
     end)
   end
-
-  # An `order_by` value is a keyword list of `direction: field` (e.g. `[asc: :name, desc: :id]`).
-  # Produce one mutant per flippable direction key, each flipping just that key. Sourceror wraps a
-  # list literal in a value position in a single-element `__block__` (to anchor its metadata), so
-  # unwrap that before treating it as a list.
-  defp flip_orderings({:__block__, _meta, [inner]}), do: flip_orderings(inner)
-
-  defp flip_orderings(value) when is_list(value) do
-    value
-    |> Enum.with_index()
-    |> Enum.flat_map(fn {pair, index} ->
-      case flip_direction(pair) do
-        nil -> []
-        flipped -> [List.replace_at(value, index, flipped)]
-      end
-    end)
-  end
-
-  defp flip_orderings(_value), do: []
-
-  defp flip_direction({key, field}) do
-    case @direction_flips[AST.atom_value(key)] do
-      nil -> nil
-      to -> {AST.keyword_key(to), field}
-    end
-  end
-
-  defp flip_direction(_pair), do: nil
 
   defp clause_key({key, _value}), do: AST.atom_value(key)
   defp clause_key(_node), do: nil

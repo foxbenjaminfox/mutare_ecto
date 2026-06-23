@@ -42,7 +42,7 @@ defmodule Mutare.Ecto do
 
   @behaviour Mutare.Mutator
 
-  alias Mutare.Ecto.{Changeset, Host, Query, RepoAggregate}
+  alias Mutare.Ecto.{Changeset, Clause, Host, Query, RepoAggregate}
 
   # Query macros routed through the plugin's **selector host** (`c:Mutare.Mutator.host/2`) — the
   # `from` opener and the standalone/pipe condition macros — via the `:routing` classifier, which
@@ -51,10 +51,10 @@ defmodule Mutare.Ecto do
   @hosted_macros ~w(from where or_where having or_having)a
 
   # The remaining `Ecto.Query` macros, routed `:skip` so core neither mutates a query expression
-  # in place (poison) nor descends a binding/source. Their *standalone/pipe* localized mutations
-  # (`order_by(q, …)`, nested `dynamic`, …) arrive in later milestones; the `from`-keyword forms of
-  # the whole-query mutations (clause/bound drop, order-direction flip, limit/offset bump) already
-  # ride `mutate/1` over the routed `from` node.
+  # in place (poison) nor descends a binding/source. A `:skip` node is still offered to `mutate/1`,
+  # so the standalone/pipe `order_by`/`limit`/`offset` forms get their ordering/bound mutations
+  # there (`Mutare.Ecto.Clause`), exactly as the `from`-keyword forms do (`Mutare.Ecto.Query`).
+  # The rest (`select`, `group_by`, `join`, nested `dynamic`, …) stay inert pending later milestones.
   @skipped_macros ~w(
     select select_merge order_by group_by distinct
     limit offset join preload lock with_cte
@@ -87,11 +87,13 @@ defmodule Mutare.Ecto do
   @impl Mutare.Mutator
   defdelegate host(node, context), to: Host
 
-  # Whole-node query mutations need no context (no opts, no pipe shape), so they live
-  # in `mutate/1`: a `from(...)` node yields where/having drops and order-direction flips.
+  # Whole-node query mutations need no context (no opts, no pipe shape), so they live in
+  # `mutate/1`: a `from(...)` node yields its whole-query mutations (`Query`), and a standalone/
+  # pipe `order_by`/`limit`/`offset` node yields its ordering/bound mutations (`Clause`). The
+  # mutated position is the last argument in both call shapes, so neither needs the pipe mode.
   @impl Mutare.Mutator
   def mutate(node) do
-    case Query.mutations(node) do
+    case Query.mutations(node) ++ Clause.mutations(node) do
       [] -> :skip
       mutations -> mutations
     end

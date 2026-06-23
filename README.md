@@ -68,12 +68,18 @@ the two existing delivery paths (no new core machinery):
   (`u.age > 18` → `19`/`17`/`0`): the library owns these because they are part of the SQL
   the query runs, not interpolated Elixir, so core never sees them. Boundary `±1` plus the
   zero sentinel, deduped.
-- **Bound** — whole-`from`: drop a `limit`/`offset` clause, and bump its literal value by
-  `±1` (non-negative only).
+- **Bound** — drop a `limit`/`offset` clause, and bump its literal value by `±1`
+  (non-negative only). Both the whole-`from` keyword form and the standalone/pipe form
+  (`limit(q, 10)`, `q |> offset(5)`).
 - **JoinType** — whole-`from`: swap a join's kind by rewriting its clause key,
   `join`/`inner_join` ↔ `left_join` (the portable `INNER`/`LEFT` pair;
   `RIGHT`/`FULL`/`CROSS` are dialect-gated in Milestone 4).
+- **Ordering (standalone/pipe)** — flip a sort direction in the composable form too
+  (`order_by(q, [u], asc: u.name)`, `q |> order_by(desc: u.name)`), alongside the
+  whole-`from` `order_by` flip already shipped. Both `limit`/`offset` and `order_by`
+  standalone forms ride `mutate/1` over the (otherwise `:skip`ped) macro node — no host
+  needed, since the call is itself an expression the in-place selector can wrap whole.
 
-Still to come (see `DESIGN.md`, Milestones 3–4): the standalone/pipe forms of ordering
-and bounds, aggregate-in-`select`, binding-reorder, the keyword-shorthand shape split, the
-`nil`-pair exclusion, and SQL-equivalence reporting + dialect gating.
+Still to come (see `DESIGN.md`, Milestones 3–4): aggregate-in-`select`, binding-reorder,
+the keyword-shorthand shape split, the `nil`-pair exclusion, and SQL-equivalence reporting
++ dialect gating.
