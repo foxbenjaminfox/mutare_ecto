@@ -140,6 +140,8 @@ The shorthand-vs-expression split is exactly why shape-aware routing is required
 
 **`nil`-valued keyword pairs are excluded.** `where(q, deleted_at: nil)` compiles to `IS NULL`, not `= NULL`; the classifier routes a `nil`-valued shorthand pair to `:skip` so no value mutator perturbs it into nonsense. Null is the SQL family's job (below), delivered deliberately, not as an accident of literal mutation.
 
+> **Implementation note (discovered building Milestone 3).** Both halves of the shorthand split — routing each shorthand *value* `:expression` while leaving the column-name *keys* alone, and routing the `nil`-valued pair to `:skip` — assume **per-keyword-pair** routing. Core's `macro_routing/1` is per *visible argument*, and a shorthand clause list (`[category: "Foo", deleted_at: nil]`) is a single argument: routing it `:expression` mutates the keys (meaningless) and the `nil` pair (nonsense) too; `:skip` mutates nothing; `call_option_keys: false` is all-or-nothing per mutator, not per pair. So the shorthand split needs **a third core extension — per-pair treatment for a keyword-list macro argument** (the natural successor to the host + `:routing` extensions Milestone 2 introduced). Until then the shorthand positions stay `:skip`: safe (no poison, no broken mutants), but their values are not yet mutated. Everything else in Milestone 3 ships without it.
+
 ## The SQL-semantics mutator catalog
 
 These are the plugin's **own** mutators, applied only inside hosted fragments and reasoned about in SQL's three-valued logic. They resemble Mutare's families by name only; their equivalence rules and inclusion decisions are SQL's.

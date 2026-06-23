@@ -34,9 +34,20 @@ defmodule Mutare.Ecto.Host do
       `:hosted`.
 
   A bindingless `from(S, where: [x: v])` or keyword-shorthand `where(q, x: v)` carries no hosted
-  fragment (its values are plain interpolated data, core's to mutate) — the shorthand/`:expression`
-  split and the `nil`-pair exclusion are Milestone 3, so for now those positions are left
-  untouched (`:skip`).
+  fragment (its values are plain interpolated data, core's to mutate). For now those positions are
+  routed `:skip` — safe (no poison, no broken mutants), but their values are not yet mutated.
+
+  > #### Keyword-shorthand split — blocked on a core extension {: .info}
+  >
+  > The design's keyword-shorthand split (route each shorthand *value* `:expression` so core's
+  > literal families mutate it, while leaving the column-name *keys* and `nil`-valued pairs alone)
+  > needs **per-keyword-pair** routing. Core's `c:Mutare.Mutator.macro_routing/1` is per *visible
+  > argument*, and a shorthand clause list is a single argument: routing it `:expression` would
+  > also mutate the column-name keys (meaningless) and the `nil` pairs (`IS NULL` → nonsense),
+  > while `:skip` (current) mutates nothing. `call_option_keys: false` is all-or-nothing per
+  > mutator, not per pair. Delivering only the values, and skipping `nil` pairs, requires a core
+  > extension exposing per-pair treatment for a keyword-list macro argument — the natural
+  > successor to the host/`:routing` extensions Milestone 2 introduced.
   """
 
   alias Mutare.Ecto.{AST, Fragment}

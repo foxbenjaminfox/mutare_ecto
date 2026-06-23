@@ -31,8 +31,8 @@ in `DESIGN.md`.
 
 ## Status
 
-Milestones 1 and 2 are implemented; Milestone 3 (the rest of the query catalog) is
-in progress.
+Milestones 1 and 2 are implemented, and Milestone 3 (the rest of the query catalog) is
+complete except the keyword-shorthand split (see the end of this section).
 
 **Bucket 1 + 2 (Milestone 1)** — plain calls and the schema skip, against Mutare's
 existing plumbing:
@@ -88,5 +88,16 @@ the two existing delivery paths (no new core machinery):
   swapping the body's references, so it rides the host with no special delivery path; emitted
   only when both bindings actually appear in the condition.
 
-Still to come (see `DESIGN.md`, Milestones 3–4): the keyword-shorthand shape split, the
-`nil`-pair exclusion, and SQL-equivalence reporting + dialect gating.
+**Blocked on a core extension.** The one Milestone-3 item not shipped is the
+**keyword-shorthand split** — routing each shorthand value (`where(q, category: "Foo")`,
+`from(S, where: [category: "Foo"])`) to core's literal families while leaving the column-name
+keys and `nil`-valued pairs alone. That needs *per-keyword-pair* routing; core's
+`macro_routing/1` is per visible argument, and a shorthand clause list is a single argument
+(routing it whole would mutate the keys and the `nil` pairs too). So those positions stay
+`:skip` for now — safe (no poison, no broken mutants), just not yet mutated — pending a core
+extension exposing per-pair treatment, the natural successor to the Milestone-2 host/`:routing`
+extensions. See `DESIGN.md` (the implementation note after the routing table) and
+`Mutare.Ecto.Host`.
+
+Still to come (see `DESIGN.md`, Milestone 4): SQL-equivalence reporting, dialect gating
+(the non-portable joins, `ilike`, …), multi-repo, and per-family naming.
