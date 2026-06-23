@@ -103,7 +103,7 @@ defmodule Mutare.Ecto.Host do
     with index when not is_nil(index) <- condition_index(args),
          bindings = binding_vars(Enum.at(args, index - 1)),
          condition = Enum.at(args, index),
-         [_ | _] = mutants <- Fragment.mutants(condition) do
+         [_ | _] = mutants <- catalog(condition, bindings) do
       [target(condition, mutants, bindings, condition_splice(index))]
     else
       _ -> []
@@ -122,13 +122,22 @@ defmodule Mutare.Ecto.Host do
     |> Enum.with_index()
     |> Enum.flat_map(fn {{key, value}, index} ->
       with true <- AST.atom_value(key) in @condition_keys,
-           [_ | _] = mutants <- Fragment.mutants(value) do
+           [_ | _] = mutants <- catalog(value, bindings) do
         [target(value, mutants, bindings, from_clause_splice(index, key))]
       else
         _ -> []
       end
     end)
   end
+
+  # The full set of logical mutants for a `where`/`having` condition: the SQL-operator/predicate
+  # catalog (`Fragment.mutants/1`) plus the binding-reorder swaps the declared bindings admit
+  # (`Fragment.binding_reorders/2`). Both ride the same `dynamic([bindings], _)` wrap.
+  defp catalog(condition, bindings) do
+    Fragment.mutants(condition) ++ Fragment.binding_reorders(condition, binding_names(bindings))
+  end
+
+  defp binding_names(bindings), do: Enum.map(bindings, fn {name, _meta, _ctx} -> name end)
 
   # The binding list the query establishes: the source binding (`u` in `u in User`) followed by
   # each join's binding, in clause order — exactly the positional bindings a `dynamic` re-declares.

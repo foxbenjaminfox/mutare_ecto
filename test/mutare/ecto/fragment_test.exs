@@ -17,6 +17,15 @@ defmodule Mutare.Ecto.FragmentTest do
     |> MapSet.new()
   end
 
+  # Every binding-reorder mutant of `code` (given binding `names`) as a rendered set.
+  defp reorders(code, names) do
+    code
+    |> Sourceror.parse_string!()
+    |> Fragment.binding_reorders(names)
+    |> Enum.map(&Sourceror.to_string/1)
+    |> MapSet.new()
+  end
+
   describe "Comparison" do
     test "each comparison offers its single boundary/equality swap" do
       assert mutants("u.age > v") == MapSet.new(["u.age >= v"])
@@ -90,6 +99,30 @@ defmodule Mutare.Ecto.FragmentTest do
     test "a bare boolean column / non-catalog node yields no mutant" do
       assert mutants("u.active") == MapSet.new([])
       assert mutants("u.points") == MapSet.new([])
+    end
+  end
+
+  describe "binding_reorders/2" do
+    test "swaps two binding references that both appear" do
+      assert reorders("a.x == b.y", [:a, :b]) == MapSet.new(["b.x == a.y"])
+    end
+
+    test "needs both bindings present — a single-reference condition yields nothing" do
+      assert reorders("a.x == a.y", [:a, :b]) == MapSet.new([])
+      assert reorders("a.x > ^v", [:a, :b]) == MapSet.new([])
+    end
+
+    test "one mutant per pair for three bindings" do
+      assert reorders("a.x == b.y and b.z < c.w", [:a, :b, :c]) ==
+               MapSet.new([
+                 "b.x == a.y and a.z < c.w",
+                 "c.x == b.y and b.z < a.w",
+                 "a.x == c.y and c.z < b.w"
+               ])
+    end
+
+    test "a single-binding query has nothing to reorder" do
+      assert reorders("a.x == a.y", [:a]) == MapSet.new([])
     end
   end
 end

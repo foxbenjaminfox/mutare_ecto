@@ -207,6 +207,28 @@ defmodule Mutare.Ecto.HostTest do
       assert "u.age >= 18" in mutated
       assert_compiles(src)
     end
+
+    test "binding-reorder swaps the two join bindings and compiles" do
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q do
+          from u in User,
+            join: p in Post,
+            on: p.user_id == u.id,
+            where: u.id == p.user_id,
+            select: u.id
+        end
+      end
+      """
+
+      assert Enum.any?(hosted(src), fn {original, mutated} ->
+               original == "u.id == p.user_id" and mutated == "p.id == u.user_id"
+             end)
+
+      assert metamutant(src) =~ "dynamic([u, p]"
+      assert_compiles(src)
+    end
   end
 
   describe "the recorded diff is a clean logical change" do

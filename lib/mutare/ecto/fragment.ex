@@ -65,6 +65,49 @@ defmodule Mutare.Ecto.Fragment do
   @spec mutants(Macro.t()) :: [Macro.t()]
   def mutants(condition), do: do_mutants(condition)
 
+  @doc """
+  Binding-reorder mutants: for each pair of `binding_names` that **both** appear in `condition`,
+  the condition with those two binding references swapped throughout (`a.x == b.y` → `b.x == a.y`).
+
+  Reordering a query's declared binding list `[a, b]` → `[b, a]` is equivalent to swapping the
+  body's references while keeping the declared order (`DESIGN.md`, "Binding reorder is the same
+  mechanism") — and since the host re-declares each `dynamic`'s own binding list, the plugin just
+  emits the swapped *body* and rides the host. Requiring both bindings to appear keeps the mutant
+  a genuine reference swap (and avoids reaching for a column on the wrong schema). The host calls
+  this with the binding list it already extracted; for a single-binding query it returns `[]`.
+  """
+  @spec binding_reorders(Macro.t(), [atom()]) :: [Macro.t()]
+  def binding_reorders(condition, binding_names) when is_list(binding_names) do
+    present = Enum.filter(binding_names, &references?(condition, &1))
+
+    for {a, i} <- Enum.with_index(present),
+        {b, j} <- Enum.with_index(present),
+        i < j,
+        do: swap_vars(condition, a, b)
+  end
+
+  # Whether `name` appears as a (binding) variable node anywhere in `ast`.
+  defp references?(ast, name) do
+    {_ast, found?} =
+      Macro.prewalk(ast, false, fn
+        {^name, _meta, ctx} = node, _acc when is_atom(ctx) -> {node, true}
+        node, acc -> {node, acc}
+      end)
+
+    found?
+  end
+
+  # Swap every variable node named `a` with `b` and vice versa (a transposition of the two
+  # bindings). Only variable nodes (`{name, meta, ctx}` with an atom `ctx`) are touched, so a
+  # pinned value or field name that happens to share a name is unaffected.
+  defp swap_vars(ast, a, b) do
+    Macro.prewalk(ast, fn
+      {^a, meta, ctx} when is_atom(ctx) -> {b, meta, ctx}
+      {^b, meta, ctx} when is_atom(ctx) -> {a, meta, ctx}
+      other -> other
+    end)
+  end
+
   # NullPredicate, as a unit. `not is_nil(x)` → `is_nil(x)`: flip the whole predicate, never
   # descend into the inner `is_nil` (that would also offer `is_nil` → `not is_nil`, yielding a
   # redundant `not not is_nil(x)`).

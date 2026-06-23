@@ -83,6 +83,10 @@ the two existing delivery paths (no new core machinery):
   appears in a `select`/`select_merge` expression — a bare call, or one nested in a map,
   tuple, or keyword list. Both the whole-`from` keyword form and the standalone/pipe form.
   (`count` is left alone, as in `RepoAggregate`.)
+- **Binding-reorder** — in a multi-binding `where`/`having`, swap two binding references
+  (`a.x == b.y` → `b.x == a.y`). Reordering the declared binding list is equivalent to
+  swapping the body's references, so it rides the host with no special delivery path; emitted
+  only when both bindings actually appear in the condition.
 
-Still to come (see `DESIGN.md`, Milestones 3–4): binding-reorder, the keyword-shorthand
-shape split, the `nil`-pair exclusion, and SQL-equivalence reporting + dialect gating.
+Still to come (see `DESIGN.md`, Milestones 3–4): the keyword-shorthand shape split, the
+`nil`-pair exclusion, and SQL-equivalence reporting + dialect gating.
