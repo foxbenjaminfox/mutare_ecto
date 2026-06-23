@@ -34,20 +34,15 @@ defmodule Mutare.Ecto.Host do
       `:hosted`.
 
   A bindingless `from(S, where: [x: v])` or keyword-shorthand `where(q, x: v)` carries no hosted
-  fragment (its values are plain interpolated data, core's to mutate). For now those positions are
-  routed `:skip` — safe (no poison, no broken mutants), but their values are not yet mutated.
-
-  > #### Keyword-shorthand split — blocked on a core extension {: .info}
-  >
-  > The design's keyword-shorthand split (route each shorthand *value* `:expression` so core's
-  > literal families mutate it, while leaving the column-name *keys* and `nil`-valued pairs alone)
-  > needs **per-keyword-pair** routing. Core's `c:Mutare.Mutator.macro_routing/1` is per *visible
-  > argument*, and a shorthand clause list is a single argument: routing it `:expression` would
-  > also mutate the column-name keys (meaningless) and the `nil` pairs (`IS NULL` → nonsense),
-  > while `:skip` (current) mutates nothing. `call_option_keys: false` is all-or-nothing per
-  > mutator, not per pair. Delivering only the values, and skipping `nil` pairs, requires a core
-  > extension exposing per-pair treatment for a keyword-list macro argument — the natural
-  > successor to the host/`:routing` extensions Milestone 2 introduced.
+  *fragment* — its values are plain interpolated data, core's literal families to mutate, not the
+  SQL catalog. They are routed with core's **per-keyword-pair** treatment `{:keyword, …}`: each
+  `where`/`having` shorthand pair's scalar *value* is routed `:pinned` (core mutates it, delivered
+  `^`-pinned — Ecto rejects a bare selector `case` there), while the column-name *keys*, the
+  `nil`-valued pairs (an `IS NULL`, never `= nil`), compound values, and the non-condition clauses
+  (`select`/`order_by`/… — whole-`from`'s job) are left raw. So a shorthand value mutation is
+  recorded under the *core* family that made it (`:literal`/`:string`/…), not `:ecto`. This relies
+  on core's per-pair routing + `:pinned` extensions (the successors to the Milestone-2 host /
+  `:routing` extensions); see `c:Mutare.Mutator.macro_routing/1`.
   """
 
   alias Mutare.Ecto.{AST, Fragment}
@@ -72,15 +67,25 @@ defmodule Mutare.Ecto.Host do
   `where`/`having` family), consulted by `Mutare.Transform.Resolve` with the concrete node.
   Returns `[]` for anything else.
   """
-  @spec macro_routing(Macro.t()) :: [Mutare.Macro.Spec.treatment()]
+  @spec macro_routing(Macro.t()) ::
+          [Mutare.Macro.Spec.treatment() | :pinned | {:keyword, [term()]}]
   def macro_routing({:from, _meta, [source | rest]}) when is_list(rest) do
-    # Source is never mutated (a table/schema swap is a broken query, not a mutant); the
-    # clause-bearing argument is hosted only for a binding `from` (a bindingless `from`'s
-    # clauses are shorthand data — Milestone 3).
+    # Source is never mutated (a table/schema swap is a broken query, not a mutant). A binding
+    # `from` hosts its clause-bearing argument (the where/having conditions); a bindingless
+    # `from`'s clauses are keyword-shorthand data, routed per-pair so core mutates the
+    # `where`/`having` shorthand *values* (`^`-pinned) while leaving keys, nil pairs, and the
+    # other clauses (select/order_by/… — whole-`from`'s job) alone.
     clause_treatment =
       case rest do
-        [_clauses] -> if binding_source?(source), do: :hosted, else: :skip
-        _ -> :skip
+        [clauses] ->
+          cond do
+            binding_source?(source) -> :hosted
+            is_list(clauses) -> {:keyword, clause_value_treatments(clauses)}
+            true -> :skip
+          end
+
+        _ ->
+          :skip
       end
 
     [:skip | List.duplicate(clause_treatment, length(rest))]
@@ -90,12 +95,88 @@ defmodule Mutare.Ecto.Host do
     default = List.duplicate(:skip, length(args))
 
     case condition_index(args) do
-      nil -> default
-      index -> List.replace_at(default, index, :hosted)
+      # binding form (`where(q, [u], cond)`) — host the condition after the binding list.
+      index when is_integer(index) -> List.replace_at(default, index, :hosted)
+      # keyword-shorthand form (`where(q, col: v)`) — route the trailing keyword list per-pair.
+      nil -> shorthand_route(args, default)
     end
   end
 
   def macro_routing(_node), do: []
+
+  # === keyword-shorthand routing =============================================
+
+  # No binding list → maybe a keyword-shorthand condition (`where(q, col: v)`). Route the trailing
+  # keyword-list argument `{:keyword, value_treatments}` so core mutates each scalar value
+  # `^`-pinned, leaving keys and nil/compound values alone. A non-shorthand trailing arg → default.
+  defp shorthand_route(args, default) do
+    case args |> List.last() |> shorthand_pairs() do
+      nil ->
+        default
+
+      pairs ->
+        List.replace_at(default, length(args) - 1, {:keyword, pair_value_treatments(pairs)})
+    end
+  end
+
+  # A bindingless `from`'s clause list: route each `where`/`having` clause's shorthand value
+  # per-pair (`{:keyword, …}`, nested — the value is itself a keyword list), and leave every other
+  # clause raw (select/order_by/limit are whole-`from`'s job, or carry field names).
+  defp clause_value_treatments(clauses) do
+    Enum.map(clauses, fn
+      {key, value} ->
+        if AST.atom_value(key) in @condition_keys, do: where_value_treatment(value), else: :skip
+
+      _other ->
+        :skip
+    end)
+  end
+
+  defp where_value_treatment(value) do
+    case shorthand_pairs(value) do
+      nil -> :skip
+      pairs -> {:keyword, pair_value_treatments(pairs)}
+    end
+  end
+
+  # A shorthand value list, unwrapped from the Sourceror `{:__block__, _, [list]}` it takes in a
+  # keyword *value* position (the `from` form) or bare (a trailing keyword argument). `nil` when
+  # the value isn't a non-empty keyword list (so it isn't shorthand — e.g. a binding list, a bare
+  # field list `[:id]`, an expression).
+  defp shorthand_pairs({:__block__, _meta, [list]}) when is_list(list), do: keyword_pairs(list)
+  defp shorthand_pairs(list) when is_list(list), do: keyword_pairs(list)
+  defp shorthand_pairs(_value), do: nil
+
+  defp keyword_pairs(list) do
+    if list != [] and Enum.all?(list, &match?({_k, _v}, &1)), do: list, else: nil
+  end
+
+  defp pair_value_treatments(pairs) do
+    Enum.map(pairs, fn
+      {_key, value} -> pair_value_treatment(value)
+      _other -> :skip
+    end)
+  end
+
+  # The treatment for one shorthand pair's *value*: a `nil` (an `IS NULL` predicate, never `= nil`)
+  # and any compound/interpolated/expression value are left raw (`:skip`); a scalar literal
+  # (string, number, atom, boolean) is mutated by core's literal families and delivered `:pinned`
+  # (the query position needs `^`). Pinning is scalar-only — a compound value would mutate nested
+  # nodes where an inner `^` still poisons.
+  defp pair_value_treatment(value) do
+    cond do
+      nil_literal?(value) -> :skip
+      scalar_literal?(value) -> :pinned
+      true -> :skip
+    end
+  end
+
+  defp nil_literal?({:__block__, _meta, [nil]}), do: true
+  defp nil_literal?(nil), do: true
+  defp nil_literal?(_value), do: false
+
+  defp scalar_literal?({:__block__, _meta, [v]}), do: is_binary(v) or is_number(v) or is_atom(v)
+  defp scalar_literal?(_value), do: false
 
   @doc """
   The selector-host targets for a query macro node — one per binding-referencing `where`/`having`

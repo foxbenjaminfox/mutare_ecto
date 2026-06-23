@@ -31,8 +31,8 @@ in `DESIGN.md`.
 
 ## Status
 
-Milestones 1 and 2 are implemented, and Milestone 3 (the rest of the query catalog) is
-complete except the keyword-shorthand split (see the end of this section).
+Milestones 1, 2, and 3 are implemented (the query catalog, including the keyword-shorthand
+split — see the end of this section).
 
 **Bucket 1 + 2 (Milestone 1)** — plain calls and the schema skip, against Mutare's
 existing plumbing:
@@ -88,16 +88,15 @@ the two existing delivery paths (no new core machinery):
   swapping the body's references, so it rides the host with no special delivery path; emitted
   only when both bindings actually appear in the condition.
 
-**Blocked on a core extension.** The one Milestone-3 item not shipped is the
-**keyword-shorthand split** — routing each shorthand value (`where(q, category: "Foo")`,
-`from(S, where: [category: "Foo"])`) to core's literal families while leaving the column-name
-keys and `nil`-valued pairs alone. That needs *per-keyword-pair* routing; core's
-`macro_routing/1` is per visible argument, and a shorthand clause list is a single argument
-(routing it whole would mutate the keys and the `nil` pairs too). So those positions stay
-`:skip` for now — safe (no poison, no broken mutants), just not yet mutated — pending a core
-extension exposing per-pair treatment, the natural successor to the Milestone-2 host/`:routing`
-extensions. See `DESIGN.md` (the implementation note after the routing table) and
-`Mutare.Ecto.Host`.
+- **Keyword-shorthand split** — `where(q, category: "Foo")` and the bindingless
+  `from(S, where: [category: "Foo"])` carry *data* values, so they're mutated by core's literal
+  families (recorded under `:literal`/`:string`, not `:ecto`) while the column-name keys and
+  `nil`/compound pairs are left raw. Delivered `^`-pinned, since Ecto rejects a bare selector
+  `case` in a query value position. This required two new Mutare core extensions — *per-keyword-pair
+  routing* (`{:keyword, value_treatments}`) and *pinned in-place delivery* (`:pinned`), the
+  successors to the Milestone-2 host/`:routing` extensions; the pinned [Mutare](../mutare)
+  dependency now carries them. (A shorthand clause *mixed into a binding* `from` stays `:hosted`
+  and isn't split — a documented edge; see `DESIGN.md`.)
 
 Still to come (see `DESIGN.md`, Milestone 4): SQL-equivalence reporting, dialect gating
 (the non-portable joins, `ilike`, …), multi-repo, and per-family naming.

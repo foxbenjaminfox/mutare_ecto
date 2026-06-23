@@ -1,0 +1,98 @@
+defmodule Mutare.Ecto.ShorthandTest do
+  use ExUnit.Case, async: true
+
+  import Mutare.Ecto.TestSupport
+
+  alias Mutare.Ecto.Host
+
+  # The keyword-shorthand split: `where(q, col: val)` and the bindingless `from(S, where: [col:
+  # val])` carry *data* values (not binding-referencing fragments), so they are mutated by core's
+  # literal families — but delivered `^`-pinned (Ecto rejects a bare selector `case` in a query
+  # value position), with the column-name keys left raw. This rides core's per-keyword-pair
+  # routing + `:pinned` extensions; here we assert the routing the plugin emits and the end-to-end
+  # behaviour (value mutated, keys raw, metamutant compiles).
+
+  @all [:all, {Mutare.Ecto, repo: MyApp.Repo}]
+
+  defp routing(code), do: code |> Sourceror.parse_string!() |> Host.macro_routing()
+
+  describe "macro_routing — the per-pair treatment the plugin emits" do
+    test "a standalone shorthand routes each scalar value :pinned, keys raw" do
+      assert routing(~s|where(q, category: "Foo", count: 5)|) ==
+               [:skip, {:keyword, [:pinned, :pinned]}]
+    end
+
+    test "the piped shorthand routes its sole keyword argument" do
+      assert routing(~s|where(category: "Foo")|) == [{:keyword, [:pinned]}]
+    end
+
+    test "a nil-valued pair is skipped (IS NULL, never = nil)" do
+      assert routing(~s|where(q, deleted_at: nil)|) == [:skip, {:keyword, [:skip]}]
+    end
+
+    test "a compound (non-scalar) value is skipped (pinning is scalar-only)" do
+      assert routing(~s|where(q, ids: [1, 2])|) == [:skip, {:keyword, [:skip]}]
+    end
+
+    test "the binding form still hosts its condition (not shorthand)" do
+      assert routing(~s|where(q, [u], u.x == u.y)|) == [:skip, :skip, :hosted]
+    end
+
+    test "a bindingless from routes where/having values per-pair, other clauses raw" do
+      assert [:skip, {:keyword, treatments}] =
+               routing(~s|from("posts", where: [a: 1], select: [:id])|)
+
+      # where value → nested {:keyword, [:pinned]}; select → :skip.
+      assert treatments == [{:keyword, [:pinned]}, :skip]
+    end
+
+    test "a binding from still hosts (its shorthand-clause mixing is a known gap)" do
+      # `p in "posts"` is a binding source, so the clause arg is :hosted (the host handles
+      # binding-referencing conditions); a shorthand clause mixed into a binding from is not
+      # yet split — see the module note.
+      assert routing(~s|from(p in "posts", where: p.x == p.y)|) == [:skip, :hosted]
+    end
+  end
+
+  describe "end-to-end (core families mutate the value, ^-pinned)" do
+    test "a standalone shorthand value is mutated, the key is not, and it compiles" do
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q(query), do: where(query, category: "Foo")
+      end
+      """
+
+      diffs = diffs(src, mutators: @all)
+
+      # The value is mutated by a core literal family (its own name, not :ecto).
+      assert Enum.any?(diffs, fn {_m, original, mutated} ->
+               original == "\"Foo\"" and mutated == "\"\""
+             end)
+
+      # The column-name key is never mutated.
+      refute Enum.any?(diffs, fn {_m, original, _mutated} -> original == "category" end)
+
+      # Delivered ^-pinned (a bare selector case would poison the Ecto macro).
+      assert metamutant(src, mutators: @all) =~ "^"
+      assert_compiles(src, mutators: @all)
+    end
+
+    test "a bindingless from shorthand value is mutated; select field names are not" do
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q, do: from("posts", where: [category: "Foo"], select: [:id])
+      end
+      """
+
+      diffs = diffs(src, mutators: @all)
+
+      assert Enum.any?(diffs, fn {_m, original, _mutated} -> original == "\"Foo\"" end)
+      # The select field name :id is not a value to mutate.
+      refute Enum.any?(diffs, fn {_m, original, _mutated} -> original == ":id" end)
+
+      assert_compiles(src, mutators: @all)
+    end
+  end
+end
