@@ -22,7 +22,7 @@ defmodule Mutare.Ecto.MixProject do
 
   defp deps do
     [
-      {:mutare, path: "../mutare5"},
+      {:mutare, path: "../mutare"},
       {:ecto, "~> 3.10"}
     ]
   end

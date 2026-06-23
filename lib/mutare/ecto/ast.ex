@@ -21,6 +21,14 @@ defmodule Mutare.Ecto.AST do
   def keyword_key(atom) when is_atom(atom), do: {:__block__, [format: :keyword], [atom]}
 
   @doc """
+  Strip a variable node's metadata, keeping its name and hygiene context — for re-declaring a
+  query binding inside a synthesized `dynamic([…], _)` wrap, where the source line/column and any
+  Sourceror token meta are irrelevant (the wrap is invisible in the recorded Site).
+  """
+  @spec clean_var(Macro.t()) :: Macro.t()
+  def clean_var({name, _meta, ctx}) when is_atom(name) and is_atom(ctx), do: {name, [], ctx}
+
+  @doc """
   Normalize a module reference to the resolved key shape `Mutare.Transform.Calls` returns:
   an Elixir-module alias atom (`MyApp.Repo`) → its segment path (`[:MyApp, :Repo]`), an
   Erlang atom module (`:binary`) → itself. Lets a configured Repo be compared directly to a

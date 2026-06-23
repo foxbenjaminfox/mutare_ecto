@@ -15,12 +15,11 @@ defmodule Mutare.Ecto.ChangesetTest do
     end
     """
 
-    sites = sites(src)
-    assert length(sites) == 2
-    assert Enum.all?(sites, &(&1.mutator == :ecto))
-    assert Enum.all?(sites, &(&1.mutated_code =~ "identity"))
+    diffs = ecto_diffs(src)
+    assert length(diffs) == 2
+    assert Enum.all?(diffs, fn {_original, mutated} -> mutated =~ "identity" end)
 
-    originals = Enum.map(sites, & &1.original_code)
+    originals = Enum.map(diffs, fn {original, _mutated} -> original end)
     assert Enum.any?(originals, &(&1 =~ "validate_required"))
     assert Enum.any?(originals, &(&1 =~ "validate_length"))
   end
@@ -33,8 +32,8 @@ defmodule Mutare.Ecto.ChangesetTest do
     end
     """
 
-    assert [site] = sites(src)
-    assert site.mutated_code == "cs"
+    assert [{_original, mutated}] = ecto_diffs(src)
+    assert mutated == "cs"
   end
 
   test "drops a constraint as well as a validator" do
@@ -45,8 +44,8 @@ defmodule Mutare.Ecto.ChangesetTest do
     end
     """
 
-    assert [site] = sites(src)
-    assert site.mutated_code =~ "identity"
+    assert [{_original, mutated}] = ecto_diffs(src)
+    assert mutated =~ "identity"
   end
 
   test "does not fire on a non-changeset call of the same name" do
@@ -56,6 +55,6 @@ defmodule Mutare.Ecto.ChangesetTest do
     end
     """
 
-    assert sites(src) == []
+    assert ecto_diffs(src) == []
   end
 end

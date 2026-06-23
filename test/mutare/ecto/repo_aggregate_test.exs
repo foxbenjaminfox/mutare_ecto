@@ -11,11 +11,10 @@ defmodule Mutare.Ecto.RepoAggregateTest do
     end
     """
 
-    assert [site] = sites(src)
-    assert site.mutator == :ecto
-    assert site.original_code =~ ":sum"
-    assert site.mutated_code =~ ":avg"
-    assert site.mutated_code =~ "Repo.aggregate"
+    assert [{original, mutated}] = ecto_diffs(src)
+    assert original =~ ":sum"
+    assert mutated =~ ":avg"
+    assert mutated =~ "Repo.aggregate"
   end
 
   test "swaps :min to :max in a piped aggregate (effective-arity aware)" do
@@ -26,8 +25,8 @@ defmodule Mutare.Ecto.RepoAggregateTest do
     end
     """
 
-    assert [site] = sites(src)
-    assert site.mutated_code =~ ":max"
+    assert [{_original, mutated}] = ecto_diffs(src)
+    assert mutated =~ ":max"
   end
 
   test "leaves :count alone (different arity contract)" do
@@ -38,7 +37,7 @@ defmodule Mutare.Ecto.RepoAggregateTest do
     end
     """
 
-    assert sites(src) == []
+    assert ecto_diffs(src) == []
   end
 
   test "does not fire on a non-repo aggregate call" do
@@ -48,7 +47,7 @@ defmodule Mutare.Ecto.RepoAggregateTest do
     end
     """
 
-    assert sites(src) == []
+    assert ecto_diffs(src) == []
   end
 
   test "does not fire when no repo is configured" do
@@ -59,6 +58,6 @@ defmodule Mutare.Ecto.RepoAggregateTest do
     end
     """
 
-    assert sites(src, mutators: [Mutare.Ecto]) == []
+    assert ecto_diffs(src, mutators: [Mutare.Ecto]) == []
   end
 end

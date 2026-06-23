@@ -11,13 +11,12 @@ defmodule Mutare.Ecto.QueryTest do
     end
     """
 
-    sites = sites(src)
-    drops = Enum.filter(sites, &(&1.mutator == :ecto and &1.mutated_code =~ "from"))
+    drops = Enum.filter(ecto_diffs(src), fn {_original, mutated} -> mutated =~ "from" end)
 
     # Two where clauses → two drop mutants; the surviving query keeps select and one where.
     assert length(drops) >= 2
-    assert Enum.any?(drops, &(not (&1.mutated_code =~ "active")))
-    assert Enum.any?(drops, &(not (&1.mutated_code =~ "deleted")))
+    assert Enum.any?(drops, fn {_original, mutated} -> not (mutated =~ "active") end)
+    assert Enum.any?(drops, fn {_original, mutated} -> not (mutated =~ "deleted") end)
   end
 
   test "drops a where clause (bindingless keyword form)" do
@@ -28,8 +27,7 @@ defmodule Mutare.Ecto.QueryTest do
     end
     """
 
-    sites = sites(src)
-    assert Enum.any?(sites, &(&1.mutator == :ecto and not (&1.mutated_code =~ "active")))
+    assert Enum.any?(ecto_diffs(src), fn {_original, mutated} -> not (mutated =~ "active") end)
   end
 
   test "flips an order_by direction" do
@@ -40,8 +38,7 @@ defmodule Mutare.Ecto.QueryTest do
     end
     """
 
-    sites = sites(src)
-    assert Enum.any?(sites, &(&1.mutated_code =~ "desc"))
+    assert Enum.any?(ecto_diffs(src), fn {_original, mutated} -> mutated =~ "desc" end)
   end
 
   test "does not fire on a plain (non-from) call" do
@@ -51,6 +48,6 @@ defmodule Mutare.Ecto.QueryTest do
     end
     """
 
-    assert sites(src) == []
+    assert ecto_diffs(src) == []
   end
 end

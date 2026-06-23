@@ -4,14 +4,24 @@ defmodule Mutare.EctoTest do
   import Mutare.Ecto.TestSupport
 
   describe "macros/0" do
-    test "registers schema and the query macros as :skip" do
+    test "skips schema, routes the host macros, skips the rest of the query DSL" do
       macros = Mutare.Ecto.macros()
 
+      # Schema bodies are never mutated.
       assert {Ecto.Schema, :schema, :skip} in macros
       assert {Ecto.Schema, :embedded_schema, :skip} in macros
-      assert {Ecto.Query, :from, :any, :skip} in macros
-      assert {Ecto.Query, :where, :any, :skip} in macros
+
+      # The `from` opener and the where/having family route through the selector host
+      # (`:routing` → `macro_routing/1` → `host/2`).
+      assert {Ecto.Query, :from, :any, :routing} in macros
+      assert {Ecto.Query, :where, :any, :routing} in macros
+      assert {Ecto.Query, :or_where, :any, :routing} in macros
+      assert {Ecto.Query, :having, :any, :routing} in macros
+      assert {Ecto.Query, :or_having, :any, :routing} in macros
+
+      # The query macros not yet mutated stay :skip so core leaves them alone.
       assert {Ecto.Query, :order_by, :any, :skip} in macros
+      assert {Ecto.Query, :select, :any, :skip} in macros
     end
   end
 
@@ -28,8 +38,7 @@ defmodule Mutare.EctoTest do
       end
       """
 
-      mm = metamutant(src, mutators: [:all, {Mutare.Ecto, repo: MyApp.Repo}])
-      assert compiles?(mm)
+      assert_compiles(src, mutators: [:all, {Mutare.Ecto, repo: MyApp.Repo}])
     end
   end
 
@@ -42,28 +51,15 @@ defmodule Mutare.EctoTest do
       end
       """
 
-      sites = sites(src, mutators: [:all, {Mutare.Ecto, repo: MyApp.Repo}])
-      mm = metamutant(src, mutators: [:all, {Mutare.Ecto, repo: MyApp.Repo}])
+      mutators = [:all, {Mutare.Ecto, repo: MyApp.Repo}]
 
       # The `>` inside the where is never mutated in place (it would poison): Relational
       # must not have fired. The whole-query families (Ecto where-drop, ReturnValue) still do.
-      refute Enum.any?(sites, &(&1.mutator == :relational))
-      assert compiles?(mm)
+      refute Enum.any?(diffs(src, mutators: mutators), fn {mutator, _o, _m} ->
+               mutator == :relational
+             end)
+
+      assert_compiles(src, mutators: mutators)
     end
-  end
-
-  # Compile a rendered metamutant in this process to prove compile-safety, then unload it.
-  defp compiles?(source) do
-    source
-    |> Code.compile_string()
-    |> Enum.each(fn {mod, _bin} ->
-      :code.purge(mod)
-      :code.delete(mod)
-    end)
-
-    true
-  rescue
-    error ->
-      flunk("metamutant failed to compile: #{Exception.message(error)}\n\n#{source}")
   end
 end

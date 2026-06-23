@@ -1,33 +1,42 @@
 defmodule Mutare.Ecto.TestSupport do
   @moduledoc false
-  # Shared helpers for the plugin's unit tests: run `Mutare.transform_string/2` with only the
-  # Ecto mutator enabled (so the recorded sites are exactly the plugin's, nothing from core's
-  # built-ins) and a stand-in Repo. `expand_uses: true` is the default, but explicit here since
-  # the schema/query routing depends on it.
+  # Shared helpers layered on `Mutare.Test` — core's public test surface for custom-mutator
+  # projects. They thread the plugin's default configuration (the `{Mutare.Ecto, repo: …}`
+  # mutator and the `:all` shorthand) into core's `diffs`/`diffs_for`/`assert_metamutant_compiles`,
+  # and add a `metamutant/1` that returns the rendered source — for the `=~` scaffolding checks
+  # (`dynamic([u], …)`) the `Mutare.Test` helpers don't cover.
+  #
+  # `expand_uses: true` is the transform default, so the `Mutare.Test` helpers (which don't pass
+  # it) still get the `use Ecto.Schema` / `use MyAppWeb` expansion the schema/query routing needs.
 
   @repo MyApp.Repo
 
-  @doc "The `[%Mutare.Site{}]` the Ecto mutator records for `source`."
-  def sites(source, opts \\ []) do
-    {_metamutant, sites, _next_id} = run(source, opts)
-    sites
-  end
+  @doc "Every recorded `{mutator, original_code, mutated_code}` for `source` (all families)."
+  def diffs(source, opts \\ []), do: Mutare.Test.diffs(source, mutators(opts))
 
-  @doc "The rendered metamutant source for `source` (for compile-safety checks)."
+  @doc "The `{original_code, mutated_code}` pairs the `:ecto` family records for `source`."
+  def ecto_diffs(source, opts \\ []), do: Mutare.Test.diffs_for(source, mutators(opts), :ecto)
+
+  @doc "Assert the metamutant embedding every mutant of `source` compiles (the single-build net)."
+  def assert_compiles(source, opts \\ []),
+    do: Mutare.Test.assert_metamutant_compiles(source, mutators(opts))
+
+  @doc "The rendered metamutant source for `source` — for `=~` checks on the woven scaffolding."
   def metamutant(source, opts \\ []) do
-    {metamutant, _sites, _next_id} = run(source, opts)
+    {metamutant, _sites, _next_id} =
+      Mutare.transform_string(source, mutators: mutators(opts), expand_uses: true)
+
     metamutant
   end
 
-  defp run(source, opts) do
-    mutators =
-      opts
-      |> Keyword.get(:mutators, [{Mutare.Ecto, repo: @repo}])
-      |> Enum.flat_map(fn
-        :all -> Mutare.Mutators.all()
-        other -> [other]
-      end)
-
-    Mutare.transform_string(source, mutators: mutators, expand_uses: true)
+  # The `:mutators` list, expanding the `:all` shorthand and defaulting to the Ecto plugin alone
+  # (so recorded mutations are exactly the plugin's, nothing from core's built-ins).
+  defp mutators(opts) do
+    opts
+    |> Keyword.get(:mutators, [{Mutare.Ecto, repo: @repo}])
+    |> Enum.flat_map(fn
+      :all -> Mutare.Mutators.all()
+      other -> [other]
+    end)
   end
 end

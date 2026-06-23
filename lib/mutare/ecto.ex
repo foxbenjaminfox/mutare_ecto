@@ -14,19 +14,25 @@ defmodule Mutare.Ecto do
   `context.opts` in `mutate/2`.
 
   This module is a thin front for a family of sub-mutators, dispatched by the node it
-  sees: `Mutare.Ecto.RepoAggregate`, `Mutare.Ecto.Changeset`, and `Mutare.Ecto.Query`.
-  All mutations are recorded under the single family name `:ecto`. See `DESIGN.md` for
-  the surface map and the SQL-semantics boundary.
+  sees: `Mutare.Ecto.RepoAggregate`, `Mutare.Ecto.Changeset`, `Mutare.Ecto.Query` (whole-`from`
+  mutations), and `Mutare.Ecto.Host` (localized in-fragment `where`/`having` mutations, via the
+  SQL catalog in `Mutare.Ecto.Fragment`). All mutations are recorded under the single family name
+  `:ecto`. See `DESIGN.md` for the surface map and the SQL-semantics boundary.
 
   ## Macro routing
 
-  `macros/0` registers the compile-time DSL so Mutare core leaves it alone:
+  `macros/0` registers the compile-time DSL so Mutare core never splices a runtime selector into
+  a query expression (which would poison the single build):
 
     * `schema`/`embedded_schema` are `:skip`ped — a mutated field name or type is a
       broken schema, not a mutant.
-    * the query macros (`from`, `where`, `order_by`, …) are `:skip`ped so core never
-      tries to splice a runtime selector into a query expression (which would poison
-      the single build). The plugin mutates them itself, with DSL knowledge.
+    * the `from` opener and the `where`/`having` family route via the `:routing` classifier
+      (`macro_routing/1`), so a binding-referencing condition is delivered through the plugin's
+      **selector host** (`host/2` — Ecto's `^`/`dynamic` injection), while plain data is left to
+      core. The whole-`from` mutations (clause drop, order-direction flip) ride `mutate/1` over
+      the same routed node.
+    * the remaining query macros (`order_by`, `select`, `limit`, …) are `:skip`ped pending later
+      milestones.
 
   Resolution of these macros relies on Mutare's `use`-expansion (so the
   `use Ecto.Schema`-injected `import Ecto.Schema`, and a `use MyAppWeb, :live_view`-bundled
@@ -36,13 +42,19 @@ defmodule Mutare.Ecto do
 
   @behaviour Mutare.Mutator
 
-  alias Mutare.Ecto.{Changeset, Query, RepoAggregate}
+  alias Mutare.Ecto.{Changeset, Host, Query, RepoAggregate}
 
-  # The `Ecto.Query` macros whose arguments are query expressions (or bindings), all
-  # routed `:skip` so core neither mutates a query condition in place (poison) nor a
-  # binding/source. The plugin's own `mutate/*` reaches the ones it can mutate safely.
-  @query_macros ~w(
-    from where or_where having or_having
+  # Query macros routed through the plugin's **selector host** (`c:Mutare.Mutator.host/2`) — the
+  # `from` opener and the standalone/pipe condition macros — via the `:routing` classifier, which
+  # decides per call shape whether a position carries a hosted DSL fragment (a binding-referencing
+  # `where`/`having` condition) or plain data. See `Mutare.Ecto.Host`.
+  @hosted_macros ~w(from where or_where having or_having)a
+
+  # The remaining `Ecto.Query` macros, routed `:skip` so core neither mutates a query expression
+  # in place (poison) nor descends a binding/source. Their localized mutations (ordering, bounds,
+  # membership, nested `dynamic`, …) arrive in later milestones; `from`'s whole-query mutations
+  # (clause drop, order-direction flip) still ride `mutate/1` over the routed `from` node.
+  @skipped_macros ~w(
     select select_merge order_by group_by distinct
     limit offset join preload lock with_cte
     windows union union_all except intersect dynamic
@@ -58,10 +70,21 @@ defmodule Mutare.Ecto do
       {Ecto.Schema, :embedded_schema, :skip}
     ]
 
-    queries = for macro <- @query_macros, do: {Ecto.Query, macro, :any, :skip}
+    hosted = for macro <- @hosted_macros, do: {Ecto.Query, macro, :any, :routing}
+    skipped = for macro <- @skipped_macros, do: {Ecto.Query, macro, :any, :skip}
 
-    schema ++ queries
+    schema ++ hosted ++ skipped
   end
+
+  # Shape-aware routing for the `:routing` query macros — which positions carry a hosted DSL
+  # fragment vs. plain data. Delegated to `Mutare.Ecto.Host`.
+  @impl Mutare.Mutator
+  defdelegate macro_routing(node), to: Host
+
+  # The selector host: per hosted `where`/`having` condition, the `{original, mutants}` pair plus
+  # the `dynamic`/`^` `wrap`/`splice` transforms. Delegated to `Mutare.Ecto.Host`.
+  @impl Mutare.Mutator
+  defdelegate host(node, context), to: Host
 
   # Whole-node query mutations need no context (no opts, no pipe shape), so they live
   # in `mutate/1`: a `from(...)` node yields where/having drops and order-direction flips.
