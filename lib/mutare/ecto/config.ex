@@ -12,19 +12,30 @@ defmodule Mutare.Ecto.Config do
   #   * in-fragment (`where`/`having`, via the host): comparison, connective, null_predicate,
   #     membership, fragment_literal, binding_reorder;
   #   * whole-query / clause-macro: filter_drop (drop a where/having), bound (limit/offset),
-  #     ordering, join_type, aggregate (in `select` and `Repo.aggregate`);
-  #   * changeset: validation_drop.
+  #     ordering (sort direction), ordering_nulls (NULLs placement), join_type,
+  #     aggregate (in `select` and `Repo.aggregate`), query_terminal (`first`↔`last`);
+  #   * repo write: persistence (insert/update/delete → apply_action), on_conflict (`:nothing`↔`:raise`);
+  #   * changeset: validation_drop (validators/constraints), hook_drop (prepare_changes/optimistic_lock).
   @families ~w(
     comparison connective null_predicate membership fragment_literal binding_reorder
-    filter_drop ordering bound join_type aggregate validation_drop
+    filter_drop ordering ordering_nulls bound join_type aggregate query_terminal
+    persistence on_conflict validation_drop hook_drop
   )a
 
   # The families whose survivors may be **legitimately unkillable without a `NULL`/boundary
   # fixture** — their equivalence reasoning is SQL's three-valued logic, so a surviving `==`/`!=`
   # or `and`/`or` mutant on a nullable column (or an `is_nil` flip) can be honest signal that the
-  # kill needs boundary/NULL data, distinct from a plain "your test is missing". Surfaced under
-  # their own report name via the `:as` convention (see `Mutare.Ecto.equivalence_sensitive_families/0`).
-  @equivalence_sensitive ~w(comparison connective null_predicate)a
+  # kill needs boundary/NULL data, distinct from a plain "your test is missing". `ordering_nulls`
+  # joins them: a `*_nulls_first`↔`*_nulls_last` flip is only killable when the result actually
+  # holds NULL rows in the ordered column. Surfaced under their own report name via the `:as`
+  # convention (see `Mutare.Ecto.equivalence_sensitive_families/0`).
+  #
+  # The per-mutant *note* (below) is threaded onto a Site only on the **host** delivery path
+  # (`emit_hosted_site`); the three in-fragment families ride it, so their survivors render the
+  # advisory inline. `ordering_nulls` is delivered non-hosted (a whole-`from`/clause-macro rewrite),
+  # which has no note channel today — so its membership here drives the classification and the
+  # `:as` grouping, and the inline note will follow once ordering routes through the host.
+  @equivalence_sensitive ~w(comparison connective null_predicate ordering_nulls)a
 
   # The advisory recorded on an equivalence-sensitive mutant's `Mutare.Site` (and shown in the
   # report) — honest signal that a survivor may need a fixture to kill, distinct from a test gap.

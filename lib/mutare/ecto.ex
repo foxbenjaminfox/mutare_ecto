@@ -14,9 +14,11 @@ defmodule Mutare.Ecto do
   `context.opts` in `mutate/2`.
 
   This module is a thin front for a family of sub-mutators, dispatched by the node it
-  sees: `Mutare.Ecto.RepoAggregate`, `Mutare.Ecto.Changeset`, `Mutare.Ecto.Query` (whole-`from`
-  mutations), `Mutare.Ecto.Clause` (standalone/pipe clause macros), and `Mutare.Ecto.Host`
-  (localized in-fragment `where`/`having` mutations, via the SQL catalog in `Mutare.Ecto.Fragment`).
+  sees: `Mutare.Ecto.RepoAggregate` and `Mutare.Ecto.RepoWrite` (Repo calls), `Mutare.Ecto.Changeset`
+  (changeset pipelines), `Mutare.Ecto.Query` (whole-`from` mutations), `Mutare.Ecto.Clause` and
+  `Mutare.Ecto.QueryTerminal` (standalone/pipe clause macros and `first`/`last`), and
+  `Mutare.Ecto.Host` (localized in-fragment `where`/`having` mutations, via the SQL catalog in
+  `Mutare.Ecto.Fragment`).
 
   ## Configuration
 
@@ -38,11 +40,15 @@ defmodule Mutare.Ecto do
       repos**, or with different `families:`/`as:` to split the catalog into separately-named
       report families.
 
-  **Equivalence-sensitive families.** Mutants of `:comparison`, `:connective`, and `:null_predicate`
-  (whose equivalence reasoning is SQL's three-valued logic) carry a **report note** — a survivor
-  reads `… SURVIVED  — kill may require NULL/boundary data` — so it is recognised as honest signal,
-  not a plain test gap. `equivalence_sensitive_families/0` returns that set; with the `:as`
-  convention you can additionally *group* them under their own report name:
+  **Equivalence-sensitive families.** Mutants of `:comparison`, `:connective`, `:null_predicate`,
+  and `:ordering_nulls` (whose equivalence reasoning is SQL's three-valued logic) carry a **report
+  note** — a survivor reads `… SURVIVED  — kill may require NULL/boundary data` — so it is
+  recognised as honest signal, not a plain test gap. (The note is rendered inline only on the
+  **host** delivery path, so the three in-fragment families surface it today; `:ordering_nulls`,
+  delivered as a whole-`from`/clause-macro rewrite, is classified here for the `:as` grouping and
+  will surface the inline note once ordering routes through the host.)
+  `equivalence_sensitive_families/0` returns that set; with the `:as` convention you can
+  additionally *group* them under their own report name:
 
       {Mutare.Ecto, repo: R, families: Mutare.Ecto.equivalence_sensitive_families(), as: :ecto_boundary_null}
 
@@ -72,7 +78,7 @@ defmodule Mutare.Ecto do
 
   @behaviour Mutare.Mutator
 
-  alias Mutare.Ecto.{Changeset, Clause, Config, Host, Query, RepoAggregate}
+  alias Mutare.Ecto.{Changeset, Clause, Config, Host, Query, QueryTerminal, RepoAggregate, RepoWrite}
 
   # Query macros routed through the plugin's **selector host** (`c:Mutare.Mutator.host/2`) — the
   # `from` opener and the standalone/pipe condition macros — via the `:routing` classifier, which
@@ -100,9 +106,9 @@ defmodule Mutare.Ecto do
 
   @doc """
   The families whose survivors may be legitimately unkillable without a `NULL`/boundary fixture
-  (`:comparison`, `:connective`, `:null_predicate`) — their equivalence reasoning is SQL's
-  three-valued logic. Run them under their own `:as` name to surface "kill requires boundary/NULL
-  data" in the report (see the "Configuration" section).
+  (`:comparison`, `:connective`, `:null_predicate`, `:ordering_nulls`) — their equivalence
+  reasoning is SQL's three-valued logic. Run them under their own `:as` name to surface "kill
+  requires boundary/NULL data" in the report (see the "Configuration" section).
   """
   @spec equivalence_sensitive_families() :: [atom()]
   defdelegate equivalence_sensitive_families, to: Config
@@ -143,7 +149,9 @@ defmodule Mutare.Ecto do
     tagged =
       Query.mutations(node, opts) ++
         Clause.mutations(node) ++
+        QueryTerminal.mutations(node) ++
         RepoAggregate.mutations(node, context) ++
+        RepoWrite.mutations(node, context) ++
         Changeset.mutations(node, context)
 
     case for {family, mutated} <- tagged, Config.family_enabled?(opts, family), do: mutated do

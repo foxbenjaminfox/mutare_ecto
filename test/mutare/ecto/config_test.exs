@@ -91,7 +91,8 @@ defmodule Mutare.Ecto.ConfigTest do
       assert Mutare.Ecto.equivalence_sensitive_families() == [
                :comparison,
                :connective,
-               :null_predicate
+               :null_predicate,
+               :ordering_nulls
              ]
 
       # …and they're a subset of the full set.
@@ -101,7 +102,12 @@ defmodule Mutare.Ecto.ConfigTest do
     test "the full family set is exposed" do
       assert :comparison in Mutare.Ecto.families()
       assert :validation_drop in Mutare.Ecto.families()
-      assert length(Mutare.Ecto.families()) == 12
+      assert :persistence in Mutare.Ecto.families()
+      assert :on_conflict in Mutare.Ecto.families()
+      assert :query_terminal in Mutare.Ecto.families()
+      assert :hook_drop in Mutare.Ecto.families()
+      assert :ordering_nulls in Mutare.Ecto.families()
+      assert length(Mutare.Ecto.families()) == 17
     end
 
     test "an unknown family name fails loudly" do

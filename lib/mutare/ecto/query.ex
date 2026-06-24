@@ -53,7 +53,7 @@ defmodule Mutare.Ecto.Query do
   def mutations({:from, meta, [source, clauses]}, opts) when is_list(clauses) do
     tag(:filter_drop, drops(meta, source, clauses, @droppable)) ++
       tag(:bound, drops(meta, source, clauses, @bound_keys)) ++
-      tag(:ordering, order_flips(meta, source, clauses)) ++
+      order_flips(meta, source, clauses) ++
       tag(:bound, bound_bumps(meta, source, clauses)) ++
       tag(:join_type, join_swaps(meta, source, clauses, opts)) ++
       tag(:aggregate, select_swaps(meta, source, clauses))
@@ -135,14 +135,15 @@ defmodule Mutare.Ecto.Query do
   end
 
   # Flip each `order_by` clause's directions, reusing the shared ordering catalog — one mutant
-  # per flippable direction key (`Mutare.Ecto.Ordering`).
+  # per axis per direction key, tagged with its family (`:ordering` direction / `:ordering_nulls`
+  # placement; see `Mutare.Ecto.Ordering`).
   defp order_flips(meta, source, clauses) do
     clauses
     |> Enum.with_index()
     |> Enum.flat_map(fn {pair, index} ->
       if clause_key(pair) == :order_by do
-        for flipped <- Ordering.flips(clause_value(pair)) do
-          {:from, meta, [source, List.replace_at(clauses, index, put_value(pair, flipped))]}
+        for {family, flipped} <- Ordering.flips(clause_value(pair)) do
+          {family, {:from, meta, [source, List.replace_at(clauses, index, put_value(pair, flipped))]}}
         end
       else
         []

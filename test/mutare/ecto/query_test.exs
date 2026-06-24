@@ -38,7 +38,36 @@ defmodule Mutare.Ecto.QueryTest do
     end
     """
 
-    assert Enum.any?(ecto_diffs(src), fn {_original, mutated} -> mutated =~ "desc" end)
+    # A bare direction declares no NULLs placement, so it yields only the direction flip.
+    assert [{_o, mutated}] = ecto_diffs(src)
+    assert mutated =~ "desc: p.name"
+  end
+
+  test "a nulls-qualified ordering splits into independent direction and placement axes" do
+    src = """
+    defmodule Posts do
+      import Ecto.Query
+      def q, do: from(p in "posts", order_by: [asc_nulls_first: p.name])
+    end
+    """
+
+    only = fn families ->
+      src
+      |> ecto_diffs(mutators: [{Mutare.Ecto, repo: MyApp.Repo, families: families}])
+      |> Enum.map(fn {_o, mutated} -> mutated end)
+    end
+
+    # :ordering — flip the direction, keep the NULLs placement.
+    assert [direction] = only.([:ordering])
+    assert direction =~ "desc_nulls_first: p.name"
+
+    # :ordering_nulls — flip the NULLs placement, keep the direction.
+    assert [nulls] = only.([:ordering_nulls])
+    assert nulls =~ "asc_nulls_last: p.name"
+
+    # Both axes together: two mutants, each flipping exactly one component (never both at once,
+    # which the old single combined flip did — a weaker mutant any order-pinning test killed).
+    assert length(only.([:ordering, :ordering_nulls])) == 2
   end
 
   test "does not fire on a plain (non-from) call" do

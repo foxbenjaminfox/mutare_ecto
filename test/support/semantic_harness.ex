@@ -31,8 +31,9 @@ defmodule Mutare.Ecto.SemanticHarness do
   Call once from the semantic test's `setup_all` (not `test_helper.exs`): the DB is only needed by
   this one file, so booting it here keeps every other test run — and the exqlite NIF's runtime cost —
   out of it. `start_supervised!/1` ties the Repo to ExUnit's supervisor, so it lives exactly as long
-  as the module's tests and stops cleanly afterward; `on_exit/1` then removes the temp files and the
-  process-global `:mutare_active` switch, leaving no VM state behind.
+  as the module's tests and stops cleanly afterward; `on_exit/1` then removes the temp files, the
+  process-global `:mutare_active` switch, and the `Application` env this set (restoring any prior
+  value), leaving no VM state behind.
 
   The database is a fresh temp file *carrying the OS pid*, so two concurrent `mix test` runs on one
   host get independent SQLite files instead of clobbering a shared one (`pool_size: 1` + `async:
@@ -44,6 +45,11 @@ defmodule Mutare.Ecto.SemanticHarness do
     db_path = Path.join(System.tmp_dir!(), "mutare_ecto_semantic_#{System.pid()}.db")
     db_files = [db_path, db_path <> "-wal", db_path <> "-shm"]
     Enum.each(db_files, &File.rm/1)
+
+    # Capture the prior config so `on_exit` can restore it exactly — `Application.put_env` here
+    # mutates process-global state, and the harness should leave no VM state behind (same stance
+    # as the `:mutare_active` cleanup below).
+    prior_env = Application.fetch_env(:mutare_ecto, @repo)
 
     Application.put_env(:mutare_ecto, @repo,
       database: db_path,
@@ -58,6 +64,12 @@ defmodule Mutare.Ecto.SemanticHarness do
 
     ExUnit.Callbacks.on_exit(fn ->
       :persistent_term.erase(:mutare_active)
+
+      case prior_env do
+        {:ok, value} -> Application.put_env(:mutare_ecto, @repo, value)
+        :error -> Application.delete_env(:mutare_ecto, @repo)
+      end
+
       Enum.each(db_files, &File.rm/1)
     end)
 

@@ -56,6 +56,22 @@ defmodule Mutare.Ecto.ClauseTest do
 
       assert ecto_diffs(src) == []
     end
+
+    test "a nulls-qualified direction splits into direction and placement axes" do
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q(query), do: query |> order_by([u], desc_nulls_last: u.name)
+      end
+      """
+
+      mutated = Enum.map(ecto_diffs(src), fn {_o, m} -> m end)
+      # direction axis (keep placement) + nulls axis (keep direction), and nothing else.
+      assert "order_by([u], asc_nulls_last: u.name)" in mutated
+      assert "order_by([u], desc_nulls_first: u.name)" in mutated
+      assert length(mutated) == 2
+      assert_compiles(src)
+    end
   end
 
   describe "Bound (standalone / pipe limit/offset)" do

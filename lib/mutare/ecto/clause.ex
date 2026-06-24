@@ -33,7 +33,9 @@ defmodule Mutare.Ecto.Clause do
   @spec mutations(Macro.t()) :: [{atom(), Macro.t()}]
   def mutations({:order_by, meta, args}) when is_list(args) and args != [] do
     {init, [ordering]} = Enum.split(args, -1)
-    for flipped <- Ordering.flips(ordering), do: {:ordering, {:order_by, meta, init ++ [flipped]}}
+
+    for {family, flipped} <- Ordering.flips(ordering),
+        do: {family, {:order_by, meta, init ++ [flipped]}}
   end
 
   def mutations({macro, meta, args})
