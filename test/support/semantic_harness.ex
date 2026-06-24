@@ -85,10 +85,10 @@ defmodule Mutare.Ecto.SemanticHarness do
   into a live module. `sites` are the `Mutare.Site`s, used to look up a mutant's id by its logical
   diff (`site_id/2`).
   """
-  @spec compile(String.t(), keyword()) :: {module(), [Mutare.Site.t()]}
-  def compile(source, opts \\ []) do
+  @spec compile(String.t()) :: {module(), [Mutare.Site.t()]}
+  def compile(source) do
     {metamutant, sites, _next} =
-      Mutare.transform_string(source, mutators: TestSupport.mutators(opts), expand_uses: true)
+      Mutare.transform_string(source, mutators: TestSupport.mutators([]), expand_uses: true)
 
     {compile_module!(TestSupport.uniquify_module(metamutant)), sites}
   end
