@@ -36,20 +36,29 @@ defmodule Mutare.Ecto.TestSupport do
     metamutant
   end
 
-  # Append a per-call unique suffix to the source's top-level module name, so concurrent
-  # `assert_compiles` calls never define the same module name at once. Only the first
-  # `defmodule <Name>` is rewritten; the query schema/Repo aliases the body references are
-  # untouched (they are external, not the unit under compilation).
-  defp uniquify_module(source) do
+  @doc """
+  Append a per-call unique suffix to the source's top-level module name.
+
+  Both `assert_compiles/2` and the semantic harness compile through the global
+  `Code.compile_string`, so two tests that both define, say, `defmodule Posts` would otherwise race
+  the compiler ("cannot compile module Posts"). Only the first `defmodule <Name>` is rewritten; the
+  query schema/Repo aliases the body references are untouched (they are external, not the unit under
+  compilation).
+  """
+  def uniquify_module(source) do
     suffix = System.unique_integer([:positive])
     # `\g{1}` (not `\1`) delimits the backreference so the trailing suffix digits aren't read
     # as part of the group number.
     String.replace(source, ~r/defmodule\s+([\w.]+)/, "defmodule \\g{1}#{suffix}", global: false)
   end
 
-  # The `:mutators` list, expanding the `:all` shorthand and defaulting to the Ecto plugin alone
-  # (so recorded mutations are exactly the plugin's, nothing from core's built-ins).
-  defp mutators(opts) do
+  @doc """
+  The `:mutators` list, expanding the `:all` shorthand and defaulting to the Ecto plugin alone.
+
+  Defaulting to `[{Mutare.Ecto, repo: MyApp.Repo}]` keeps recorded mutations exactly the plugin's,
+  with nothing from core's built-ins.
+  """
+  def mutators(opts) do
     opts
     |> Keyword.get(:mutators, [{Mutare.Ecto, repo: @repo}])
     |> Enum.flat_map(fn

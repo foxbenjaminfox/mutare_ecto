@@ -23,7 +23,12 @@ defmodule Mutare.Ecto.MixProject do
   defp deps do
     [
       {:mutare, path: "../mutare"},
-      {:ecto, "~> 3.10"}
+      {:ecto, "~> 3.10"},
+      # Semantic-layer tests run actual mutated queries against a real SQL engine. SQLite
+      # (via ecto_sqlite3 → ecto_sql + the exqlite NIF) is self-contained — no server to
+      # stand up — so the "does the injected `dynamic` actually run" tests work anywhere.
+      {:ecto_sql, "~> 3.14", only: :test},
+      {:ecto_sqlite3, "~> 0.24", only: :test}
     ]
   end
 end
