@@ -20,11 +20,11 @@ defmodule MyApp.User do
   use Ecto.Schema
 
   schema "users" do
-    field :name, :string
-    field :age, :integer
-    field :active, :boolean
-    field :role, :string
-    field :score, :integer
+    field(:name, :string)
+    field(:age, :integer)
+    field(:active, :boolean)
+    field(:role, :string)
+    field(:score, :integer)
   end
 end
 
@@ -36,9 +36,9 @@ defmodule MyApp.Post do
   use Ecto.Schema
 
   schema "posts" do
-    field :title, :string
-    field :views, :integer
-    field :published, :boolean
-    field :user_id, :integer
+    field(:title, :string)
+    field(:views, :integer)
+    field(:published, :boolean)
+    field(:user_id, :integer)
   end
 end

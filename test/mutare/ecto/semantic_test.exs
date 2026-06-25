@@ -126,6 +126,7 @@ defmodule Mutare.Ecto.SemanticTest do
         """)
 
       assert ids(mod, 0) == [2, 5, 6]
+
       # `> 17` keeps everyone over 17 — the age-18 rows (Alice, Dave) join Bob/Eve/Frank; Carol (17)
       # still sits on the boundary, excluded.
       assert ids(mod, H.site_id(sites, {"u.age > 18", "u.age > 17"})) == [1, 2, 4, 5, 6]

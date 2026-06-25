@@ -1,130 +1,162 @@
 # mutare_ecto
 
 A mutation-testing plugin for [Ecto](https://hexdocs.pm/ecto), built as a custom
-[Mutare](../mutare) mutator. It mutates the Ecto surface an application writes —
-`Repo` calls, changeset pipelines, and the query DSL — **without treating SQL as
-Elixir**: it reuses all of Mutare's plumbing (identity resolution, the
-selector/coverage/poison machinery, the delivery host) but ships its own
-SQL-semantics mutation catalog.
+[Mutare](../mutare) mutator.
 
-See [`DESIGN.md`](DESIGN.md) for the full blueprint and the rationale behind that
-boundary.
+Mutation testing checks how good your tests actually are: it makes small, deliberate changes to
+your code — a `>` becomes a `>=`, a `where` clause is dropped, a `validate_required` is removed —
+and reruns your suite. If the tests still pass, that mutation **survived**, and you've found a gap
+your assertions don't cover.
+
+`mutare_ecto` aims that lens at the Ecto code you write — `Repo` calls, changeset pipelines, and
+the `from`/query DSL — so a survivor tells you something concrete: *"no test would notice if this
+filter, this sort order, or this validation quietly changed."*
+
+## Why a dedicated Ecto mutator
+
+An Ecto `where` clause looks like Elixir, but it isn't — it's a fragment of SQL, and SQL runs
+under **three-valued logic** (`NULL` is neither true nor false). A general-purpose mutator that
+treats `a < b or a > b` as ordinary Elixir will "helpfully" conclude it's equivalent to `a != b`
+and skip the mutation. In SQL that's wrong: when `a` or `b` is `NULL`, the two differ — and that's
+exactly the untested edge you'd want flagged.
+
+So `mutare_ecto` ships its **own** SQL-semantics mutation catalog and never borrows Mutare's
+Elixir-semantics mutators inside a query. Every mutation it emits is one a real SQL engine will
+run, and its equivalence reasoning is SQL's, not Elixir's. (The full rationale is in
+[`DESIGN.md`](DESIGN.md).)
+
+## Installation
+
+Add both Mutare and this plugin to the app you want to test, in `:dev`/`:test`:
+
+```elixir
+# mix.exs
+defp deps do
+  [
+    {:mutare, "~> ..."},
+    {:mutare_ecto, "~> ..."}
+  ]
+end
+```
+
+It must run **as a dependency of the app under test** (not against an external source path), so
+your `Repo` and schemas are loadable in the Mutare process — that's what lets `use Ecto.Schema`
+expand and the query macros resolve. If Ecto isn't loadable, the plugin refuses loudly rather than
+silently producing junk.
 
 ## Usage
 
-Add it (and Mutare) to the app under test, and enable it in `.mutare.exs`:
+Enable it in `.mutare.exs`, naming your Repo:
 
 ```elixir
 # .mutare.exs
 [
   mutators: [
-    :all,                              # Mutare's built-ins for ordinary Elixir
-    {Mutare.Ecto, repo: MyApp.Repo}    # the Ecto surface
+    :all,                            # Mutare's built-ins for ordinary Elixir
+    {Mutare.Ecto, repo: MyApp.Repo}  # the Ecto surface
   ]
 ]
 ```
 
-`mutare_ecto` requires Ecto and your schemas to be loadable in the Mutare process —
-i.e. Mutare run **as a dependency of the app under test**, not against an external
-path (so `use Ecto.Schema` expands and the query macros resolve). See *Deployment*
-in `DESIGN.md`.
+Then run Mutare as usual. Listing the entry both registers the plugin's query-DSL routing and
+enables its mutations; `repo:` is what lets it recognise `Repo.*` calls regardless of how they're
+aliased or imported.
 
-## Status
+## What it mutates
 
-All four milestones are implemented: the Repo/changeset/schema surface (1), the selector
-host (2), the full query catalog (3), and configuration — `families:`, `dialects:`, multi-repo,
-per-family naming, and equivalence reporting (4).
+Every mutation is tagged with a **family**, so you can enable or report on them individually
+(see Configuration). They cover three surfaces:
 
-**Bucket 1 + 2 (Milestone 1)** — plain calls and the schema skip, against Mutare's
-existing plumbing:
+**Inside `where` / `having` conditions** — delivered through Ecto's `^`/`dynamic` injection so
+the query still compiles once and the active mutant is chosen at build time:
 
-- **Schema skip** — `schema`/`embedded_schema` bodies are left untouched.
-- **RepoAggregate** — `Repo.aggregate(q, :sum, …)` → `:avg`/`:min`↔`:max`.
-- **ChangesetValidationDrop** — drop a `validate_*`/`*_constraint` from a changeset pipeline.
-- **Query (whole-`from`)** — drop a `where`/`having` clause; flip an `order_by` direction.
+| Family | Example | Question a survivor raises |
+|---|---|---|
+| `comparison` | `u.age > 18` → `>= 18` | Is the boundary tested? |
+| `null_predicate` | `is_nil(u.x)` → `not is_nil(u.x)` | Is the `NULL` case tested? |
+| `connective` | `a and b` → `a or b` | Does any row distinguish the two? |
+| `membership` | `x in ^list` → `x not in ^list`; `like` → `ilike` | Polarity / case-sensitivity |
+| `fragment_literal` | `u.age > 18` → `19` / `17` / `0` | Off-by-one in a literal |
+| `binding_reorder` | `a.x == b.y` → `b.x == a.y` | Are the two bindings distinguished? |
+| `filter_drop` | drop a whole `where`/`having` clause | Is this filter tested at all? |
 
-**Bucket 3 core (Milestone 2)** — the localized, in-fragment query mutations, now
-shipping via the selector host:
+**Query shape** — ordering, pagination, joins, aggregates, and the query terminals:
 
-- **In-`where`/`having` operator swaps** — Comparison (`>`↔`>=`, `<`↔`<=`, `==`↔`!=`),
-  Connective (`and`↔`or`), and NullPredicate (`is_nil`↔`not is_nil`), each delivered
-  through Ecto's `^`/`dynamic` injection so the metamutant still compiles once and
-  selects the active mutant at query-build time. Covers the `from` keyword form
-  (`from(u in User, where: u.x == u.y)`) and the composable pipe/direct forms
-  (`q |> where([u], …)`, `where(q, [u], …)`), including binding accumulation across
-  joins (`dynamic([u, p], …)`). The catalog is the plugin's own SQL-semantics one —
-  it reuses none of Mutare's built-in mutators inside a query fragment. See
-  `DESIGN.md`, Bucket 3.
+| Family | Example |
+|---|---|
+| `ordering` | `order_by: [asc: u.name]` → `[desc: u.name]` |
+| `ordering_nulls` | `:asc_nulls_first` → `:asc_nulls_last` |
+| `bound` | `limit: 10` → `9` / `11`, or drop the `limit`/`offset` |
+| `join_type` | `join`/`inner_join` ↔ `left_join` (changes result cardinality) |
+| `aggregate` | `sum(u.x)` ↔ `avg(u.x)`, `min` ↔ `max` (in `select` or `Repo.aggregate`) |
+| `query_terminal` | `Ecto.Query.first` ↔ `last` |
 
-This required Mutare core's *foreign-semantics DSL host* extensions (the
-mutator-supplied selector host + `:hosted`/`:routing` macro routing); the pinned
-[Mutare](../mutare) dependency now carries them.
+**Repo writes and changesets** — plain calls, no query DSL involved:
 
-**Full query catalog (Milestone 3, in progress)** — more of the SQL catalog, landing in
-the two existing delivery paths (no new core machinery):
+| Family | Example | Question a survivor raises |
+|---|---|---|
+| `persistence` | `Repo.insert(cs)` → non-persisting `apply_action` | Does a test assert the write actually happened? |
+| `on_conflict` | `on_conflict: :nothing` → `:raise` | Is the conflict behaviour tested? |
+| `validation_drop` | drop `validate_required`, `unique_constraint`, … | Is the rule it enforces tested? |
+| `hook_drop` | drop `prepare_changes` / `optimistic_lock` | Is the side effect / lock asserted? |
 
-- **Membership** — in a `where`/`having` fragment, `x in ^list` ↔ `x not in ^list`
-  (polarity) and `like` ↔ `ilike` (case-sensitivity), delivered through the selector host.
-- **FragmentLiteral** — a non-pinned integer literal *written into* a fragment
-  (`u.age > 18` → `19`/`17`/`0`): the library owns these because they are part of the SQL
-  the query runs, not interpolated Elixir, so core never sees them. Boundary `±1` plus the
-  zero sentinel, deduped.
-- **Bound** — drop a `limit`/`offset` clause, and bump its literal value by `±1`
-  (non-negative only). Both the whole-`from` keyword form and the standalone/pipe form
-  (`limit(q, 10)`, `q |> offset(5)`).
-- **JoinType** — whole-`from`: swap a join's kind by rewriting its clause key,
-  `join`/`inner_join` ↔ `left_join` (the portable `INNER`/`LEFT` pair;
-  `RIGHT`/`FULL`/`CROSS` are dialect-gated in Milestone 4).
-- **Ordering (standalone/pipe)** — flip a sort direction in the composable form too
-  (`order_by(q, [u], asc: u.name)`, `q |> order_by(desc: u.name)`), alongside the
-  whole-`from` `order_by` flip already shipped. The `limit`/`offset`/`order_by`/`select`
-  standalone forms all ride `mutate/1` over the (otherwise `:skip`ped) macro node — no host
-  needed, since the call is itself an expression the in-place selector can wrap whole.
-- **Aggregate (in `select`)** — swap an aggregate (`sum`↔`avg`, `min`↔`max`) wherever it
-  appears in a `select`/`select_merge` expression — a bare call, or one nested in a map,
-  tuple, or keyword list. Both the whole-`from` keyword form and the standalone/pipe form.
-  (`count` is left alone, as in `RepoAggregate`.)
-- **Binding-reorder** — in a multi-binding `where`/`having`, swap two binding references
-  (`a.x == b.y` → `b.x == a.y`). Reordering the declared binding list is equivalent to
-  swapping the body's references, so it rides the host with no special delivery path; emitted
-  only when both bindings actually appear in the condition.
+Both query syntaxes are covered — the `from(u in User, where: …)` keyword form and the composable
+pipe form (`q |> where([u], …)`) — as are direct, aliased, and `import`/`use`-bundled call styles.
+Schema definitions (`schema`/`embedded_schema`) are left untouched: a mutated field name is a
+broken schema, not an interesting mutant.
 
-- **Keyword-shorthand split** — `where(q, category: "Foo")` and the bindingless
-  `from(S, where: [category: "Foo"])` carry *data* values, so they're mutated by core's literal
-  families (recorded under `:literal`/`:string`, not `:ecto`) while the column-name keys and
-  `nil`/compound pairs are left raw. Delivered `^`-pinned, since Ecto rejects a bare selector
-  `case` in a query value position. This required two new Mutare core extensions — *per-keyword-pair
-  routing* (`{:keyword, value_treatments}`) and *pinned in-place delivery* (`:pinned`), the
-  successors to the Milestone-2 host/`:routing` extensions; the pinned [Mutare](../mutare)
-  dependency now carries them. (A shorthand clause *mixed into a binding* `from` stays `:hosted`
-  and isn't split — a documented edge; see `DESIGN.md`.)
+## Configuration
 
-**Configuration (Milestone 4)** — each `{Mutare.Ecto, …}` entry is tunable:
+Each `{Mutare.Ecto, …}` entry takes:
 
-- **`families:`** — narrow the SQL catalog to a subset (default `:all`); every family
-  (`:comparison`, `:null_predicate`, `:bound`, …) is independently toggleable. An unknown family
-  name fails loudly. See `Mutare.Ecto.families/0`.
-- **`dialects:`** — gate dialect-specific mutations (default `[]`, the portable core): `:postgres`
-  enables `like`↔`ilike`; `:postgres`/`:mysql` enable the `LEFT`↔`RIGHT` join swap (SQLite lacks
-  `RIGHT JOIN`).
-- **Per-family naming + multiple repos** — list the plugin more than once with different
-  `families:`/`as:` (to report a sub-family under its own name) or `repo:`/`as:` (to cover several
-  repos); `:as` renames the recorded family.
-- **Equivalence reporting** — mutants of the families whose survivors may be legitimately
-  unkillable without a `NULL`/boundary fixture (`:comparison`, `:connective`, `:null_predicate` —
-  SQL's three-valued logic) carry a **report note**: a survivor reads
-  `… SURVIVED  — kill may require NULL/boundary data` (and the JSON report's `description`), so it's
-  not mistaken for a plain test gap. This rides a Mutare core `Site` note threaded from the host.
-  `Mutare.Ecto.equivalence_sensitive_families/0` plus the `:as` convention additionally lets you
-  *group* them under their own report name. (The catalog is SQL-native, so it emits no
-  Elixir-equivalent mutations to inflate the denominator in the first place.)
+```elixir
+{Mutare.Ecto,
+ repo: MyApp.Repo,                 # required — identifies Repo.* calls
+ families: :all,                   # or a subset, e.g. [:comparison, :null_predicate]
+ dialects: [:postgres]}            # gate dialect-specific mutations (default: portable core)
+```
 
-      # .mutare.exs — split the boundary/NULL families out under their own report name
-      [
-        mutators: [
-          :all,
-          {Mutare.Ecto, repo: MyApp.Repo, dialects: [:postgres],
-           families: Mutare.Ecto.equivalence_sensitive_families(), as: :ecto_boundary_null},
-          {Mutare.Ecto, repo: MyApp.Repo, dialects: [:postgres]}
-        ]
-      ]
+- **`families:`** — narrow the catalog to a subset. Every family above is independently
+  toggleable; an unknown name fails loudly. `Mutare.Ecto.families/0` returns the full set.
+- **`dialects:`** — enable mutations that aren't portable across all adapters. The default `[]` is
+  the portable core (safe on SQLite, Postgres, MySQL alike). `:postgres` adds `like`↔`ilike`;
+  `:postgres`/`:mysql` add the `LEFT`↔`RIGHT` join swap (SQLite has no `RIGHT JOIN`).
+- **`as:`** — rename the family in the report. List the plugin more than once with different
+  `repo:`/`as:` to cover **multiple repos**, or different `families:`/`as:` to report a sub-family
+  under its own name.
+
+## Equivalence reporting
+
+Some survivors are honest signal rather than a flat "your test is missing." A surviving
+`==`↔`!=`, `and`↔`or`, or `is_nil` mutant on a nullable column may be **legitimately unkillable
+without a `NULL` or boundary-value fixture** — that's three-valued logic, not an oversight. The
+plugin marks these families so the report reads:
+
+```
+… SURVIVED  — kill may require NULL/boundary data
+```
+
+`Mutare.Ecto.equivalence_sensitive_families/0` returns that set, and with `as:` you can group them
+under their own report name to separate "needs a boundary fixture" from "needs any test at all":
+
+```elixir
+# .mutare.exs
+[
+  mutators: [
+    :all,
+    {Mutare.Ecto, repo: MyApp.Repo, dialects: [:postgres],
+     families: Mutare.Ecto.equivalence_sensitive_families(), as: :ecto_boundary_null},
+    {Mutare.Ecto, repo: MyApp.Repo, dialects: [:postgres]}
+  ]
+]
+```
+
+Because the catalog is SQL-native, it also never emits the always-equivalent mutations (like
+`x * 1`) that would otherwise inflate your denominator and dilute the score.
+
+## Learn more
+
+[`DESIGN.md`](DESIGN.md) is the full blueprint: the SQL-semantics boundary, how the `^`/`dynamic`
+delivery host weaves a mutation into a query while keeping the single compile, and the routing that
+tells query fragments apart from plain interpolated data.
+</content>

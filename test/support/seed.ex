@@ -46,25 +46,33 @@ defmodule MyApp.Seed do
     Ecto.Adapters.SQL.query!(repo, "DROP TABLE IF EXISTS users", [])
     Ecto.Adapters.SQL.query!(repo, "DROP TABLE IF EXISTS posts", [])
 
-    Ecto.Adapters.SQL.query!(repo, """
-    CREATE TABLE users (
-      id INTEGER PRIMARY KEY,
-      name TEXT,
-      age INTEGER,
-      active INTEGER,
-      role TEXT,
-      score INTEGER
+    Ecto.Adapters.SQL.query!(
+      repo,
+      """
+      CREATE TABLE users (
+        id INTEGER PRIMARY KEY,
+        name TEXT,
+        age INTEGER,
+        active INTEGER,
+        role TEXT,
+        score INTEGER
+      )
+      """,
+      []
     )
-    """, [])
 
-    Ecto.Adapters.SQL.query!(repo, """
-    CREATE TABLE posts (
-      id INTEGER PRIMARY KEY,
-      title TEXT,
-      views INTEGER,
-      published INTEGER,
-      user_id INTEGER
+    Ecto.Adapters.SQL.query!(
+      repo,
+      """
+      CREATE TABLE posts (
+        id INTEGER PRIMARY KEY,
+        title TEXT,
+        views INTEGER,
+        published INTEGER,
+        user_id INTEGER
+      )
+      """,
+      []
     )
-    """, [])
   end
 end

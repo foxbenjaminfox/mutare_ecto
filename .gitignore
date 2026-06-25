@@ -9,3 +9,7 @@ erl_crash.dump
 /config/*.secret.exs
 .elixir_ls/
 mutare_ecto-*.tar
+
+# Dialyzer PLTs (rebuildable cache)
+/priv/plts/*.plt
+/priv/plts/*.plt.hash
