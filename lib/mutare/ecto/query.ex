@@ -20,7 +20,8 @@ defmodule Mutare.Ecto.Query do
       ↔ `left_join`. "Does any test exercise rows the join's cardinality changes?" An inner
       join drops rows a left join keeps, so the swap is a strong, killable mutation. The
       **portable** pair (every adapter supports `INNER`/`LEFT`) is always offered; the
-      `LEFT`↔`RIGHT` pair is **dialect-gated** (`:postgres`/`:mysql` — SQLite lacks `RIGHT`).
+      `LEFT`↔`RIGHT` pair is **dialect-gated** (`:postgres`/`:mysql` — SQLite lacks `RIGHT`),
+      and the `*`→`FULL` swap is gated to `:postgres`/`:sqlite` (MySQL has no `FULL JOIN`).
     * **Aggregate (in `select`)** — swap an aggregate inside a `select`/`select_merge` clause
       value (`sum`↔`avg`, `min`↔`max`), via the shared `Mutare.Ecto.Aggregate` walker. "Does
       any test pin which aggregate the column is reduced by?"
@@ -40,11 +41,25 @@ defmodule Mutare.Ecto.Query do
   @select_keys ~w(select select_merge)a
 
   # JoinType: each join-clause key's kind swaps. `join` is the keyword-form default inner join.
-  # The portable pair (`INNER`↔`LEFT`) is always offered; the `LEFT`↔`RIGHT` pair is added only
-  # under a dialect that supports `RIGHT JOIN` (`@right_join_dialects`) — SQLite does not.
+  # The portable pair (`INNER`↔`LEFT`) is always offered; the non-portable pairs are added only
+  # under a dialect that supports them:
+  #
+  #   * `LEFT`↔`RIGHT` — `@right_join_dialects` (`:postgres`/`:mysql`); SQLite lacks `RIGHT JOIN`.
+  #   * `*`→`FULL` (and `FULL`→`LEFT`) — `@full_join_dialects` (`:postgres`/`:sqlite` ≥ 3.39);
+  #     MySQL has no `FULL JOIN` at any version. This is an *introducing* swap (the source's
+  #     `inner`/`left` becomes a `FULL` not written by the user), so it must be dialect-gated —
+  #     unlike a swap that only permutes a form already in the source.
   @portable_join_flips %{join: [:left_join], inner_join: [:left_join], left_join: [:inner_join]}
   @right_join_flips %{left_join: [:right_join], right_join: [:left_join]}
   @right_join_dialects [:postgres, :mysql]
+  @full_join_flips %{
+    join: [:full_join],
+    inner_join: [:full_join],
+    left_join: [:full_join],
+    right_join: [:full_join],
+    full_join: [:left_join]
+  }
+  @full_join_dialects [:postgres, :sqlite]
 
   @doc "Whole-`from` mutations for a `from(...)` node as `{family, node}` pairs, or `[]`."
   @spec mutations(Macro.t(), keyword()) :: [{family(), Macro.t()}]
@@ -99,8 +114,9 @@ defmodule Mutare.Ecto.Query do
   defp bumps(n), do: [n + 1]
 
   # Swap each join clause's *kind* by rewriting its key (`join`/`inner_join` ↔ `left_join`, plus
-  # `left_join`↔`right_join` under a `RIGHT`-capable dialect), keeping the join's value
-  # (`c in assoc(p, :x)`). One mutant per enabled target.
+  # `left_join`↔`right_join` under a `RIGHT`-capable dialect and `*`→`full_join` under a
+  # `FULL`-capable one), keeping the join's value (`c in assoc(p, :x)`). One mutant per enabled
+  # target.
   defp join_swaps(meta, source, clauses, opts) do
     flips = join_flips(opts)
 
@@ -114,12 +130,17 @@ defmodule Mutare.Ecto.Query do
     end)
   end
 
+  # The portable flips, plus each dialect-gated map whose dialects `opts` enables (`RIGHT`,
+  # `FULL`). Independently gated, so a config can enable one without the other.
   defp join_flips(opts) do
-    if Config.dialect_enabled?(opts, @right_join_dialects),
-      # mutare:ignore[operand_swap] merge order is irrelevant — targets are consumed as a set
-      do: Map.merge(@portable_join_flips, @right_join_flips, fn _k, a, b -> a ++ b end),
-      else: @portable_join_flips
+    @portable_join_flips
+    |> maybe_merge(@right_join_flips, Config.dialect_enabled?(opts, @right_join_dialects))
+    |> maybe_merge(@full_join_flips, Config.dialect_enabled?(opts, @full_join_dialects))
   end
+
+  defp maybe_merge(flips, _added, false), do: flips
+  # mutare:ignore[operand_swap] merge order is irrelevant — targets are consumed as a set
+  defp maybe_merge(flips, added, true), do: Map.merge(flips, added, fn _k, a, b -> a ++ b end)
 
   # Swap each aggregate inside a `select`/`select_merge` clause value — one mutant per aggregate
   # position (`Mutare.Ecto.Aggregate`).

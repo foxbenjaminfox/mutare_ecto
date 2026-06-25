@@ -63,6 +63,35 @@ defmodule Mutare.Ecto.ConfigTest do
       assert Enum.any?(pg, &(&1 =~ "inner_join: c in assoc"))
       assert Enum.any?(pg, &(&1 =~ "right_join: c in assoc"))
     end
+
+    test "*→full join only under a FULL-capable dialect" do
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q do
+          from p in Post, left_join: c in assoc(p, :comments), on: c.ok, select: p.id
+        end
+      end
+      """
+
+      # Portable default and a RIGHT-only dialect never introduce a FULL join.
+      portable = mutated(ecto_diffs(src, ecto(families: [:join_type])))
+      refute Enum.any?(portable, &(&1 =~ "full_join"))
+
+      mysql = mutated(ecto_diffs(src, ecto(families: [:join_type], dialects: [:mysql])))
+      refute Enum.any?(mysql, &(&1 =~ "full_join"))
+
+      # Postgres and SQLite both support FULL JOIN: left_join → full_join is offered.
+      for dialect <- [:postgres, :sqlite] do
+        flips = mutated(ecto_diffs(src, ecto(families: [:join_type], dialects: [dialect])))
+
+        assert Enum.any?(flips, &(&1 =~ "full_join: c in assoc")),
+               "expected a full_join mutant under #{dialect}"
+      end
+
+      # The woven full_join branch is valid Ecto — the single build (every mutant) compiles.
+      assert_compiles(src, ecto(families: [:join_type], dialects: [:postgres]))
+    end
   end
 
   describe ":as reports a sub-family under its own name" do
