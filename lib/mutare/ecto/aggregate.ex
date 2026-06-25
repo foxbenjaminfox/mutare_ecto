@@ -31,6 +31,7 @@ defmodule Mutare.Ecto.Aggregate do
 
   # A 2-tuple literal — a `{a, b}` select, or a keyword/map pair: descend into both sides.
   defp walk({left, right}) do
+    # mutare:ignore[operand_swap] branch order is irrelevant — mutants are consumed as a set
     for(m <- walk(left), do: {m, right}) ++ for(m <- walk(right), do: {left, m})
   end
 

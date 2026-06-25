@@ -51,12 +51,14 @@ defmodule Mutare.Ecto.Query do
   def mutations(node, opts \\ [])
 
   def mutations({:from, meta, [source, clauses]}, opts) when is_list(clauses) do
-    tag(:filter_drop, drops(meta, source, clauses, @droppable)) ++
-      tag(:bound, drops(meta, source, clauses, @bound_keys)) ++
-      order_flips(meta, source, clauses) ++
-      tag(:bound, bound_bumps(meta, source, clauses)) ++
-      tag(:join_type, join_swaps(meta, source, clauses, opts)) ++
+    Enum.concat([
+      tag(:filter_drop, drops(meta, source, clauses, @droppable)),
+      tag(:bound, drops(meta, source, clauses, @bound_keys)),
+      order_flips(meta, source, clauses),
+      tag(:bound, bound_bumps(meta, source, clauses)),
+      tag(:join_type, join_swaps(meta, source, clauses, opts)),
       tag(:aggregate, select_swaps(meta, source, clauses))
+    ])
   end
 
   def mutations(_node, _opts), do: []
@@ -114,6 +116,7 @@ defmodule Mutare.Ecto.Query do
 
   defp join_flips(opts) do
     if Config.dialect_enabled?(opts, @right_join_dialects),
+      # mutare:ignore[operand_swap] merge order is irrelevant — targets are consumed as a set
       do: Map.merge(@portable_join_flips, @right_join_flips, fn _k, a, b -> a ++ b end),
       else: @portable_join_flips
   end
@@ -143,7 +146,8 @@ defmodule Mutare.Ecto.Query do
     |> Enum.flat_map(fn {pair, index} ->
       if clause_key(pair) == :order_by do
         for {family, flipped} <- Ordering.flips(clause_value(pair)) do
-          {family, {:from, meta, [source, List.replace_at(clauses, index, put_value(pair, flipped))]}}
+          {family,
+           {:from, meta, [source, List.replace_at(clauses, index, put_value(pair, flipped))]}}
         end
       else
         []

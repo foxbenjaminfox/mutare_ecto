@@ -101,6 +101,22 @@ defmodule Mutare.Ecto.QueryTest do
       assert Enum.any?(diffs, fn {_o, mutated} -> mutated =~ "limit: 9" end)
     end
 
+    test "bumps a limit of 1 to both 2 and 0 (the lower bump reaches zero, still valid SQL)" do
+      # The boundary *of* the bound bump: at n = 1 the `n > 0` clamp must still emit both bumps,
+      # so `limit: 0` is offered. The other bound tests use n ∈ {10, 0}, neither of which
+      # distinguishes `n > 0` from `n > 1`.
+      src = """
+      defmodule Posts do
+        import Ecto.Query
+        def q, do: from(p in "posts", limit: 1, select: p.id)
+      end
+      """
+
+      diffs = ecto_diffs(src)
+      assert Enum.any?(diffs, fn {_o, mutated} -> mutated =~ "limit: 2" end)
+      assert Enum.any?(diffs, fn {_o, mutated} -> mutated =~ "limit: 0" end)
+    end
+
     test "bumps an offset and clamps the lower bound non-negative" do
       src = """
       defmodule Posts do

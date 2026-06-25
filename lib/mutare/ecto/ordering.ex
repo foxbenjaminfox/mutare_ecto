@@ -69,6 +69,7 @@ defmodule Mutare.Ecto.Ordering do
   defp axis_flips({key, field}) do
     direction = AST.atom_value(key)
 
+    # mutare:ignore[operand_swap] axis order is irrelevant — flips are consumed as a set
     tag(:ordering, @direction_flips[direction], field) ++
       tag(:ordering_nulls, @nulls_flips[direction], field)
   end

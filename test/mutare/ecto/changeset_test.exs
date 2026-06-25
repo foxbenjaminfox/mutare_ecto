@@ -48,6 +48,37 @@ defmodule Mutare.Ecto.ChangesetTest do
     assert mutated =~ "identity"
   end
 
+  test "leaves content-producing calls (cast/change/put_change) untouched" do
+    # The moduledoc contract: only *transparent* validators/constraints (and the Repo-time hooks)
+    # are dropped — never a content-producing call, since dropping `cast`/`change`/`put_change`
+    # changes the changeset's *data*, a different (and unsafe) mutation. Pins that `family/1`
+    # tags those as nil (no drop) rather than falling through to a drop family.
+    src = """
+    defmodule Acct do
+      import Ecto.Changeset
+      def changeset(cs, attrs) do
+        cs
+        |> cast(attrs, [:name])
+        |> change(%{role: :user})
+        |> put_change(:active, true)
+        |> validate_required([:name])
+      end
+    end
+    """
+
+    diffs = ecto_diffs(src)
+
+    # Exactly one drop — the lone transparent validator — and nothing else in the pipeline.
+    assert [{original, mutated}] = diffs
+    assert original =~ "validate_required"
+    assert mutated =~ "identity"
+
+    # None of the content-producing stages are ever a drop candidate.
+    refute Enum.any?(diffs, fn {original, _m} ->
+             original =~ "cast(" or original =~ "change(" or original =~ "put_change("
+           end)
+  end
+
   test "does not fire on a non-changeset call of the same name" do
     src = """
     defmodule Acct do
@@ -89,7 +120,9 @@ defmodule Mutare.Ecto.ChangesetTest do
     """
 
     test "drops prepare_changes and optimistic_lock under :hook_drop" do
-      hooks = ecto_diffs(@hook_src, mutators: [{Mutare.Ecto, repo: MyApp.Repo, families: [:hook_drop]}])
+      hooks =
+        ecto_diffs(@hook_src, mutators: [{Mutare.Ecto, repo: MyApp.Repo, families: [:hook_drop]}])
+
       assert length(hooks) == 2
       assert Enum.all?(hooks, fn {_o, mutated} -> mutated =~ "identity" end)
 
@@ -100,7 +133,9 @@ defmodule Mutare.Ecto.ChangesetTest do
 
     test "the hooks are NOT in :validation_drop" do
       validators =
-        ecto_diffs(@hook_src, mutators: [{Mutare.Ecto, repo: MyApp.Repo, families: [:validation_drop]}])
+        ecto_diffs(@hook_src,
+          mutators: [{Mutare.Ecto, repo: MyApp.Repo, families: [:validation_drop]}]
+        )
 
       assert validators == []
     end

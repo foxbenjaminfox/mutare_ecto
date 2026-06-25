@@ -123,6 +123,22 @@ defmodule Mutare.Ecto.ClauseTest do
       refute "offset(-1)" in mutated
     end
 
+    test "n = 1 bumps to both 2 and 0 (the lower bump reaches zero, which is valid SQL)" do
+      # The boundary *of* the boundary bump: at n = 1 the `n > 0` clamp must still fire both
+      # bumps, so `limit(0)` (an empty result) is offered. The other tests use n ∈ {10, 5, 0},
+      # none of which distinguishes `n > 0` from `n > 1`.
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q(query), do: query |> limit(1)
+      end
+      """
+
+      mutated = Enum.map(ecto_diffs(src), fn {_o, m} -> m end)
+      assert "limit(2)" in mutated
+      assert "limit(0)" in mutated
+    end
+
     test "a pinned bound is not bumped (runtime value), but the stage is still dropped" do
       src = """
       defmodule M do
@@ -161,6 +177,22 @@ defmodule Mutare.Ecto.ClauseTest do
       """
 
       assert Enum.any?(ecto_diffs(src), fn {_o, mutated} -> mutated =~ "min(u.x)" end)
+      assert_compiles(src)
+    end
+
+    test "swaps an aggregate in the direct (3-arg) select form, not just the pipe form" do
+      # The pipe form (`q |> select([u], expr)`) carries 2 visible args, where splitting off the
+      # last is indistinguishable from splitting off the first — so it can't pin *which* end the
+      # select expression is taken from. The direct form has 3 (`select(q, [u], expr)`), so it
+      # exercises `Enum.split(args, -1)` taking the trailing expression specifically.
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q(query), do: select(query, [u], sum(u.amount))
+      end
+      """
+
+      assert Enum.any?(ecto_diffs(src), fn {_o, mutated} -> mutated =~ "avg(u.amount)" end)
       assert_compiles(src)
     end
   end

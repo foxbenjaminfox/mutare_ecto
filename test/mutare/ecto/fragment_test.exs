@@ -87,6 +87,15 @@ defmodule Mutare.Ecto.FragmentTest do
       assert mutants("ilike(u.name, ^q)", dialects: [:postgres]) ==
                MapSet.new(["like(u.name, ^q)"])
     end
+
+    test "the swap is gated to postgres specifically — a different configured dialect won't enable it" do
+      # `like`↔`ilike` is supported only under `:postgres`. Configuring some *other* dialect must
+      # leave it gated off — i.e. the gate checks membership in the supported set, not merely "is
+      # any dialect configured". (`[:postgres]` alone can't catch a `&1 in supported` → `true`
+      # mutation, since postgres *is* in the supported set there.)
+      assert mutants("like(u.name, ^q)", dialects: [:mysql]) == MapSet.new([])
+      assert mutants("ilike(u.name, ^q)", dialects: [:mysql]) == MapSet.new([])
+    end
   end
 
   describe "family tags" do

@@ -135,8 +135,10 @@ defmodule Mutare.Ecto.Fragment do
 
   # An operator/connective (atom form): offer its own swap (if any), then descend into its
   # operands so a nested comparison/connective is mutated too (`is_nil(u.x) and u.y > 1`).
-  defp do_mutants({form, meta, args}, opts) when is_atom(form) and is_list(args),
-    do: local(form, meta, args, opts) ++ lift(form, meta, args, opts)
+  defp do_mutants({form, meta, args}, opts) when is_atom(form) and is_list(args) do
+    # mutare:ignore[operand_swap] local/lift order is irrelevant — mutants are consumed as a set
+    local(form, meta, args, opts) ++ lift(form, meta, args, opts)
+  end
 
   # A non-atom-form node (e.g. a `u.age` field access, whose form is the `{:., …}` dot tuple):
   # descend into its arguments only, never its form — exactly as core's analyzer recurses, so a

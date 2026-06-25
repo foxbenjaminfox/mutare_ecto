@@ -72,6 +72,7 @@ defmodule Mutare.Ecto.RepoWrite do
   def mutations(node, %{opts: opts, pipe_mode: pipe_mode}) do
     with repo when not is_nil(repo) <- repo_key(opts),
          {^repo, fun, args, rebuild} <- Calls.resolved_call(node) do
+      # mutare:ignore[operand_swap] family order is irrelevant — mutations are consumed as a set
       persistence(fun, args, pipe_mode) ++ on_conflict(fun, args, rebuild)
     else
       _ -> []
@@ -135,14 +136,21 @@ defmodule Mutare.Ecto.RepoWrite do
 
       index ->
         {key, value} = Enum.at(list, index)
-        List.replace_at(list, index, {key, AST.atom_literal(@on_conflict_swaps[AST.atom_value(value)])})
+
+        List.replace_at(
+          list,
+          index,
+          {key, AST.atom_literal(@on_conflict_swaps[AST.atom_value(value)])}
+        )
     end
   end
 
   defp swap_on_conflict(_other), do: nil
 
   defp on_conflict_pair?({key, value}),
-    do: AST.atom_value(key) == :on_conflict and Map.has_key?(@on_conflict_swaps, AST.atom_value(value))
+    do:
+      AST.atom_value(key) == :on_conflict and
+        Map.has_key?(@on_conflict_swaps, AST.atom_value(value))
 
   defp on_conflict_pair?(_node), do: false
 end

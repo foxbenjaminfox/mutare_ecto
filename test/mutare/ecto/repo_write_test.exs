@@ -132,6 +132,9 @@ defmodule Mutare.Ecto.RepoWriteTest do
       assert original =~ "on_conflict: :nothing"
       assert mutated =~ "on_conflict: :raise"
       assert mutated =~ "conflict_target: :email"
+      # The changeset stays the *first* argument — the rebuild reassembles `init ++ [swapped]`,
+      # not the reverse (which would emit `insert([on_conflict: …], cs)`, a malformed call).
+      assert mutated =~ "insert(cs,"
     end
 
     test "fires on the bang twin and in the piped form" do

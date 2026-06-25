@@ -141,6 +141,7 @@ defmodule Mutare.Ecto do
     clauses = for macro <- Host.clause_macros(), do: {Ecto.Query, macro, :any, :routing}
     skipped = for macro <- @skipped_macros, do: {Ecto.Query, macro, :any, :skip}
 
+    # mutare:ignore[operand_swap] concat order is irrelevant — entries registered as a set
     schema ++ hosted ++ clauses ++ skipped
   end
 
@@ -165,13 +166,15 @@ defmodule Mutare.Ecto do
   @impl Mutare.Mutator
   def mutate(node, %{opts: opts} = context) do
     tagged =
-      Query.mutations(node, opts) ++
-        Clause.mutations(node) ++
-        ClauseDrop.mutations(node, context) ++
-        QueryTerminal.mutations(node) ++
-        RepoAggregate.mutations(node, context) ++
-        RepoWrite.mutations(node, context) ++
+      Enum.concat([
+        Query.mutations(node, opts),
+        Clause.mutations(node),
+        ClauseDrop.mutations(node, context),
+        QueryTerminal.mutations(node),
+        RepoAggregate.mutations(node, context),
+        RepoWrite.mutations(node, context),
         Changeset.mutations(node, context)
+      ])
 
     case for {family, mutated} <- tagged, Config.family_enabled?(opts, family), do: mutated do
       [] -> :skip
