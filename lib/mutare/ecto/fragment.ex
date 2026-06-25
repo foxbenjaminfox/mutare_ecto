@@ -73,23 +73,12 @@ defmodule Mutare.Ecto.Fragment do
   """
   @spec binding_reorders(Macro.t(), [atom()]) :: [Macro.t()]
   def binding_reorders(condition, binding_names) when is_list(binding_names) do
-    present = Enum.filter(binding_names, &references?(condition, &1))
+    present = Enum.filter(binding_names, &AST.references_var?(condition, &1))
 
     for {a, i} <- Enum.with_index(present),
         {b, j} <- Enum.with_index(present),
         i < j,
         do: swap_vars(condition, a, b)
-  end
-
-  # Whether `name` appears as a (binding) variable node anywhere in `ast`.
-  defp references?(ast, name) do
-    {_ast, found?} =
-      Macro.prewalk(ast, false, fn
-        {^name, _meta, ctx} = node, _acc when is_atom(ctx) -> {node, true}
-        node, acc -> {node, acc}
-      end)
-
-    found?
   end
 
   # Swap every variable node named `a` with `b` and vice versa (a transposition of the two

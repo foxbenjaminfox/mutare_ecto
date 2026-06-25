@@ -16,9 +16,11 @@ defmodule Mutare.Ecto do
   This module is a thin front for a family of sub-mutators, dispatched by the node it
   sees: `Mutare.Ecto.RepoAggregate` and `Mutare.Ecto.RepoWrite` (Repo calls), `Mutare.Ecto.Changeset`
   (changeset pipelines), `Mutare.Ecto.Query` (whole-`from` mutations), `Mutare.Ecto.Clause` and
-  `Mutare.Ecto.QueryTerminal` (standalone/pipe clause macros and `first`/`last`), `Mutare.Ecto.ClauseDrop`
-  (removing a standalone/pipe clause stage — `q |> where(…)` → `q`), and `Mutare.Ecto.Host`
-  (localized in-fragment `where`/`having` mutations, via the SQL catalog in `Mutare.Ecto.Fragment`).
+  `Mutare.Ecto.QueryTerminal` (standalone/pipe clause macros and `first`/`last`),
+  `Mutare.Ecto.BindingReorder` (positional binding transpositions on any binding-list macro),
+  `Mutare.Ecto.ClauseDrop` (removing a standalone/pipe clause stage — `q |> where(…)` → `q`), and
+  `Mutare.Ecto.Host` (localized in-fragment `where`/`having` mutations, via the SQL catalog in
+  `Mutare.Ecto.Fragment`).
 
   ## Configuration
 
@@ -84,6 +86,7 @@ defmodule Mutare.Ecto do
   @behaviour Mutare.Mutator
 
   alias Mutare.Ecto.{
+    BindingReorder,
     Changeset,
     Clause,
     ClauseDrop,
@@ -107,7 +110,8 @@ defmodule Mutare.Ecto do
   # mutates the upstream query through a pipe stage (a static `:skip` would stamp the piped value
   # `:skip` and silently drop every upstream mutation); (2) it keeps their *data* positions raw, so
   # core never descends a binding/expression (poison). A routed node is still offered to `mutate/2`,
-  # where the plugin's own mutators fire: `Mutare.Ecto.Clause` (ordering/bound/aggregate) and
+  # where the plugin's own mutators fire: `Mutare.Ecto.Clause` (ordering/bound/aggregate),
+  # `Mutare.Ecto.BindingReorder` (positional binding transpositions), and
   # `Mutare.Ecto.ClauseDrop` (stage removal — `q |> where(…)` → `q`).
   #
   # Only `dynamic` stays `:skip`: it is not a query-threading pipe stage but an in-fragment helper
@@ -169,6 +173,7 @@ defmodule Mutare.Ecto do
       Enum.concat([
         Query.mutations(node, opts),
         Clause.mutations(node),
+        BindingReorder.mutations(node),
         ClauseDrop.mutations(node, context),
         QueryTerminal.mutations(node),
         RepoAggregate.mutations(node, context),

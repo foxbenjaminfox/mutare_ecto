@@ -11,6 +11,8 @@ defmodule Mutare.Ecto.Config do
   #
   #   * in-fragment (`where`/`having`, via the host): comparison, connective, null_predicate,
   #     membership, fragment_literal, binding_reorder;
+  #   * binding_reorder also fires **in place** on every other binding-list macro (`select`,
+  #     `order_by`, `join`, … — `Mutare.Ecto.BindingReorder`): a positional binding transposition;
   #   * whole-query / clause-macro: filter_drop (drop a where/having), bound (limit/offset),
   #     ordering (sort direction), ordering_nulls (NULLs placement), join_type,
   #     aggregate (in `select` and `Repo.aggregate`), query_terminal (`first`↔`last`),

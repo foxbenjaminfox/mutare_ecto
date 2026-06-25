@@ -241,6 +241,83 @@ defmodule Mutare.Ecto.HostTest do
     end
   end
 
+  describe "binding-list sources (the from rebinding form)" do
+    # Regression: a `from` whose source is a *binding list* (`[…] in query`), not a lone `u in S`,
+    # used to reach `clean_var/1` with the whole list and crash with a FunctionClauseError. The host
+    # now expands the list element-wise: positional bindings swap, named bindings are re-declared but
+    # never reordered.
+
+    test "a named-binding source no longer crashes and still hosts the operator swap" do
+      # The exact shape from the original crash report: a multi-named rebinding list on the LHS of `in`.
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q(query) do
+          from([descriptor: d, file: f, option: opt, field: field] in query,
+            where: d.size > 1,
+            select: d.id)
+        end
+      end
+      """
+
+      # The catalog still mutates the condition (boundary bump on the literal `1`)…
+      assert Enum.any?(hosted(src), fn {original, mutated} ->
+               original == "d.size > 1" and mutated == "d.size >= 1"
+             end)
+
+      # …and the woven dynamic re-declares the full binding list, named bindings intact (a list this
+      # long is rendered across lines, so we match the binding list itself, not the `dynamic(` head).
+      assert metamutant(src) =~ "[descriptor: d, file: f, option: opt, field: field]"
+      assert_compiles(src)
+    end
+
+    test "a positional rebinding list swaps its two bindings" do
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q(query), do: from([u, p] in query, where: u.id == p.user_id, select: u.id)
+      end
+      """
+
+      assert Enum.any?(hosted(src), fn {original, mutated} ->
+               original == "u.id == p.user_id" and mutated == "p.id == u.user_id"
+             end)
+
+      assert metamutant(src) =~ "dynamic([u, p]"
+      assert_compiles(src)
+    end
+
+    test "a mixed list reorders only the positional bindings, leaving the named one alone" do
+      # `c` is named — present in the condition but excluded from reorder. Only `u`/`p` (positional)
+      # transpose; `c.flag` is never reached, so no mutant ever puts a `u`/`p` field onto `c`.
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q(query) do
+          from([u, p, comments: c] in query,
+            where: u.age > p.views and c.flag > u.score,
+            select: u.id)
+        end
+      end
+      """
+
+      # The positional swap fires…
+      assert Enum.any?(hosted(src), fn {original, mutated} ->
+               original == "u.age > p.views and c.flag > u.score" and
+                 mutated == "p.age > u.views and c.flag > p.score"
+             end)
+
+      # …but `c` is never reordered: no mutant moves a `u`/`p` field onto the named binding.
+      refute Enum.any?(hosted(src), fn {_original, mutated} ->
+               mutated =~ "c.age" or mutated =~ "c.views" or mutated =~ "c.score"
+             end)
+
+      # The named binding is still re-declared faithfully so the fragment compiles.
+      assert metamutant(src) =~ "[u, p, comments: c]"
+      assert_compiles(src)
+    end
+  end
+
   describe "the recorded diff is a clean logical change" do
     test "neither side leaks the dynamic / ^ / case scaffolding the host weaves" do
       src = """

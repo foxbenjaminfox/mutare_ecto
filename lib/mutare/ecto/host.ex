@@ -246,7 +246,7 @@ defmodule Mutare.Ecto.Host do
 
   def host({macro, _meta, args}, context) when macro in @condition_macros and is_list(args) do
     with index when not is_nil(index) <- condition_index(args),
-         bindings = binding_vars(Enum.at(args, index - 1)),
+         bindings = binding_decls(Enum.at(args, index - 1)),
          condition = Enum.at(args, index),
          [_ | _] = mutants <- catalog(condition, bindings, opts(context)) do
       [target(condition, mutants, bindings, condition_splice(index))]
@@ -302,14 +302,21 @@ defmodule Mutare.Ecto.Host do
     end
   end
 
-  defp binding_names(bindings), do: Enum.map(bindings, fn {name, _meta, _ctx} -> name end)
+  # The positional binding names eligible for reorder, drawn from the declarations `binding_decls/1`
+  # produced. Named bindings (`post: p`) are deliberately excluded: a reorder is a *positional*
+  # transposition (`[a, b]` → `[b, a]`), meaningless for a name-addressed binding, so a named binding
+  # rides the query untouched while its positional siblings still swap.
+  defp binding_names(bindings) do
+    for {name, _meta, ctx} <- bindings, is_atom(name) and is_atom(ctx), do: name
+  end
 
-  # The binding list the query establishes: the source binding (`u` in `u in User`) followed by
-  # each join's binding, in clause order — exactly the positional bindings a `dynamic` re-declares.
+  # The binding list the query establishes: the source binding(s) — a lone `u` (`u in User`) or a
+  # whole binding list in the rebinding form (`[a, b] in query`, `[post: p] in query`) — followed by
+  # each join's binding, in clause order. Exactly the bindings a `dynamic` re-declares.
   defp from_bindings(source, clauses) do
     source_binding =
       case source do
-        {:in, _, [var, _src]} -> [AST.clean_var(var)]
+        {:in, _, [lhs, _src]} -> binding_decls(lhs)
         _ -> []
       end
 
@@ -317,9 +324,10 @@ defmodule Mutare.Ecto.Host do
   end
 
   defp join_bindings(clauses) do
-    for {key, {:in, _, [var, _src]}} <- clauses,
+    for {key, {:in, _, [lhs, _src]}} <- clauses,
         AST.atom_value(key) in @join_keys,
-        do: AST.clean_var(var)
+        decl <- binding_decls(lhs),
+        do: decl
   end
 
   defp binding_source?({:in, _, [_var, _src]}), do: true
@@ -364,10 +372,31 @@ defmodule Mutare.Ecto.Host do
   defp variable?({name, _meta, ctx}) when is_atom(name) and is_atom(ctx), do: true
   defp variable?(_node), do: false
 
-  defp binding_vars({:__block__, _, [list]}) when is_list(list),
-    do: Enum.map(list, &AST.clean_var/1)
+  # The binding declarations a binding node establishes, normalized for re-declaration in the woven
+  # `dynamic([…], _)`: a lone variable (`u in User`) yields `[u]`; a binding list — positional
+  # (`[a, b]`), named (`[post: p]`), or mixed (`[a, post: p]`) — expands element-wise. Positional
+  # bindings become clean vars (reorder candidates via `binding_names/1`); named bindings keep their
+  # key so the dynamic re-declares them faithfully, yet never become reorder candidates. Sourceror
+  # block-wraps a list literal (`{:__block__, _, [list]}`); a bare list reaches here already
+  # unwrapped; anything unrecognized yields `[]` (no host).
+  defp binding_decls({:__block__, _meta, [list]}) when is_list(list), do: binding_decls(list)
+  defp binding_decls(list) when is_list(list), do: Enum.flat_map(list, &binding_decl/1)
 
-  defp binding_vars(list) when is_list(list), do: Enum.map(list, &AST.clean_var/1)
+  defp binding_decls({name, _meta, ctx} = var) when is_atom(name) and is_atom(ctx),
+    do: [AST.clean_var(var)]
+
+  defp binding_decls(_node), do: []
+
+  # One binding-list element. A positional binding is a clean var; a named binding (`post: p`) is
+  # re-emitted as a clean keyword pair — key normalized to the Sourceror keyword shape so the
+  # renderer prints `post: p`, bound var cleaned. Anything unrecognized is dropped.
+  defp binding_decl({name, _meta, ctx} = var) when is_atom(name) and is_atom(ctx),
+    do: [AST.clean_var(var)]
+
+  defp binding_decl({key, {name, _m, ctx} = var}) when is_atom(name) and is_atom(ctx),
+    do: [{AST.keyword_key(AST.atom_value(key)), AST.clean_var(var)}]
+
+  defp binding_decl(_node), do: []
 
   # === shared ================================================================
 

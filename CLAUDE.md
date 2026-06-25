@@ -56,9 +56,8 @@ the test-only fixtures.
 `mix.exs` pins `{:mutare, path: "../mutare"}`. Several features here required **new Mutare-core
 extensions** (the selector host, `:routing`/`:hosted` macro routing, `{:keyword, …}` per-pair
 routing, `:pinned` in-place delivery, the `Site` `note` channel). When a task needs core
-machinery that doesn't exist yet, it is added to `../mutare` — that sibling repo is in scope for
-such changes. Core's public test surface for plugins is `Mutare.Test` (wrapped here by
-`Mutare.Ecto.TestSupport`).
+machinery that doesn't exist yet, it is added to `../mutare`. Core's public test 
+surface for plugins is `Mutare.Test` (wrapped here by `Mutare.Ecto.TestSupport`).
 
 Deployment requirement: Mutare must run **as a dependency of the app under test** so Ecto and the
 app's schemas are on the BEAM code path. This is what lets `use`-expansion expand `use Ecto.Schema`
@@ -102,6 +101,7 @@ The surface divides by **how a mutation is delivered**, not by what it mutates:
 | `ecto.ex` | Dispatcher + `Mutare.Mutator` callbacks |
 | `host.ex` | Selector host (#3): `macro_routing/1` + `host/2`, the `^`/`dynamic` weaving |
 | `fragment.ex` | The **SQL-semantics catalog** for `where`/`having` conditions (Comparison, Connective, NullPredicate, Membership, FragmentLiteral, binding-reorder) |
+| `binding_reorder.ex` | Positional binding-reorder (`[a, b]`→`[b, a]`) for the **other** binding-list macros (`select`/`order_by`/`join`/…), delivered in-place; `where`/`having` get theirs via the host. Named bindings are never moved |
 | `query.ex` | Whole-`from` rewrites (clause drop, order flip, bound, join-type, select aggregate) |
 | `clause.ex` | Standalone/pipe cousins of `query.ex` (`order_by`/`limit`/`offset`/`select`) |
 | `ordering.ex` / `aggregate.ex` | Shared catalogs used by both `query.ex` and `clause.ex` |
