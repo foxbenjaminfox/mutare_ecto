@@ -55,6 +55,21 @@ defmodule Mutare.Ecto.Host do
   # precedes the condition both directly (`where(q, [p], cond)`) and piped (`q |> where([p], cond)`).
   @condition_macros ~w(where or_where having or_having)a
 
+  # The remaining composable query macros — the standalone/pipe clause builders. They neither host
+  # a fragment nor carry shorthand data, but they *thread a query* (the first argument, or the
+  # pipe's left side), so they route through the `:routing` classifier for one reason: to mark that
+  # threaded query an **`:expression`** (mutate it normally) instead of `:skip`. Routing them via
+  # the classifier (rather than a static `:skip`) is also what lets core mutate the **piped left
+  # side** — a static `:skip` macro stamps its piped value `:skip`, silently suppressing every
+  # mutation of the upstream query (`from(…) |> limit(10)` would lose the `from`'s mutations). Their
+  # own data positions (binding list, ordering, bound, selector) stay `:skip` — the plugin owns
+  # those via `mutate/2` (`Mutare.Ecto.Clause`) and `Mutare.Ecto.ClauseDrop` (stage removal).
+  @plain_clause_macros ~w(
+    select select_merge order_by group_by distinct
+    limit offset join preload lock with_cte
+    windows union union_all except intersect
+  )a
+
   # `from` keyword keys that introduce an extra positional binding (`join: p in assoc(u, :x)`),
   # so the woven `dynamic` re-declares the full binding list the query establishes.
   @join_keys ~w(
@@ -62,10 +77,18 @@ defmodule Mutare.Ecto.Host do
     inner_lateral_join left_lateral_join
   )a
 
+  @doc "The hosted condition macros (`where`/`having` family), registered `:routing` by the plugin."
+  @spec condition_macros() :: [atom()]
+  def condition_macros, do: @condition_macros
+
+  @doc "The plain composable clause macros (`limit`/`order_by`/…), registered `:routing` by the plugin."
+  @spec clause_macros() :: [atom()]
+  def clause_macros, do: @plain_clause_macros
+
   @doc """
-  Per-visible-argument routing for a `:routing`-registered query macro (`from` and the
-  `where`/`having` family), consulted by `Mutare.Transform.Resolve` with the concrete node.
-  Returns `[]` for anything else.
+  Per-visible-argument routing for a `:routing`-registered query macro (`from`, the
+  `where`/`having` family, and the plain clause macros), consulted by `Mutare.Transform.Resolve`
+  with the concrete node. Returns `[]` for anything else.
   """
   @spec macro_routing(Macro.t()) ::
           [Mutare.Macro.Spec.treatment() | :pinned | {:keyword, [term()]}]
@@ -92,17 +115,47 @@ defmodule Mutare.Ecto.Host do
   end
 
   def macro_routing({macro, _meta, args}) when macro in @condition_macros and is_list(args) do
-    default = List.duplicate(:skip, length(args))
+    # The threaded query (the first arg, when written directly) is an ordinary expression; its own
+    # data positions stay raw. The condition/shorthand overlay then marks what the host/core own.
+    base = query_threading_route(args)
 
     case condition_index(args) do
       # binding form (`where(q, [u], cond)`) — host the condition after the binding list.
-      index when is_integer(index) -> List.replace_at(default, index, :hosted)
+      index when is_integer(index) -> List.replace_at(base, index, :hosted)
       # keyword-shorthand form (`where(q, col: v)`) — route the trailing keyword list per-pair.
-      nil -> shorthand_route(args, default)
+      nil -> shorthand_route(args, base)
     end
   end
 
+  def macro_routing({macro, _meta, args}) when macro in @plain_clause_macros and is_list(args) do
+    # No hosted fragment, no shorthand: just thread the query (first arg → `:expression` when it is
+    # one) and leave every data position raw for the plugin's own `mutate/2` mutators.
+    query_threading_route(args)
+  end
+
   def macro_routing(_node), do: []
+
+  # The base routing for a query-threading macro: mark the first argument `:expression` **iff it is
+  # the threaded query** (a bare query variable, a `from(…)`, or a nested pipe — not a binding list,
+  # an integer bound, or an ordering written directly as the first arg, which only happens in the
+  # *piped* form where the real query is the `|>` left side and already routed runtime). Every
+  # remaining position is raw (`:skip`). A query position carrying nothing to mutate (a bare
+  # variable) routes `:expression` harmlessly — core finds no candidates on it.
+  defp query_threading_route([]), do: []
+
+  defp query_threading_route([first | rest]) do
+    first_treatment = if query_arg?(first), do: :expression, else: :skip
+    [first_treatment | List.duplicate(:skip, length(rest))]
+  end
+
+  # Whether a first-argument node is the threaded query (so it should be mutated as an expression):
+  # a bare variable (`q`), a `from(…)` opener, or a nested pipe (`(… |> …)`). A binding list, a
+  # keyword list, a literal, or any other DSL-data shape is not — that is a piped call's own first
+  # data argument (the query is the `|>` left side, routed separately).
+  defp query_arg?({name, _meta, ctx}) when is_atom(name) and is_atom(ctx), do: true
+  defp query_arg?({:from, _meta, _args}), do: true
+  defp query_arg?({:|>, _meta, _args}), do: true
+  defp query_arg?(_node), do: false
 
   # === keyword-shorthand routing =============================================
 

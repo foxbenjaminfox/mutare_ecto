@@ -5,8 +5,9 @@ defmodule Mutare.Ecto.ClauseTest do
 
   # The standalone/pipe clause-macro mutations (`order_by`/`limit`/`offset` written as composable
   # calls, not `from` keywords). These ride `mutate/1` + Mutare's in-place selector — the macros
-  # are registered `:skip`, but a `:skip` node is still offered to the mutator. We assert the
-  # logical diff is recorded and the metamutant compiles.
+  # route through the `:routing` classifier (their data positions stay raw), but a routed node is
+  # still offered to the mutator. We assert the logical diff is recorded and the metamutant
+  # compiles. Stage *removal* of these clauses is covered in `clause_drop_test.exs`.
 
   describe "Ordering (standalone / pipe order_by)" do
     test "flips the direction in the pipe form" do
@@ -46,7 +47,7 @@ defmodule Mutare.Ecto.ClauseTest do
       assert Enum.any?(mutated, &(&1 =~ "asc: u.name" and &1 =~ "asc: u.id"))
     end
 
-    test "an ordering without an explicit direction yields nothing" do
+    test "an ordering without an explicit direction yields no flip (only the stage drop)" do
       src = """
       defmodule M do
         import Ecto.Query
@@ -54,7 +55,11 @@ defmodule Mutare.Ecto.ClauseTest do
       end
       """
 
-      assert ecto_diffs(src) == []
+      # No explicit direction → no ordering flip. The stage drop still fires: the directly-written
+      # `order_by(query, …)` collapses to its query argument (`Mutare.Ecto.ClauseDrop`).
+      mutated = Enum.map(ecto_diffs(src), fn {_o, m} -> m end)
+      refute Enum.any?(mutated, &(&1 =~ "order_by"))
+      assert mutated == ["query"]
     end
 
     test "a nulls-qualified direction splits into direction and placement axes" do
@@ -66,10 +71,13 @@ defmodule Mutare.Ecto.ClauseTest do
       """
 
       mutated = Enum.map(ecto_diffs(src), fn {_o, m} -> m end)
-      # direction axis (keep placement) + nulls axis (keep direction), and nothing else.
-      assert "order_by([u], asc_nulls_last: u.name)" in mutated
-      assert "order_by([u], desc_nulls_first: u.name)" in mutated
-      assert length(mutated) == 2
+      # direction axis (keep placement) + nulls axis (keep direction), and no combined flip.
+      orderings = Enum.filter(mutated, &(&1 =~ "order_by"))
+      assert "order_by([u], asc_nulls_last: u.name)" in orderings
+      assert "order_by([u], desc_nulls_first: u.name)" in orderings
+      assert length(orderings) == 2
+      # …alongside the orthogonal stage drop (clause_drop → identity in the pipe form).
+      assert Enum.any?(mutated, &(&1 =~ "identity"))
       assert_compiles(src)
     end
   end
@@ -115,7 +123,7 @@ defmodule Mutare.Ecto.ClauseTest do
       refute "offset(-1)" in mutated
     end
 
-    test "leaves a pinned bound to core (no literal bump)" do
+    test "a pinned bound is not bumped (runtime value), but the stage is still dropped" do
       src = """
       defmodule M do
         import Ecto.Query
@@ -123,7 +131,10 @@ defmodule Mutare.Ecto.ClauseTest do
       end
       """
 
-      assert ecto_diffs(src) == []
+      # `^n` is a runtime value, so there is no `n±1` literal bump — but dropping the whole `limit`
+      # stage is valid regardless, so the only diff is the pipe-form drop (`:bound`).
+      mutated = Enum.map(ecto_diffs(src), fn {_o, m} -> m end)
+      assert mutated == ["Elixir.Function.identity()"]
       assert_compiles(src)
     end
   end

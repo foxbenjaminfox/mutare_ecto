@@ -266,6 +266,37 @@ defmodule Mutare.Ecto.SemanticTest do
     end
   end
 
+  describe "clause-drop — remove a piped `where` stage (standalone/pipe)" do
+    # The pipe-form twin of filter-drop (`Mutare.Ecto.ClauseDrop`): `q |> where([u], u.age > 18)`
+    # becomes `q |> Function.identity()`. Proves the stage drop is **live** — the dropped `where`
+    # actually stops filtering at the engine (after `hoist_pipe` lifts the selector out of the pipe),
+    # not just in the recorded Site. The mutant renders as `identity()`, so locate it by that token
+    # with the same one-and-only-one `site_by` guard.
+    test "dropping a piped where stage returns the whole table" do
+      {mod, sites} =
+        build("""
+        defmodule Q do
+          import Ecto.Query
+          alias MyApp.User
+          def q, do: from(u in User, select: u.id) |> where([u], u.age > 18)
+        end
+        """)
+
+      # Baseline: ages strictly over 18 — Bob(25), Eve(40), Frank(19).
+      assert ids(mod, 0) == [2, 5, 6]
+
+      drop =
+        H.site_by(
+          sites,
+          "clause-drop (piped where)",
+          &(&1.original_code =~ "where(" and &1.mutated_code =~ "identity")
+        )
+
+      # With the filter stage dropped, every row survives.
+      assert ids(mod, drop.id) == [1, 2, 3, 4, 5, 6]
+    end
+  end
+
   describe "Ordering — `asc` ↔ `desc` (whole-`from`)" do
     # A pinned-keyword direction flip. With `limit: 1` the top row flips from youngest to oldest —
     # observable proof the mutated `order_by` reached the engine.

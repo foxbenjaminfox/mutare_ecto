@@ -150,7 +150,7 @@ defmodule Mutare.Ecto.HostTest do
       assert_compiles(src)
     end
 
-    test "a keyword-shorthand where carries no hosted dynamic and no sites" do
+    test "a keyword-shorthand where weaves no hosted dynamic (only the stage drop fires)" do
       src = """
       defmodule M do
         import Ecto.Query
@@ -158,7 +158,10 @@ defmodule Mutare.Ecto.HostTest do
       end
       """
 
-      assert diffs(src) == []
+      # The host weaves nothing into a shorthand `where` (its value is core's job, `^`-pinned) — no
+      # `dynamic(` scaffolding. The one mutation is the orthogonal stage drop (collapse to query).
+      assert [{:ecto, original, "query"}] = diffs(src)
+      assert original =~ "where(query"
       refute metamutant(src) =~ "dynamic("
       assert_compiles(src)
     end

@@ -13,10 +13,13 @@ defmodule Mutare.Ecto.Clause do
       swap an aggregate (`sum`↔`avg`, `min`↔`max`), via the shared `Mutare.Ecto.Aggregate`
       walker.
 
-  These macros are registered `:skip` (so core never descends a binding/expression into them),
-  but a `:skip` macro node is still offered to every mutator's `mutate/1` — exactly like a
-  `from` node — and the mutation rides Mutare's ordinary in-place selector. No host is needed:
-  the macro call is itself an expression, so the selector `case` can wrap it whole.
+  These macros are registered through the `:routing` classifier (`Mutare.Ecto.Host`), which keeps
+  their *data* positions (binding list, ordering, bound, selector) raw — so core never descends a
+  binding/expression into them — while marking the threaded query an `:expression`. A routed macro
+  node is still offered to every mutator's `mutate/1` — exactly like a `from` node — and the
+  mutation rides Mutare's ordinary in-place selector. No host is needed: the macro call is itself
+  an expression, so the selector `case` can wrap it whole. The orthogonal **stage removal**
+  (`q |> order_by(…)` → `q`) lives in `Mutare.Ecto.ClauseDrop`.
 
   The mutated position is always the **last argument** (the ordering / the bound value), which
   is true for both the direct form (`order_by(q, binds, ordering)`) and the pipe form

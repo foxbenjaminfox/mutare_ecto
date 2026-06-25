@@ -17,25 +17,28 @@ defmodule Mutare.Ecto.ShorthandTest do
   defp routing(code), do: code |> Sourceror.parse_string!() |> Host.macro_routing()
 
   describe "macro_routing — the per-pair treatment the plugin emits" do
-    test "a standalone shorthand routes each scalar value :pinned, keys raw" do
+    test "a standalone shorthand routes each scalar value :pinned, keys raw, query :expression" do
+      # The directly-written query (`q`) is the threaded value — an ordinary expression.
       assert routing(~s|where(q, category: "Foo", count: 5)|) ==
-               [:skip, {:keyword, [:pinned, :pinned]}]
+               [:expression, {:keyword, [:pinned, :pinned]}]
     end
 
     test "the piped shorthand routes its sole keyword argument" do
+      # Piped: the query is the `|>` left side (routed runtime separately), so the only visible
+      # argument is the shorthand keyword list.
       assert routing(~s|where(category: "Foo")|) == [{:keyword, [:pinned]}]
     end
 
     test "a nil-valued pair is skipped (IS NULL, never = nil)" do
-      assert routing(~s|where(q, deleted_at: nil)|) == [:skip, {:keyword, [:skip]}]
+      assert routing(~s|where(q, deleted_at: nil)|) == [:expression, {:keyword, [:skip]}]
     end
 
     test "a compound (non-scalar) value is skipped (pinning is scalar-only)" do
-      assert routing(~s|where(q, ids: [1, 2])|) == [:skip, {:keyword, [:skip]}]
+      assert routing(~s|where(q, ids: [1, 2])|) == [:expression, {:keyword, [:skip]}]
     end
 
-    test "the binding form still hosts its condition (not shorthand)" do
-      assert routing(~s|where(q, [u], u.x == u.y)|) == [:skip, :skip, :hosted]
+    test "the binding form still hosts its condition (not shorthand), query :expression" do
+      assert routing(~s|where(q, [u], u.x == u.y)|) == [:expression, :skip, :hosted]
     end
 
     test "a bindingless from routes where/having values per-pair, other clauses raw" do

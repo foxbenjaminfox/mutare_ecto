@@ -1,0 +1,153 @@
+defmodule Mutare.Ecto.ClauseDropTest do
+  use ExUnit.Case, async: true
+
+  import Mutare.Ecto.TestSupport
+
+  # Stage removal of a standalone/pipe query clause — `Mutare.Ecto.ClauseDrop`. The pipe form
+  # becomes `Function.identity()` (`q |> where(…)` ≡ `q`), the direct form collapses to the query
+  # argument (`where(q, …)` → `q`). This is the query-side twin of the changeset validator drop,
+  # and the primary motivating mutation for a query builder. We also assert the routing change that
+  # underlies it: a pipe stage no longer suppresses mutation of the upstream query.
+
+  defp mutated(src, opts \\ []), do: Enum.map(ecto_diffs(src, opts), fn {_o, m} -> m end)
+
+  describe "pipe form → Function.identity()" do
+    test "drops a piped where (a filter)" do
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q(query), do: query |> where([u], u.active)
+      end
+      """
+
+      assert "Elixir.Function.identity()" in mutated(src)
+      assert_compiles(src)
+    end
+
+    test "drops a piped order_by / limit / select / join / distinct stage" do
+      for stage <- [
+            "order_by([u], asc: u.name)",
+            "limit(10)",
+            "offset(5)",
+            "select([u], u.name)",
+            ~s|join(:inner, [u], p in "posts", on: p.uid == u.id)|,
+            "distinct(true)",
+            "group_by([u], u.role)"
+          ] do
+        src = """
+        defmodule M do
+          import Ecto.Query
+          def q(query), do: query |> #{stage}
+        end
+        """
+
+        assert "Elixir.Function.identity()" in mutated(src),
+               "expected a stage drop for: #{stage}"
+
+        assert_compiles(src)
+      end
+    end
+  end
+
+  describe "direct form → collapses to the query argument" do
+    test "collapses a directly-written where to its query" do
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q(query), do: where(query, [u], u.active)
+      end
+      """
+
+      assert mutated(src) == ["query"]
+      assert_compiles(src)
+    end
+
+    test "collapses a directly-written limit to its query (alongside the bound bumps)" do
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q(query), do: limit(query, 10)
+      end
+      """
+
+      m = mutated(src)
+      assert "query" in m
+      assert "limit(query, 11)" in m
+      assert "limit(query, 9)" in m
+      assert_compiles(src)
+    end
+  end
+
+  describe "families mirror the from-keyword clause drop" do
+    @src """
+    defmodule M do
+      import Ecto.Query
+      def q(query) do
+        query
+        |> where([u], u.active)
+        |> limit(10)
+        |> order_by([u], asc: u.name)
+      end
+    end
+    """
+
+    test ":filter_drop drops the where stage only" do
+      m = mutated(@src, mutators: [{Mutare.Ecto, repo: MyApp.Repo, families: [:filter_drop]}])
+      assert m == ["Elixir.Function.identity()"]
+    end
+
+    test ":bound drops the limit stage (and is where the n±1 bumps live too)" do
+      m = mutated(@src, mutators: [{Mutare.Ecto, repo: MyApp.Repo, families: [:bound]}])
+      assert "Elixir.Function.identity()" in m
+      assert "limit(11)" in m
+      assert "limit(9)" in m
+    end
+
+    test ":clause_drop drops the order_by stage (not where/limit, which have their own families)" do
+      m = mutated(@src, mutators: [{Mutare.Ecto, repo: MyApp.Repo, families: [:clause_drop]}])
+      # order_by has no other family here, so its only mutation is the drop.
+      assert m == ["Elixir.Function.identity()"]
+    end
+  end
+
+  describe "resolution — only real Ecto.Query clauses" do
+    test "does not fire on a same-named user function" do
+      src = """
+      defmodule M do
+        def where(q, _), do: q
+        def q(query), do: query |> where([:x])
+      end
+      """
+
+      assert ecto_diffs(src) == []
+    end
+  end
+
+  describe "routing fix — a pipe stage no longer suppresses upstream mutation" do
+    test "the upstream from's where is mutated through a limit pipe stage" do
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q, do: from(u in "users", where: u.age > 18) |> limit(10)
+      end
+      """
+
+      m = mutated(src)
+      # Previously the static-`:skip` `limit` stamped its piped value `:skip`, dropping every
+      # mutation of the upstream `from`. Now the boundary swap on `u.age > 18` fires through it.
+      assert "u.age >= 18" in m
+      assert_compiles(src)
+    end
+
+    test "the upstream from's where is mutated through an order_by pipe stage" do
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q, do: from(u in "users", where: u.age > 18) |> order_by([u], asc: u.name)
+      end
+      """
+
+      assert "u.age >= 18" in mutated(src)
+    end
+  end
+end

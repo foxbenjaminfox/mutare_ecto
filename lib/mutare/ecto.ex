@@ -16,9 +16,9 @@ defmodule Mutare.Ecto do
   This module is a thin front for a family of sub-mutators, dispatched by the node it
   sees: `Mutare.Ecto.RepoAggregate` and `Mutare.Ecto.RepoWrite` (Repo calls), `Mutare.Ecto.Changeset`
   (changeset pipelines), `Mutare.Ecto.Query` (whole-`from` mutations), `Mutare.Ecto.Clause` and
-  `Mutare.Ecto.QueryTerminal` (standalone/pipe clause macros and `first`/`last`), and
-  `Mutare.Ecto.Host` (localized in-fragment `where`/`having` mutations, via the SQL catalog in
-  `Mutare.Ecto.Fragment`).
+  `Mutare.Ecto.QueryTerminal` (standalone/pipe clause macros and `first`/`last`), `Mutare.Ecto.ClauseDrop`
+  (removing a standalone/pipe clause stage — `q |> where(…)` → `q`), and `Mutare.Ecto.Host`
+  (localized in-fragment `where`/`having` mutations, via the SQL catalog in `Mutare.Ecto.Fragment`).
 
   ## Configuration
 
@@ -67,8 +67,13 @@ defmodule Mutare.Ecto do
       **selector host** (`host/2` — Ecto's `^`/`dynamic` injection), while keyword-shorthand data
       is routed to core's literal families (`{:keyword, …}`/`:pinned`). The whole-`from` mutations
       (clause/bound drop, order/join swaps, select aggregates) ride `mutate/2` over the routed node.
-    * the standalone/pipe clause macros (`order_by`, `limit`, `offset`, `select`, …) are `:skip`ped
-      so core leaves them raw, but their `mutate/2` mutations still fire (`Mutare.Ecto.Clause`).
+    * the standalone/pipe clause macros (`order_by`, `limit`, `offset`, `select`, `join`, …) also
+      route via the `:routing` classifier: their data positions stay raw (so core descends nothing),
+      but the **threaded query** (the first argument / the piped left side) is routed `:expression`
+      so the upstream query is mutated through the stage (a static `:skip` would suppress it). Their
+      own `mutate/2` mutations still fire — direction/bound/aggregate (`Mutare.Ecto.Clause`) and
+      **stage removal** (`q |> where(…)` → `q`, `Mutare.Ecto.ClauseDrop`). Only `dynamic` stays
+      `:skip` (an in-fragment helper, not a query-threading stage).
 
   Resolution of these macros relies on Mutare's `use`-expansion (so the
   `use Ecto.Schema`-injected `import Ecto.Schema`, and a `use MyAppWeb, :live_view`-bundled
@@ -78,7 +83,17 @@ defmodule Mutare.Ecto do
 
   @behaviour Mutare.Mutator
 
-  alias Mutare.Ecto.{Changeset, Clause, Config, Host, Query, QueryTerminal, RepoAggregate, RepoWrite}
+  alias Mutare.Ecto.{
+    Changeset,
+    Clause,
+    ClauseDrop,
+    Config,
+    Host,
+    Query,
+    QueryTerminal,
+    RepoAggregate,
+    RepoWrite
+  }
 
   # Query macros routed through the plugin's **selector host** (`c:Mutare.Mutator.host/2`) — the
   # `from` opener and the standalone/pipe condition macros — via the `:routing` classifier, which
@@ -86,16 +101,18 @@ defmodule Mutare.Ecto do
   # `where`/`having` condition) or plain data. See `Mutare.Ecto.Host`.
   @hosted_macros ~w(from where or_where having or_having)a
 
-  # The remaining `Ecto.Query` macros, routed `:skip` so core neither mutates a query expression
-  # in place (poison) nor descends a binding/source. A `:skip` node is still offered to `mutate/1`,
-  # so the standalone/pipe `order_by`/`limit`/`offset` forms get their ordering/bound mutations
-  # there (`Mutare.Ecto.Clause`), exactly as the `from`-keyword forms do (`Mutare.Ecto.Query`).
-  # The rest (`select`, `group_by`, `join`, nested `dynamic`, …) stay inert pending later milestones.
-  @skipped_macros ~w(
-    select select_merge order_by group_by distinct
-    limit offset join preload lock with_cte
-    windows union union_all except intersect dynamic
-  )a
+  # The plain composable clause macros (`Mutare.Ecto.Host.clause_macros/0`) — `order_by`, `limit`,
+  # `select`, `join`, … — also route via the `:routing` classifier, for two reasons: (1) it marks
+  # the **threaded query** (the first argument / the piped left side) an `:expression`, so core
+  # mutates the upstream query through a pipe stage (a static `:skip` would stamp the piped value
+  # `:skip` and silently drop every upstream mutation); (2) it keeps their *data* positions raw, so
+  # core never descends a binding/expression (poison). A routed node is still offered to `mutate/2`,
+  # where the plugin's own mutators fire: `Mutare.Ecto.Clause` (ordering/bound/aggregate) and
+  # `Mutare.Ecto.ClauseDrop` (stage removal — `q |> where(…)` → `q`).
+  #
+  # Only `dynamic` stays `:skip`: it is not a query-threading pipe stage but an in-fragment helper
+  # (`dynamic([u], expr)` inside a `where`/`select`), so core must descend nothing in it.
+  @skipped_macros ~w(dynamic)a
 
   @impl Mutare.Mutator
   def name, do: :ecto
@@ -121,9 +138,10 @@ defmodule Mutare.Ecto do
     ]
 
     hosted = for macro <- @hosted_macros, do: {Ecto.Query, macro, :any, :routing}
+    clauses = for macro <- Host.clause_macros(), do: {Ecto.Query, macro, :any, :routing}
     skipped = for macro <- @skipped_macros, do: {Ecto.Query, macro, :any, :skip}
 
-    schema ++ hosted ++ skipped
+    schema ++ hosted ++ clauses ++ skipped
   end
 
   # Shape-aware routing for the `:routing` query macros — which positions carry a hosted DSL
@@ -149,6 +167,7 @@ defmodule Mutare.Ecto do
     tagged =
       Query.mutations(node, opts) ++
         Clause.mutations(node) ++
+        ClauseDrop.mutations(node, context) ++
         QueryTerminal.mutations(node) ++
         RepoAggregate.mutations(node, context) ++
         RepoWrite.mutations(node, context) ++

@@ -4,7 +4,7 @@ defmodule Mutare.EctoTest do
   import Mutare.Ecto.TestSupport
 
   describe "macros/0" do
-    test "skips schema, routes the host macros, skips the rest of the query DSL" do
+    test "skips schema, routes the host macros and the clause macros, skips dynamic" do
       macros = Mutare.Ecto.macros()
 
       # Schema bodies are never mutated.
@@ -19,9 +19,15 @@ defmodule Mutare.EctoTest do
       assert {Ecto.Query, :having, :any, :routing} in macros
       assert {Ecto.Query, :or_having, :any, :routing} in macros
 
-      # The query macros not yet mutated stay :skip so core leaves them alone.
-      assert {Ecto.Query, :order_by, :any, :skip} in macros
-      assert {Ecto.Query, :select, :any, :skip} in macros
+      # The plain clause macros also route (`:routing`) so the threaded query is mutated as an
+      # expression (not suppressed) and the stage can be dropped (`Mutare.Ecto.ClauseDrop`).
+      assert {Ecto.Query, :order_by, :any, :routing} in macros
+      assert {Ecto.Query, :select, :any, :routing} in macros
+      assert {Ecto.Query, :limit, :any, :routing} in macros
+      assert {Ecto.Query, :join, :any, :routing} in macros
+
+      # `dynamic` is an in-fragment helper, not a query-threading stage, so it stays :skip.
+      assert {Ecto.Query, :dynamic, :any, :skip} in macros
     end
   end
 

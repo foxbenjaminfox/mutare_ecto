@@ -13,12 +13,13 @@ defmodule Mutare.Ecto.Config do
   #     membership, fragment_literal, binding_reorder;
   #   * whole-query / clause-macro: filter_drop (drop a where/having), bound (limit/offset),
   #     ordering (sort direction), ordering_nulls (NULLs placement), join_type,
-  #     aggregate (in `select` and `Repo.aggregate`), query_terminal (`first`↔`last`);
+  #     aggregate (in `select` and `Repo.aggregate`), query_terminal (`first`↔`last`),
+  #     clause_drop (drop a standalone/pipe order_by/select/join/… stage — `Mutare.Ecto.ClauseDrop`);
   #   * repo write: persistence (insert/update/delete → apply_action), on_conflict (`:nothing`↔`:raise`);
   #   * changeset: validation_drop (validators/constraints), hook_drop (prepare_changes/optimistic_lock).
   @families ~w(
     comparison connective null_predicate membership fragment_literal binding_reorder
-    filter_drop ordering ordering_nulls bound join_type aggregate query_terminal
+    filter_drop ordering ordering_nulls bound join_type aggregate query_terminal clause_drop
     persistence on_conflict validation_drop hook_drop
   )a
 

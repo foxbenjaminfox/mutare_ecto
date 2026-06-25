@@ -107,7 +107,8 @@ defmodule Mutare.Ecto.ConfigTest do
       assert :query_terminal in Mutare.Ecto.families()
       assert :hook_drop in Mutare.Ecto.families()
       assert :ordering_nulls in Mutare.Ecto.families()
-      assert length(Mutare.Ecto.families()) == 17
+      assert :clause_drop in Mutare.Ecto.families()
+      assert length(Mutare.Ecto.families()) == 18
     end
 
     test "an unknown family name fails loudly" do
