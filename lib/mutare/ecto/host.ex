@@ -8,8 +8,9 @@ defmodule Mutare.Ecto.Host do
   time — but Ecto's `^` interpolation plus `dynamic/2` injects a runtime-chosen fragment the
   query *actually runs*, and the active mutant id is constant for a run, so exactly one branch
   bakes into the compiled query. This module hands core, per mutatable condition, the
-  `{original, mutants}` pair (from `Mutare.Ecto.Fragment`'s SQL catalog) plus two pure
-  transforms:
+  `{original, mutants}` pair (from `Mutare.Ecto.Fragment`'s SQL catalog, plus the shared
+  `Mutare.Ecto.Aggregate` walker for an aggregate inside a `having` — `sum`↔`avg`, `min`↔`max`)
+  plus two pure transforms:
 
     * **`wrap`** — `&Ecto.Query.dynamic([bindings], &1)`, mapping each logical branch fragment
       to the value the clause position runs. The `[bindings]` are re-declared from the enclosing
@@ -45,7 +46,7 @@ defmodule Mutare.Ecto.Host do
   `:routing` extensions); see `c:Mutare.Mutator.macro_routing/1`.
   """
 
-  alias Mutare.Ecto.{AST, Config, Fragment}
+  alias Mutare.Ecto.{Aggregate, AST, Config, Fragment}
 
   # The clause keys whose value is a boolean condition the catalog mutates — in the `from`
   # keyword list and as standalone `Ecto.Query` macros.
@@ -291,18 +292,22 @@ defmodule Mutare.Ecto.Host do
   end
 
   # The enabled logical mutants for a `where`/`having` condition: the SQL-operator/predicate
-  # catalog (`Fragment.mutants/2`, dialect-gated by `opts`) plus the binding-reorder swaps the
-  # declared bindings admit, each tagged with its family and filtered to the configured
-  # `families:`. Both ride the same `dynamic([bindings], _)` wrap. An equivalence-sensitive family
-  # is wrapped by `Config.noted/2` in a `%Mutare.Mutator.Mutation{}` so the report flags "kill may
-  # require NULL/boundary data".
+  # catalog (`Fragment.mutants/2`, dialect-gated by `opts`), the binding-reorder swaps the declared
+  # bindings admit, and the aggregate swaps the condition admits (`Aggregate.swaps/1` — `sum`↔`avg`,
+  # `min`↔`max`, the in-fragment cousin of the `select`/`Repo.aggregate` swap, fired on a
+  # `having: sum(p.x) > n`), each tagged with its family and filtered to the configured `families:`.
+  # All ride the same `dynamic([bindings], _)` wrap. An equivalence-sensitive family is wrapped by
+  # `Config.noted/2` in a `%Mutare.Mutator.Mutation{}` so the report flags "kill may require
+  # NULL/boundary data".
   defp catalog(condition, bindings, opts) do
     reorders =
       for node <- Fragment.binding_reorders(condition, binding_names(bindings)),
           do: {:binding_reorder, node}
 
+    aggregates = for node <- Aggregate.swaps(condition), do: {:aggregate, node}
+
     # mutare:ignore[operand_swap] equivalent — the mutants are consumed as a set, so their concatenation order is irrelevant
-    for {family, node} <- Fragment.mutants(condition, opts) ++ reorders,
+    for {family, node} <- Fragment.mutants(condition, opts) ++ reorders ++ aggregates,
         Config.family_enabled?(opts, family),
         do: Config.noted(family, node)
   end

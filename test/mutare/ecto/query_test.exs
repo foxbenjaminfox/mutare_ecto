@@ -191,7 +191,7 @@ defmodule Mutare.Ecto.QueryTest do
     end
   end
 
-  describe "Aggregate (in select)" do
+  describe "Aggregate (in select / order_by)" do
     test "swaps an aggregate inside a from select clause" do
       src = """
       defmodule Posts do
@@ -216,6 +216,18 @@ defmodule Mutare.Ecto.QueryTest do
       assert Enum.any?(mutated, &(&1 =~ "avg(p.views)"))
       assert Enum.any?(mutated, &(&1 =~ "min(p.views)"))
     end
+
+    test "swaps an aggregate inside a from order_by clause" do
+      src = """
+      defmodule Posts do
+        import Ecto.Query
+        def q, do: from(p in "posts", group_by: p.user_id, order_by: [desc: sum(p.views)])
+      end
+      """
+
+      assert Enum.any?(ecto_diffs(src), fn {_o, mutated} -> mutated =~ "desc: avg(p.views)" end)
+      assert_compiles(src)
+    end
   end
 
   # Each whole-`from` family keys off a specific clause type. These pin that the gate is the clause
@@ -238,14 +250,21 @@ defmodule Mutare.Ecto.QueryTest do
       refute Enum.any?(bounds, &(&1 =~ "select: 2" or &1 =~ "select: 0"))
     end
 
-    test "aggregate swaps fire only on select/select_merge, not an aggregate elsewhere" do
+    test "aggregate swaps fire on select/select_merge and order_by, but leave a hosted having alone" do
       aggs =
         for {:aggregate, m} <-
-              mutations("from(p in Post, having: sum(p.x) > 5, select: avg(p.y))"),
+              mutations(
+                "from(p in Post, having: sum(p.a) > 5, order_by: max(p.b), select: avg(p.c))"
+              ),
             do: m
 
-      # `avg` in the select swaps; the `sum` inside `having` is left alone.
-      assert "from(p in Post, having: sum(p.x) > 5, select: sum(p.y))" in aggs
+      # The `select` and `order_by` aggregates each swap in place — one single-point mutant each…
+      assert "from(p in Post, having: sum(p.a) > 5, order_by: max(p.b), select: sum(p.c))" in aggs
+      assert "from(p in Post, having: sum(p.a) > 5, order_by: min(p.b), select: avg(p.c))" in aggs
+      assert length(aggs) == 2
+
+      # …but the `having` aggregate is delivered through the host (`^`/`dynamic`), never as a
+      # whole-`from` rewrite here, so Query leaves it untouched (no double-delivery).
       refute Enum.any?(aggs, &(&1 =~ "having: avg"))
     end
 

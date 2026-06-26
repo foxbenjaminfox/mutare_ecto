@@ -22,9 +22,10 @@ defmodule Mutare.Ecto.Query do
       **portable** pair (every adapter supports `INNER`/`LEFT`) is always offered; the
       `LEFT`↔`RIGHT` pair is **dialect-gated** (`:postgres`/`:mysql` — SQLite lacks `RIGHT`),
       and the `*`→`FULL` swap is gated to `:postgres`/`:sqlite` (MySQL has no `FULL JOIN`).
-    * **Aggregate (in `select`)** — swap an aggregate inside a `select`/`select_merge` clause
-      value (`sum`↔`avg`, `min`↔`max`), via the shared `Mutare.Ecto.Aggregate` walker. "Does
-      any test pin which aggregate the column is reduced by?"
+    * **Aggregate (in `select`/`order_by`)** — swap an aggregate inside a `select`/`select_merge`
+      or `order_by` clause value (`sum`↔`avg`, `min`↔`max`), via the shared `Mutare.Ecto.Aggregate`
+      walker. "Does any test pin which aggregate the column is reduced/sorted by?" (An aggregate
+      inside a `having` is delivered through the host instead — see `Mutare.Ecto.Host`.)
 
   Each mutation is returned as `{family, node}` so the caller can filter by `families:`; `opts`
   carries `dialects:` for the join gate. A `from` node is `{:from, meta, [source, clauses]}`
@@ -38,7 +39,7 @@ defmodule Mutare.Ecto.Query do
 
   @droppable ~w(where having or_where or_having)a
   @bound_keys ~w(limit offset)a
-  @select_keys ~w(select select_merge)a
+  @aggregate_keys ~w(select select_merge order_by)a
 
   # JoinType: each join-clause key's kind swaps. `join` is the keyword-form default inner join.
   # The portable pair (`INNER`↔`LEFT`) is always offered; the non-portable pairs are added only
@@ -73,7 +74,7 @@ defmodule Mutare.Ecto.Query do
       order_flips(meta, source, clauses),
       tag(:bound, bound_bumps(meta, source, clauses)),
       tag(:join_type, join_swaps(meta, source, clauses, opts)),
-      tag(:aggregate, select_swaps(meta, source, clauses))
+      tag(:aggregate, aggregate_swaps(meta, source, clauses))
     ])
   end
 
@@ -143,13 +144,15 @@ defmodule Mutare.Ecto.Query do
   # mutare:ignore[operand_swap] merge order is irrelevant — targets are consumed as a set
   defp maybe_merge(flips, added, true), do: Map.merge(flips, added, fn _k, a, b -> a ++ b end)
 
-  # Swap each aggregate inside a `select`/`select_merge` clause value — one mutant per aggregate
-  # position (`Mutare.Ecto.Aggregate`).
-  defp select_swaps(meta, source, clauses) do
+  # Swap each aggregate inside a `select`/`select_merge`/`order_by` clause value — one mutant per
+  # aggregate position (`Mutare.Ecto.Aggregate`). A `having` aggregate is deliberately *not* here:
+  # its condition is hosted (`^`/`dynamic`), so the swap rides the host alongside the operator swaps
+  # (`Mutare.Ecto.Host.catalog/3`) rather than being delivered as a whole-`from` rewrite.
+  defp aggregate_swaps(meta, source, clauses) do
     clauses
     |> Enum.with_index()
     |> Enum.flat_map(fn {pair, index} ->
-      if clause_key(pair) in @select_keys do
+      if clause_key(pair) in @aggregate_keys do
         for swapped <- Aggregate.swaps(clause_value(pair)) do
           {:from, meta, [source, List.replace_at(clauses, index, put_value(pair, swapped))]}
         end

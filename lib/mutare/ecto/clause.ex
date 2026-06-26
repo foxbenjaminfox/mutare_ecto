@@ -9,9 +9,10 @@ defmodule Mutare.Ecto.Clause do
       `Mutare.Ecto.Ordering` catalog.
     * **Bound** — `limit(q, 10)` / `q |> offset(5)`: bump the literal value by `±1`
       (non-negative only).
-    * **Aggregate** — `select(q, [u], sum(u.amount))` / `q |> select_merge(%{n: max(u.x)})`:
-      swap an aggregate (`sum`↔`avg`, `min`↔`max`), via the shared `Mutare.Ecto.Aggregate`
-      walker.
+    * **Aggregate** — `select(q, [u], sum(u.amount))` / `q |> select_merge(%{n: max(u.x)})`, and
+      an aggregate written into an `order_by` (`q |> order_by([u], desc: sum(u.amount))`): swap the
+      aggregate (`sum`↔`avg`, `min`↔`max`), via the shared `Mutare.Ecto.Aggregate` walker. (A
+      `having` aggregate is hosted instead — `Mutare.Ecto.Host`.)
 
   These macros are registered through the `:routing` classifier (`Mutare.Ecto.Host`), which keeps
   their *data* positions (binding list, ordering, bound, selector) raw — so core never descends a
@@ -37,8 +38,16 @@ defmodule Mutare.Ecto.Clause do
   def mutations({:order_by, meta, args}) when is_list(args) and args != [] do
     {init, [ordering]} = Enum.split(args, -1)
 
-    for {family, flipped} <- Ordering.flips(ordering),
-        do: {family, {:order_by, meta, init ++ [flipped]}}
+    flips =
+      for {family, flipped} <- Ordering.flips(ordering),
+          do: {family, {:order_by, meta, init ++ [flipped]}}
+
+    aggregates =
+      for swapped <- Aggregate.swaps(ordering),
+          do: {:aggregate, {:order_by, meta, init ++ [swapped]}}
+
+    # mutare:ignore[operand_swap] direction flips and aggregate swaps are consumed as a set — order is irrelevant
+    flips ++ aggregates
   end
 
   def mutations({macro, meta, args})

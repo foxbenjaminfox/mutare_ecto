@@ -243,6 +243,46 @@ defmodule Mutare.Ecto.HostTest do
       assert_compiles(src)
     end
 
+    test "an aggregate inside a having is swapped and woven through the host" do
+      # The realistic `having` shape carries an aggregate (`sum(u.age) > n`). Its `sum`↔`avg` swap
+      # rides the same `^`/`dynamic` host as the operator swaps — recorded as a clean logical diff
+      # on the bare condition, the scaffolding invisible — and the woven `dynamic` must accept the
+      # aggregate (it does: `dynamic([u], sum(u.age) > 100)`), so the metamutant compiles.
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q do
+          from u in User,
+            group_by: u.role,
+            having: sum(u.age) > 100,
+            select: u.role
+        end
+      end
+      """
+
+      assert Enum.any?(hosted(src), fn {original, mutated} ->
+               original == "sum(u.age) > 100" and mutated == "avg(u.age) > 100"
+             end)
+
+      assert metamutant(src) =~ "dynamic([u]"
+      assert_compiles(src)
+    end
+
+    test "a piped having hosts its aggregate swap too" do
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q(query), do: query |> having([u], max(u.age) > 30)
+      end
+      """
+
+      assert Enum.any?(hosted(src), fn {original, mutated} ->
+               original == "max(u.age) > 30" and mutated == "min(u.age) > 30"
+             end)
+
+      assert_compiles(src)
+    end
+
     test "binding-reorder swaps the two join bindings and compiles" do
       src = """
       defmodule M do

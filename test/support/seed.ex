@@ -15,7 +15,9 @@ defmodule MyApp.Seed do
   #   * Ordering asc↔desc (age)        — youngest vs oldest sorts to the top.
   #   * Bound limit/offset             — a `limit: 2` window shifts when dropped/bumped.
   #   * JoinType inner↔left            — post P3's `user_id` matches no user (orphan).
-  #   * Aggregate sum↔avg (age)        — the two reduce the same column to different numbers.
+  #   * Aggregate sum↔avg (age)        — the two reduce the same column to different numbers (in a
+  #                                      `select`, and grouped by `role` in a `having: _ > 25`, where
+  #                                      sum keeps admin+user but avg keeps only admin).
   #   * binding_reorder                — a posts self-join on `views` is asymmetric under the swap.
 
   @users [

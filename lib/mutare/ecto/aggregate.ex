@@ -1,11 +1,15 @@
 defmodule Mutare.Ecto.Aggregate do
   @moduledoc false
-  # The select-expression half of the Aggregate family (`DESIGN.md`): swap an aggregate call
+  # The shared aggregate walker of the Aggregate family (`DESIGN.md`): swap an aggregate call
   # along its SQL-meaningful ladder — `sum`↔`avg`, `min`↔`max` — wherever it appears inside a
-  # `select`/`select_merge` expression. A select expression is an arbitrary shape (a bare call,
-  # a tuple, a list, a map, a keyword list of them), so `swaps/1` walks the whole structure and
-  # returns one *single-point* mutant per aggregate position — each the expression with exactly
-  # one aggregate swapped.
+  # query expression. An expression is an arbitrary shape (a bare call, a tuple, a list, a map, a
+  # keyword list of them), so `swaps/1` walks the whole structure and returns one *single-point*
+  # mutant per aggregate position — each the expression with exactly one aggregate swapped.
+  #
+  # Callers feed it three positions: a `select`/`select_merge` value and an `order_by` value
+  # (both whole-`from` and standalone/pipe — `Mutare.Ecto.Query`/`Mutare.Ecto.Clause`, delivered
+  # in place), and a `where`/`having` condition (`Mutare.Ecto.Host`, delivered `^`/`dynamic`-hosted
+  # so a `having: sum(p.x) > n` swaps its aggregate behind the same selector as its operators).
   #
   # `count` is deliberately excluded (as in `Mutare.Ecto.RepoAggregate`): swapping it for a
   # value aggregate changes the result's meaning in a way its `:distinct`/arity contract makes

@@ -195,6 +195,25 @@ defmodule Mutare.Ecto.ClauseTest do
       assert Enum.any?(ecto_diffs(src), fn {_o, mutated} -> mutated =~ "avg(u.amount)" end)
       assert_compiles(src)
     end
+
+    test "swaps an aggregate written into an order_by, alongside the direction flip" do
+      # An `order_by` carries two independent mutation axes when its key is a sort direction *and*
+      # its value is an aggregate: the direction flips (`:ordering`) and the aggregate swaps
+      # (`:aggregate`) — neither subsumes the other, so both must appear.
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q(query), do: query |> order_by([u], desc: sum(u.amount))
+      end
+      """
+
+      mutated = Enum.map(ecto_diffs(src), fn {_o, m} -> m end)
+      # the aggregate swap (keep the direction)…
+      assert Enum.any?(mutated, &(&1 =~ "desc: avg(u.amount)"))
+      # …and the orthogonal direction flip (keep the aggregate).
+      assert Enum.any?(mutated, &(&1 =~ "asc: sum(u.amount)"))
+      assert_compiles(src)
+    end
   end
 
   describe "totality — a degenerate zero-arg macro node yields no mutant, never a crash" do

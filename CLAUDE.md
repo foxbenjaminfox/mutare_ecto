@@ -89,10 +89,12 @@ The surface divides by **how a mutation is delivered**, not by what it mutates:
    whole-`from` rewrites in `Query` and the standalone/pipe rewrites in `Clause`.
 2. **Skipped** (`Bucket 2`) — `schema`/`embedded_schema` bodies. A mutated field name/type is a
    broken schema, not a mutant.
-3. **Hosted DSL** (`Bucket 3`, the heart) — in-fragment `where`/`having` operator swaps. A query
-   clause can't host a runtime `case`, so the host weaves each mutant behind Ecto's `^` + `dynamic`
-   injection (`Mutare.Ecto.Host` + the SQL catalog in `Mutare.Ecto.Fragment`). Exactly one branch
-   bakes into the compiled query per run, selected by `:persistent_term.get(:mutare_active, 0)`.
+3. **Hosted DSL** (`Bucket 3`, the heart) — in-fragment `where`/`having` operator swaps (and the
+   `sum`↔`avg`/`min`↔`max` aggregate swap inside a `having: sum(p.x) > n`). A query clause can't
+   host a runtime `case`, so the host weaves each mutant behind Ecto's `^` + `dynamic` injection
+   (`Mutare.Ecto.Host` + the SQL catalog in `Mutare.Ecto.Fragment`, plus `Mutare.Ecto.Aggregate`
+   for the aggregate). Exactly one branch bakes into the compiled query per run, selected by
+   `:persistent_term.get(:mutare_active, 0)`.
 
 ### Module map (`lib/mutare/ecto/`)
 
@@ -102,9 +104,9 @@ The surface divides by **how a mutation is delivered**, not by what it mutates:
 | `host.ex` | Selector host (#3): `macro_routing/1` + `host/2`, the `^`/`dynamic` weaving |
 | `fragment.ex` | The **SQL-semantics catalog** for `where`/`having` conditions (Comparison, Connective, NullPredicate, Membership, FragmentLiteral, binding-reorder) |
 | `binding_reorder.ex` | Positional binding-reorder (`[a, b]`→`[b, a]`) for the **other** binding-list macros (`select`/`order_by`/`join`/…), delivered in-place; `where`/`having` get theirs via the host. Named bindings are never moved |
-| `query.ex` | Whole-`from` rewrites (clause drop, order flip, bound, join-type, select aggregate) |
+| `query.ex` | Whole-`from` rewrites (clause drop, order flip, bound, join-type, `select`/`order_by` aggregate) |
 | `clause.ex` | Standalone/pipe cousins of `query.ex` (`order_by`/`limit`/`offset`/`select`) |
-| `ordering.ex` / `aggregate.ex` | Shared catalogs used by both `query.ex` and `clause.ex` |
+| `ordering.ex` / `aggregate.ex` | Shared catalogs used by `query.ex`, `clause.ex`, and (aggregate) the `having` host |
 | `repo_aggregate.ex` / `repo_write.ex` / `query_terminal.ex` | Bucket-1 Repo/query-function families |
 | `changeset.ex` | Changeset pipeline drops (`:validation_drop`, `:hook_drop`) |
 | `config.ex` | `families:`/`dialects:` reading + validation; equivalence-sensitive set + note |

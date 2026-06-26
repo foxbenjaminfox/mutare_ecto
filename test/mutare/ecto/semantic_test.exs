@@ -442,6 +442,38 @@ defmodule Mutare.Ecto.SemanticTest do
     end
   end
 
+  describe "Aggregate — `sum` ↔ `avg` in a `having` (dynamic-injected)" do
+    # The hosted twin of the select-aggregate swap: an aggregate inside a `having` rides the same
+    # `^`/`dynamic` host as the operator swaps, so an inert injection is the real risk here too.
+    # Grouped by role, `having: sum(u.age) > 25` keeps the groups whose ages *total* over 25 —
+    # admin (18+40=58) and user (25+18+19=62); swapping `sum` for `avg` re-asks the question of the
+    # group's *mean* (admin 29, user ≈20.7), which drops `user` while keeping `admin`. The surviving
+    # group set changes, proving the woven `dynamic([u], avg(u.age) > 25)` actually ran.
+    test "swapping sum for avg in a having changes which groups survive" do
+      {mod, sites} =
+        build("""
+        defmodule Q do
+          import Ecto.Query
+          alias MyApp.User
+          def q do
+            from u in User,
+              group_by: u.role,
+              having: sum(u.age) > 25,
+              select: u.role
+          end
+        end
+        """)
+
+      baseline = ids(mod, 0)
+      mutant = ids(mod, site_id(sites, {"sum(u.age) > 25", "avg(u.age) > 25"}))
+
+      # sum(age) per role over 25: admin 58, user 62 clear it; mod 17 doesn't.
+      assert baseline == ["admin", "user"]
+      # avg(age) per role over 25: only admin (29); user (≈20.7) and mod (17) fall below.
+      assert mutant == ["admin"]
+    end
+  end
+
   describe "the switch itself" do
     # A guard test for the whole harness: baseline (id 0) really is the *original* query, and an id
     # outside the recorded set falls through the selector's catch-all to the baseline too — so a

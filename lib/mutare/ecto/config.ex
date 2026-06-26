@@ -17,7 +17,8 @@ defmodule Mutare.Ecto.Config do
   #     `order_by`, `join`, … — `Mutare.Ecto.BindingReorder`): a positional binding transposition;
   #   * whole-query / clause-macro: filter_drop (drop a where/having), bound (limit/offset),
   #     ordering (sort direction), ordering_nulls (NULLs placement), join_type,
-  #     aggregate (in `select` and `Repo.aggregate`), query_terminal (`first`↔`last`),
+  #     aggregate (`sum`↔`avg`/`min`↔`max` in `select`/`order_by`/`Repo.aggregate` delivered in
+  #     place, and in a hosted `having` condition via `Mutare.Ecto.Host`), query_terminal (`first`↔`last`),
   #     clause_drop (drop a standalone/pipe order_by/select/join/… stage — `Mutare.Ecto.ClauseDrop`);
   #   * repo write: persistence (insert/update/delete → apply_action), on_conflict (`:nothing`↔`:raise`);
   #   * changeset: validation_drop (validators/constraints), hook_drop (prepare_changes/optimistic_lock).

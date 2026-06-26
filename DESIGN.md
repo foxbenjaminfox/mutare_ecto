@@ -160,7 +160,7 @@ These are the plugin's **own** mutators, applied only inside hosted fragments an
 | **Connective** | `and`↔`or` | Three-valued; killable but its equivalences differ from Elixir's — owned here, never reused from core. |
 | **Membership** | `x in ^list`↔`x not in ^list`; `like`↔`ilike` | Polarity and case-sensitivity. |
 | **Ordering** | `:asc`↔`:desc`; nulls placement `:asc_nulls_first`↔`:asc_nulls_last` | Pinned-keyword delivery. |
-| **Aggregate** | in `select`/`Repo.aggregate`: `sum`↔`avg`, `min`↔`max`; toggle `distinct` | Bucket-1 form for `Repo.aggregate`; hosted form inside a `select`. |
+| **Aggregate** | in `select`/`order_by`/`having`/`Repo.aggregate`: `sum`↔`avg`, `min`↔`max` | In-place whole-`from`/clause rewrite for `select`/`order_by` and the Bucket-1 `Repo.aggregate` atom; **hosted** (`^`/`dynamic`) inside a `having` condition, woven behind the same selector as that condition's operator swaps. (`count` is left alone — an arity/meaning change, not a focused swap.) |
 | **JoinType** | `:inner`↔`:left` (and `:left`↔`:right`) | Changes result cardinality — a strong, killable mutation; only between join kinds the query is structurally valid under. |
 | **Bound** | `limit`/`offset` `n`→`n±1`, drop `limit`/`offset` | Pinned-literal delivery. |
 | **FragmentLiteral** | a *non-pinned* literal inside a fragment (`u.age > 18` → `19`) | The library owns in-fragment literals so it can keep them SQL-safe. |
@@ -224,7 +224,7 @@ Ecto **version sensitivity** is real and owned here: which clauses accept `^dyna
 
 1. **Buckets 1 + 2, zero core dependency.** Repo-call and changeset families + schema-skip, delivered by Mutare as it stands. Ships a useful plugin and proves the `macros/0` + `Calls` + `use`-expansion path end to end.
 2. **The host (Bucket 3 core).** Comparison + NullPredicate + Connective on `where`/`having`, delivered via the #1 host and #2 routing. The distinctive piece; proves `^`/`dynamic` weaving with live mutation against a real Repo.
-3. **Full query catalog.** Ordering, Bound, Membership, JoinType, Aggregate-in-select, FragmentLiteral, plus binding-reorder; the keyword-shorthand shape split and the `nil`-pair exclusion.
+3. **Full query catalog.** Ordering, Bound, Membership, JoinType, Aggregate (in `select`/`order_by` in place and in a hosted `having`), FragmentLiteral, plus binding-reorder; the keyword-shorthand shape split and the `nil`-pair exclusion.
 4. **Equivalence reporting + dialects.** SQL-equivalence annotations, dialect gating, multi-repo, per-family naming.
 5. **Plain-call surface deepening.** More Bucket-1 families on the Repo/changeset/query-function surface, plus the ordering-axis split — no new core extensions.
 6. **Clause-stage removal + threaded-query routing.** Drop a standalone/pipe clause stage (`q |> where(…)` → `q`), and route the threaded query `:expression` so a pipe stage no longer suppresses upstream mutation — no new core extensions.
