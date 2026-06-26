@@ -65,6 +65,7 @@ defmodule Mutare.Ecto.Query do
   @spec mutations(Macro.t(), keyword()) :: [{family(), Macro.t()}]
   def mutations(node, opts \\ [])
 
+  # mutare:ignore[guard_drop] equivalent — a from's clause argument is always a keyword list; a non-list is malformed AST (a `from(S)` with no clauses is a one-element arg list, caught by the fallthrough clause)
   def mutations({:from, meta, [source, clauses]}, opts) when is_list(clauses) do
     Enum.concat([
       tag(:filter_drop, drops(meta, source, clauses, @droppable)),
@@ -177,6 +178,8 @@ defmodule Mutare.Ecto.Query do
   end
 
   defp clause_key({key, _value}), do: AST.atom_value(key)
+
+  # mutare:ignore[clause_drop] equivalent — a Sourceror-parsed from clause list is all `key: value` pairs, so the non-pair fallback is unreachable from valid Ecto
   defp clause_key(_node), do: nil
 
   defp clause_value({_key, value}), do: value

@@ -217,4 +217,49 @@ defmodule Mutare.Ecto.QueryTest do
       assert Enum.any?(mutated, &(&1 =~ "min(p.views)"))
     end
   end
+
+  # Each whole-`from` family keys off a specific clause type. These pin that the gate is the clause
+  # *key*, not merely the clause *value's shape* — a constant in a `select`, an aggregate in a
+  # `having`, or a direction in a `distinct` must not be mutated as if it were the gated clause.
+  describe "clause gates — a family fires only on its own clause key" do
+    defp mutations(code) do
+      code
+      |> Sourceror.parse_string!()
+      |> Mutare.Ecto.Query.mutations()
+      |> Enum.map(fn {family, node} -> {family, Sourceror.to_string(node)} end)
+    end
+
+    test "bound bumps fire only on limit/offset, not another integer-valued clause" do
+      bounds = for {:bound, m} <- mutations("from(p in Post, select: 1, limit: 10)"), do: m
+
+      # The literal `10` bumps both ways; the `select: 1` constant is never bumped.
+      assert "from(p in Post, select: 1, limit: 11)" in bounds
+      assert "from(p in Post, select: 1, limit: 9)" in bounds
+      refute Enum.any?(bounds, &(&1 =~ "select: 2" or &1 =~ "select: 0"))
+    end
+
+    test "aggregate swaps fire only on select/select_merge, not an aggregate elsewhere" do
+      aggs =
+        for {:aggregate, m} <-
+              mutations("from(p in Post, having: sum(p.x) > 5, select: avg(p.y))"),
+            do: m
+
+      # `avg` in the select swaps; the `sum` inside `having` is left alone.
+      assert "from(p in Post, having: sum(p.x) > 5, select: sum(p.y))" in aggs
+      refute Enum.any?(aggs, &(&1 =~ "having: avg"))
+    end
+
+    test "order flips fire only on order_by, not a direction in another clause" do
+      flips =
+        for {family, m} <-
+              mutations("from(p in Post, distinct: [desc: p.id], order_by: [asc: p.name])"),
+            family in [:ordering, :ordering_nulls],
+            do: m
+
+      # The order_by direction flips; the `distinct: [desc: p.id]` direction is left alone — so no
+      # mutant flips it to `asc: p.id` (the flipped value renders bracket-less, like the order_by).
+      assert Enum.any?(flips, &(&1 =~ "order_by: desc: p.name"))
+      refute Enum.any?(flips, &(&1 =~ "asc: p.id"))
+    end
+  end
 end
