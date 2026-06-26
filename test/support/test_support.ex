@@ -20,13 +20,13 @@ defmodule Mutare.Ecto.TestSupport do
   @doc """
   Assert the metamutant embedding every mutant of `source` compiles (the single-build net).
 
-  The top-level module name is made unique per call first: `assert_metamutant_compiles`
-  compiles through the global `Code.compile_string`, so two `async: true` tests that both
-  define, say, `defmodule Posts` would race the compiler ("cannot compile module Posts") —
-  the module name is irrelevant to what we assert, so we sidestep the clash entirely.
+  Delegates straight to `Mutare.Test.assert_metamutant_compiles/2`, which compiles the metamutant
+  inside a uniquely-named wrapper module — so two `async: true` tests that both define, say,
+  `defmodule Posts` can't race the global compiler ("cannot compile module Posts"), with no source
+  rewriting on our side.
   """
   def assert_compiles(source, opts \\ []),
-    do: source |> uniquify_module() |> Mutare.Test.assert_metamutant_compiles(mutators(opts))
+    do: Mutare.Test.assert_metamutant_compiles(source, mutators(opts))
 
   @doc "The rendered metamutant source for `source` — for `=~` checks on the woven scaffolding."
   def metamutant(source, opts \\ []) do
@@ -34,22 +34,6 @@ defmodule Mutare.Ecto.TestSupport do
       Mutare.transform_string(source, mutators: mutators(opts), expand_uses: true)
 
     metamutant
-  end
-
-  @doc """
-  Append a per-call unique suffix to the source's top-level module name.
-
-  Both `assert_compiles/2` and the semantic harness compile through the global
-  `Code.compile_string`, so two tests that both define, say, `defmodule Posts` would otherwise race
-  the compiler ("cannot compile module Posts"). Only the first `defmodule <Name>` is rewritten; the
-  query schema/Repo aliases the body references are untouched (they are external, not the unit under
-  compilation).
-  """
-  def uniquify_module(source) do
-    suffix = System.unique_integer([:positive])
-    # `\g{1}` (not `\1`) delimits the backreference so the trailing suffix digits aren't read
-    # as part of the group number.
-    String.replace(source, ~r/defmodule\s+([\w.]+)/, "defmodule \\g{1}#{suffix}", global: false)
   end
 
   @doc """
