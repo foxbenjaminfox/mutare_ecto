@@ -160,4 +160,28 @@ defmodule Mutare.Ecto.BindingReorderTest do
       assert_compiles(src)
     end
   end
+
+  describe "the reorder catalog directly (mutations/1)" do
+    defp reorder_renders(code) do
+      code
+      |> Sourceror.parse_string!()
+      |> Mutare.Ecto.BindingReorder.mutations()
+      |> Enum.map(fn {:binding_reorder, node} -> Sourceror.to_string(node) end)
+    end
+
+    test "two referenced positional bindings yield exactly one swap (the unordered pair, once)" do
+      # `[a, b]` both referenced → the lone transposition `[b, a]`. The pair is visited exactly once:
+      # not as the (a,a)/(b,b) no-op self-swaps, nor as both (a,b) and (b,a). A count of one is the
+      # discriminator (the `i < j` bound), so it is asserted as an exact, single-element list.
+      assert reorder_renders("select(q, [a, b], [a.x, b.y])") == ["select(q, [b, a], [a.x, b.y])"]
+    end
+
+    test "a list of field accesses / atoms is not a binding list (no swap, no crash)" do
+      # find_binding_list tests every list argument with binding_entry?; a select/group_by list of
+      # field accesses or field names has no variable entries, so it is never mistaken for a binding
+      # list — the entry predicate's fallback must return false, not raise on the non-binding shape.
+      assert reorder_renders("select(q, [u.x, u.y])") == []
+      assert reorder_renders("group_by(q, [:id, :name])") == []
+    end
+  end
 end
