@@ -42,6 +42,8 @@ defmodule Mutare.Ecto.ClauseDrop do
 
   alias Mutare.Ecto.{AST, StageDrop}
 
+  @behaviour Mutare.Ecto.SubMutator
+
   # The resolved-call module key `Mutare.Transform.Calls` returns for an `Ecto.Query` call, derived
   # from the canonical `AST.module_key/1` rather than hardcoding its `[:Ecto, :Query]` split form.
   @query_key AST.module_key(Ecto.Query)
@@ -63,6 +65,7 @@ defmodule Mutare.Ecto.ClauseDrop do
   Pipe-aware: the `pipe_mode` from `context` decides identity-vs-first-argument delivery.
   """
   @spec mutations(Macro.t(), Mutare.Mutator.context()) :: [{atom(), Macro.t()}]
+  @impl Mutare.Ecto.SubMutator
   def mutations(node, %{pipe_mode: pipe_mode}),
     do: StageDrop.mutations(node, @query_key, &family/1, pipe_mode)
 

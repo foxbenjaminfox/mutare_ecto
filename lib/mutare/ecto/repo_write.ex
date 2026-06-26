@@ -41,6 +41,8 @@ defmodule Mutare.Ecto.RepoWrite do
   alias Mutare.Ecto.{AST, Config}
   alias Mutare.Transform.Calls
 
+  @behaviour Mutare.Ecto.SubMutator
+
   # Alias-proof reference to `Ecto.Changeset`: the metamutant recompiles in the *author's* module,
   # whose aliases we don't control — a bare `Ecto.Changeset` there can be shadowed by a submodule
   # (`defmodule Ecto.Changeset` nested in `Foo` aliases `Ecto`→`Foo.Ecto`) or a plain
@@ -69,6 +71,7 @@ defmodule Mutare.Ecto.RepoWrite do
 
   @doc "RepoWrite mutations for `node` as `{family, node}` pairs, or `[]`."
   @spec mutations(Macro.t(), Mutare.Mutator.context()) :: [{atom(), Macro.t()}]
+  @impl Mutare.Ecto.SubMutator
   def mutations(node, %{opts: opts, pipe_mode: pipe_mode}) do
     with repo when not is_nil(repo) <- Config.repo_key(opts),
          {^repo, fun, args, rebuild} <- Calls.resolved_call(node) do

@@ -22,9 +22,12 @@ defmodule Mutare.Ecto.QueryTerminal do
   @swaps %{first: :last, last: :first}
   @terminals Map.keys(@swaps)
 
+  @behaviour Mutare.Ecto.SubMutator
+
   @doc "First↔last swap for an `Ecto.Query` terminal call as a `{:query_terminal, node}` pair, or `[]`."
-  @spec mutations(Macro.t()) :: [{:query_terminal, Macro.t()}]
-  def mutations(node) do
+  @spec mutations(Macro.t(), Mutare.Mutator.context()) :: [{:query_terminal, Macro.t()}]
+  @impl Mutare.Ecto.SubMutator
+  def mutations(node, _context) do
     case Calls.resolved_call(node) do
       {@query_key, fun, args, rebuild} when fun in @terminals ->
         [{:query_terminal, rebuild.(@swaps[fun], args)}]

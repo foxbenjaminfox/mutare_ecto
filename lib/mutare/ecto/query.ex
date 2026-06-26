@@ -35,6 +35,8 @@ defmodule Mutare.Ecto.Query do
 
   alias Mutare.Ecto.{Aggregate, AST, Config, Ordering}
 
+  @behaviour Mutare.Ecto.SubMutator
+
   @type family :: atom()
 
   @droppable ~w(where having or_where or_having)a
@@ -63,11 +65,10 @@ defmodule Mutare.Ecto.Query do
   @full_join_dialects [:postgres, :sqlite]
 
   @doc "Whole-`from` mutations for a `from(...)` node as `{family, node}` pairs, or `[]`."
-  @spec mutations(Macro.t(), keyword()) :: [{family(), Macro.t()}]
-  def mutations(node, opts \\ [])
-
+  @spec mutations(Macro.t(), Mutare.Mutator.context()) :: [{family(), Macro.t()}]
+  @impl Mutare.Ecto.SubMutator
   # mutare:ignore[guard_drop] equivalent — a from's clause argument is always a keyword list; a non-list is malformed AST (a `from(S)` with no clauses is a one-element arg list, caught by the fallthrough clause)
-  def mutations({:from, meta, [source, clauses]}, opts) when is_list(clauses) do
+  def mutations({:from, meta, [source, clauses]}, %{opts: opts}) when is_list(clauses) do
     Enum.concat([
       tag(:filter_drop, drops(meta, source, clauses, @droppable)),
       tag(:bound, drops(meta, source, clauses, @bound_keys)),
@@ -78,7 +79,7 @@ defmodule Mutare.Ecto.Query do
     ])
   end
 
-  def mutations(_node, _opts), do: []
+  def mutations(_node, _context), do: []
 
   defp tag(family, nodes), do: Enum.map(nodes, &{family, &1})
 

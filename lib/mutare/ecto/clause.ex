@@ -30,12 +30,15 @@ defmodule Mutare.Ecto.Clause do
 
   alias Mutare.Ecto.{Aggregate, AST, Ordering}
 
+  @behaviour Mutare.Ecto.SubMutator
+
   @bound_macros ~w(limit offset)a
   @select_macros ~w(select select_merge)a
 
   @doc "Standalone/pipe clause-macro mutations for `node` as `{family, node}` pairs, or `[]`."
-  @spec mutations(Macro.t()) :: [{atom(), Macro.t()}]
-  def mutations({:order_by, meta, args}) when is_list(args) and args != [] do
+  @spec mutations(Macro.t(), Mutare.Mutator.context()) :: [{atom(), Macro.t()}]
+  @impl Mutare.Ecto.SubMutator
+  def mutations({:order_by, meta, args}, _context) when is_list(args) and args != [] do
     {init, [ordering]} = Enum.split(args, -1)
 
     flips =
@@ -50,7 +53,7 @@ defmodule Mutare.Ecto.Clause do
     flips ++ aggregates
   end
 
-  def mutations({macro, meta, args})
+  def mutations({macro, meta, args}, _context)
       when macro in @bound_macros and is_list(args) and args != [] do
     {init, [value]} = Enum.split(args, -1)
 
@@ -63,11 +66,11 @@ defmodule Mutare.Ecto.Clause do
     end
   end
 
-  def mutations({macro, meta, args})
+  def mutations({macro, meta, args}, _context)
       when macro in @select_macros and is_list(args) and args != [] do
     {init, [expr]} = Enum.split(args, -1)
     for swapped <- Aggregate.swaps(expr), do: {:aggregate, {macro, meta, init ++ [swapped]}}
   end
 
-  def mutations(_node), do: []
+  def mutations(_node, _context), do: []
 end

@@ -179,7 +179,7 @@ defmodule Mutare.Ecto.BindingReorderTest do
     defp reorder_renders(code) do
       code
       |> Sourceror.parse_string!()
-      |> Mutare.Ecto.BindingReorder.mutations()
+      |> Mutare.Ecto.BindingReorder.mutations(%{})
       |> Enum.map(fn {:binding_reorder, node} -> Sourceror.to_string(node) end)
     end
 

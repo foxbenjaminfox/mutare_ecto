@@ -26,6 +26,8 @@ defmodule Mutare.Ecto.Changeset do
 
   alias Mutare.Ecto.{AST, StageDrop}
 
+  @behaviour Mutare.Ecto.SubMutator
+
   # The resolved-call module key `Mutare.Transform.Calls` returns for an `Ecto.Changeset` call,
   # derived from the canonical `AST.module_key/1` rather than hardcoding its split form.
   @changeset_key AST.module_key(Ecto.Changeset)
@@ -51,6 +53,7 @@ defmodule Mutare.Ecto.Changeset do
   """
   @spec mutations(Macro.t(), Mutare.Mutator.context()) ::
           [{:validation_drop | :hook_drop, Macro.t()}]
+  @impl Mutare.Ecto.SubMutator
   def mutations(node, %{pipe_mode: pipe_mode}),
     do: StageDrop.mutations(node, @changeset_key, &family/1, pipe_mode)
 

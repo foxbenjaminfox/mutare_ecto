@@ -223,7 +223,7 @@ defmodule Mutare.Ecto.ClauseTest do
     # `select()` (no query, no value) is the degenerate node that exercises that guard.
     test "an empty-args order_by / limit / select returns []" do
       for code <- ["order_by()", "limit()", "offset()", "select()", "select_merge()"] do
-        assert Mutare.Ecto.Clause.mutations(Sourceror.parse_string!(code)) == [],
+        assert Mutare.Ecto.Clause.mutations(Sourceror.parse_string!(code), %{}) == [],
                "expected no mutant for #{code}"
       end
     end

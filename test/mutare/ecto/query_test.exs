@@ -237,7 +237,7 @@ defmodule Mutare.Ecto.QueryTest do
     defp mutations(code) do
       code
       |> Sourceror.parse_string!()
-      |> Mutare.Ecto.Query.mutations()
+      |> Mutare.Ecto.Query.mutations(%{opts: []})
       |> Enum.map(fn {family, node} -> {family, Sourceror.to_string(node)} end)
     end
 

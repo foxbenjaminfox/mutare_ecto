@@ -18,11 +18,14 @@ defmodule Mutare.Ecto.RepoAggregate do
   alias Mutare.Ecto.{Aggregate, AST, Config}
   alias Mutare.Transform.Calls
 
+  @behaviour Mutare.Ecto.SubMutator
+
   # The aggregate's effective argument position: aggregate(queryable, agg, field) → 1.
   @agg_position 1
 
   @doc "Aggregate-swap mutations for a `Repo.aggregate/3` node as `{:aggregate, node}` pairs, or `[]`."
   @spec mutations(Macro.t(), Mutare.Mutator.context()) :: [{:aggregate, Macro.t()}]
+  @impl Mutare.Ecto.SubMutator
   def mutations(node, %{opts: opts, pipe_mode: pipe_mode}) do
     with repo when not is_nil(repo) <- Config.repo_key(opts),
          {^repo, :aggregate, args, rebuild} <- Calls.resolved_call(node) do

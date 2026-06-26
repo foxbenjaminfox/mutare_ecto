@@ -24,14 +24,17 @@ defmodule Mutare.Ecto.BindingReorder do
 
   alias Mutare.Ecto.{AST, Binding, Host}
 
+  @behaviour Mutare.Ecto.SubMutator
+
   @doc "Binding-reorder mutants for `node` as `{:binding_reorder, node}` pairs, or `[]`."
-  @spec mutations(Macro.t()) :: [{:binding_reorder, Macro.t()}]
+  @spec mutations(Macro.t(), Mutare.Mutator.context()) :: [{:binding_reorder, Macro.t()}]
+  @impl Mutare.Ecto.SubMutator
   # mutare:ignore[guard_drop] equivalent — `args` is a `{form, meta, args}` node's argument slot, always a list; the guard is redundant
-  def mutations({macro, meta, args}) when is_list(args) do
+  def mutations({macro, meta, args}, _context) when is_list(args) do
     if macro in Host.clause_macros(), do: reorders(macro, meta, args), else: []
   end
 
-  def mutations(_node), do: []
+  def mutations(_node, _context), do: []
 
   # One mutant per pair of *positional* bindings both referenced in the body (the arguments after
   # the binding list — where `from`-less macros reference their bindings). The binding list itself

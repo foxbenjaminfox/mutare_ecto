@@ -159,27 +159,29 @@ defmodule Mutare.Ecto do
   @impl Mutare.Mutator
   defdelegate host(node, context), to: Host
 
+  # The sub-mutators dispatched by `mutate/2`, each a `Mutare.Ecto.SubMutator` (uniform
+  # `mutations(node, context)`). A node is offered to every one; the configured Repo (RepoAggregate/
+  # RepoWrite), pipe shape (the drops), and `families:`/`dialects:` all ride the shared context.
+  @submutators [
+    Query,
+    Clause,
+    BindingReorder,
+    ClauseDrop,
+    QueryTerminal,
+    RepoAggregate,
+    RepoWrite,
+    Changeset
+  ]
+
   # Every node mutation runs through `mutate/2` (not `mutate/1`), because all of them now read
   # `context.opts` — the `families:` filter (every family is independently toggleable) and the
-  # `dialects:` gate (so a non-portable mutation only fires under a supporting adapter). The
-  # sub-mutators return `{family, node}` pairs; the configured Repo (RepoAggregate) and pipe
-  # shape (Changeset) come from the same context.
+  # `dialects:` gate (so a non-portable mutation only fires under a supporting adapter).
   @impl Mutare.Mutator
   def mutate(_node), do: :skip
 
   @impl Mutare.Mutator
   def mutate(node, %{opts: opts} = context) do
-    tagged =
-      Enum.concat([
-        Query.mutations(node, opts),
-        Clause.mutations(node),
-        BindingReorder.mutations(node),
-        ClauseDrop.mutations(node, context),
-        QueryTerminal.mutations(node),
-        RepoAggregate.mutations(node, context),
-        RepoWrite.mutations(node, context),
-        Changeset.mutations(node, context)
-      ])
+    tagged = Enum.flat_map(@submutators, & &1.mutations(node, context))
 
     case for {family, mutated} <- tagged,
              Config.family_enabled?(opts, family),
