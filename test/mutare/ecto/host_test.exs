@@ -2,6 +2,7 @@ defmodule Mutare.Ecto.HostTest do
   use ExUnit.Case, async: true
 
   import Mutare.Ecto.TestSupport
+  alias Mutare.Ecto.Host
 
   # The localized `where`/`having` mutations the selector host delivers via Ecto's `^`/`dynamic`
   # injection. These tests prove three things end to end: the right call positions route `:hosted`,
@@ -339,6 +340,144 @@ defmodule Mutare.Ecto.HostTest do
       # The named binding is still re-declared faithfully so the fragment compiles.
       assert metamutant(src) =~ "[u, p, comments: c]"
       assert_compiles(src)
+    end
+  end
+
+  # The end-to-end tests above confirm *delivery*; the blocks below pin the two public entry
+  # points directly — the per-argument treatment list `macro_routing/1` returns, and the target
+  # set `host/2` builds — so the routing/shape predicates are exercised on their own, not only
+  # incidentally through a compiled metamutant.
+
+  describe "the registered macro lists" do
+    test "condition_macros are the where/having family" do
+      assert Host.condition_macros() == ~w(where or_where having or_having)a
+    end
+
+    test "clause_macros are the plain composable builders" do
+      assert Host.clause_macros() ==
+               ~w(select select_merge order_by group_by distinct limit offset join preload
+                  lock with_cte windows union union_all except intersect)a
+    end
+  end
+
+  describe "macro_routing/1 — per-argument treatment" do
+    defp routing(code), do: code |> Sourceror.parse_string!() |> Host.macro_routing()
+
+    test "from keyword form: a binding source hosts its clause argument" do
+      assert routing("from(u in User, where: u.x == u.y, select: u.id)") == [:skip, :hosted]
+    end
+
+    test "from keyword form: a bindingless source routes where-shorthand values per-pair" do
+      # The `where:` value is a keyword list → `{:keyword, [:pinned]}` (core mutates the scalar,
+      # `^`-pinned); `select:` is not a condition key → `:skip`. The order_by variant proves a
+      # *non-condition* clause whose value is itself a keyword list still routes `:skip`, not the
+      # condition treatment (pins the `key in @condition_keys` test, not just "has a kw value").
+      assert routing(~s|from("users", where: [active: true], select: [:id])|) ==
+               [:skip, {:keyword, [{:keyword, [:pinned]}, :skip]}]
+
+      assert routing(~s|from("t", where: [a: 1], order_by: [asc: :x])|) ==
+               [:skip, {:keyword, [{:keyword, [:pinned]}, :skip]}]
+
+      assert routing(~s|from("users", select: [:id])|) == [:skip, {:keyword, [:skip]}]
+    end
+
+    test "shorthand pair values: scalars pin, nil/interpolation/compound stay raw" do
+      assert routing(~s|where(q, name: "x", age: 5, tag: :a, active: true)|) ==
+               [:expression, {:keyword, [:pinned, :pinned, :pinned, :pinned]}]
+
+      # nil is an `IS NULL` (never `= nil`); `^v` is already interpolated; a list/field is compound
+      # — all raw. (Pins nil_literal?/scalar_literal? and the pair_value_treatment cond.)
+      assert routing(~s|where(q, a: nil, b: ^v, c: [1, 2], d: u.x)|) ==
+               [:expression, {:keyword, [:skip, :skip, :skip, :skip]}]
+    end
+
+    test "condition macros (direct + piped) host the condition after the binding list" do
+      assert routing("where(query, [u], u.x == u.y)") == [:expression, :skip, :hosted]
+      assert routing("having(query, [u], u.x == u.y)") == [:expression, :skip, :hosted]
+      # piped form — the binding list is the first *argument* (the query is the `|>` LHS).
+      assert routing("where([u], u.x == u.y)") == [:skip, :hosted]
+      # a piped query as the first arg is still recognized as the threaded expression.
+      assert routing("where(q |> sub(), [u], u.x == u.y)") == [:expression, :skip, :hosted]
+    end
+
+    test "condition macro with no condition after the binding list hosts nothing" do
+      # condition_index requires an argument *after* the binding list, so a binding-only call
+      # never marks a position `:hosted`.
+      assert routing("where([u])") == [:skip]
+      assert routing("where(q, [u])") == [:expression, :skip]
+    end
+
+    test "a shorthand condition macro routes its trailing pairs per-pair" do
+      assert routing("where(query, active: true)") == [:expression, {:keyword, [:pinned]}]
+    end
+
+    test "plain clause macros thread the query and leave every data position raw" do
+      assert routing("limit(query, 10)") == [:expression, :skip]
+      assert routing("order_by(query, [u], asc: u.x)") == [:expression, :skip, :skip]
+
+      # the threaded query is recognized as a bare var, a from(…), or a pipe — each → :expression.
+      assert routing("select(q, [u], u.id)") == [:expression, :skip, :skip]
+      assert routing("select(from(u in User), [u], u.id)") == [:expression, :skip, :skip]
+      assert routing("select(q |> base(), [u], u.id)") == [:expression, :skip, :skip]
+    end
+
+    test "a piped clause macro's first data argument is not the query" do
+      # `q |> limit(10)` → `limit(10)`: the `10` is a bound, not the threaded query, so `:skip`.
+      assert routing("limit(10)") == [:skip]
+    end
+
+    test "a non-routing macro yields []" do
+      assert routing("foobar(query, 1)") == []
+    end
+
+    test "an empty list is neither a binding list nor a shorthand keyword list" do
+      # `[]` must not be mistaken for a binding list (so it never marks a `:hosted` position) nor
+      # for shorthand pairs (so it never becomes a `{:keyword, …}` overlay) — both reduce to a raw
+      # data argument.
+      assert routing("where(q, [])") == [:expression, :skip]
+      assert routing("where(q, [], u.x == u.y)") == [:expression, :skip, :skip]
+    end
+  end
+
+  describe "host/2 — the target set" do
+    defp host_originals(code) do
+      code
+      |> Sourceror.parse_string!()
+      |> Host.host(%{opts: [repo: MyApp.Repo]})
+    end
+
+    test "a from hosts one target per catalog-mutatable where/having condition" do
+      [t] = host_originals("from(u in User, where: u.x == u.y, select: u.id)")
+      assert Sourceror.to_string(t.original) == "u.x == u.y"
+      assert t.mutants != []
+    end
+
+    test "multiple conditions each become their own target, in clause order" do
+      targets = host_originals("from(u in User, where: u.x == u.y, having: u.a > u.b)")
+      assert Enum.map(targets, &Sourceror.to_string(&1.original)) == ["u.x == u.y", "u.a > u.b"]
+      assert Enum.all?(targets, &(&1.mutants != []))
+    end
+
+    test "the direct and piped where/having forms each host their condition" do
+      for code <- ["where(query, [u], u.x == u.y)", "having(query, [u], u.x == u.y)"] do
+        assert [t] = host_originals(code)
+        assert Sourceror.to_string(t.original) == "u.x == u.y"
+        assert t.mutants != []
+      end
+    end
+
+    test "nothing hostable yields no targets" do
+      assert host_originals(~s|from("users", where: [active: true])|) == []
+      assert host_originals("limit(query, 10)") == []
+      assert host_originals("from(u in User, select: u.id)") == []
+    end
+
+    test "host tolerates a context without :opts (families default to all)" do
+      # `opts/1` falls back to `[]` for a context lacking `:opts`, so the host still builds its
+      # targets rather than crashing — `[]` reads as the default `:all` families downstream.
+      node = Sourceror.parse_string!("from(u in User, where: u.x == u.y, select: u.id)")
+      assert [t] = Host.host(node, %{})
+      assert Sourceror.to_string(t.original) == "u.x == u.y"
     end
   end
 

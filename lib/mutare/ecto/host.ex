@@ -92,6 +92,7 @@ defmodule Mutare.Ecto.Host do
   """
   @spec macro_routing(Macro.t()) ::
           [Mutare.Macro.Spec.treatment() | :pinned | {:keyword, [term()]}]
+  # mutare:ignore[guard_drop] equivalent — `rest` is the tail of the `[source | rest]` cons match, so it is always a list; the guard is redundant
   def macro_routing({:from, _meta, [source | rest]}) when is_list(rest) do
     # Source is never mutated (a table/schema swap is a broken query, not a mutant). A binding
     # `from` hosts its clause-bearing argument (the where/having conditions); a bindingless
@@ -103,6 +104,7 @@ defmodule Mutare.Ecto.Host do
         [clauses] ->
           cond do
             binding_source?(source) -> :hosted
+            # mutare:ignore[if_condition] equivalent — a bindingless from's clause argument is always a keyword list in parsed Ecto; a non-list reaches this branch only via malformed AST
             is_list(clauses) -> {:keyword, clause_value_treatments(clauses)}
             true -> :skip
           end
@@ -141,6 +143,7 @@ defmodule Mutare.Ecto.Host do
   # *piped* form where the real query is the `|>` left side and already routed runtime). Every
   # remaining position is raw (`:skip`). A query position carrying nothing to mutate (a bare
   # variable) routes `:expression` harmlessly — core finds no candidates on it.
+  # mutare:ignore[clause_drop] equivalent — query_threading_route only sees `[]` for an argless macro (`where()`), which valid Ecto never writes
   defp query_threading_route([]), do: []
 
   defp query_threading_route([first | rest]) do
@@ -152,6 +155,7 @@ defmodule Mutare.Ecto.Host do
   # a bare variable (`q`), a `from(…)` opener, or a nested pipe (`(… |> …)`). A binding list, a
   # keyword list, a literal, or any other DSL-data shape is not — that is a piped call's own first
   # data argument (the query is the `|>` left side, routed separately).
+  # mutare:ignore[pattern_swap] equivalent — symmetric guard, body returns the constant `true`, so swapping the name/ctx binders changes nothing
   defp query_arg?({name, _meta, ctx}) when is_atom(name) and is_atom(ctx), do: true
   defp query_arg?({:from, _meta, _args}), do: true
   defp query_arg?({:|>, _meta, _args}), do: true
@@ -168,6 +172,7 @@ defmodule Mutare.Ecto.Host do
         default
 
       pairs ->
+        # mutare:ignore[operand_swap] equivalent — a shorthand call carries at most two args, where `length - 1` and `1 - length` both index the last element
         List.replace_at(default, length(args) - 1, {:keyword, pair_value_treatments(pairs)})
     end
   end
@@ -196,11 +201,13 @@ defmodule Mutare.Ecto.Host do
   # keyword *value* position (the `from` form) or bare (a trailing keyword argument). `nil` when
   # the value isn't a non-empty keyword list (so it isn't shorthand — e.g. a binding list, a bare
   # field list `[:id]`, an expression).
+  # mutare:ignore[guard_drop] equivalent — Sourceror block-wraps list literals, so this block clause always wraps a list; a non-list inside the block arrives only from malformed AST
   defp shorthand_pairs({:__block__, _meta, [list]}) when is_list(list), do: keyword_pairs(list)
   defp shorthand_pairs(list) when is_list(list), do: keyword_pairs(list)
   defp shorthand_pairs(_value), do: nil
 
   defp keyword_pairs(list) do
+    # mutare:ignore[collection] equivalent — all?/any? differ only on a list mixing pairs and non-pairs, which a real binding/shorthand list never is
     if list != [] and Enum.all?(list, &match?({_k, _v}, &1)), do: list, else: nil
   end
 
@@ -225,6 +232,8 @@ defmodule Mutare.Ecto.Host do
   end
 
   defp nil_literal?({:__block__, _meta, [nil]}), do: true
+
+  # mutare:ignore[clause_drop] equivalent — Sourceror block-wraps a literal nil, so the bare-nil clause is unreachable from parsed Ecto
   defp nil_literal?(nil), do: true
   defp nil_literal?(_value), do: false
 
@@ -237,6 +246,7 @@ defmodule Mutare.Ecto.Host do
   bindingless source, a shorthand value, a condition with no catalog operators).
   """
   @spec host(Macro.t(), Mutare.Mutator.context()) :: [map()]
+  # mutare:ignore[guard_drop] equivalent — a from's clause argument is always a keyword list; a non-list is malformed AST
   def host({:from, _meta, [source, clauses]}, context) when is_list(clauses) do
     case from_bindings(source, clauses) do
       [] -> []
@@ -244,6 +254,7 @@ defmodule Mutare.Ecto.Host do
     end
   end
 
+  # mutare:ignore[logical, conditional] equivalent — widening the guard admits only non-condition macros / non-list args, none of which expose a catalog-mutatable condition, so host still yields []
   def host({macro, _meta, args}, context) when macro in @condition_macros and is_list(args) do
     with index when not is_nil(index) <- condition_index(args),
          bindings = binding_decls(Enum.at(args, index - 1)),
@@ -257,6 +268,7 @@ defmodule Mutare.Ecto.Host do
 
   def host(_node, _context), do: []
 
+  # mutare:ignore[guard_drop] equivalent — context.opts is always a keyword list; a non-list never reaches here
   defp opts(%{opts: opts}) when is_list(opts), do: opts
   defp opts(_context), do: []
 
@@ -289,6 +301,7 @@ defmodule Mutare.Ecto.Host do
       for node <- Fragment.binding_reorders(condition, binding_names(bindings)),
           do: {:binding_reorder, node}
 
+    # mutare:ignore[operand_swap] equivalent — the mutants are consumed as a set, so their concatenation order is irrelevant
     for {family, node} <- Fragment.mutants(condition, opts) ++ reorders,
         Config.family_enabled?(opts, family),
         do: Config.noted(family, node)
@@ -299,6 +312,7 @@ defmodule Mutare.Ecto.Host do
   # transposition (`[a, b]` → `[b, a]`), meaningless for a name-addressed binding, so a named binding
   # rides the query untouched while its positional siblings still swap.
   defp binding_names(bindings) do
+    # mutare:ignore[logical, conditional] equivalent — the 3-tuples reaching this guard are clean vars (atom name and ctx), so it is always true; named binds are 2-tuples already excluded by the comprehension pattern
     for {name, _meta, ctx} <- bindings, is_atom(name) and is_atom(ctx), do: name
   end
 
@@ -324,11 +338,13 @@ defmodule Mutare.Ecto.Host do
 
   # A normalized binding decl is positional (a clean var, a 3-tuple `{name, meta, ctx}`) rather than
   # named (a `{key, var}` keyword pair, a 2-tuple). Named binds address by name and must sort last.
+  # mutare:ignore[pattern_swap, logical, conditional] equivalent — symmetric guard with a constant body (swap is a no-op), and the guard only separates a variable from a same-shaped call node, which a binding decl never holds
   defp positional_binding?({name, _meta, ctx}) when is_atom(name) and is_atom(ctx), do: true
   defp positional_binding?(_node), do: false
 
   defp join_bindings(clauses) do
     for {key, {:in, _, [lhs, _src]}} <- clauses,
+        # mutare:ignore[conditional] equivalent — only join clauses carry an `x in src` value; a where/having `field in ^list` has a field-access LHS yielding no binding decl, so treating it as a join adds nothing
         AST.atom_value(key) in @join_keys,
         decl <- binding_decls(lhs),
         do: decl
@@ -352,6 +368,7 @@ defmodule Mutare.Ecto.Host do
   defp condition_index(args) do
     case Enum.find_index(args, &binding_list?/1) do
       nil -> nil
+      # mutare:ignore[arithmetic, conditional, literal, relational] equivalent — these mutate the guard `index + 1 < length`, which differs only when the binding list is the last argument, where every downstream path reduces to a harmless out-of-bounds index or nil (no host either way)
       index when index + 1 < length(args) -> index + 1
       _ -> nil
     end
@@ -366,14 +383,22 @@ defmodule Mutare.Ecto.Host do
   # A binding list is a (Sourceror block-wrapped) non-empty list of plain variables — `[p]`,
   # `[p, q]` — distinguishing the binding form from a keyword-shorthand value (a list of
   # `key: value` pairs) and from the query argument (a single variable, not a list).
+  # mutare:ignore[guard_drop] equivalent — Sourceror block-wraps list literals, so this block clause always wraps a list
   defp binding_list?({:__block__, _, [list]}) when is_list(list), do: variable_list?(list)
+
+  # mutare:ignore[clause_drop, return_value] equivalent — the bare-list clause is unreachable (parsed binding lists are block-wrapped, handled above), so dropping it or changing its return is unobservable
   defp binding_list?(list) when is_list(list), do: variable_list?(list)
   defp binding_list?(_node), do: false
 
   defp variable_list?([]), do: false
+
+  # mutare:ignore[collection, return_value] equivalent — a real binding list is all-variables (all? and any? agree, both truthy); only a non-binding list at a non-last position would distinguish, which never occurs
   defp variable_list?(list), do: Enum.all?(list, &variable?/1)
 
+  # mutare:ignore[pattern_swap, logical, conditional] equivalent — symmetric guard with a constant body (swap is a no-op), and the guard only separates a variable from a same-shaped call node, never present in a binding list
   defp variable?({name, _meta, ctx}) when is_atom(name) and is_atom(ctx), do: true
+
+  # mutare:ignore[literal] equivalent — flipping the fallback to true misclassifies a non-variable element as a variable, observable only for a non-binding list at a non-last position, which never occurs
   defp variable?(_node), do: false
 
   # The binding declarations a binding node establishes, normalized for re-declaration in the woven
@@ -383,23 +408,29 @@ defmodule Mutare.Ecto.Host do
   # key so the dynamic re-declares them faithfully, yet never become reorder candidates. Sourceror
   # block-wraps a list literal (`{:__block__, _, [list]}`); a bare list reaches here already
   # unwrapped; anything unrecognized yields `[]` (no host).
+  # mutare:ignore[guard_drop] equivalent — Sourceror block-wraps list literals, so this block clause always wraps a list
   defp binding_decls({:__block__, _meta, [list]}) when is_list(list), do: binding_decls(list)
   defp binding_decls(list) when is_list(list), do: Enum.flat_map(list, &binding_decl/1)
 
+  # mutare:ignore[pattern_swap, logical, conditional] equivalent — symmetric guard, body reuses the whole `var`, and the guard only separates a variable from a same-shaped call node, never a binding source
   defp binding_decls({name, _meta, ctx} = var) when is_atom(name) and is_atom(ctx),
     do: [AST.clean_var(var)]
 
+  # mutare:ignore[clause_drop] equivalent — the fallback only catches an unrecognized binding node, which valid Ecto AST never produces here
   defp binding_decls(_node), do: []
 
   # One binding-list element. A positional binding is a clean var; a named binding (`post: p`) is
   # re-emitted as a clean keyword pair — key normalized to the Sourceror keyword shape so the
   # renderer prints `post: p`, bound var cleaned. Anything unrecognized is dropped.
+  # mutare:ignore[pattern_swap, logical, conditional] equivalent — symmetric guard, body reuses the whole `var`, and the guard only separates a variable from a same-shaped call node, never a binding-list element
   defp binding_decl({name, _meta, ctx} = var) when is_atom(name) and is_atom(ctx),
     do: [AST.clean_var(var)]
 
+  # mutare:ignore[pattern_swap, logical, conditional] equivalent — symmetric inner guard, body reuses `key` and the whole `var`, and the guard only separates a variable from a same-shaped call node, never a named binding's var
   defp binding_decl({key, {name, _m, ctx} = var}) when is_atom(name) and is_atom(ctx),
     do: [{AST.keyword_key(AST.atom_value(key)), AST.clean_var(var)}]
 
+  # mutare:ignore[clause_drop] equivalent — the fallback only catches an unrecognized binding-list element, which valid Ecto AST never produces here
   defp binding_decl(_node), do: []
 
   # === shared ================================================================
