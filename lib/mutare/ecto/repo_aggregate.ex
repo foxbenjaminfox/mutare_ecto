@@ -33,6 +33,7 @@ defmodule Mutare.Ecto.RepoAggregate do
     end
   end
 
+  # mutare:ignore[clause_drop] equivalent — the first clause matches every node given core's `%{opts:, pipe_mode:}` context; this fallback only guards a context missing one of those keys, which core never sends
   def mutations(_node, _context), do: []
 
   defp repo_key(opts) do

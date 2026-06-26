@@ -62,6 +62,7 @@ defmodule Mutare.Ecto.Changeset do
     end
   end
 
+  # mutare:ignore[clause_drop] equivalent — the first clause matches every node given core's `%{pipe_mode:}` context; this fallback only guards a context without that key, which core never sends
   def mutations(_node, _context), do: []
 
   defp family(fun) when fun in @droppable, do: :validation_drop

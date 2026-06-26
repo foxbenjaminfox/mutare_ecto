@@ -46,4 +46,11 @@ defmodule Mutare.Ecto.AggregateTest do
     assert swaps("u.id") == MapSet.new([])
     assert swaps("%{id: u.id, name: u.name}") == MapSet.new([])
   end
+
+  test "a bare binding variable (whole-struct select) yields nothing, never a crash" do
+    # `select(q, [u], u)` selects the whole struct: the value `u` is a variable node `{:u, _, ctx}`
+    # whose third slot is the atom hygiene context, not an args list. The `is_list(args)` guard on
+    # the call clause is what stops the walker from trying to descend that atom (which would raise).
+    assert swaps("u") == MapSet.new([])
+  end
 end

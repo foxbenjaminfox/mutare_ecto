@@ -140,4 +140,23 @@ defmodule Mutare.Ecto.ChangesetTest do
       assert validators == []
     end
   end
+
+  describe "piped identity + totality (direct mutations/2)" do
+    defp cs_mutations(code, pipe_mode) do
+      Sourceror.parse_string!(code)
+      |> Mutare.Ecto.Changeset.mutations(%{pipe_mode: pipe_mode})
+      |> Enum.map(fn {family, node} -> {family, Sourceror.to_string(node)} end)
+    end
+
+    test "the piped drop is the alias-proof Elixir.Function.identity()" do
+      # The absolute `Elixir.Function` reference is what makes the dropped stage immune to a user
+      # `alias X, as: Function` — pin the exact rendered call so a mangled alias is caught.
+      assert cs_mutations("Ecto.Changeset.validate_required(cs, [:name])", :piped) ==
+               [{:validation_drop, "Elixir.Function.identity()"}]
+    end
+
+    test "a degenerate zero-arg changeset step yields no mutant, never a crash" do
+      assert cs_mutations("Ecto.Changeset.validate_required()", :unpiped) == []
+    end
+  end
 end
