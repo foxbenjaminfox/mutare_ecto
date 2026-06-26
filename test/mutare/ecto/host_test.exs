@@ -53,6 +53,30 @@ defmodule Mutare.Ecto.HostTest do
       assert_compiles(src)
     end
 
+    test "named source rebinds sort after positional joins (dynamic/2 requires named binds last)" do
+      # Regression: a query that rebinds *named* sources up front and adds a *positional* join after
+      # establishes bindings in the order `[source: s, file: f, j]` — but `Ecto.Query.dynamic/2`
+      # requires `{as, var}` named binds to be **last** and raises at macro-expansion otherwise. The
+      # woven dynamic must reorder to positional-first, named-last (`[j, source: s, file: f]`), or the
+      # metamutant won't compile. `assert_compiles` is the real guard here — the bug was a compile-
+      # time `Ecto.Query.CompileError`, not a runtime one.
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q(base) do
+          from [source: s, file: f] in base,
+            inner_join: j in Post,
+            on: j.source_id == s.id,
+            where: j.hash == f.hash,
+            select: j.id
+        end
+      end
+      """
+
+      assert metamutant(src) =~ "dynamic([j, source: s, file: f]"
+      assert_compiles(src)
+    end
+
     test "the pipe form re-declares its stage binding list" do
       src = """
       defmodule M do

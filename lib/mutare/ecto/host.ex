@@ -304,7 +304,11 @@ defmodule Mutare.Ecto.Host do
 
   # The binding list the query establishes: the source binding(s) — a lone `u` (`u in User`) or a
   # whole binding list in the rebinding form (`[a, b] in query`, `[post: p] in query`) — followed by
-  # each join's binding, in clause order. Exactly the bindings a `dynamic` re-declares.
+  # each join's binding, in clause order. Exactly the bindings a `dynamic` re-declares — except
+  # `dynamic/2` requires the named binds (`{as, var}` tuples) to come **last**, while a query may
+  # rebind named sources up front and add positional joins after (`from([post: p] in q, join: c …)`).
+  # So the concatenation is reordered: positional binds first (in their declared, position-defining
+  # order), then the named ones — preserving each binding's identity while satisfying `dynamic/2`.
   defp from_bindings(source, clauses) do
     source_binding =
       case source do
@@ -312,8 +316,16 @@ defmodule Mutare.Ecto.Host do
         _ -> []
       end
 
-    source_binding ++ join_bindings(clauses)
+    {positional, named} =
+      Enum.split_with(source_binding ++ join_bindings(clauses), &positional_binding?/1)
+
+    positional ++ named
   end
+
+  # A normalized binding decl is positional (a clean var, a 3-tuple `{name, meta, ctx}`) rather than
+  # named (a `{key, var}` keyword pair, a 2-tuple). Named binds address by name and must sort last.
+  defp positional_binding?({name, _meta, ctx}) when is_atom(name) and is_atom(ctx), do: true
+  defp positional_binding?(_node), do: false
 
   defp join_bindings(clauses) do
     for {key, {:in, _, [lhs, _src]}} <- clauses,
