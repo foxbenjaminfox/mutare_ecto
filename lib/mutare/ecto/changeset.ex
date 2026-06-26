@@ -24,7 +24,7 @@ defmodule Mutare.Ecto.Changeset do
   changeset is the first argument, so the call collapses to that argument.
   """
 
-  alias Mutare.Transform.Calls
+  alias Mutare.Ecto.StageDrop
 
   @changeset_key [:Ecto, :Changeset]
 
@@ -49,18 +49,8 @@ defmodule Mutare.Ecto.Changeset do
   """
   @spec mutations(Macro.t(), Mutare.Mutator.context()) ::
           [{:validation_drop | :hook_drop, Macro.t()}]
-  def mutations(node, %{pipe_mode: pipe_mode}) do
-    case Calls.resolved_call(node) do
-      {@changeset_key, fun, args, _rebuild} ->
-        case family(fun) do
-          nil -> []
-          family -> for mutated <- drop(pipe_mode, args), do: {family, mutated}
-        end
-
-      _ ->
-        []
-    end
-  end
+  def mutations(node, %{pipe_mode: pipe_mode}),
+    do: StageDrop.mutations(node, @changeset_key, &family/1, pipe_mode)
 
   # mutare:ignore[clause_drop] equivalent — the first clause matches every node given core's `%{pipe_mode:}` context; this fallback only guards a context without that key, which core never sends
   def mutations(_node, _context), do: []
@@ -68,14 +58,4 @@ defmodule Mutare.Ecto.Changeset do
   defp family(fun) when fun in @droppable, do: :validation_drop
   defp family(fun) when fun in @hooks, do: :hook_drop
   defp family(_fun), do: nil
-
-  # Piped: the changeset is the `|>` LHS, so the stage becomes identity on it. The absolute
-  # `Elixir.Function` is alias-proof (a user `alias X, as: Function` can't redirect it).
-  defp drop(:piped, _args), do: [identity_call()]
-  # Direct: the changeset is the first argument; collapse the call to it.
-  defp drop(:unpiped, [changeset | _rest]), do: [changeset]
-  defp drop(:unpiped, []), do: []
-
-  defp identity_call,
-    do: {{:., [], [{:__aliases__, [], [:"Elixir", :Function]}, :identity]}, [], []}
 end

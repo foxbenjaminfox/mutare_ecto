@@ -15,17 +15,16 @@ defmodule Mutare.Ecto.RepoAggregate do
   the visible args — `Mutare.Mutator.visible_index/2` recovers where.
   """
 
-  alias Mutare.Ecto.AST
+  alias Mutare.Ecto.{Aggregate, AST, Config}
   alias Mutare.Transform.Calls
 
   # The aggregate's effective argument position: aggregate(queryable, agg, field) → 1.
   @agg_position 1
-  @swaps %{sum: :avg, avg: :sum, min: :max, max: :min}
 
   @doc "Aggregate-swap mutations for a `Repo.aggregate/3` node as `{:aggregate, node}` pairs, or `[]`."
   @spec mutations(Macro.t(), Mutare.Mutator.context()) :: [{:aggregate, Macro.t()}]
   def mutations(node, %{opts: opts, pipe_mode: pipe_mode}) do
-    with repo when not is_nil(repo) <- repo_key(opts),
+    with repo when not is_nil(repo) <- Config.repo_key(opts),
          {^repo, :aggregate, args, rebuild} <- Calls.resolved_call(node) do
       for mutated <- swap(args, rebuild, pipe_mode), do: {:aggregate, mutated}
     else
@@ -36,18 +35,11 @@ defmodule Mutare.Ecto.RepoAggregate do
   # mutare:ignore[clause_drop] equivalent — the first clause matches every node given core's `%{opts:, pipe_mode:}` context; this fallback only guards a context missing one of those keys, which core never sends
   def mutations(_node, _context), do: []
 
-  defp repo_key(opts) do
-    case Keyword.get(opts, :repo) do
-      nil -> nil
-      module -> AST.module_key(module)
-    end
-  end
-
   defp swap(args, rebuild, pipe_mode) do
     index = Mutare.Mutator.visible_index(@agg_position, pipe_mode)
 
     with node when not is_nil(node) <- index && Enum.at(args, index),
-         to when not is_nil(to) <- @swaps[AST.atom_value(node)] do
+         to when not is_nil(to) <- Aggregate.swap(AST.atom_value(node)) do
       [rebuild.(:aggregate, List.replace_at(args, index, AST.atom_literal(to)))]
     else
       _ -> []

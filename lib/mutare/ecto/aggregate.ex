@@ -22,6 +22,14 @@ defmodule Mutare.Ecto.Aggregate do
   @spec swaps(Macro.t()) :: [Macro.t()]
   def swaps(expr), do: walk(expr)
 
+  @doc """
+  The SQL-meaningful swap of a single aggregate function name (`:sum`↔`:avg`, `:min`↔`:max`), or
+  `nil` for a non-aggregate. Used by `Mutare.Ecto.RepoAggregate` to swap the *atom* form
+  (`Repo.aggregate(q, :sum, …)`) against the same ladder this walker swaps the *call* form along.
+  """
+  @spec swap(atom()) :: atom() | nil
+  def swap(name), do: Map.get(@agg_swaps, name)
+
   # An aggregate call: offer its swap (a same-arity rename, so it always compiles), then descend
   # into its arguments so a nested aggregate (`max(sum(...))` — degenerate but harmless) is still
   # reached. The function name is the call form atom (not a wrapped literal), so the rename keeps

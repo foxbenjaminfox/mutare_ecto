@@ -100,7 +100,7 @@ defmodule Mutare.Ecto.Query do
     |> Enum.flat_map(fn {pair, index} ->
       with true <- clause_key(pair) in @bound_keys,
            n when is_integer(n) <- AST.int_value(clause_value(pair)) do
-        for bumped <- bumps(n) do
+        for bumped <- AST.bumps(n) do
           {:from, meta,
            [source, List.replace_at(clauses, index, put_value(pair, AST.int_literal(bumped)))]}
         end
@@ -109,11 +109,6 @@ defmodule Mutare.Ecto.Query do
       end
     end)
   end
-
-  # The off-by-one boundary, clamped non-negative: `n+1` always, `n-1` only when it stays a
-  # valid (non-negative) bound.
-  defp bumps(n) when n > 0, do: [n + 1, n - 1]
-  defp bumps(n), do: [n + 1]
 
   # Swap each join clause's *kind* by rewriting its key (`join`/`inner_join` ↔ `left_join`, plus
   # `left_join`↔`right_join` under a `RIGHT`-capable dialect and `*`→`full_join` under a

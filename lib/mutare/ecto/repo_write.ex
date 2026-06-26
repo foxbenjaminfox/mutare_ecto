@@ -38,15 +38,15 @@ defmodule Mutare.Ecto.RepoWrite do
   `Mutare.Transform.Calls`, so it is pipe-position-agnostic.
   """
 
-  alias Mutare.Ecto.AST
+  alias Mutare.Ecto.{AST, Config}
   alias Mutare.Transform.Calls
 
   # Alias-proof reference to `Ecto.Changeset`: the metamutant recompiles in the *author's* module,
   # whose aliases we don't control — a bare `Ecto.Changeset` there can be shadowed by a submodule
   # (`defmodule Ecto.Changeset` nested in `Foo` aliases `Ecto`→`Foo.Ecto`) or a plain
   # `alias Foo, as: Ecto`, silently retargeting the call. The `Elixir.`-prefixed alias resolves to
-  # the real module unconditionally (same stance as `Mutare.Ecto.Changeset`'s `Elixir.Function`).
-  @changeset {:__aliases__, [], [:"Elixir", :Ecto, :Changeset]}
+  # the real module unconditionally (same stance as `Mutare.Ecto.StageDrop`'s `Elixir.Function`).
+  @changeset AST.absolute_alias([:Ecto, :Changeset])
 
   # Each persisting write → the `apply_action` function (raising or not) and the action atom it
   # passes. The action mirrors the write; `insert_or_update` chooses insert/update at runtime from
@@ -70,7 +70,7 @@ defmodule Mutare.Ecto.RepoWrite do
   @doc "RepoWrite mutations for `node` as `{family, node}` pairs, or `[]`."
   @spec mutations(Macro.t(), Mutare.Mutator.context()) :: [{atom(), Macro.t()}]
   def mutations(node, %{opts: opts, pipe_mode: pipe_mode}) do
-    with repo when not is_nil(repo) <- repo_key(opts),
+    with repo when not is_nil(repo) <- Config.repo_key(opts),
          {^repo, fun, args, rebuild} <- Calls.resolved_call(node) do
       # mutare:ignore[operand_swap] family order is irrelevant — mutations are consumed as a set
       persistence(fun, args, pipe_mode) ++ on_conflict(fun, args, rebuild)
@@ -81,13 +81,6 @@ defmodule Mutare.Ecto.RepoWrite do
 
   # mutare:ignore[clause_drop] equivalent — the first clause matches every node given core's `%{opts:, pipe_mode:}` context; this fallback only guards a context missing one of those keys, which core never sends
   def mutations(_node, _context), do: []
-
-  defp repo_key(opts) do
-    case Keyword.get(opts, :repo) do
-      nil -> nil
-      module -> AST.module_key(module)
-    end
-  end
 
   # `:persistence` — replace the write with `apply_action(change(arg), action)`.
   defp persistence(fun, args, pipe_mode) do
@@ -114,7 +107,7 @@ defmodule Mutare.Ecto.RepoWrite do
 
   defp apply_action(_action_fun, _action, [], :unpiped), do: nil
 
-  defp changeset(fun, args), do: {{:., [], [@changeset, fun]}, [], args}
+  defp changeset(fun, args), do: AST.remote_call(@changeset, fun, args)
 
   # `:on_conflict` — flip `on_conflict: :nothing` → `:raise` in the trailing keyword-list arg,
   # rebuilding the call in its written form. Pipe-agnostic: the opts list is the last visible arg

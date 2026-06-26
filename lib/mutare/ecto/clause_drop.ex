@@ -40,7 +40,7 @@ defmodule Mutare.Ecto.ClauseDrop do
   the mutant is exercised (killing it), never a compile error of the single metamutant build.
   """
 
-  alias Mutare.Transform.Calls
+  alias Mutare.Ecto.StageDrop
 
   @query_key [:Ecto, :Query]
 
@@ -56,36 +56,19 @@ defmodule Mutare.Ecto.ClauseDrop do
     union union_all except intersect
   )a
 
-  @droppable @filter ++ @bound ++ @other
-
   @doc """
   Stage-drop mutations for an `Ecto.Query` clause macro as `{family, node}` pairs, or `[]`.
   Pipe-aware: the `pipe_mode` from `context` decides identity-vs-first-argument delivery.
   """
   @spec mutations(Macro.t(), Mutare.Mutator.context()) :: [{atom(), Macro.t()}]
-  def mutations(node, %{pipe_mode: pipe_mode}) do
-    case Calls.resolved_call(node) do
-      {@query_key, fun, args, _rebuild} when fun in @droppable ->
-        for dropped <- drop(pipe_mode, args), do: {family(fun), dropped}
-
-      _ ->
-        []
-    end
-  end
+  def mutations(node, %{pipe_mode: pipe_mode}),
+    do: StageDrop.mutations(node, @query_key, &family/1, pipe_mode)
 
   # mutare:ignore[clause_drop] equivalent — the first clause matches every node given core's `%{pipe_mode:}` context; this fallback only guards a context without that key, which core never sends
   def mutations(_node, _context), do: []
 
   defp family(fun) when fun in @filter, do: :filter_drop
   defp family(fun) when fun in @bound, do: :bound
-  defp family(_fun), do: :clause_drop
-
-  # Piped: the query is the `|>` LHS, so the stage becomes identity on it. Direct: the query is the
-  # first argument; collapse the call to it.
-  defp drop(:piped, _args), do: [identity_call()]
-  defp drop(:unpiped, [query | _rest]), do: [query]
-  defp drop(:unpiped, []), do: []
-
-  defp identity_call,
-    do: {{:., [], [{:__aliases__, [], [:"Elixir", :Function]}, :identity]}, [], []}
+  defp family(fun) when fun in @other, do: :clause_drop
+  defp family(_fun), do: nil
 end

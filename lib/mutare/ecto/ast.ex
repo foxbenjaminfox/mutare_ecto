@@ -36,6 +36,16 @@ defmodule Mutare.Ecto.AST do
   def int_literal(int) when is_integer(int),
     do: {:__block__, [token: Integer.to_string(int)], [int]}
 
+  @doc """
+  The off-by-one boundary bumps for an integer `limit`/`offset` bound: `n+1` always, and `n-1`
+  only when it stays non-negative (a negative bound is invalid SQL). Shared by the whole-`from`
+  bound mutator (`Mutare.Ecto.Query`) and the standalone/pipe one (`Mutare.Ecto.Clause`), which
+  feed it `int_value/1` and re-emit each result through `int_literal/1`.
+  """
+  @spec bumps(integer()) :: [integer()]
+  def bumps(n) when n > 0, do: [n + 1, n - 1]
+  def bumps(n), do: [n + 1]
+
   @doc "A fresh keyword-list **key** node (`format: :keyword`), so it renders as `key:`."
   @spec keyword_key(atom()) :: Macro.t()
   # mutare:ignore[guard_drop] equivalent — defensive constructor guard; a keyword key is always an atom, so dropping the guard changes nothing any caller reaches
@@ -82,4 +92,21 @@ defmodule Mutare.Ecto.AST do
       _ -> module
     end
   end
+
+  @doc """
+  An `Elixir.`-anchored module alias node for `segments` — `[:Ecto, :Changeset]` →
+  `{:__aliases__, [], [:"Elixir", :Ecto, :Changeset]}`. The `Elixir.` prefix makes the reference
+  **alias-proof**: the metamutant recompiles in the author's aliasing scope, where a bare
+  `Ecto.Changeset` could be retargeted by an `alias`, but the absolute name resolves
+  unconditionally (see CLAUDE.md, "Emitted module references are `Elixir.`-prefixed").
+  """
+  @spec absolute_alias([atom()]) :: Macro.t()
+  def absolute_alias(segments), do: {:__aliases__, [], [:"Elixir" | segments]}
+
+  @doc """
+  A remote-call node `mod.fun(args)`, where `mod` is an alias node (typically from
+  `absolute_alias/1`) — e.g. `Elixir.Function.identity()` or `Elixir.Ecto.Query.dynamic(b, f)`.
+  """
+  @spec remote_call(Macro.t(), atom(), [Macro.t()]) :: Macro.t()
+  def remote_call(mod, fun, args), do: {{:., [], [mod, fun]}, [], args}
 end

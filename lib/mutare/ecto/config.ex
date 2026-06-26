@@ -6,6 +6,7 @@ defmodule Mutare.Ecto.Config do
   # (and/or `repo:`) is how a user narrows the catalog, names a sub-family in the report, or covers
   # multiple repos — see `DESIGN.md`, "Configuration".
 
+  alias Mutare.Ecto.AST
   alias Mutare.Mutator.Mutation
 
   # Every SQL family the plugin can emit, the source of truth for `families: :all` and for
@@ -106,6 +107,19 @@ defmodule Mutare.Ecto.Config do
   @doc "Whether `family` is enabled by `opts`."
   @spec family_enabled?(keyword(), atom()) :: boolean()
   def family_enabled?(opts, family), do: family in families(opts)
+
+  @doc """
+  The configured `repo`'s resolved module key (`Mutare.Ecto.AST.module_key/1`), ready to compare
+  against a `Mutare.Transform.Calls.resolved_call/1` module, or `nil` when no `repo:` is set.
+  Shared by the Repo-call families (`Mutare.Ecto.RepoWrite`, `Mutare.Ecto.RepoAggregate`).
+  """
+  @spec repo_key(keyword()) :: [atom()] | atom() | nil
+  def repo_key(opts) do
+    case Keyword.get(opts, :repo) do
+      nil -> nil
+      module -> AST.module_key(module)
+    end
+  end
 
   @doc "The dialects `opts` enables (default `[]` — the portable core only)."
   @spec dialects(keyword()) :: [atom()]

@@ -449,8 +449,7 @@ defmodule Mutare.Ecto.Host do
   # how `Ecto.Query` was imported.
   defp dynamic_wrap(bindings) do
     fn fragment ->
-      {{:., [], [{:__aliases__, [], [:"Elixir", :Ecto, :Query]}, :dynamic]}, [],
-       [bindings, fragment]}
+      AST.remote_call(AST.absolute_alias([:Ecto, :Query]), :dynamic, [bindings, fragment])
     end
   end
 

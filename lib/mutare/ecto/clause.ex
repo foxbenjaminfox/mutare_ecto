@@ -55,8 +55,11 @@ defmodule Mutare.Ecto.Clause do
     {init, [value]} = Enum.split(args, -1)
 
     case AST.int_value(value) do
-      nil -> []
-      n -> for bumped <- bumps(n), do: {:bound, {macro, meta, init ++ [AST.int_literal(bumped)]}}
+      nil ->
+        []
+
+      n ->
+        for bumped <- AST.bumps(n), do: {:bound, {macro, meta, init ++ [AST.int_literal(bumped)]}}
     end
   end
 
@@ -67,8 +70,4 @@ defmodule Mutare.Ecto.Clause do
   end
 
   def mutations(_node), do: []
-
-  # The off-by-one boundary, clamped non-negative (mirrors `Mutare.Ecto.Query`'s bound bumps).
-  defp bumps(n) when n > 0, do: [n + 1, n - 1]
-  defp bumps(n), do: [n + 1]
 end
