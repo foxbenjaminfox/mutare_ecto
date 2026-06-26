@@ -196,4 +196,17 @@ defmodule Mutare.Ecto.ClauseTest do
       assert_compiles(src)
     end
   end
+
+  describe "totality — a degenerate zero-arg macro node yields no mutant, never a crash" do
+    # `mutations/1` is offered every node in the source, so each clause guards `args != []`: it
+    # protects the `{init, [last]} = Enum.split(args, -1)` destructuring, which would raise a
+    # MatchError on `[]` rather than returning the no-op `[]`. A bare `order_by()`/`limit()`/
+    # `select()` (no query, no value) is the degenerate node that exercises that guard.
+    test "an empty-args order_by / limit / select returns []" do
+      for code <- ["order_by()", "limit()", "offset()", "select()", "select_merge()"] do
+        assert Mutare.Ecto.Clause.mutations(Sourceror.parse_string!(code)) == [],
+               "expected no mutant for #{code}"
+      end
+    end
+  end
 end
