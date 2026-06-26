@@ -40,9 +40,11 @@ defmodule Mutare.Ecto.ClauseDrop do
   the mutant is exercised (killing it), never a compile error of the single metamutant build.
   """
 
-  alias Mutare.Ecto.StageDrop
+  alias Mutare.Ecto.{AST, StageDrop}
 
-  @query_key [:Ecto, :Query]
+  # The resolved-call module key `Mutare.Transform.Calls` returns for an `Ecto.Query` call, derived
+  # from the canonical `AST.module_key/1` rather than hardcoding its `[:Ecto, :Query]` split form.
+  @query_key AST.module_key(Ecto.Query)
 
   # `where`/`having` removal → `:filter_drop` (parity with the `from`-keyword drop in
   # `Mutare.Ecto.Query`). Same semantic mutation, same family across both syntaxes.

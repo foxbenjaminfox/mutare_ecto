@@ -24,9 +24,11 @@ defmodule Mutare.Ecto.Changeset do
   changeset is the first argument, so the call collapses to that argument.
   """
 
-  alias Mutare.Ecto.StageDrop
+  alias Mutare.Ecto.{AST, StageDrop}
 
-  @changeset_key [:Ecto, :Changeset]
+  # The resolved-call module key `Mutare.Transform.Calls` returns for an `Ecto.Changeset` call,
+  # derived from the canonical `AST.module_key/1` rather than hardcoding its split form.
+  @changeset_key AST.module_key(Ecto.Changeset)
 
   # Transparent validators and constraints — each returns the changeset, so dropping it only
   # removes its rule. Content-*producing* calls (`cast`, `change`, `put_change`, …) are NOT

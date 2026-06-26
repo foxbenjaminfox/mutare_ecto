@@ -13,9 +13,12 @@ defmodule Mutare.Ecto.QueryTerminal do
   `q |> last()` falls out for free). Family `:query_terminal`.
   """
 
+  alias Mutare.Ecto.AST
   alias Mutare.Transform.Calls
 
-  @query_key [:Ecto, :Query]
+  # The resolved-call module key `Mutare.Transform.Calls` returns for an `Ecto.Query` call, derived
+  # from the canonical `AST.module_key/1` rather than hardcoding its `[:Ecto, :Query]` split form.
+  @query_key AST.module_key(Ecto.Query)
   @swaps %{first: :last, last: :first}
   @terminals Map.keys(@swaps)
 

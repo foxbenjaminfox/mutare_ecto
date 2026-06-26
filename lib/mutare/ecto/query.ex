@@ -102,7 +102,7 @@ defmodule Mutare.Ecto.Query do
            n when is_integer(n) <- AST.int_value(clause_value(pair)) do
         for bumped <- AST.bumps(n) do
           {:from, meta,
-           [source, List.replace_at(clauses, index, put_value(pair, AST.int_literal(bumped)))]}
+           [source, List.replace_at(clauses, index, with_value(pair, AST.int_literal(bumped)))]}
         end
       else
         _ -> []
@@ -122,7 +122,7 @@ defmodule Mutare.Ecto.Query do
     |> Enum.flat_map(fn {pair, index} ->
       for to <- Map.get(flips, clause_key(pair), []) do
         {:from, meta,
-         [source, List.replace_at(clauses, index, put_key(pair, AST.keyword_key(to)))]}
+         [source, List.replace_at(clauses, index, with_key(pair, AST.keyword_key(to)))]}
       end
     end)
   end
@@ -149,7 +149,7 @@ defmodule Mutare.Ecto.Query do
     |> Enum.flat_map(fn {pair, index} ->
       if clause_key(pair) in @aggregate_keys do
         for swapped <- Aggregate.swaps(clause_value(pair)) do
-          {:from, meta, [source, List.replace_at(clauses, index, put_value(pair, swapped))]}
+          {:from, meta, [source, List.replace_at(clauses, index, with_value(pair, swapped))]}
         end
       else
         []
@@ -167,7 +167,7 @@ defmodule Mutare.Ecto.Query do
       if clause_key(pair) == :order_by do
         for {family, flipped} <- Ordering.flips(clause_value(pair)) do
           {family,
-           {:from, meta, [source, List.replace_at(clauses, index, put_value(pair, flipped))]}}
+           {:from, meta, [source, List.replace_at(clauses, index, with_value(pair, flipped))]}}
         end
       else
         []
@@ -181,6 +181,6 @@ defmodule Mutare.Ecto.Query do
   defp clause_key(_node), do: nil
 
   defp clause_value({_key, value}), do: value
-  defp put_value({key, _old}, value), do: {key, value}
-  defp put_key({_key, value}, key), do: {key, value}
+  defp with_value({key, _old}, value), do: {key, value}
+  defp with_key({_key, value}, key), do: {key, value}
 end
