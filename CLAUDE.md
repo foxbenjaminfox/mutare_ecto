@@ -12,9 +12,9 @@ reasoning would be Elixir's two-valued logic, not SQL's three-valued logic, sile
 manufacturing false negatives), while reusing **all** of Mutare's plumbing (identity resolution,
 selector/coverage/poison/Site machinery, and the delivery host).
 
-`DESIGN.md` is the full blueprint and the source of truth for the rationale; `README.md` tracks
-milestone status. Read `DESIGN.md` before changing the catalog, routing, or delivery — the
-boundary decisions there are deliberate, not incidental.
+`DESIGN.md` is the full blueprint and the source of truth for the rationale. Read `DESIGN.md`
+before changing the catalog, routing, or delivery — the boundary decisions there are deliberate,
+not incidental.
 
 ## Commands
 
