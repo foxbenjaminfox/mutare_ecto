@@ -20,7 +20,7 @@ defmodule Mutare.Ecto.SemanticHarness do
   # SQL-meaningful way the mutation predicts.
 
   alias Mutare.Ecto.TestSupport
-  alias Mutare.{Selector, Site, Test}
+  alias Mutare.{Site, Test}
 
   @repo MyApp.Repo
 
@@ -31,8 +31,10 @@ defmodule Mutare.Ecto.SemanticHarness do
   this one file, so booting it here keeps every other test run — and the exqlite NIF's runtime cost —
   out of it. `start_supervised!/1` ties the Repo to ExUnit's supervisor, so it lives exactly as long
   as the module's tests and stops cleanly afterward; `on_exit/1` then removes the temp files, the
-  process-global selection switch (via `Mutare.Selector`), and the `Application` env this set
-  (restoring any prior value), leaving no VM state behind.
+  `Application` env this set (restoring any prior value), leaving no VM state behind. The
+  process-global selection switch needs no cleanup of its own: `under/2` runs every activation
+  through `Mutare.Test.with_active_mutant/2`, which restores the prior active id in an `after`
+  block, so no test leaks one (and the at-most residual value is baseline `0`, i.e. unset).
 
   The database is a fresh temp file *carrying the OS pid*, so two concurrent `mix test` runs on one
   host get independent SQLite files instead of clobbering a shared one (`pool_size: 1` + `async:
@@ -62,8 +64,6 @@ defmodule Mutare.Ecto.SemanticHarness do
     MyApp.Seed.populate!(@repo)
 
     ExUnit.Callbacks.on_exit(fn ->
-      :persistent_term.erase(Selector.key())
-
       case prior_env do
         {:ok, value} -> Application.put_env(:mutare_ecto, @repo, value)
         :error -> Application.delete_env(:mutare_ecto, @repo)
