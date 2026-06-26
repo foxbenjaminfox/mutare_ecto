@@ -14,7 +14,7 @@ defmodule Mutare.Ecto.ShorthandTest do
 
   @all [:all, {Mutare.Ecto, repo: MyApp.Repo}]
 
-  defp routing(code), do: code |> Sourceror.parse_string!() |> Host.macro_routing()
+  defp routing(code), do: code |> Sourceror.parse_string!() |> Host.Routing.macro_routing()
 
   describe "macro_routing — the per-pair treatment the plugin emits" do
     test "a standalone shorthand routes each scalar value :pinned, keys raw, query :expression" do

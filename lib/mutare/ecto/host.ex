@@ -23,37 +23,18 @@ defmodule Mutare.Ecto.Host do
   the coverage catch-all, and the `Mutare.Site` (recorded from the *logical* pair, so the diff
   is `u.x == u.y` → `!=`, the `dynamic`/`^` scaffolding invisible).
 
-  ## Routing
-
-  Both query syntaxes are covered, routed by call shape (`macro_routing/1`):
-
-    * the `from` keyword form — `from(p in S, where: p.x == v, …)`: the clause-bearing argument
-      routes `:hosted` when the source is a binding (`p in S`), and `host/2` produces one target
-      per binding-referencing `where`/`having` clause;
-    * the composable pipe/standalone form — `q |> where([p], p.x == v)` / `where(q, [p], …)`:
-      the binding-list argument is detected by shape and the **condition that follows it** routes
-      `:hosted`.
-
-  A bindingless `from(S, where: [x: v])` or keyword-shorthand `where(q, x: v)` carries no hosted
-  *fragment* — its values are plain interpolated data, core's literal families to mutate, not the
-  SQL catalog. They are routed with core's **per-keyword-pair** treatment `{:keyword, …}`: each
-  `where`/`having` shorthand pair's scalar *value* is routed `:pinned` (core mutates it, delivered
-  `^`-pinned — Ecto rejects a bare selector `case` there), while the column-name *keys*, the
-  `nil`-valued pairs (an `IS NULL`, never `= nil`), compound values, and the non-condition clauses
-  (`select`/`order_by`/… — whole-`from`'s job) are left raw. So a shorthand value mutation is
-  recorded under the *core* family that made it (`:literal`/`:string`/…), not `:ecto`. This relies
-  on core's per-pair routing + `:pinned` extensions (the successors to the Milestone-2 host /
-  `:routing` extensions); see `c:Mutare.Mutator.macro_routing/1`.
+  The companion `Mutare.Ecto.Host.Routing` owns the other half — the `macro_routing/1` classifier
+  that decides *which* argument positions are `:hosted` (and how the rest route); this module then
+  builds and weaves the targets for those positions. `condition_index/1` (the binding-list/condition
+  shape detection) is shared by both and lives here.
   """
 
   alias Mutare.Ecto.{Aggregate, AST, Binding, Config, Fragment}
 
-  # The clause keys whose value is a boolean condition the catalog mutates — in the `from`
-  # keyword list and as standalone `Ecto.Query` macros.
-  @condition_keys ~w(where or_where having or_having)a
-
-  # The query macros (besides `from`) whose condition argument is hosted. Their binding list
-  # precedes the condition both directly (`where(q, [p], cond)`) and piped (`q |> where([p], cond)`).
+  # The query macros whose condition argument is hosted (the `where`/`having` family). The same set
+  # doubles as the `from`-clause condition *keys* (`where:`/`having:`/…) — they are one and the same.
+  # Their binding list precedes the condition both directly (`where(q, [p], cond)`) and piped
+  # (`q |> where([p], cond)`). Public via `condition_macros/0` so `Mutare.Ecto.Host.Routing` shares it.
   @condition_macros ~w(where or_where having or_having)a
 
   # The remaining composable query macros — the standalone/pipe clause builders. They neither host
@@ -85,159 +66,6 @@ defmodule Mutare.Ecto.Host do
   @doc "The plain composable clause macros (`limit`/`order_by`/…), registered `:routing` by the plugin."
   @spec clause_macros() :: [atom()]
   def clause_macros, do: @plain_clause_macros
-
-  @doc """
-  Per-visible-argument routing for a `:routing`-registered query macro (`from`, the
-  `where`/`having` family, and the plain clause macros), consulted by `Mutare.Transform.Resolve`
-  with the concrete node. Returns `[]` for anything else.
-  """
-  @spec macro_routing(Macro.t()) ::
-          [Mutare.Macro.Spec.treatment() | :pinned | {:keyword, [term()]}]
-  # mutare:ignore[guard_drop] equivalent — `rest` is the tail of the `[source | rest]` cons match, so it is always a list; the guard is redundant
-  def macro_routing({:from, _meta, [source | rest]}) when is_list(rest) do
-    # Source is never mutated (a table/schema swap is a broken query, not a mutant). A binding
-    # `from` hosts its clause-bearing argument (the where/having conditions); a bindingless
-    # `from`'s clauses are keyword-shorthand data, routed per-pair so core mutates the
-    # `where`/`having` shorthand *values* (`^`-pinned) while leaving keys, nil pairs, and the
-    # other clauses (select/order_by/… — whole-`from`'s job) alone.
-    clause_treatment =
-      case rest do
-        [clauses] ->
-          cond do
-            binding_source?(source) -> :hosted
-            # mutare:ignore[if_condition] equivalent — a bindingless from's clause argument is always a keyword list in parsed Ecto; a non-list reaches this branch only via malformed AST
-            is_list(clauses) -> {:keyword, clause_value_treatments(clauses)}
-            true -> :skip
-          end
-
-        _ ->
-          :skip
-      end
-
-    [:skip | List.duplicate(clause_treatment, length(rest))]
-  end
-
-  def macro_routing({macro, _meta, args}) when macro in @condition_macros and is_list(args) do
-    # The threaded query (the first arg, when written directly) is an ordinary expression; its own
-    # data positions stay raw. The condition/shorthand overlay then marks what the host/core own.
-    base = query_threading_route(args)
-
-    case condition_index(args) do
-      # binding form (`where(q, [u], cond)`) — host the condition after the binding list.
-      index when is_integer(index) -> List.replace_at(base, index, :hosted)
-      # keyword-shorthand form (`where(q, col: v)`) — route the trailing keyword list per-pair.
-      nil -> shorthand_route(args, base)
-    end
-  end
-
-  def macro_routing({macro, _meta, args}) when macro in @plain_clause_macros and is_list(args) do
-    # No hosted fragment, no shorthand: just thread the query (first arg → `:expression` when it is
-    # one) and leave every data position raw for the plugin's own `mutate/2` mutators.
-    query_threading_route(args)
-  end
-
-  def macro_routing(_node), do: []
-
-  # The base routing for a query-threading macro: mark the first argument `:expression` **iff it is
-  # the threaded query** (a bare query variable, a `from(…)`, or a nested pipe — not a binding list,
-  # an integer bound, or an ordering written directly as the first arg, which only happens in the
-  # *piped* form where the real query is the `|>` left side and already routed runtime). Every
-  # remaining position is raw (`:skip`). A query position carrying nothing to mutate (a bare
-  # variable) routes `:expression` harmlessly — core finds no candidates on it.
-  # mutare:ignore[clause_drop] equivalent — query_threading_route only sees `[]` for an argless macro (`where()`), which valid Ecto never writes
-  defp query_threading_route([]), do: []
-
-  defp query_threading_route([first | rest]) do
-    first_treatment = if query_arg?(first), do: :expression, else: :skip
-    [first_treatment | List.duplicate(:skip, length(rest))]
-  end
-
-  # Whether a first-argument node is the threaded query (so it should be mutated as an expression):
-  # a bare variable (`q`), a `from(…)` opener, or a nested pipe (`(… |> …)`). A binding list, a
-  # keyword list, a literal, or any other DSL-data shape is not — that is a piped call's own first
-  # data argument (the query is the `|>` left side, routed separately).
-  defp query_arg?({:from, _meta, _args}), do: true
-  defp query_arg?({:|>, _meta, _args}), do: true
-  defp query_arg?(node), do: Binding.variable?(node)
-
-  # === keyword-shorthand routing =============================================
-
-  # No binding list → maybe a keyword-shorthand condition (`where(q, col: v)`). Route the trailing
-  # keyword-list argument `{:keyword, value_treatments}` so core mutates each scalar value
-  # `^`-pinned, leaving keys and nil/compound values alone. A non-shorthand trailing arg → default.
-  defp shorthand_route(args, default) do
-    case args |> List.last() |> shorthand_pairs() do
-      nil ->
-        default
-
-      pairs ->
-        # mutare:ignore[operand_swap] equivalent — a shorthand call carries at most two args, where `length - 1` and `1 - length` both index the last element
-        List.replace_at(default, length(args) - 1, {:keyword, pair_value_treatments(pairs)})
-    end
-  end
-
-  # A bindingless `from`'s clause list: route each `where`/`having` clause's shorthand value
-  # per-pair (`{:keyword, …}`, nested — the value is itself a keyword list), and leave every other
-  # clause raw (select/order_by/limit are whole-`from`'s job, or carry field names).
-  defp clause_value_treatments(clauses) do
-    Enum.map(clauses, fn
-      {key, value} ->
-        if AST.atom_value(key) in @condition_keys, do: where_value_treatment(value), else: :skip
-
-      _other ->
-        :skip
-    end)
-  end
-
-  defp where_value_treatment(value) do
-    case shorthand_pairs(value) do
-      nil -> :skip
-      pairs -> {:keyword, pair_value_treatments(pairs)}
-    end
-  end
-
-  # A shorthand value list, unwrapped from the Sourceror `{:__block__, _, [list]}` it takes in a
-  # keyword *value* position (the `from` form) or bare (a trailing keyword argument). `nil` when
-  # the value isn't a non-empty keyword list (so it isn't shorthand — e.g. a binding list, a bare
-  # field list `[:id]`, an expression).
-  # mutare:ignore[guard_drop] equivalent — Sourceror block-wraps list literals, so this block clause always wraps a list; a non-list inside the block arrives only from malformed AST
-  defp shorthand_pairs({:__block__, _meta, [list]}) when is_list(list), do: keyword_pairs(list)
-  defp shorthand_pairs(list) when is_list(list), do: keyword_pairs(list)
-  defp shorthand_pairs(_value), do: nil
-
-  defp keyword_pairs(list) do
-    # mutare:ignore[collection] equivalent — all?/any? differ only on a list mixing pairs and non-pairs, which a real binding/shorthand list never is
-    if list != [] and Enum.all?(list, &match?({_k, _v}, &1)), do: list, else: nil
-  end
-
-  defp pair_value_treatments(pairs) do
-    Enum.map(pairs, fn
-      {_key, value} -> pair_value_treatment(value)
-      _other -> :skip
-    end)
-  end
-
-  # The treatment for one shorthand pair's *value*: a `nil` (an `IS NULL` predicate, never `= nil`)
-  # and any compound/interpolated/expression value are left raw (`:skip`); a scalar literal
-  # (string, number, atom, boolean) is mutated by core's literal families and delivered `:pinned`
-  # (the query position needs `^`). Pinning is scalar-only — a compound value would mutate nested
-  # nodes where an inner `^` still poisons.
-  defp pair_value_treatment(value) do
-    cond do
-      nil_literal?(value) -> :skip
-      scalar_literal?(value) -> :pinned
-      true -> :skip
-    end
-  end
-
-  defp nil_literal?({:__block__, _meta, [nil]}), do: true
-
-  # mutare:ignore[clause_drop] equivalent — Sourceror block-wraps a literal nil, so the bare-nil clause is unreachable from parsed Ecto
-  defp nil_literal?(nil), do: true
-  defp nil_literal?(_value), do: false
-
-  defp scalar_literal?({:__block__, _meta, [v]}), do: is_binary(v) or is_number(v) or is_atom(v)
-  defp scalar_literal?(_value), do: false
 
   @doc """
   The selector-host targets for a query macro node — one per binding-referencing `where`/`having`
@@ -280,7 +108,7 @@ defmodule Mutare.Ecto.Host do
     clauses
     |> Enum.with_index()
     |> Enum.flat_map(fn {{key, value}, index} ->
-      with true <- AST.atom_value(key) in @condition_keys,
+      with true <- AST.atom_value(key) in @condition_macros,
            [_ | _] = mutants <- catalog(value, bindings, opts) do
         [target(value, mutants, bindings, from_clause_splice(index, key))]
       else
@@ -333,8 +161,8 @@ defmodule Mutare.Ecto.Host do
   #      the host adds no second one — the joins just follow the source's positionals (`[..., c, j]`).
   #   3. **join positionals** — each `join`'s binding (`@join_keys`), in clause order, behind the
   #      anchor.
-  #   4. **named binds** — the `{as, var}` tuples, which `dynamic/2` requires **last** and which
-  #      resolve by name (no position), from the source pattern and any named joins.
+  #   4. **source-pattern named binds** — the `{as, var}` tuples, which `dynamic/2` requires **last**
+  #      and which resolve by name (no position). Joins contribute none (they bind positionally).
   defp from_bindings(source, clauses) do
     source_decls =
       case source do
@@ -342,18 +170,18 @@ defmodule Mutare.Ecto.Host do
         _ -> []
       end
 
-    # The source pattern's named binds sort to the end; its positionals — and any explicit `...` — keep
-    # their declared order at the front, since `[a, ..., c]` declares distinct positions (`a`@0, `c`
-    # last) that must be preserved verbatim.
+    # The source pattern's named binds sort to the end (`dynamic/2` requires it; they resolve by name,
+    # not position); its positionals — and any explicit `...` — keep their declared order at the front,
+    # since `[a, ..., c]` declares distinct positions (`a`@0, `c` last) that must be preserved verbatim.
     {source_named, source_front} = Enum.split_with(source_decls, &named_binding?/1)
 
-    {join_positional, join_named} =
-      Enum.split_with(join_bindings(clauses), &Binding.variable?/1)
+    # Joins bind positionally — a join clause's lhs is a variable (named joins use `as:`, a separate
+    # option, not a binding-pattern entry) — so every join decl is a positional reorder candidate. The
+    # `[]` asserts that: a named join decl (which would need sorting last) raises here rather than
+    # being silently mis-positioned.
+    {join_positional, []} = Enum.split_with(join_bindings(clauses), &Binding.variable?/1)
 
-    # mutare:ignore[list, operand_swap] equivalent — `join_named` is always `[]`: a join clause binds positionally (its lhs is a variable; named joins use `as:`, not a binding-pattern named entry), so `join_bindings/1` never yields a named decl. `source_named ++ []`, `source_named -- []`, and `[] ++ source_named` all equal `source_named`
-    source_front ++
-      positioned_joins(source_front, source_named, join_positional) ++
-      source_named ++ join_named
+    source_front ++ positioned_joins(source_front, source_named, join_positional) ++ source_named
   end
 
   # The join positionals, placed so each maps to its true tail position. When the source pattern
@@ -393,9 +221,6 @@ defmodule Mutare.Ecto.Host do
         do: decl
   end
 
-  defp binding_source?({:in, _, [_var, _src]}), do: true
-  defp binding_source?(_node), do: false
-
   # Replace clause `index`'s value with the `^`-pinned selector `case`, preserving the key.
   defp from_clause_splice(index, key) do
     fn {:from, meta, [source, clauses]}, case_node ->
@@ -405,10 +230,16 @@ defmodule Mutare.Ecto.Host do
 
   # === where / having (standalone + piped) ===================================
 
-  # The condition argument's index: the position right after the binding list. Works for both
-  # the direct form (`where(q, [p], cond)` — binding at 1, cond at 2) and the piped form
-  # (`q |> where([p], cond)` — binding at 0, cond at 1, the query being the piped LHS, not in args).
-  defp condition_index(args) do
+  @doc """
+  The condition argument's index for a `where`/`having` macro call — the position right after the
+  binding list — or `nil` when the call carries no binding list (a keyword-shorthand form). Works for
+  both the direct form (`where(q, [p], cond)` — binding at 1, cond at 2) and the piped form
+  (`q |> where([p], cond)` — binding at 0, cond at 1, the query being the piped LHS, not in args).
+  Shared shape detection: `Mutare.Ecto.Host.Routing` uses it to mark the condition position `:hosted`,
+  and `host/2` (below) to locate the condition it weaves.
+  """
+  @spec condition_index([Macro.t()]) :: non_neg_integer() | nil
+  def condition_index(args) do
     case Enum.find_index(args, &binding_list?/1) do
       nil -> nil
       # mutare:ignore[arithmetic, conditional, literal, relational] equivalent — these mutate the guard `index + 1 < length`, which differs only when the binding list is the last argument, where every downstream path reduces to a harmless out-of-bounds index or nil (no host either way)

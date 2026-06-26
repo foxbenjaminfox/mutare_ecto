@@ -150,9 +150,9 @@ defmodule Mutare.Ecto do
   end
 
   # Shape-aware routing for the `:routing` query macros — which positions carry a hosted DSL
-  # fragment vs. plain data. Delegated to `Mutare.Ecto.Host`.
+  # fragment vs. plain data. Delegated to `Mutare.Ecto.Host.Routing` (the classifier half of the host).
   @impl Mutare.Mutator
-  defdelegate macro_routing(node), to: Host
+  defdelegate macro_routing(node), to: Host.Routing
 
   # The selector host: per hosted `where`/`having` condition, the `{original, mutants}` pair plus
   # the `dynamic`/`^` `wrap`/`splice` transforms. Delegated to `Mutare.Ecto.Host`.

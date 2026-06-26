@@ -570,7 +570,7 @@ defmodule Mutare.Ecto.HostTest do
   end
 
   describe "macro_routing/1 — per-argument treatment" do
-    defp routing(code), do: code |> Sourceror.parse_string!() |> Host.macro_routing()
+    defp routing(code), do: code |> Sourceror.parse_string!() |> Host.Routing.macro_routing()
 
     test "from keyword form: a binding source hosts its clause argument" do
       assert routing("from(u in User, where: u.x == u.y, select: u.id)") == [:skip, :hosted]
