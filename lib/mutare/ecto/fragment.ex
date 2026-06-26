@@ -72,6 +72,7 @@ defmodule Mutare.Ecto.Fragment do
   this with the binding list it already extracted; for a single-binding query it returns `[]`.
   """
   @spec binding_reorders(Macro.t(), [atom()]) :: [Macro.t()]
+  # mutare:ignore[guard_drop] equivalent — defensive contract guard; the host always passes the binding list it extracted, and the body's Enum.filter/2 would raise on a non-list anyway, so no reachable input distinguishes the guarded and unguarded clause
   def binding_reorders(condition, binding_names) when is_list(binding_names) do
     present = Enum.filter(binding_names, &AST.references_var?(condition, &1))
 
@@ -86,7 +87,9 @@ defmodule Mutare.Ecto.Fragment do
   # pinned value or field name that happens to share a name is unaffected.
   defp swap_vars(ast, a, b) do
     Macro.prewalk(ast, fn
+      # mutare:ignore[guard_drop] equivalent — the guard limits the swap to *variable* nodes; the only same-named non-variable 3-tuple is a local call `a(...)`, which no where/having condition produces, so dropping it changes nothing reachable
       {^a, meta, ctx} when is_atom(ctx) -> {b, meta, ctx}
+      # mutare:ignore[guard_drop] equivalent — symmetric to the clause above; a same-named call `b(...)` can't occur in a query condition, so this guard's distinguishing input never arrives
       {^b, meta, ctx} when is_atom(ctx) -> {a, meta, ctx}
       other -> other
     end)
@@ -132,6 +135,7 @@ defmodule Mutare.Ecto.Fragment do
   # A non-atom-form node (e.g. a `u.age` field access, whose form is the `{:., …}` dot tuple):
   # descend into its arguments only, never its form — exactly as core's analyzer recurses, so a
   # field/qualifier reference is a leaf.
+  # mutare:ignore[pattern_swap, clause_drop] equivalent — the only non-atom-form node a condition yields is a field/dot access whose args are `[]`, and lift/4 over no args is a no-op, so reordering the head's bindings or dropping the clause both produce the same empty result
   defp do_mutants({form, meta, args}, opts) when is_list(args), do: lift(form, meta, args, opts)
 
   # Literals, atoms, variables, 2-tuples, lists: no catalog target (interpolations and literals

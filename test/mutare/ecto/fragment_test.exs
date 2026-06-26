@@ -106,6 +106,14 @@ defmodule Mutare.Ecto.FragmentTest do
       assert families("u.role in ^r") == MapSet.new([:membership])
       assert families("like(u.x, ^q)", dialects: [:postgres]) == MapSet.new([:membership])
     end
+
+    test "the reverse-polarity unit clauses (not in / not is_nil) carry their family too" do
+      # `not in`→`in` and `not is_nil`→`is_nil` are *separate* clauses from their forward
+      # directions, so each one's tag is pinned in its own right — otherwise an `atom` mutation
+      # of the family name on the reverse clause survives unnoticed.
+      assert families("u.role not in ^r") == MapSet.new([:membership])
+      assert families("not is_nil(u.x)") == MapSet.new([:null_predicate])
+    end
   end
 
   describe "FragmentLiteral" do
@@ -119,6 +127,22 @@ defmodule Mutare.Ecto.FragmentTest do
       # `0` never re-emits `0`, and `n - 1` (= -1) is a valid SQL value (kept), so `> 0`
       # yields the comparison swap plus `> 1` and `> -1`.
       assert mutants("u.x > 0") == MapSet.new(["u.x >= 0", "u.x > 1", "u.x > -1"])
+    end
+
+    test "colliding boundary variants are deduped — no repeated literal mutant" do
+      # For `1`: n+1 = 2, n-1 = 0, and the zero sentinel is *also* 0, so the literal variants
+      # are {2, 0}, not {2, 0, 0}. Asserted on the raw list (the `mutants/2` helper's MapSet
+      # would mask the duplicate), so a dropped `Enum.uniq/1` — which re-emits `> 0` twice — is
+      # caught.
+      literals =
+        "u.age > 1"
+        |> Sourceror.parse_string!()
+        |> Fragment.mutants()
+        |> Enum.filter(fn {family, _node} -> family == :fragment_literal end)
+        |> Enum.map(fn {_family, node} -> Sourceror.to_string(node) end)
+        |> Enum.sort()
+
+      assert literals == ["u.age > 0", "u.age > 2"]
     end
 
     test "a pinned interpolation is left to core (no literal mutant)" do
