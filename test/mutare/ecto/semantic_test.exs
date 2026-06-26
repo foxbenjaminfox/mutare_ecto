@@ -547,4 +547,56 @@ defmodule Mutare.Ecto.SemanticTest do
       )
     end
   end
+
+  describe "Regression — explicit `...` in a source rebind (baseline correctness)" do
+    # The sibling of the named-rebind bug: an *explicit* `...` in the source pattern (`[..., c] in q`)
+    # declares `c` as the query's last binding, but the host used to drop the `...` when re-declaring
+    # the woven dynamic, re-binding `c` to position 0. With a 3-binding base (only the last skipped to)
+    # the woven `where` then filtered the *wrong* binding — corrupting the baseline while `c` in the
+    # (un-woven) `select` stayed correct. The fix preserves the source `...` in the woven binding list.
+    test "the baseline filters the binding the source `...` selects, not position 0" do
+      {mod, _sites} =
+        build("""
+        defmodule Q do
+          import Ecto.Query
+          alias MyApp.User
+
+          def q do
+            base =
+              from(u1 in User,
+                join: u2 in User, on: u2.id == u1.id + 1,
+                join: u3 in User, on: u3.id == u1.id + 2
+              )
+
+            from([..., c] in base, where: c.age > 18, select: c.id)
+          end
+        end
+        """)
+
+      # base rows (u1, u2=u1+1, u3=u1+2): (1,2,3) (2,3,4) (3,4,5) (4,5,6). `[..., c]` binds c → u3.
+      # Keeping c.age > 18 (u3 ∈ {Eve 40, Frank 19}) leaves rows (3,4,5) and (4,5,6) → c.id ∈ [5, 6].
+      reference = Enum.sort(reference_last_binding())
+
+      assert reference == [5, 6]
+
+      # Pre-fix the woven `[c]` filtered position 0 (u1.age > 18 → only Bob's row (2,3,4)), so the
+      # baseline returned that row's c.id (u3 = 4) — i.e. [4], diverging from the source.
+      assert ids(mod, 0) == reference
+    end
+
+    # The hand-written twin of the fixture's `q/0`, run directly (no metamutant).
+    defp reference_last_binding do
+      import Ecto.Query
+
+      base =
+        from(u1 in MyApp.User,
+          join: u2 in MyApp.User,
+          on: u2.id == u1.id + 1,
+          join: u3 in MyApp.User,
+          on: u3.id == u1.id + 2
+        )
+
+      MyApp.Repo.all(from([..., c] in base, where: c.age > 18, select: c.id))
+    end
+  end
 end

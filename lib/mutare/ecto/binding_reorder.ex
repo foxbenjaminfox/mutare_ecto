@@ -81,6 +81,11 @@ defmodule Mutare.Ecto.BindingReorder do
   # mutare:ignore[pattern_swap, logical, conditional] equivalent — as above, for the named `key: var` entry: symmetric inner guard, constant body, and no call node ever appears here
   defp binding_entry?({_key, {name, _meta, ctx}}) when is_atom(name) and is_atom(ctx), do: true
 
+  # The `...` tail anchor (`[..., a, b]`) — a binding-list element, so the list is still recognized.
+  # `positional_positions/1` skips it (its context slot is not an atom), and `swap/3` reorders the
+  # positional entries *around* it by index, so the anchor keeps its place.
+  defp binding_entry?({:..., _meta, _ctx}), do: true
+
   # mutare:ignore[literal] equivalent — flipping the fallback to `true` only mis-identifies a non-binding list as a binding list, but positional_positions then yields no positions for it, so no swap is produced either way (the clause_drop here is killed separately)
   defp binding_entry?(_node), do: false
 

@@ -124,6 +124,72 @@ defmodule Mutare.Ecto.HostTest do
       assert_compiles(src)
     end
 
+    test "an explicit `...` in a from source rebind is preserved" do
+      # `[..., c] in query` declares `c` as the query's *last* binding. Dropping the `...` (the old
+      # behavior) re-binds `c` to position 0 — the same baseline-corruption class as the named-rebind
+      # bug, reached here via an anchor the source pattern wrote itself.
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q(query), do: from([..., c] in query, where: c.age > 1, select: c.id)
+      end
+      """
+
+      assert metamutant(src) =~ "dynamic([..., c]"
+      assert_compiles(src)
+    end
+
+    test "an explicit source `...` plus a join keeps both at the tail (no second anchor)" do
+      # The source's own `...` already anchors the tail, so the join follows `c` contiguously
+      # (`[..., c, j]`) — the host must not add a *second* `...`.
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q(query) do
+          from [..., c] in query,
+            inner_join: j in Post,
+            on: j.user_id == c.id,
+            where: j.views > c.id,
+            select: j.id
+        end
+      end
+      """
+
+      assert metamutant(src) =~ "dynamic([..., c, j]"
+      refute metamutant(src) =~ "dynamic([..., ..."
+      assert_compiles(src)
+    end
+
+    test "a leading positional before a source `...` is preserved (`[a, ..., c]`)" do
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q(query), do: from([a, ..., c] in query, where: a.age > c.age, select: a.id)
+      end
+      """
+
+      assert metamutant(src) =~ "dynamic([a, ..., c]"
+      assert_compiles(src)
+    end
+
+    test "the standalone form recognizes a `...` binding list and hosts its condition" do
+      # Previously `[..., c]` wasn't recognized as a binding list, so the condition was silently *not*
+      # hosted (a missed mutation). It now hosts, re-declaring the `...` in the woven dynamic.
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q(query), do: where(query, [..., c], c.age > 1)
+      end
+      """
+
+      assert Enum.any?(hosted(src), fn {original, mutated} ->
+               original == "c.age > 1" and mutated == "c.age >= 1"
+             end)
+
+      assert metamutant(src) =~ "dynamic([..., c]"
+      assert_compiles(src)
+    end
+
     test "the pipe form re-declares its stage binding list" do
       src = """
       defmodule M do
@@ -484,6 +550,8 @@ defmodule Mutare.Ecto.HostTest do
       assert routing("where([u], u.x == u.y)") == [:skip, :hosted]
       # a piped query as the first arg is still recognized as the threaded expression.
       assert routing("where(q |> sub(), [u], u.x == u.y)") == [:expression, :skip, :hosted]
+      # a `...`-anchored binding list is recognized too, so its condition routes `:hosted`.
+      assert routing("where(query, [..., c], c.x == c.y)") == [:expression, :skip, :hosted]
     end
 
     test "condition macro with no condition after the binding list hosts nothing" do

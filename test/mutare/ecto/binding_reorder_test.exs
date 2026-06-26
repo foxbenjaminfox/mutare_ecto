@@ -141,6 +141,20 @@ defmodule Mutare.Ecto.BindingReorderTest do
       refute Enum.any?(mutated(src), &(&1 =~ "order_by(query, [p, u]"))
       assert_compiles(src)
     end
+
+    test "a `...`-anchored list still reorders its positional bindings, keeping the anchor in place" do
+      # `[..., a, b]` is a binding list (the `...` is a recognized element); the two positionals `a`/`b`
+      # transpose around the anchor — `[..., b, a]` — and the `...` keeps its place.
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q(query), do: select(query, [..., a, b], {a.id, b.id})
+      end
+      """
+
+      assert Enum.any?(mutated(src), &(&1 =~ "select(query, [..., b, a]"))
+      assert_compiles(src)
+    end
   end
 
   describe "where/having are not double-handled" do
