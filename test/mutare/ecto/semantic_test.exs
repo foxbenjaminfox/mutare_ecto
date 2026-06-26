@@ -23,10 +23,12 @@ defmodule Mutare.Ecto.SemanticTest do
 
   alias Mutare.Ecto.SemanticHarness, as: H
 
-  # Mutant lookup comes straight from core — the harness owns no lookup helper. In-fragment mutants
-  # resolve by their exact `{original, mutated}` diff with `site_id/2`; whole-`from` mutants — whose
-  # recorded diff is the entire rewritten query, so siblings share an `original_code` — resolve by a
-  # substring predicate with `site_by/3`.
+  # Mutant lookup comes straight from core — the harness owns no lookup helper. Most mutants resolve
+  # by their `{original, mutated}` diff with `site_id/2`: in-fragment mutants name it exactly (string
+  # slots), while whole-`from` mutants — whose recorded diff is the entire rewritten query, so
+  # siblings share an `original_code` — name it with `Regex` slots that the mutated half
+  # disambiguates. Only the drops, recognized by the *absence* of a token, still need an ad-hoc
+  # `site_by/3` predicate.
   import Mutare.Test, only: [site_id: 2, site_by: 3]
 
   # Start + seed the real `MyApp.Repo` once for this module (and tear it down after). Owning the DB
@@ -282,8 +284,8 @@ defmodule Mutare.Ecto.SemanticTest do
     # The pipe-form twin of filter-drop (`Mutare.Ecto.ClauseDrop`): `q |> where([u], u.age > 18)`
     # becomes `q |> Function.identity()`. Proves the stage drop is **live** — the dropped `where`
     # actually stops filtering at the engine (after `hoist_pipe` lifts the selector out of the pipe),
-    # not just in the recorded Site. The mutant renders as `identity()`, so locate it by that token
-    # with the same one-and-only-one `site_by` guard.
+    # not just in the recorded Site. The mutant renders as `identity()`, so locate it by that token —
+    # the `Regex` mutated-slot of `site_id/2`.
     test "dropping a piped where stage returns the whole table" do
       {mod, sites} =
         build("""
@@ -297,15 +299,10 @@ defmodule Mutare.Ecto.SemanticTest do
       # Baseline: ages strictly over 18 — Bob(25), Eve(40), Frank(19).
       assert ids(mod, 0) == [2, 5, 6]
 
-      drop =
-        site_by(
-          sites,
-          "clause-drop (piped where)",
-          &(&1.original_code =~ "where(" and &1.mutated_code =~ "identity")
-        )
+      drop = site_id(sites, {~r/where\(/, ~r/identity/})
 
       # With the filter stage dropped, every row survives.
-      assert ids(mod, drop.id) == [1, 2, 3, 4, 5, 6]
+      assert ids(mod, drop) == [1, 2, 3, 4, 5, 6]
     end
   end
 
@@ -324,14 +321,9 @@ defmodule Mutare.Ecto.SemanticTest do
 
       assert q_under(mod, 0) == [3]
 
-      flip =
-        site_by(
-          sites,
-          "asc→desc",
-          &(&1.original_code =~ "order_by" and &1.mutated_code =~ "desc: u.age")
-        )
+      flip = site_id(sites, {~r/order_by/, ~r/desc: u.age/})
 
-      assert q_under(mod, flip.id) == [5]
+      assert q_under(mod, flip) == [5]
     end
   end
 
@@ -348,14 +340,9 @@ defmodule Mutare.Ecto.SemanticTest do
 
       assert ids(mod, 0) == [1, 2]
 
-      bump =
-        site_by(
-          sites,
-          "limit 2→3",
-          &(&1.original_code =~ "limit: 2" and &1.mutated_code =~ "limit: 3")
-        )
+      bump = site_id(sites, {~r/limit: 2/, ~r/limit: 3/})
 
-      assert ids(mod, bump.id) == [1, 2, 3]
+      assert ids(mod, bump) == [1, 2, 3]
 
       # The drop has no `limit` left in its rendered mutant — locate it by that absence. `site_by`
       # gives this the same one-and-only-one guard as `site_id`, so a stray sibling can't slip past.
@@ -388,14 +375,9 @@ defmodule Mutare.Ecto.SemanticTest do
       # offset 2: skip Alice/Bob, keep the rest.
       assert ids(mod, 0) == [3, 4, 5, 6]
       # offset 3 skips one more from the top.
-      bump =
-        site_by(
-          sites,
-          "offset 2→3",
-          &(&1.original_code =~ "offset: 2" and &1.mutated_code =~ "offset: 3")
-        )
+      bump = site_id(sites, {~r/offset: 2/, ~r/offset: 3/})
 
-      assert ids(mod, bump.id) == [4, 5, 6]
+      assert ids(mod, bump) == [4, 5, 6]
 
       # The drop has no `offset` left in its rendered mutant — locate it by that absence (the `limit`
       # is still there, so the limit-drop site, whose mutant keeps `offset: 2`, can't match). Same
@@ -427,8 +409,8 @@ defmodule Mutare.Ecto.SemanticTest do
         """)
 
       baseline = ids(mod, 0)
-      left = site_by(sites, "join→left_join", &(&1.mutated_code =~ "left_join: u in User"))
-      mutant = ids(mod, left.id)
+      left = site_id(sites, {~r/join: u in User/, ~r/left_join: u in User/})
+      mutant = ids(mod, left)
 
       # Inner join: only posts whose user exists (P1→user1, P2→user2).
       assert baseline == [1, 2]
@@ -449,8 +431,8 @@ defmodule Mutare.Ecto.SemanticTest do
         """)
 
       [sum] = q_under(mod, 0)
-      swap = site_by(sites, "sum→avg", &(&1.mutated_code =~ "avg(u.age)"))
-      [avg] = q_under(mod, swap.id)
+      swap = site_id(sites, {~r/sum\(u\.age\)/, ~r/avg\(u\.age\)/})
+      [avg] = q_under(mod, swap)
 
       # Σ ages over the six users.
       assert sum == 18 + 25 + 17 + 18 + 40 + 19
