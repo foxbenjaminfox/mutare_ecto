@@ -148,8 +148,19 @@ defmodule Mutare.Ecto.ConfigTest do
       end
       """
 
-      assert_raise ArgumentError, ~r/unknown Mutare.Ecto families: \[:bogus\]/, fn ->
+      # Anchored at the start (`\A`): the message must *lead* with the "unknown families" text,
+      # not bury it after the valid-families dump — this pins the `<>` operand order in validate!/1.
+      assert_raise ArgumentError, ~r/\Aunknown Mutare.Ecto families: \[:bogus\]/, fn ->
         ecto_diffs(src, ecto(families: [:bogus]))
+      end
+    end
+
+    test "a families: that is neither :all nor a list is rejected" do
+      # The `is_list` guard routes only a *list* to validate!/1; a bare atom — a user who wrote
+      # `families: :comparison` instead of `[:comparison]` — matches no case clause and fails
+      # loudly, rather than being silently fed to `--`/2 (which would raise a vaguer ArgumentError).
+      assert_raise CaseClauseError, fn ->
+        Mutare.Ecto.Config.families(families: :comparison)
       end
     end
 
