@@ -350,6 +350,7 @@ defmodule Mutare.Ecto.Host do
     {join_positional, join_named} =
       Enum.split_with(join_bindings(clauses), &Binding.variable?/1)
 
+    # mutare:ignore[list, operand_swap] equivalent — `join_named` is always `[]`: a join clause binds positionally (its lhs is a variable; named joins use `as:`, not a binding-pattern named entry), so `join_bindings/1` never yields a named decl. `source_named ++ []`, `source_named -- []`, and `[] ++ source_named` all equal `source_named`
     source_front ++
       positioned_joins(source_front, source_named, join_positional) ++
       source_named ++ join_named
@@ -437,6 +438,7 @@ defmodule Mutare.Ecto.Host do
   # A positional binding variable or the `...` anchor — the elements a (positional) binding list is
   # made of. A named pair is not one here: the standalone/pipe binding-list *detection* only needs to
   # recognize positional lists (the `from` keyword form handles named binds via `binding_decls/1`).
+  # mutare:ignore[conditional] equivalent — forcing this to `true` only widens which lists count as binding lists; the standalone form's binding list is always a list of plain variables/`...` (a non-binding list never sits at that argument position), so over-accepting an element changes no routing on reachable input
   defp binding_list_element?(node), do: Binding.variable?(node) or Binding.ellipsis?(node)
 
   # The binding declarations a binding node establishes, normalized for re-declaration in the woven

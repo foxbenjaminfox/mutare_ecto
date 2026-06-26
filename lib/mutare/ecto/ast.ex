@@ -33,6 +33,7 @@ defmodule Mutare.Ecto.AST do
   @spec int_literal(integer()) :: Macro.t()
   def int_literal(int) when is_integer(int) and int < 0, do: {:-, [], [int_literal(-int)]}
 
+  # mutare:ignore[guard_drop] equivalent — constructor guard; every caller passes an integer (the prior clause handles negatives, this one the non-negative rest), so no reachable input distinguishes the guarded clause from a bare one
   def int_literal(int) when is_integer(int),
     do: {:__block__, [token: Integer.to_string(int)], [int]}
 

@@ -172,6 +172,63 @@ defmodule Mutare.Ecto.HostTest do
       assert_compiles(src)
     end
 
+    test "a named source with no join gets no spurious `...`" do
+      # A named rebind alone (no join) re-declares exactly `[post: p]`; the host must not anchor a
+      # tail that isn't there. (Pins the `join_positional != []` guard: with no join, no `...`.)
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q(query), do: from([post: p] in query, where: p.title == "x", select: p.id)
+      end
+      """
+
+      assert metamutant(src) =~ "dynamic([post: p]"
+      refute metamutant(src) =~ "dynamic([..., post: p]"
+      assert_compiles(src)
+    end
+
+    test "an opaque source with no positional binding anchors the join to the tail" do
+      # `[] in query` rebinds none of `query`'s (unknown) bindings, so a join is appended after all of
+      # them and must be `...`-anchored — `[..., j]`, not `[j]`. (Pins the `source_positional == []`
+      # arm of the anchor: an empty source pattern is opaque, so the join still needs the anchor.)
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q(query) do
+          from [] in query,
+            inner_join: j in Post,
+            on: j.user_id == 1,
+            where: j.views > 1,
+            select: j.id
+        end
+      end
+      """
+
+      assert metamutant(src) =~ "dynamic([..., j]"
+      assert_compiles(src)
+    end
+
+    test "a source `...` with named binds keeps a single anchor (no second `...`)" do
+      # `[a, ..., post: p]` already anchors the tail itself, so the join follows `a` after the source's
+      # own `...` — `[a, ..., j, post: p]`. Re-anchoring here would emit a second `...` (invalid Ecto).
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q(query) do
+          from [a, ..., post: p] in query,
+            inner_join: j in Post,
+            on: j.user_id == a.id,
+            where: j.views > p.views,
+            select: j.id
+        end
+      end
+      """
+
+      assert metamutant(src) =~ "dynamic([a, ..., j, post: p]"
+      refute metamutant(src) =~ "dynamic([a, ..., ..."
+      assert_compiles(src)
+    end
+
     test "the standalone form recognizes a `...` binding list and hosts its condition" do
       # Previously `[..., c]` wasn't recognized as a binding list, so the condition was silently *not*
       # hosted (a missed mutation). It now hosts, re-declaring the `...` in the woven dynamic.
