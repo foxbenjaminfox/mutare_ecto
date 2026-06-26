@@ -46,7 +46,7 @@ defmodule Mutare.Ecto.Host do
   `:routing` extensions); see `c:Mutare.Mutator.macro_routing/1`.
   """
 
-  alias Mutare.Ecto.{Aggregate, AST, Config, Fragment}
+  alias Mutare.Ecto.{Aggregate, AST, Binding, Config, Fragment}
 
   # The clause keys whose value is a boolean condition the catalog mutates — in the `from`
   # keyword list and as standalone `Ecto.Query` macros.
@@ -156,11 +156,9 @@ defmodule Mutare.Ecto.Host do
   # a bare variable (`q`), a `from(…)` opener, or a nested pipe (`(… |> …)`). A binding list, a
   # keyword list, a literal, or any other DSL-data shape is not — that is a piped call's own first
   # data argument (the query is the `|>` left side, routed separately).
-  # mutare:ignore[pattern_swap] equivalent — symmetric guard, body returns the constant `true`, so swapping the name/ctx binders changes nothing
-  defp query_arg?({name, _meta, ctx}) when is_atom(name) and is_atom(ctx), do: true
   defp query_arg?({:from, _meta, _args}), do: true
   defp query_arg?({:|>, _meta, _args}), do: true
-  defp query_arg?(_node), do: false
+  defp query_arg?(node), do: Binding.variable?(node)
 
   # === keyword-shorthand routing =============================================
 
@@ -316,10 +314,7 @@ defmodule Mutare.Ecto.Host do
   # produced. Named bindings (`post: p`) are deliberately excluded: a reorder is a *positional*
   # transposition (`[a, b]` → `[b, a]`), meaningless for a name-addressed binding, so a named binding
   # rides the query untouched while its positional siblings still swap.
-  defp binding_names(bindings) do
-    # mutare:ignore[logical, conditional] equivalent — the 3-tuples reaching this guard are clean vars (atom name and ctx), so it is always true; named binds are 2-tuples already excluded by the comprehension pattern
-    for {name, _meta, ctx} <- bindings, is_atom(name) and is_atom(ctx), do: name
-  end
+  defp binding_names(bindings), do: for(b <- bindings, Binding.variable?(b), do: elem(b, 0))
 
   # The binding list the query establishes, re-declared for the woven `dynamic([…], _)`. It is
   # assembled in four ordered parts:
@@ -353,7 +348,7 @@ defmodule Mutare.Ecto.Host do
     {source_named, source_front} = Enum.split_with(source_decls, &named_binding?/1)
 
     {join_positional, join_named} =
-      Enum.split_with(join_bindings(clauses), &positional_binding?/1)
+      Enum.split_with(join_bindings(clauses), &Binding.variable?/1)
 
     source_front ++
       positioned_joins(source_front, source_named, join_positional) ++
@@ -365,7 +360,7 @@ defmodule Mutare.Ecto.Host do
   # follow the source's positionals contiguously (`[..., c, j]`). Otherwise `join_anchor/3` supplies
   # the `...` itself when the leading positions are opaque.
   defp positioned_joins(source_front, source_named, join_positional) do
-    if Enum.any?(source_front, &ellipsis?/1),
+    if Enum.any?(source_front, &Binding.ellipsis?/1),
       do: join_positional,
       else: join_anchor(source_front, source_named, join_positional)
   end
@@ -377,29 +372,17 @@ defmodule Mutare.Ecto.Host do
   # contiguously after it, so no anchor is needed.
   defp join_anchor(source_positional, source_named, join_positional) do
     if join_positional != [] and (source_positional == [] or source_named != []) do
-      [ellipsis() | join_positional]
+      [Binding.ellipsis() | join_positional]
     else
       join_positional
     end
   end
 
-  # A normalized binding decl is positional (a clean var, a 3-tuple `{name, meta, ctx}`) rather than
-  # named (a `{key, var}` keyword pair, a 2-tuple). Named binds address by name and must sort last.
-  # mutare:ignore[pattern_swap, logical, conditional] equivalent — symmetric guard with a constant body (swap is a no-op), and the guard only separates a variable from a same-shaped call node, which a binding decl never holds
-  defp positional_binding?({name, _meta, ctx}) when is_atom(name) and is_atom(ctx), do: true
-  defp positional_binding?(_node), do: false
-
   # A named binding decl — the `{key, var}` keyword pair `binding_decl/1` emits for `post: p`. Used to
   # peel named binds (which `dynamic/2` requires last) off the source pattern while leaving its
-  # positionals *and* any `...` anchor in place. A positional (3-tuple) or the `...` node is not one.
+  # positionals (`Binding.variable?/1`) *and* any `...` anchor (`Binding.ellipsis?/1`) in place.
   defp named_binding?({_key, _var}), do: true
   defp named_binding?(_node), do: false
-
-  # The `...` tail-anchor node in a binding list (`[a, ..., c]`) — a leaf with head `:...`, never a
-  # variable (its context slot is not an atom) and never a named pair. No legal binding ever shares
-  # the spelling, so matching the head alone is unambiguous.
-  defp ellipsis?({:..., _meta, _ctx}), do: true
-  defp ellipsis?(_node), do: false
 
   defp join_bindings(clauses) do
     for {key, {:in, _, [lhs, _src]}} <- clauses,
@@ -439,50 +422,34 @@ defmodule Mutare.Ecto.Host do
     end
   end
 
-  # A binding list is a (Sourceror block-wrapped) non-empty list of plain variables — `[p]`,
-  # `[p, q]` — and the optional `...` tail anchor (`[..., p]`), distinguishing the binding form from a
+  # A binding list is a (Sourceror block-wrapped) non-empty list of plain variables — `[p]`, `[p, q]`
+  # — and the optional `...` tail anchor (`[..., p]`), distinguishing the binding form from a
   # keyword-shorthand value (a list of `key: value` pairs) and from the query argument (a single
   # variable, not a list).
-  # mutare:ignore[guard_drop] equivalent — Sourceror block-wraps list literals, so this block clause always wraps a list
-  defp binding_list?({:__block__, _, [list]}) when is_list(list), do: variable_list?(list)
-
-  # mutare:ignore[clause_drop, return_value] equivalent — the bare-list clause is unreachable (parsed binding lists are block-wrapped, handled above), so dropping it or changing its return is unobservable
-  defp binding_list?(list) when is_list(list), do: variable_list?(list)
-  defp binding_list?(_node), do: false
-
-  defp variable_list?([]), do: false
-
-  # mutare:ignore[collection, return_value] equivalent — a real binding list is all binding-list elements (all? and any? agree, both truthy); only a non-binding list at a non-last position would distinguish, which never occurs
-  defp variable_list?(list), do: Enum.all?(list, &binding_list_element?/1)
+  defp binding_list?(node) do
+    case Binding.unwrap_list(node) do
+      # mutare:ignore[collection, return_value] equivalent — a real binding list is all binding-list elements (all? and any? agree, both truthy); only a non-binding list at a non-last position would distinguish, which never occurs
+      [_ | _] = list -> Enum.all?(list, &binding_list_element?/1)
+      _ -> false
+    end
+  end
 
   # A positional binding variable or the `...` anchor — the elements a (positional) binding list is
   # made of. A named pair is not one here: the standalone/pipe binding-list *detection* only needs to
   # recognize positional lists (the `from` keyword form handles named binds via `binding_decls/1`).
-  defp binding_list_element?(node), do: variable?(node) or ellipsis?(node)
-
-  # mutare:ignore[pattern_swap, logical, conditional] equivalent — symmetric guard with a constant body (swap is a no-op), and the guard only separates a variable from a same-shaped call node, never present in a binding list
-  defp variable?({name, _meta, ctx}) when is_atom(name) and is_atom(ctx), do: true
-
-  # mutare:ignore[literal] equivalent — flipping the fallback to true misclassifies a non-variable element as a variable, observable only for a non-binding list at a non-last position, which never occurs
-  defp variable?(_node), do: false
+  defp binding_list_element?(node), do: Binding.variable?(node) or Binding.ellipsis?(node)
 
   # The binding declarations a binding node establishes, normalized for re-declaration in the woven
-  # `dynamic([…], _)`: a lone variable (`u in User`) yields `[u]`; a binding list — positional
-  # (`[a, b]`), named (`[post: p]`), or mixed (`[a, post: p]`) — expands element-wise. Positional
-  # bindings become clean vars (reorder candidates via `binding_names/1`); named bindings keep their
-  # key so the dynamic re-declares them faithfully, yet never become reorder candidates. Sourceror
-  # block-wraps a list literal (`{:__block__, _, [list]}`); a bare list reaches here already
-  # unwrapped; anything unrecognized yields `[]` (no host).
-  # mutare:ignore[guard_drop] equivalent — Sourceror block-wraps list literals, so this block clause always wraps a list
-  defp binding_decls({:__block__, _meta, [list]}) when is_list(list), do: binding_decls(list)
-  defp binding_decls(list) when is_list(list), do: Enum.flat_map(list, &binding_decl/1)
-
-  # mutare:ignore[pattern_swap, logical, conditional] equivalent — symmetric guard, body reuses the whole `var`, and the guard only separates a variable from a same-shaped call node, never a binding source
-  defp binding_decls({name, _meta, ctx} = var) when is_atom(name) and is_atom(ctx),
-    do: [AST.clean_var(var)]
-
-  # mutare:ignore[clause_drop] equivalent — the fallback only catches an unrecognized binding node, which valid Ecto AST never produces here
-  defp binding_decls(_node), do: []
+  # `dynamic([…], _)`: a binding list — positional (`[a, b]`), named (`[post: p]`), mixed
+  # (`[a, post: p]`), or `...`-anchored (`[..., c]`) — expands element-wise via `binding_decl/1`; a
+  # lone variable (`u in User`) is a single decl (`Binding.unwrap_list/1` returns `nil`, so it routes
+  # straight to `binding_decl/1`, which yields `[u]`); anything unrecognized yields `[]` (no host).
+  defp binding_decls(node) do
+    case Binding.unwrap_list(node) do
+      nil -> binding_decl(node)
+      list -> Enum.flat_map(list, &binding_decl/1)
+    end
+  end
 
   # One binding-list element. A positional binding is a clean var; a named binding (`post: p`) is
   # re-emitted as a clean keyword pair — key normalized to the Sourceror keyword shape so the
@@ -497,7 +464,7 @@ defmodule Mutare.Ecto.Host do
 
   # The `...` tail anchor (`[..., c] in q`) — preserved (re-emitted clean-meta) so the woven dynamic
   # keeps the source pattern's own anchor and maps each trailing binding to its true position.
-  defp binding_decl({:..., _meta, _ctx}), do: [ellipsis()]
+  defp binding_decl({:..., _meta, _ctx}), do: [Binding.ellipsis()]
 
   # mutare:ignore[clause_drop] equivalent — the fallback only catches an unrecognized binding-list element, which valid Ecto AST never produces here
   defp binding_decl(_node), do: []
@@ -518,9 +485,4 @@ defmodule Mutare.Ecto.Host do
   end
 
   defp pin(case_node), do: {:^, [], [case_node]}
-
-  # The `...` tail anchor for a `dynamic/2` binding list (`[a, ..., j]`) — the Sourceror/Elixir
-  # ellipsis node, clean meta. Pins trailing join bindings to their true positions past an opaque
-  # source query's leading (and named-rebound) bindings.
-  defp ellipsis, do: {:..., [], []}
 end

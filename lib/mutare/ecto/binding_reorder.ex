@@ -22,7 +22,7 @@ defmodule Mutare.Ecto.BindingReorder do
   exchange and avoids manufacturing an equivalent mutant when a declared binding is unused.
   """
 
-  alias Mutare.Ecto.{AST, Host}
+  alias Mutare.Ecto.{AST, Binding, Host}
 
   @doc "Binding-reorder mutants for `node` as `{:binding_reorder, node}` pairs, or `[]`."
   @spec mutations(Macro.t()) :: [{:binding_reorder, Macro.t()}]
@@ -38,7 +38,7 @@ defmodule Mutare.Ecto.BindingReorder do
   # carries only declarations, so it is excluded from the reference test.
   defp reorders(macro, meta, args) do
     with {index, blist} <- find_binding_list(args),
-         positions = positional_positions(unwrap(blist)),
+         positions = positional_positions(Binding.unwrap_list(blist)),
          # mutare:ignore[literal, conditional] equivalent — a fast-path guard; the `i < j` loop below already yields [] for fewer than two positions, so weakening or dropping this bound changes nothing
          true <- length(positions) >= 2 do
       body = Enum.drop(args, index + 1)
@@ -68,55 +68,36 @@ defmodule Mutare.Ecto.BindingReorder do
   end
 
   defp binding_list?(node) do
-    case unwrap(node) do
+    case Binding.unwrap_list(node) do
       # mutare:ignore[return_value, collection] equivalent — the binding list is always the first list-shaped argument and is all binding entries; a partial/non-entry list at that position never occurs, so all?/any? and the boolean return are indistinguishable on reachable input
       [_ | _] = list -> Enum.all?(list, &binding_entry?/1)
       _ -> false
     end
   end
 
-  # mutare:ignore[pattern_swap, logical, conditional] equivalent — symmetric guard with a constant body (swap is a no-op), and the guard only separates a variable from a same-shaped call node, never present in a binding list
-  defp binding_entry?({name, _meta, ctx}) when is_atom(name) and is_atom(ctx), do: true
+  # A binding-list element: a named binding (`key: var`, a 2-tuple), or — for any other node — a
+  # positional variable or the `...` anchor. The named clause precedes the catch-all so a 2-tuple is
+  # tested by its bound var, not mistaken for a (non-variable) leaf.
+  defp binding_entry?({_key, var}), do: Binding.variable?(var)
+  defp binding_entry?(node), do: Binding.variable?(node) or Binding.ellipsis?(node)
 
-  # mutare:ignore[pattern_swap, logical, conditional] equivalent — as above, for the named `key: var` entry: symmetric inner guard, constant body, and no call node ever appears here
-  defp binding_entry?({_key, {name, _meta, ctx}}) when is_atom(name) and is_atom(ctx), do: true
-
-  # The `...` tail anchor (`[..., a, b]`) — a binding-list element, so the list is still recognized.
-  # `positional_positions/1` skips it (its context slot is not an atom), and `swap/3` reorders the
-  # positional entries *around* it by index, so the anchor keeps its place.
-  defp binding_entry?({:..., _meta, _ctx}), do: true
-
-  # mutare:ignore[literal] equivalent — flipping the fallback to `true` only mis-identifies a non-binding list as a binding list, but positional_positions then yields no positions for it, so no swap is produced either way (the clause_drop here is killed separately)
-  defp binding_entry?(_node), do: false
-
-  # The `{index_in_list, name}` of each *positional* binding, in order. Named bindings are skipped:
-  # addressed by name, they never move under a positional transposition.
+  # The `{index_in_list, name}` of each *positional* binding, in order. Named bindings and the `...`
+  # anchor are skipped (`Binding.variable?/1` rejects both): they never move under a positional swap.
   defp positional_positions(list) do
-    list
-    |> Enum.with_index()
-    |> Enum.flat_map(fn
-      # mutare:ignore[logical, conditional] equivalent — every 3-tuple entry reaching here already passed binding_entry?'s `is_atom(name) and is_atom(ctx)`, so this guard is always true; named binds are 2-tuples handled by the next clause
-      {{name, _meta, ctx}, index} when is_atom(name) and is_atom(ctx) -> [{index, name}]
-      {_named_or_other, _index} -> []
-    end)
+    for {entry, index} <- Enum.with_index(list),
+        Binding.variable?(entry),
+        do: {index, elem(entry, 0)}
   end
 
   # Swap the two list entries at positions `i`/`j`, preserving the binding list's wrapper (Sourceror
   # block-wraps a list literal) and every entry's own metadata — entries are *reordered*, not
   # rewritten, so each renders with its original text in its new position.
   defp swap(blist, i, j) do
-    list = unwrap(blist)
+    list = Binding.unwrap_list(blist)
     a = Enum.at(list, i)
     b = Enum.at(list, j)
     rewrap(blist, list |> List.replace_at(i, b) |> List.replace_at(j, a))
   end
-
-  # mutare:ignore[guard_drop] equivalent — Sourceror block-wraps list literals, so this block clause always wraps a list
-  defp unwrap({:__block__, _meta, [list]}) when is_list(list), do: list
-
-  # mutare:ignore[guard_drop, clause_drop] equivalent — a parsed binding list reaches here block-wrapped (clause above); the bare-list clause guards a non-block list that Sourceror-parsed input never produces, and a non-list falls through to the same nil
-  defp unwrap(list) when is_list(list), do: list
-  defp unwrap(_node), do: nil
 
   # mutare:ignore[clause_drop, atom] equivalent — the block wrapper carries only source-formatting meta; the reordered list renders identically whether re-wrapped or returned bare, so matching or dropping this clause is unobservable
   defp rewrap({:__block__, meta, [_list]}, new_list), do: {:__block__, meta, [new_list]}
