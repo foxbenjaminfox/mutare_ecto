@@ -321,24 +321,51 @@ defmodule Mutare.Ecto.Host do
     for {name, _meta, ctx} <- bindings, is_atom(name) and is_atom(ctx), do: name
   end
 
-  # The binding list the query establishes: the source binding(s) — a lone `u` (`u in User`) or a
-  # whole binding list in the rebinding form (`[a, b] in query`, `[post: p] in query`) — followed by
-  # each join's binding, in clause order. Exactly the bindings a `dynamic` re-declares — except
-  # `dynamic/2` requires the named binds (`{as, var}` tuples) to come **last**, while a query may
-  # rebind named sources up front and add positional joins after (`from([post: p] in q, join: c …)`).
-  # So the concatenation is reordered: positional binds first (in their declared, position-defining
-  # order), then the named ones — preserving each binding's identity while satisfying `dynamic/2`.
+  # The binding list the query establishes, re-declared for the woven `dynamic([…], _)`. It is
+  # assembled in four ordered parts:
+  #
+  #   1. **source-pattern positionals** — `[a, b]` from `[a, b] in query` (or the lone `u` of
+  #      `u in User`). They rebind the source query's *leading* positions, so they stay at the front.
+  #   2. **`...`** (the tail anchor) — emitted only when there are join positionals whose absolute
+  #      position the host can't pin down: the source rebinds *named* sources, or contributes no
+  #      positional of its own (`[as: x] in query`, a bindingless `from(query, …)`). A join binding is
+  #      appended after *all* of the opaque source query's bindings, and a named bind consumes no
+  #      position — so without `...` a lone trailing join silently re-binds to position 0
+  #      (BUG-from_bindings-named-rebind-join). `...` pins each join to its true tail position. When
+  #      the source is a leading positional run with no named rebind, the joins follow it contiguously
+  #      and no anchor is needed (`[u, c]` / `[a, b, c]` is unchanged).
+  #   3. **join positionals** — each `join`'s binding (`@join_keys`), in clause order, behind the
+  #      anchor.
+  #   4. **named binds** — the `{as, var}` tuples, which `dynamic/2` requires **last** and which
+  #      resolve by name (no position), from the source pattern and any named joins.
   defp from_bindings(source, clauses) do
-    source_binding =
+    source_decls =
       case source do
         {:in, _, [lhs, _src]} -> binding_decls(lhs)
         _ -> []
       end
 
-    {positional, named} =
-      Enum.split_with(source_binding ++ join_bindings(clauses), &positional_binding?/1)
+    {source_positional, source_named} = Enum.split_with(source_decls, &positional_binding?/1)
 
-    positional ++ named
+    {join_positional, join_named} =
+      Enum.split_with(join_bindings(clauses), &positional_binding?/1)
+
+    source_positional ++
+      join_anchor(source_positional, source_named, join_positional) ++
+      source_named ++ join_named
+  end
+
+  # The join positionals, anchored to the query's tail with a leading `...` when the host cannot
+  # know how many of the opaque source query's bindings precede them — i.e. when there *are* join
+  # positionals and the source either rebinds a named source or contributes no positional of its own.
+  # A leading positional run with no named rebind (`u in User`, `[a, b] in q`) places the joins
+  # contiguously after it, so no anchor is needed.
+  defp join_anchor(source_positional, source_named, join_positional) do
+    if join_positional != [] and (source_positional == [] or source_named != []) do
+      [ellipsis() | join_positional]
+    else
+      join_positional
+    end
   end
 
   # A normalized binding decl is positional (a clean var, a 3-tuple `{name, meta, ctx}`) rather than
@@ -454,4 +481,9 @@ defmodule Mutare.Ecto.Host do
   end
 
   defp pin(case_node), do: {:^, [], [case_node]}
+
+  # The `...` tail anchor for a `dynamic/2` binding list (`[a, ..., j]`) — the Sourceror/Elixir
+  # ellipsis node, clean meta. Pins trailing join bindings to their true positions past an opaque
+  # source query's leading (and named-rebound) bindings.
+  defp ellipsis, do: {:..., [], []}
 end

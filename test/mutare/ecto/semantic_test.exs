@@ -492,4 +492,59 @@ defmodule Mutare.Ecto.SemanticTest do
       assert ids(mod, 999_999) == [2, 5, 6]
     end
   end
+
+  describe "Regression — named source rebind + positional join (baseline correctness)" do
+    # BUG-from_bindings-named-rebind-join: when a `from` rebinds a *named* source and adds a
+    # *positional* join, the woven `dynamic` binding list used to place the join at position 0 — named
+    # binds consume no position, so a lone trailing join read as "first positional". Because the host
+    # wraps even the *original* branch in `dynamic([…], original)`, this corrupted the **baseline**
+    # (id 0), not just the mutants: `mix mutare` aborts with "baseline suite is not green". The fix
+    # anchors the join to the tail with `...`. This test pins the baseline to the *source* semantics —
+    # the one thing the unit `assert_compiles` could never catch (the bad query compiled fine).
+    test "the baseline reproduces the source query, not a join-at-position-0 corruption" do
+      {mod, _sites} =
+        build("""
+        defmodule Q do
+          import Ecto.Query
+          alias MyApp.User
+
+          def q do
+            base = from(u in User, as: :usr)
+
+            from([usr: u] in base,
+              inner_join: u2 in User,
+              on: u2.id != u.id,
+              where: u2.age == u.age,
+              select: u2.id
+            )
+          end
+        end
+        """)
+
+      # The hand-written source semantics (no weave): for each user, the *other* users sharing its
+      # age. Only Alice(18)/Dave(18) pair up; no one else shares an age — so the source returns [1, 4].
+      reference = Enum.sort(reference_same_age_peers())
+
+      assert reference == [1, 4]
+      # The baseline (id 0) must equal the source. Pre-fix the woven `[u2, usr: u]` collapsed the
+      # predicate to `usr.age == usr.age` (a tautology keeping every joined pair), so it diverged.
+      assert ids(mod, 0) == reference
+    end
+
+    # The hand-written twin of the fixture's `q/0`, run directly (no metamutant) — the exact semantics
+    # the woven baseline must reproduce.
+    defp reference_same_age_peers do
+      import Ecto.Query
+      base = from(u in MyApp.User, as: :usr)
+
+      MyApp.Repo.all(
+        from([usr: u] in base,
+          inner_join: u2 in MyApp.User,
+          on: u2.id != u.id,
+          where: u2.age == u.age,
+          select: u2.id
+        )
+      )
+    end
+  end
 end

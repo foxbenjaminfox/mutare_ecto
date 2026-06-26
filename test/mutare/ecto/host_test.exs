@@ -54,13 +54,14 @@ defmodule Mutare.Ecto.HostTest do
       assert_compiles(src)
     end
 
-    test "named source rebinds sort after positional joins (dynamic/2 requires named binds last)" do
-      # Regression: a query that rebinds *named* sources up front and adds a *positional* join after
-      # establishes bindings in the order `[source: s, file: f, j]` — but `Ecto.Query.dynamic/2`
-      # requires `{as, var}` named binds to be **last** and raises at macro-expansion otherwise. The
-      # woven dynamic must reorder to positional-first, named-last (`[j, source: s, file: f]`), or the
-      # metamutant won't compile. `assert_compiles` is the real guard here — the bug was a compile-
-      # time `Ecto.Query.CompileError`, not a runtime one.
+    test "named source rebind + positional join anchors the join to the tail with `...`" do
+      # Regression (BUG-from_bindings-named-rebind-join.md): a query that rebinds *named* sources up
+      # front and adds a *positional* join after establishes its bindings at positions `[s@0, f@1, j@2]`
+      # (named binds rebind by name; the join lands at the tail). The woven dynamic must (a) sort the
+      # `{as, var}` named binds **last** (`dynamic/2` requires it) *and* (b) anchor the join with `...`,
+      # or `j` re-binds to position 0 — a silently wrong baseline, not a compile error. The earlier
+      # `[j, source: s, file: f]` shape compiled but corrupted the SQL (it mapped `j` to `s`'s
+      # position), which `assert_compiles` alone could never catch; the semantic suite proves the fix.
       src = """
       defmodule M do
         import Ecto.Query
@@ -74,7 +75,52 @@ defmodule Mutare.Ecto.HostTest do
       end
       """
 
-      assert metamutant(src) =~ "dynamic([j, source: s, file: f]"
+      assert metamutant(src) =~ "dynamic([..., j, source: s, file: f]"
+      assert_compiles(src)
+    end
+
+    test "a mixed source pattern (positional + named) keeps the positional in front, anchors the join" do
+      # `[a, post: p] in base` contributes a leading positional (`a`, rebinding position 0) *and* a
+      # named rebind (`p`). The named rebind makes `base`'s positions past `a` opaque, so the join is
+      # still `...`-anchored: `[a, ..., j, post: p]` — leading positional in front, join behind `...`,
+      # named last. (Distinguishes the two arms of the anchor rule: a leading positional alone would
+      # *not* anchor, but the named rebind forces it.)
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q(base) do
+          from [a, post: p] in base,
+            inner_join: j in Post,
+            on: j.user_id == a.id,
+            where: j.views > p.views,
+            select: j.id
+        end
+      end
+      """
+
+      assert metamutant(src) =~ "dynamic([a, ..., j, post: p]"
+      assert_compiles(src)
+    end
+
+    test "a positional-only source with a join stays contiguous (no `...`)" do
+      # The counterpart: an all-positional rebind `[a, b] in base` pins positions 0/1, so the join
+      # follows contiguously at position 2 — no anchor, `[a, b, j]` unchanged. Guards against
+      # over-eagerly anchoring every join.
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q(base) do
+          from [a, b] in base,
+            inner_join: j in Post,
+            on: j.user_id == a.id,
+            where: j.views > b.views,
+            select: j.id
+        end
+      end
+      """
+
+      assert metamutant(src) =~ "dynamic([a, b, j]"
+      refute metamutant(src) =~ "dynamic([a, b, ..."
       assert_compiles(src)
     end
 
