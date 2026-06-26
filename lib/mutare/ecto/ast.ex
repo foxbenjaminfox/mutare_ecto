@@ -14,6 +14,7 @@ defmodule Mutare.Ecto.AST do
 
   @doc "A fresh atom literal node, clean-meta so it renders the new value."
   @spec atom_literal(atom()) :: Macro.t()
+  # mutare:ignore[guard_drop] equivalent — defensive constructor guard; every caller passes an atom (a non-atom would be an invalid literal here), so no reachable input distinguishes the guarded clause from the bare one
   def atom_literal(atom) when is_atom(atom), do: {:__block__, [], [atom]}
 
   @doc "The integer value of an integer literal node (Sourceror-wrapped or bare), or `nil`."
@@ -37,6 +38,7 @@ defmodule Mutare.Ecto.AST do
 
   @doc "A fresh keyword-list **key** node (`format: :keyword`), so it renders as `key:`."
   @spec keyword_key(atom()) :: Macro.t()
+  # mutare:ignore[guard_drop] equivalent — defensive constructor guard; a keyword key is always an atom, so dropping the guard changes nothing any caller reaches
   def keyword_key(atom) when is_atom(atom), do: {:__block__, [format: :keyword], [atom]}
 
   @doc """
@@ -45,6 +47,7 @@ defmodule Mutare.Ecto.AST do
   Sourceror token meta are irrelevant (the wrap is invisible in the recorded Site).
   """
   @spec clean_var(Macro.t()) :: Macro.t()
+  # mutare:ignore[conditional, logical] equivalent — clean_var only ever re-declares a binding *variable* (atom name, atom context); a non-variable 3-tuple never reaches it, so widening the guard to `or`/`true` admits no input that actually occurs
   def clean_var({name, _meta, ctx}) when is_atom(name) and is_atom(ctx), do: {name, [], ctx}
 
   @doc """
@@ -54,6 +57,7 @@ defmodule Mutare.Ecto.AST do
   variable node, so it does not count.
   """
   @spec references_var?(Macro.t(), atom()) :: boolean()
+  # mutare:ignore[guard_drop] equivalent — defensive guard; binding names are always atoms, and a non-atom name (which the prewalk below would simply never match) never arrives to distinguish the guarded clause
   def references_var?(ast, name) when is_atom(name) do
     {_ast, found?} =
       Macro.prewalk(ast, false, fn
@@ -71,6 +75,7 @@ defmodule Mutare.Ecto.AST do
   `resolved_call/1` module.
   """
   @spec module_key(module()) :: [atom()] | atom()
+  # mutare:ignore[guard_drop] equivalent — a non-atom raises FunctionClauseError here *and*, with the guard dropped, inside Macro.classify_atom/1 just below, so the guarded and unguarded clauses are indistinguishable on every input
   def module_key(module) when is_atom(module) do
     case Macro.classify_atom(module) do
       :alias -> module |> Module.split() |> Enum.map(&String.to_atom/1)
