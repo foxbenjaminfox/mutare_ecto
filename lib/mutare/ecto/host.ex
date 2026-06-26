@@ -282,7 +282,8 @@ defmodule Mutare.Ecto.Host do
   # catalog (`Fragment.mutants/2`, dialect-gated by `opts`) plus the binding-reorder swaps the
   # declared bindings admit, each tagged with its family and filtered to the configured
   # `families:`. Both ride the same `dynamic([bindings], _)` wrap. An equivalence-sensitive family
-  # carries a `%{node:, note:}` so the report flags "kill may require NULL/boundary data".
+  # is wrapped by `Config.noted/2` in a `%Mutare.Mutator.Mutation{}` so the report flags "kill may
+  # require NULL/boundary data".
   defp catalog(condition, bindings, opts) do
     reorders =
       for node <- Fragment.binding_reorders(condition, binding_names(bindings)),
@@ -290,16 +291,7 @@ defmodule Mutare.Ecto.Host do
 
     for {family, node} <- Fragment.mutants(condition, opts) ++ reorders,
         Config.family_enabled?(opts, family),
-        do: noted(family, node)
-  end
-
-  # Wrap a mutant in `%{node:, note:}` when its family is equivalence-sensitive, so the note rides
-  # onto the Site; otherwise a bare node (no note). Both forms are accepted by the host contract.
-  defp noted(family, node) do
-    case Config.equivalence_note(family) do
-      nil -> node
-      note -> %{node: node, note: note}
-    end
+        do: Config.noted(family, node)
   end
 
   # The positional binding names eligible for reorder, drawn from the declarations `binding_decls/1`

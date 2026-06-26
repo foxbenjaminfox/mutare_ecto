@@ -178,6 +178,36 @@ defmodule Mutare.Ecto.ConfigTest do
       assert membership.note == nil
       assert Mutare.Report.header(membership) =~ ~r/SURVIVED$/
     end
+
+    test "a non-hosted ordering_nulls mutant carries the note too (mutate/2 delivery)" do
+      # `:ordering_nulls` is equivalence-sensitive but delivered in place via `mutate/2`, not the
+      # host. Now that core accepts a `%Mutare.Mutator.Mutation{}` on the `mutate/2` return, its note
+      # rides onto the Site just like the in-fragment families' — so the advisory surfaces for *every*
+      # equivalence-sensitive family, not only the hosted three.
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q, do: from(u in User, order_by: [asc_nulls_first: u.score], select: u.id)
+      end
+      """
+
+      {_meta, sites, _next} =
+        Mutare.transform_string(src,
+          mutators: [{Mutare.Ecto, repo: MyApp.Repo}],
+          expand_uses: true
+        )
+
+      # The NULLs-placement flip (asc_nulls_first → asc_nulls_last) is the ordering_nulls mutant; the
+      # direction flip (→ desc_nulls_first) is plain :ordering and carries no note.
+      nulls = Enum.find(sites, &(&1.mutated_code =~ "asc_nulls_last" and &1.mutator == :ecto))
+      assert nulls.note == "kill may require NULL/boundary data (SQL three-valued logic)"
+      assert Mutare.Report.header(nulls) =~ "SURVIVED  — kill may require NULL/boundary data"
+
+      direction =
+        Enum.find(sites, &(&1.mutated_code =~ "desc_nulls_first" and &1.mutator == :ecto))
+
+      assert direction.note == nil
+    end
   end
 
   describe "multiple repos" do

@@ -45,10 +45,10 @@ defmodule Mutare.Ecto do
   **Equivalence-sensitive families.** Mutants of `:comparison`, `:connective`, `:null_predicate`,
   and `:ordering_nulls` (whose equivalence reasoning is SQL's three-valued logic) carry a **report
   note** — a survivor reads `… SURVIVED  — kill may require NULL/boundary data` — so it is
-  recognised as honest signal, not a plain test gap. (The note is rendered inline only on the
-  **host** delivery path, so the three in-fragment families surface it today; `:ordering_nulls`,
-  delivered as a whole-`from`/clause-macro rewrite, is classified here for the `:as` grouping and
-  will surface the inline note once ordering routes through the host.)
+  recognised as honest signal, not a plain test gap. The note rides onto the `Mutare.Site` via a
+  `%Mutare.Mutator.Mutation{}` (`Mutare.Ecto.Config.noted/2`), which core accepts on both delivery
+  paths — so the three in-fragment families surface it through the **host** and `:ordering_nulls`
+  through its `mutate/2` whole-`from`/clause-macro rewrite.
   `equivalence_sensitive_families/0` returns that set; with the `:as` convention you can
   additionally *group* them under their own report name:
 
@@ -181,7 +181,9 @@ defmodule Mutare.Ecto do
         Changeset.mutations(node, context)
       ])
 
-    case for {family, mutated} <- tagged, Config.family_enabled?(opts, family), do: mutated do
+    case for {family, mutated} <- tagged,
+             Config.family_enabled?(opts, family),
+             do: Config.noted(family, mutated) do
       [] -> :skip
       mutations -> mutations
     end

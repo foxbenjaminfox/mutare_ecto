@@ -6,6 +6,8 @@ defmodule Mutare.Ecto.Config do
   # (and/or `repo:`) is how a user narrows the catalog, names a sub-family in the report, or covers
   # multiple repos — see `DESIGN.md`, "Configuration".
 
+  alias Mutare.Mutator.Mutation
+
   # Every SQL family the plugin can emit, the source of truth for `families: :all` and for
   # validating a configured subset. Grouped by the surface they mutate:
   #
@@ -33,11 +35,10 @@ defmodule Mutare.Ecto.Config do
   # holds NULL rows in the ordered column. Surfaced under their own report name via the `:as`
   # convention (see `Mutare.Ecto.equivalence_sensitive_families/0`).
   #
-  # The per-mutant *note* (below) is threaded onto a Site only on the **host** delivery path
-  # (`emit_hosted_site`); the three in-fragment families ride it, so their survivors render the
-  # advisory inline. `ordering_nulls` is delivered non-hosted (a whole-`from`/clause-macro rewrite),
-  # which has no note channel today — so its membership here drives the classification and the
-  # `:as` grouping, and the inline note will follow once ordering routes through the host.
+  # The per-mutant *note* (below) rides onto a Site via a `%Mutare.Mutator.Mutation{}` (`noted/2`),
+  # which core accepts on **both** delivery paths — the selector host's `:mutants` and a plain
+  # `mutate/2` return. So all four families surface the advisory inline: the three in-fragment ones
+  # through the host, and `ordering_nulls` (a whole-`from`/clause-macro rewrite) through `mutate/2`.
   @equivalence_sensitive ~w(comparison connective null_predicate ordering_nulls)a
 
   # The advisory recorded on an equivalence-sensitive mutant's `Mutare.Site` (and shown in the
@@ -59,6 +60,22 @@ defmodule Mutare.Ecto.Config do
   @spec equivalence_note(atom()) :: String.t() | nil
   def equivalence_note(family) when family in @equivalence_sensitive, do: @equivalence_note
   def equivalence_note(_family), do: nil
+
+  @doc """
+  Tag a mutant `node` with its family's report note, ready to return from `mutate/2` or a host
+  target's `:mutants`.
+
+  An equivalence-sensitive family's node is wrapped in a `%Mutare.Mutator.Mutation{}` carrying the
+  advisory (so it rides onto the `Mutare.Site`); every other family yields the bare node (the
+  common, note-free case). Core accepts both forms on either delivery path.
+  """
+  @spec noted(atom(), Macro.t()) :: Macro.t() | Mutation.t()
+  def noted(family, node) do
+    case equivalence_note(family) do
+      nil -> node
+      note -> Mutation.new(node, note)
+    end
+  end
 
   @doc """
   The families enabled by `opts` — the configured `families:` list, or all of them when it is
