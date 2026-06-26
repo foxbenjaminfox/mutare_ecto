@@ -79,6 +79,7 @@ defmodule Mutare.Ecto.RepoWrite do
     end
   end
 
+  # mutare:ignore[clause_drop] equivalent — the first clause matches every node given core's `%{opts:, pipe_mode:}` context; this fallback only guards a context missing one of those keys, which core never sends
   def mutations(_node, _context), do: []
 
   defp repo_key(opts) do
@@ -152,5 +153,6 @@ defmodule Mutare.Ecto.RepoWrite do
       AST.atom_value(key) == :on_conflict and
         Map.has_key?(@on_conflict_swaps, AST.atom_value(value))
 
+  # mutare:ignore[clause_drop] equivalent — a Sourceror-parsed opts keyword list is all `key: value` pairs, so the non-pair fallback is unreachable from valid Ecto
   defp on_conflict_pair?(_node), do: false
 end

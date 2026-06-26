@@ -171,4 +171,27 @@ defmodule Mutare.Ecto.RepoWriteTest do
       assert ecto_diffs(src, on_conflict()) == []
     end
   end
+
+  describe "totality + gate precision (direct mutations/2)" do
+    defp write_mutations(code, pipe_mode) do
+      Mutare.Ecto.RepoWrite.mutations(
+        Sourceror.parse_string!(code),
+        %{opts: [repo: MyApp.Repo], pipe_mode: pipe_mode}
+      )
+    end
+
+    test "a degenerate zero-arg write yields no mutant, never a crash" do
+      # `Repo.insert()` with no changeset hits the empty-args/unpiped path: apply_action returns
+      # nil and wrap(nil) drops it, so the mutator stays total — `[]`, not a nil-node `:persistence`
+      # mutant nor a FunctionClauseError — on a write node it is offered but cannot rewrite.
+      assert write_mutations("MyApp.Repo.insert()", :unpiped) == []
+    end
+
+    test "the on_conflict swap keys off the on_conflict option, not any :nothing-valued pair" do
+      # A non-on_conflict option that happens to be valued `:nothing` must not be flipped to
+      # `:raise` — the gate is the *key*, not merely the value.
+      muts = write_mutations("MyApp.Repo.insert(cs, log: :nothing)", :unpiped)
+      refute Enum.any?(muts, fn {family, _node} -> family == :on_conflict end)
+    end
+  end
 end
