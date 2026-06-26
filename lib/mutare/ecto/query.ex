@@ -88,7 +88,7 @@ defmodule Mutare.Ecto.Query do
   # and the bound drops (limit/offset).
   defp drops(meta, source, clauses, keys) do
     for {pair, index} <- Enum.with_index(clauses), clause_key(pair) in keys do
-      {:from, meta, [source, List.delete_at(clauses, index)]}
+      drop_clause(meta, source, clauses, index)
     end
   end
 
@@ -96,15 +96,18 @@ defmodule Mutare.Ecto.Query do
   # A `^pinned`/expression bound has no literal here, so it yields nothing — its value is
   # mutated where it is bound, in ordinary Elixir.
   defp bound_bumps(meta, source, clauses) do
-    clauses
-    |> Enum.with_index()
-    |> Enum.flat_map(fn {pair, index} ->
+    flat_map_clauses(clauses, fn pair, index ->
       with true <- clause_key(pair) in @bound_keys,
            n when is_integer(n) <- AST.int_value(clause_value(pair)) do
-        for bumped <- AST.bumps(n) do
-          {:from, meta,
-           [source, List.replace_at(clauses, index, with_value(pair, AST.int_literal(bumped)))]}
-        end
+        for bumped <- AST.bumps(n),
+            do:
+              replace_clause(
+                meta,
+                source,
+                clauses,
+                index,
+                with_value(pair, AST.int_literal(bumped))
+              )
       else
         _ -> []
       end
@@ -118,13 +121,9 @@ defmodule Mutare.Ecto.Query do
   defp join_swaps(meta, source, clauses, opts) do
     flips = join_flips(opts)
 
-    clauses
-    |> Enum.with_index()
-    |> Enum.flat_map(fn {pair, index} ->
-      for to <- Map.get(flips, clause_key(pair), []) do
-        {:from, meta,
-         [source, List.replace_at(clauses, index, with_key(pair, AST.keyword_key(to)))]}
-      end
+    flat_map_clauses(clauses, fn pair, index ->
+      for to <- Map.get(flips, clause_key(pair), []),
+          do: replace_clause(meta, source, clauses, index, with_key(pair, AST.keyword_key(to)))
     end)
   end
 
@@ -145,13 +144,10 @@ defmodule Mutare.Ecto.Query do
   # its condition is hosted (`^`/`dynamic`), so the swap rides the host alongside the operator swaps
   # (`Mutare.Ecto.Host.catalog/3`) rather than being delivered as a whole-`from` rewrite.
   defp aggregate_swaps(meta, source, clauses) do
-    clauses
-    |> Enum.with_index()
-    |> Enum.flat_map(fn {pair, index} ->
+    flat_map_clauses(clauses, fn pair, index ->
       if clause_key(pair) in @aggregate_keys do
-        for swapped <- Aggregate.swaps(clause_value(pair)) do
-          {:from, meta, [source, List.replace_at(clauses, index, with_value(pair, swapped))]}
-        end
+        for swapped <- Aggregate.swaps(clause_value(pair)),
+            do: replace_clause(meta, source, clauses, index, with_value(pair, swapped))
       else
         []
       end
@@ -162,18 +158,28 @@ defmodule Mutare.Ecto.Query do
   # per axis per direction key, tagged with its family (`:ordering` direction / `:ordering_nulls`
   # placement; see `Mutare.Ecto.Ordering`).
   defp order_flips(meta, source, clauses) do
-    clauses
-    |> Enum.with_index()
-    |> Enum.flat_map(fn {pair, index} ->
+    flat_map_clauses(clauses, fn pair, index ->
       if clause_key(pair) == :order_by do
-        for {family, flipped} <- Ordering.flips(clause_value(pair)) do
-          {family,
-           {:from, meta, [source, List.replace_at(clauses, index, with_value(pair, flipped))]}}
-        end
+        for {family, flipped} <- Ordering.flips(clause_value(pair)),
+            do: {family, replace_clause(meta, source, clauses, index, with_value(pair, flipped))}
       else
         []
       end
     end)
+  end
+
+  # The clause-rewrite skeleton every whole-`from` mutator shares: map each indexed clause to a list
+  # of mutants and flatten, then rebuild the `from` with the chosen clause replaced (or removed).
+  defp flat_map_clauses(clauses, fun) do
+    clauses |> Enum.with_index() |> Enum.flat_map(fn {pair, index} -> fun.(pair, index) end)
+  end
+
+  defp replace_clause(meta, source, clauses, index, new_pair) do
+    {:from, meta, [source, List.replace_at(clauses, index, new_pair)]}
+  end
+
+  defp drop_clause(meta, source, clauses, index) do
+    {:from, meta, [source, List.delete_at(clauses, index)]}
   end
 
   defp clause_key({key, _value}), do: AST.atom_value(key)
