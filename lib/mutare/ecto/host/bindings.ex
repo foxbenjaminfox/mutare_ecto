@@ -13,11 +13,13 @@ defmodule Mutare.Ecto.Host.Bindings do
   def from(source, %KeywordList{} = clauses) do
     {source_decls, composed?} =
       case source do
-        # `x in <var>` composes an *external* query: the source rebinds its leading bindings, but the
-        # query can carry more the host can't see, so an appended join must anchor to the tail (`...`)
-        # rather than sit at the next contiguous slot. `x in Schema` (a literal source) has no hidden
-        # bindings — the joins follow contiguously, so it must *not* anchor.
-        {:in, _, [lhs, rhs]} -> {declarations(lhs), Binding.variable?(rhs)}
+        # A binding source `lhs in rhs` rebinds `rhs`'s *leading* bindings. When `rhs` composes an
+        # external query — a bound variable (`x in q`), a function call (`x in build(args)`), a
+        # `subquery(...)`, or any other expression — that query can carry more bindings the host can't
+        # see, so an appended join must anchor to the tail (`...`) rather than sit at the next
+        # contiguous slot. Only a *literal* queryable (`x in Schema`, `x in "table"`, `x in {"t", S}`)
+        # has no hidden bindings — its joins follow contiguously, so it must *not* anchor.
+        {:in, _, [lhs, rhs]} -> {declarations(lhs), composed_source?(rhs)}
         _ -> {[], false}
       end
 
@@ -122,6 +124,24 @@ defmodule Mutare.Ecto.Host.Bindings do
 
   defp named?({_key, _var}), do: true
   defp named?(_node), do: false
+
+  # Whether a binding source's right-hand side composes an external query that may carry bindings the
+  # host can't see (so an appended join must anchor to the tail). True for everything *except* a
+  # literal queryable — only those contribute exactly the bindings the source pattern names.
+  defp composed_source?(rhs), do: not literal_queryable?(rhs)
+
+  # A literal queryable `from` source with no hidden bindings: a schema module (`Post`), a string/atom
+  # table name (`"posts"`), or a `{source, schema}` tuple (`{"posts", Post}`). Every other shape (a
+  # bound query variable, a function call, a `subquery(...)`, any expression) is an opaque composed
+  # query — see `composed_source?/1`.
+  defp literal_queryable?({:__aliases__, _meta, _parts}), do: true
+  defp literal_queryable?({:__block__, _meta, [inner]}), do: literal_queryable?(inner)
+
+  defp literal_queryable?({source, schema}),
+    do: literal_queryable?(source) and literal_queryable?(schema)
+
+  defp literal_queryable?(node) when is_binary(node) or is_atom(node), do: true
+  defp literal_queryable?(_node), do: false
 
   defp join_expression?({:in, _, [_lhs, _source]}), do: true
   defp join_expression?(_node), do: false

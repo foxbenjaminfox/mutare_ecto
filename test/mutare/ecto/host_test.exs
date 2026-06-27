@@ -179,6 +179,77 @@ defmodule Mutare.Ecto.HostTest do
       assert_compiles(src)
     end
 
+    test "a function-call source composing a query anchors appended joins to the tail" do
+      # A function call (`base(args)`) is just as opaque a composed query as a bound variable: it can
+      # return a query carrying hidden bindings, so an appended join must anchor to the tail. The old
+      # `composed?` check only recognized a *bare variable* source, so a function-call source dropped
+      # the anchor — weaving the contiguous (wrong) `[a, b, j]`, which silently binds `j` to a hidden
+      # binding of the returned query whenever it has one between `b` and `j`.
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q(args) do
+          from [a, b] in base(args),
+            inner_join: j in Post,
+            on: j.user_id == a.id,
+            where: j.views > b.views,
+            select: j.id
+        end
+        def base(_), do: from(p in "posts")
+      end
+      """
+
+      assert metamutant(src) =~ "dynamic([a, b, ..., j]"
+      refute metamutant(src) =~ "dynamic([a, b, j]"
+      assert_compiles(src)
+    end
+
+    test "a subquery source composing a query anchors appended joins to the tail" do
+      # `subquery(base)` is a call, not a bare variable, so the pre-fix `composed?` check misread it as
+      # a literal source and dropped the anchor. It composes an external query like any other.
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q(base) do
+          from [a, b] in subquery(base),
+            inner_join: j in Post,
+            on: j.user_id == a.id,
+            where: j.views > b.views,
+            select: j.id
+        end
+      end
+      """
+
+      assert metamutant(src) =~ "dynamic([a, b, ..., j]"
+      refute metamutant(src) =~ "dynamic([a, b, j]"
+      assert_compiles(src)
+    end
+
+    test "literal schema / string / tuple sources keep joins contiguous (no spurious anchor)" do
+      # The other side of the `composed?` rule: a literal queryable contributes exactly the bindings
+      # its pattern names, so an appended join follows contiguously and must *not* be `...`-anchored.
+      for source <- ["Post", ~s("posts"), ~s({"posts", Post})] do
+        src = """
+        defmodule M do
+          import Ecto.Query
+          def q do
+            from a in #{source},
+              inner_join: j in Comment,
+              on: j.post_id == a.id,
+              where: j.views > a.views,
+              select: j.id
+          end
+        end
+        """
+
+        assert metamutant(src) =~ "dynamic([a, j]",
+               "expected contiguous bindings for source #{source}"
+
+        refute metamutant(src) =~ "dynamic([a, ..., j]"
+        assert_compiles(src)
+      end
+    end
+
     test "an explicit `...` in a from source rebind is preserved" do
       # `[..., c] in query` declares `c` as the query's *last* binding. Dropping the `...` (the old
       # behavior) re-binds `c` to position 0 — the same baseline-corruption class as the named-rebind

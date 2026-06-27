@@ -665,4 +665,42 @@ defmodule Mutare.Ecto.SemanticTest do
       )
     end
   end
+
+  describe "Regression — a function-call source rebind (composed query via a call, not a var)" do
+    # The same baseline corruption as the variable-source sibling above, reached through a *function
+    # call* source (`from(u1 in base(), …)`) instead of a bound variable. A call is just as opaque a
+    # composed query — it can return one carrying hidden bindings — yet the pre-fix `composed?` check
+    # recognized only a bare variable, so it dropped the tail anchor and wove `dynamic([u1, u4], …)`,
+    # binding `u4` to `base`'s hidden `u2` and corrupting the baseline. The anchored `[u1, ..., u4]`
+    # filters the real appended join. `assert_compiles` can't catch this — the wrong baseline compiles.
+    test "the baseline filters the appended join, not a hidden base binding" do
+      {mod, _sites} =
+        build("""
+        defmodule Q do
+          import Ecto.Query
+          alias MyApp.User
+
+          def q do
+            from(u1 in base(),
+              inner_join: u4 in User,
+              on: u4.id == u1.id,
+              where: u4.age > 18,
+              select: u1.id
+            )
+          end
+
+          defp base do
+            from(u1 in User,
+              join: u2 in User, on: u2.id == u1.id + 1,
+              join: u3 in User, on: u3.id == u1.id + 2
+            )
+          end
+        end
+        """)
+
+      # The same query as the variable-source sibling — only `base` is reached through a call. The
+      # reference keeps u1 ∈ {Bob} → [2].
+      assert ids(mod, 0) == reference_appended_join()
+    end
+  end
 end
