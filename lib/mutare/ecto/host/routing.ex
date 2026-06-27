@@ -20,7 +20,7 @@ defmodule Mutare.Ecto.Host.Routing do
       left raw. So a shorthand value mutation is recorded under the *core* family that made it
       (`:literal`/`:string`/…), not `:ecto`.
     * the composable pipe/standalone form — `q |> where([p], p.x == v)` / `where(q, [p], …)`: the
-      binding-list argument is detected by shape (`Mutare.Ecto.Host.condition_index/1`) and the
+      binding-list argument is detected by shape (`Mutare.Ecto.Host.Bindings.condition_index/1`) and the
       condition that follows it routes `:hosted`; a keyword-shorthand `where(q, x: v)` routes its
       trailing pairs `{:keyword, …}`. The plain clause macros (`limit`/`order_by`/…) only thread the
       query (first arg → `:expression`) and leave every data position raw for the plugin's own
@@ -76,9 +76,9 @@ defmodule Mutare.Ecto.Host.Routing do
       case rest do
         [clauses] ->
           cond do
-            binding_source?(source) -> {:keyword, clause_value_treatments(clauses, :binding)}
+            binding_source?(source) -> {:keyword, clause_treatments(clauses, :binding)}
             # mutare:ignore[if_condition] equivalent — a bindingless from's clause argument is always a keyword list in parsed Ecto; a non-list reaches this branch only via malformed AST
-            is_list(clauses) -> {:keyword, clause_value_treatments(clauses, :bindingless)}
+            is_list(clauses) -> {:keyword, clause_treatments(clauses, :bindingless)}
             true -> :skip
           end
 
@@ -183,18 +183,18 @@ defmodule Mutare.Ecto.Host.Routing do
 
       pairs ->
         # mutare:ignore[operand_swap] equivalent — a shorthand call carries at most two args, where `length - 1` and `1 - length` both index the last element
-        List.replace_at(default, length(args) - 1, {:keyword, pair_value_treatments(pairs)})
+        List.replace_at(default, length(args) - 1, {:keyword, pair_treatments(pairs)})
     end
   end
 
-  # A bindingless `from`'s clause list: route each `where`/`having` clause's shorthand value
-  # per-pair (`{:keyword, …}`, nested — the value is itself a keyword list), and leave every other
-  # clause raw (select/order_by/limit are whole-`from`'s job, or carry field names).
-  defp clause_value_treatments(clauses, source_kind) do
+  # A `from`'s clause list, one treatment per clause: a `where`/`having` clause routes by its
+  # condition value (below); every other clause (select/order_by/limit — whole-`from`'s job, or a
+  # field-name carrier) is left raw.
+  defp clause_treatments(clauses, source_kind) do
     Enum.map(clauses, fn
       {key, value} ->
         if AST.atom_value(key) in @hosted_clause_keys,
-          do: condition_value_treatment(value, source_kind),
+          do: condition_treatment(value, source_kind),
           else: :skip
 
       _other ->
@@ -202,21 +202,19 @@ defmodule Mutare.Ecto.Host.Routing do
     end)
   end
 
-  defp condition_value_treatment(value, :binding) do
+  # The treatment for one `where`/`having` condition value. A keyword-shorthand value
+  # (`where: [active: true]`) routes its pairs individually, whatever the source. A non-shorthand
+  # value (an expression `where: u.x == v`) is `:hosted` under a binding source but carries no
+  # fragment under a bindingless one — so it is left raw.
+  defp condition_treatment(value, source_kind) do
     case shorthand_pairs(value) do
-      nil -> :hosted
-      pairs -> {:keyword, pair_value_treatments(pairs)}
+      nil -> nonshorthand_treatment(source_kind)
+      pairs -> {:keyword, pair_treatments(pairs)}
     end
   end
 
-  defp condition_value_treatment(value, :bindingless), do: where_value_treatment(value)
-
-  defp where_value_treatment(value) do
-    case shorthand_pairs(value) do
-      nil -> :skip
-      pairs -> {:keyword, pair_value_treatments(pairs)}
-    end
-  end
+  defp nonshorthand_treatment(:binding), do: :hosted
+  defp nonshorthand_treatment(:bindingless), do: :skip
 
   # A shorthand value list, unwrapped from the Sourceror `{:__block__, _, [list]}` it takes in a
   # keyword *value* position (the `from` form) or bare (a trailing keyword argument). `nil` when
@@ -232,32 +230,27 @@ defmodule Mutare.Ecto.Host.Routing do
     if list != [] and Enum.all?(list, &match?({_k, _v}, &1)), do: list, else: nil
   end
 
-  defp pair_value_treatments(pairs) do
+  defp pair_treatments(pairs) do
     Enum.map(pairs, fn
-      {_key, value} -> pair_value_treatment(value)
+      {_key, value} -> pair_treatment(value)
       _other -> :skip
     end)
   end
 
-  # The treatment for one shorthand pair's *value*: a `nil` (an `IS NULL` predicate, never `= nil`)
-  # and any compound/interpolated/expression value are left raw (`:skip`); a scalar literal
-  # (string, number, atom, boolean) is mutated by core's literal families and delivered `:pinned`
-  # (the query position needs `^`). Pinning is scalar-only — a compound value would mutate nested
-  # nodes where an inner `^` still poisons.
-  defp pair_value_treatment(value) do
-    cond do
-      nil_literal?(value) -> :skip
-      scalar_literal?(value) -> :pinned
-      true -> :skip
-    end
+  # The treatment for one shorthand pair's *value*: a scalar literal (string, number, boolean — but
+  # not `nil`) is mutated by core's literal families and delivered `:pinned` (the query position
+  # needs `^`). A `nil` (an `IS NULL` predicate, never `= nil`) and any compound/interpolated value
+  # are left raw (`:skip`) — pinning is scalar-only, since a compound value would mutate nested nodes
+  # where an inner `^` still poisons.
+  defp pair_treatment(value) do
+    if scalar_literal?(value), do: :pinned, else: :skip
   end
 
-  defp nil_literal?({:__block__, _meta, [nil]}), do: true
+  # A Sourceror-wrapped scalar literal, excluding `nil` — an atom, but an `IS NULL`, not core's to
+  # pin. `true`/`false` are atoms too and *are* pinnable; the `not is_nil/1` guard keeps only `nil`
+  # out, so the ordering trap of a separate nil check disappears.
+  defp scalar_literal?({:__block__, _meta, [v]}),
+    do: is_binary(v) or is_number(v) or (is_atom(v) and not is_nil(v))
 
-  # mutare:ignore[clause_drop] equivalent — Sourceror block-wraps a literal nil, so the bare-nil clause is unreachable from parsed Ecto
-  defp nil_literal?(nil), do: true
-  defp nil_literal?(_value), do: false
-
-  defp scalar_literal?({:__block__, _meta, [v]}), do: is_binary(v) or is_number(v) or is_atom(v)
   defp scalar_literal?(_value), do: false
 end

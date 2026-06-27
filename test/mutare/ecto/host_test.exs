@@ -655,7 +655,7 @@ defmodule Mutare.Ecto.HostTest do
                [:expression, {:keyword, [:pinned, :pinned, :pinned, :pinned]}]
 
       # nil is an `IS NULL` (never `= nil`); `^v` is already interpolated; a list/field is compound
-      # — all raw. (Pins nil_literal?/scalar_literal? and the pair_value_treatment cond.)
+      # — all raw. (Pins scalar_literal?'s nil exclusion and pair_treatment.)
       assert routing(~s|where(q, a: nil, b: ^v, c: [1, 2], d: u.x)|) ==
                [:expression, {:keyword, [:skip, :skip, :skip, :skip]}]
     end
