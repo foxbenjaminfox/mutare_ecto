@@ -29,12 +29,15 @@ defmodule Mutare.Ecto.Host.Routing do
   """
 
   alias Mutare.Ecto.{AST, Binding, Host}
+  alias Mutare.Transform.Calls
 
   # The where/having family and the plain composable clause macros, as compile-time guard constants.
   # The canonical lists live on `Mutare.Ecto.Host` (`condition_macros/0`/`clause_macros/0`); the
   # condition macros double as the `from`-clause condition keys (`where`/`or_where`/`having`/…).
   @condition_macros Host.condition_macros()
   @plain_clause_macros Host.clause_macros()
+  @query_builders [:from | @condition_macros ++ @plain_clause_macros]
+  @query_key AST.module_key(Ecto.Query)
 
   @doc """
   Per-visible-argument routing for a `:routing`-registered query macro (`from`, the `where`/`having`
@@ -116,13 +119,32 @@ defmodule Mutare.Ecto.Host.Routing do
     [first_treatment | List.duplicate(:skip, length(rest))]
   end
 
-  # Whether a first-argument node is the threaded query (so it should be mutated as an expression):
-  # a bare variable (`q`), a `from(…)` opener, or a nested pipe (`(… |> …)`). A binding list, a
-  # keyword list, a literal, or any other DSL-data shape is not — that is a piped call's own first
-  # data argument (the query is the `|>` left side, routed separately).
-  defp query_arg?({:from, _meta, _args}), do: true
+  # Whether a first-argument node is a query expression that should remain reachable: a bare
+  # variable (`q`), any nested query-builder macro (`from(…)`, `where(…)`, …), or a nested pipe.
+  # A binding list, keyword list, literal, or other DSL-data shape is not — that is a piped call's
+  # own first data argument (the threaded query is the `|>` left side, routed separately).
+  defp query_arg?({name, _meta, args}) when name in @query_builders and is_list(args), do: true
   defp query_arg?({:|>, _meta, _args}), do: true
-  defp query_arg?(node), do: Binding.variable?(node)
+
+  defp query_arg?(node) do
+    Binding.variable?(node) or query_builder_call?(node)
+  end
+
+  defp query_builder_call?(node) do
+    case AST.query_macro_call(node) do
+      {name, _args, _rebuild} -> name in @query_builders
+      nil -> qualified_query_builder?(Calls.resolved_call(node))
+    end
+  end
+
+  # An outer routing classifier runs before core descends into its arguments, so a nested qualified
+  # macro has no macro-identity stamp yet. Its explicit `Ecto.Query` receiver is nevertheless
+  # authoritative through ordinary call resolution; once routed `:expression`, descent stamps and
+  # analyzes it normally. Bare query builders are recognized by the clause above.
+  defp qualified_query_builder?({@query_key, name, _args, _rebuild}),
+    do: name in @query_builders
+
+  defp qualified_query_builder?(_call), do: false
 
   # A `from` source is a *binding* source (`p in S`, `[a, b] in q`) — routed `:hosted` — rather than
   # a bare queryable (`from("users", …)`), whose clauses are keyword-shorthand data.

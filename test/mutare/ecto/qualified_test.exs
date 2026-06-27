@@ -115,6 +115,22 @@ defmodule Mutare.Ecto.QualifiedTest do
       assert norm == normalized_ecto_diffs(bare)
       assert_compiles(qual, mutators: @all)
     end
+
+    test "a qualified nested query remains reachable through an outer clause macro" do
+      bare = wrap(~S/limit(from(s in "t", where: s.id > 1), 10)/)
+
+      qual =
+        wrap(
+          ~S/Ecto.Query.limit(Ecto.Query.from(s in "t", where: s.id > 1), 10)/,
+          "require Ecto.Query"
+        )
+
+      norm = normalized_ecto_diffs(qual)
+
+      assert {"s.id > 1", "s.id >= 1"} in norm
+      assert norm == normalized_ecto_diffs(bare)
+      assert_compiles(qual, mutators: @all)
+    end
   end
 
   describe "aliased forms route identically to bare" do
