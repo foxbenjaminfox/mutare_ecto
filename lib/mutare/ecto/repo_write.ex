@@ -40,7 +40,7 @@ defmodule Mutare.Ecto.RepoWrite do
 
   alias Mutare.Ecto.{AST, Pair, RepoCall}
 
-  @behaviour Mutare.Ecto.SubMutator
+  use Mutare.Ecto.SubMutator
 
   # Alias-proof reference to `Ecto.Changeset`: the metamutant recompiles in the *author's* module,
   # whose aliases we don't control — a bare `Ecto.Changeset` there can be shadowed by a submodule
@@ -78,9 +78,6 @@ defmodule Mutare.Ecto.RepoWrite do
       nil -> []
     end
   end
-
-  # mutare:ignore[clause_drop] equivalent — the first clause matches every node given core's `%{opts:, pipe_mode:}` context; this fallback only guards a context missing one of those keys, which core never sends
-  def mutations(_node, _context), do: []
 
   # `:persistence` — replace the write with `apply_action(change(arg), action)`.
   defp persistence(fun, args, pipe_mode) do

@@ -42,7 +42,7 @@ defmodule Mutare.Ecto.ClauseDrop do
 
   alias Mutare.Ecto.{AST, StageDrop, Surface}
 
-  @behaviour Mutare.Ecto.SubMutator
+  use Mutare.Ecto.SubMutator
 
   # The resolved-call module key `Mutare.Transform.Calls` returns for an `Ecto.Query` call — the
   # canonical one owned by `AST.query_module_key/0`, never the hardcoded `[:Ecto, :Query]` split.
@@ -56,7 +56,4 @@ defmodule Mutare.Ecto.ClauseDrop do
   @impl Mutare.Ecto.SubMutator
   def mutations(node, %{pipe_mode: pipe_mode}),
     do: StageDrop.mutations(node, @query_key, &Surface.drop_family/1, pipe_mode)
-
-  # mutare:ignore[clause_drop] equivalent — the first clause matches every node given core's `%{pipe_mode:}` context; this fallback only guards a context without that key, which core never sends
-  def mutations(_node, _context), do: []
 end

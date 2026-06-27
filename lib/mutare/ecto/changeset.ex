@@ -26,7 +26,7 @@ defmodule Mutare.Ecto.Changeset do
 
   alias Mutare.Ecto.{AST, StageDrop}
 
-  @behaviour Mutare.Ecto.SubMutator
+  use Mutare.Ecto.SubMutator
 
   # The resolved-call module key `Mutare.Transform.Calls` returns for an `Ecto.Changeset` call,
   # derived from the canonical `AST.module_key/1` rather than hardcoding its split form.
@@ -56,9 +56,6 @@ defmodule Mutare.Ecto.Changeset do
   @impl Mutare.Ecto.SubMutator
   def mutations(node, %{pipe_mode: pipe_mode}),
     do: StageDrop.mutations(node, @changeset_key, &family/1, pipe_mode)
-
-  # mutare:ignore[clause_drop] equivalent — the first clause matches every node given core's `%{pipe_mode:}` context; this fallback only guards a context without that key, which core never sends
-  def mutations(_node, _context), do: []
 
   defp family(fun) when fun in @droppable, do: :validation_drop
   defp family(fun) when fun in @hooks, do: :hook_drop

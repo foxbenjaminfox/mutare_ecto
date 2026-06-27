@@ -17,7 +17,7 @@ defmodule Mutare.Ecto.RepoAggregate do
 
   alias Mutare.Ecto.{Aggregate, AST, RepoCall}
 
-  @behaviour Mutare.Ecto.SubMutator
+  use Mutare.Ecto.SubMutator
 
   # The aggregate's effective argument position: aggregate(queryable, agg, field) → 1.
   @agg_position 1
@@ -35,13 +35,9 @@ defmodule Mutare.Ecto.RepoAggregate do
     end
   end
 
-  # mutare:ignore[clause_drop] equivalent — the first clause matches every node given core's `%{opts:, pipe_mode:}` context; this fallback only guards a context missing one of those keys, which core never sends
-  def mutations(_node, _context), do: []
-
   defp swap(args, rebuild, pipe_mode) do
-    index = Mutare.Mutator.visible_index(@agg_position, pipe_mode)
-
-    with node when not is_nil(node) <- index && Enum.at(args, index),
+    with index when is_integer(index) <- Mutare.Mutator.visible_index(@agg_position, pipe_mode),
+         node when not is_nil(node) <- Enum.at(args, index),
          to when not is_nil(to) <- Aggregate.swap(AST.atom_value(node)) do
       [rebuild.(:aggregate, List.replace_at(args, index, AST.atom_literal(to)))]
     else
