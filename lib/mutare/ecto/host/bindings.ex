@@ -4,14 +4,9 @@ defmodule Mutare.Ecto.Host.Bindings do
   # `dynamic/2`. This is the only module that reasons about positional, named, ellipsis, and join
   # placement.
 
-  alias Mutare.Ecto.{AST, Binding}
+  alias Mutare.Ecto.{AST, Binding, Surface}
   alias Mutare.Ecto.AST.{BindingList, KeywordList}
   alias Mutare.Ecto.AST.KeywordList.Entry
-
-  @join_keys ~w(
-    join inner_join left_join right_join full_join cross_join
-    inner_lateral_join left_lateral_join
-  )a
 
   @doc "The dynamic binding list established by a `from` source and its join clauses."
   @spec from(Macro.t(), KeywordList.t()) :: [Macro.t()]
@@ -131,7 +126,7 @@ defmodule Mutare.Ecto.Host.Bindings do
 
   defp join_bindings(%KeywordList{entries: entries}) do
     for %Entry{key: key, value: {:in, _, [lhs, _src]}} <- entries,
-        key in @join_keys,
+        Surface.from_clause?(key, :join_binding),
         declaration <- declarations(lhs),
         do: declaration
   end

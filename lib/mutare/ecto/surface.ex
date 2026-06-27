@@ -1,77 +1,219 @@
 defmodule Mutare.Ecto.Surface do
   @moduledoc false
-  # Canonical metadata for the Ecto.Query surface the plugin classifies. Every consumer derives
-  # its macro sets and semantic family from this module so routing, mutation, and stage removal
-  # cannot silently drift apart when Ecto adds a builder.
+  # One declarative registry for every Ecto.Query macro and `from` clause key the plugin owns.
+  # Consumers derive routing, stage removal, hosted conditions, binding accumulation, and mutation
+  # capabilities from these descriptors; adding a builder no longer means updating parallel lists.
 
-  @condition_macros ~w(where or_where having or_having)a
-  @hosted_clause_keys [:on | @condition_macros]
-  @ordering_macros ~w(order_by prepend_order_by)a
-  @bound_macros ~w(limit offset)a
-  @aggregate_macros ~w(select select_merge)a
-  @aggregate_query_keys ~w(select select_merge order_by)a
+  @macro_kinds [:from, :condition, :join, :clause, :skip]
+  @mutation_capabilities [:ordering, :bound, :aggregate]
+  @from_capabilities [:hosted, :ordering, :bound, :aggregate, :join_binding, :join_type]
+  @drop_families [:filter_drop, :bound, :clause_drop]
+  @descriptor_keys [:name, :macro, :mutations, :stage_drop, :from, :from_drop]
 
-  @clause_macros ~w(
-    select select_merge order_by prepend_order_by group_by distinct
-    limit offset with_ties join preload lock update with_cte
-    windows union union_all except except_all intersect intersect_all
-  )a
+  @surface [
+    %{name: :from, macro: :from},
+    %{
+      name: :where,
+      macro: :condition,
+      stage_drop: :filter_drop,
+      from: [:hosted],
+      from_drop: :filter_drop
+    },
+    %{
+      name: :or_where,
+      macro: :condition,
+      stage_drop: :filter_drop,
+      from: [:hosted],
+      from_drop: :filter_drop
+    },
+    %{
+      name: :having,
+      macro: :condition,
+      stage_drop: :filter_drop,
+      from: [:hosted],
+      from_drop: :filter_drop
+    },
+    %{
+      name: :or_having,
+      macro: :condition,
+      stage_drop: :filter_drop,
+      from: [:hosted],
+      from_drop: :filter_drop
+    },
+    %{
+      name: :select,
+      macro: :clause,
+      mutations: [:aggregate],
+      stage_drop: :clause_drop,
+      from: [:aggregate]
+    },
+    %{
+      name: :select_merge,
+      macro: :clause,
+      mutations: [:aggregate],
+      stage_drop: :clause_drop,
+      from: [:aggregate]
+    },
+    %{
+      name: :order_by,
+      macro: :clause,
+      mutations: [:ordering, :aggregate],
+      stage_drop: :clause_drop,
+      from: [:ordering, :aggregate]
+    },
+    %{
+      name: :prepend_order_by,
+      macro: :clause,
+      mutations: [:ordering, :aggregate],
+      stage_drop: :clause_drop
+    },
+    %{name: :group_by, macro: :clause, stage_drop: :clause_drop},
+    %{name: :distinct, macro: :clause, stage_drop: :clause_drop},
+    %{
+      name: :limit,
+      macro: :clause,
+      mutations: [:bound],
+      stage_drop: :bound,
+      from: [:bound],
+      from_drop: :bound
+    },
+    %{
+      name: :offset,
+      macro: :clause,
+      mutations: [:bound],
+      stage_drop: :bound,
+      from: [:bound],
+      from_drop: :bound
+    },
+    %{name: :with_ties, macro: :clause, stage_drop: :clause_drop},
+    %{
+      name: :join,
+      macro: :join,
+      stage_drop: :clause_drop,
+      from: [:join_binding, :join_type]
+    },
+    %{name: :preload, macro: :clause, stage_drop: :clause_drop},
+    %{name: :lock, macro: :clause, stage_drop: :clause_drop},
+    %{name: :update, macro: :clause, stage_drop: :clause_drop},
+    %{name: :with_cte, macro: :clause, stage_drop: :clause_drop},
+    %{name: :windows, macro: :clause, stage_drop: :clause_drop},
+    %{name: :union, macro: :clause, stage_drop: :clause_drop},
+    %{name: :union_all, macro: :clause, stage_drop: :clause_drop},
+    %{name: :except, macro: :clause, stage_drop: :clause_drop},
+    %{name: :except_all, macro: :clause, stage_drop: :clause_drop},
+    %{name: :intersect, macro: :clause, stage_drop: :clause_drop},
+    %{name: :intersect_all, macro: :clause, stage_drop: :clause_drop},
+    %{name: :dynamic, macro: :skip},
+    %{name: :is_named_binding, macro: :skip},
+    %{name: :on, from: [:hosted]},
+    %{name: :inner_join, from: [:join_binding, :join_type]},
+    %{name: :left_join, from: [:join_binding, :join_type]},
+    %{name: :right_join, from: [:join_binding, :join_type]},
+    %{name: :full_join, from: [:join_binding, :join_type]},
+    %{name: :cross_join, from: [:join_binding]},
+    %{name: :inner_lateral_join, from: [:join_binding]},
+    %{name: :left_lateral_join, from: [:join_binding]}
+  ]
 
-  @skipped_macros ~w(dynamic is_named_binding)a
+  @names Enum.map(@surface, & &1.name)
+  @by_name Map.new(@surface, &{&1.name, &1})
 
-  @drop_families @condition_macros
-                 |> Map.new(&{&1, :filter_drop})
-                 |> Map.merge(Map.new(@bound_macros, &{&1, :bound}))
-                 |> Map.merge(Map.new(@clause_macros -- @bound_macros, &{&1, :clause_drop}))
-
-  # @drop_families layers three groups and lets the last merge win on a key collision, so a macro in
-  # both @condition_macros and @clause_macros would silently lose its :filter_drop to :clause_drop.
-  # Assert disjointness at compile time, so a mis-registered future Ecto builder fails loudly here.
-  unless MapSet.disjoint?(MapSet.new(@condition_macros), MapSet.new(@clause_macros)) do
-    raise "Mutare.Ecto.Surface: @condition_macros and @clause_macros must be disjoint"
+  if length(@names) != MapSet.size(MapSet.new(@names)) do
+    raise "Mutare.Ecto.Surface descriptors must have unique names"
   end
 
-  @doc "The condition builders whose expression is delivered through the selector host."
-  @spec condition_macros() :: [atom()]
-  def condition_macros, do: @condition_macros
+  Enum.each(@surface, fn descriptor ->
+    unknown_keys = Map.keys(descriptor) -- @descriptor_keys
+    macro_kind = Map.get(descriptor, :macro)
+    mutations = Map.get(descriptor, :mutations, [])
+    from = Map.get(descriptor, :from, [])
+    stage_drop = Map.get(descriptor, :stage_drop)
+    from_drop = Map.get(descriptor, :from_drop)
 
-  @doc "`from` clause keys whose SQL condition is selector-hosted."
-  @spec hosted_clause_keys() :: [atom()]
-  def hosted_clause_keys, do: @hosted_clause_keys
+    relationships_valid? =
+      (mutations == [] or macro_kind == :clause) and
+        (is_nil(stage_drop) or macro_kind in [:condition, :join, :clause]) and
+        (is_nil(from_drop) or from != []) and
+        (macro_kind != :condition or
+           (:hosted in from and stage_drop == :filter_drop and from_drop == :filter_drop)) and
+        (macro_kind != :join or :join_binding in from)
 
-  @doc "The composable query-building macros routed by the plugin."
-  @spec clause_macros() :: [atom()]
-  def clause_macros, do: @clause_macros
+    unless is_atom(descriptor.name) and unknown_keys == [] and
+             (is_nil(macro_kind) or macro_kind in @macro_kinds) and
+             mutations -- @mutation_capabilities == [] and from -- @from_capabilities == [] and
+             (is_nil(stage_drop) or stage_drop in @drop_families) and
+             (is_nil(from_drop) or from_drop in @drop_families) and relationships_valid? do
+      raise "invalid Mutare.Ecto.Surface descriptor: #{inspect(descriptor)}"
+    end
+  end)
 
-  @doc "The query macros deliberately kept opaque rather than treated as query stages."
-  @spec skipped_macros() :: [atom()]
-  def skipped_macros, do: @skipped_macros
+  @type macro_kind :: :from | :condition | :join | :clause | :skip
+  @type mutation_capability :: :ordering | :bound | :aggregate
+  @type from_capability ::
+          :hosted | :ordering | :bound | :aggregate | :join_binding | :join_type
+  @type drop_family :: :filter_drop | :bound | :clause_drop
+  @type descriptor :: %{
+          required(:name) => atom(),
+          optional(:macro) => macro_kind(),
+          optional(:mutations) => [mutation_capability()],
+          optional(:stage_drop) => drop_family(),
+          optional(:from) => [from_capability()],
+          optional(:from_drop) => drop_family()
+        }
 
-  @doc "The hosted opener and condition builders."
-  @spec hosted_macros() :: [atom()]
-  def hosted_macros, do: [:from | @condition_macros]
+  @doc "Every registered surface descriptor, in macro-registration order."
+  @spec descriptors() :: [descriptor()]
+  def descriptors, do: @surface
 
-  @doc "Every macro that returns/builds a query and may contain a nested query argument."
-  @spec query_builders() :: [atom()]
-  def query_builders, do: [:from | @condition_macros ++ @clause_macros]
+  @doc "The descriptor for a macro/clause name, or `nil` when the plugin does not own it."
+  @spec descriptor(atom()) :: descriptor() | nil
+  def descriptor(name), do: Map.get(@by_name, name)
 
-  @doc "Clause macros whose final expression carries an ordering."
-  @spec ordering_macros() :: [atom()]
-  def ordering_macros, do: @ordering_macros
+  @doc "The routing kind for a registered query macro, or `nil` for a clause-only/unknown name."
+  @spec macro_kind(atom()) :: macro_kind() | nil
+  def macro_kind(name), do: get(name, :macro)
 
-  @doc "Clause macros whose final expression is an integer bound."
-  @spec bound_macros() :: [atom()]
-  def bound_macros, do: @bound_macros
+  @doc "Every Ecto.Query macro registration as `{name, :routing | :skip}`."
+  @spec macro_registrations() :: [{atom(), :routing | :skip}]
+  def macro_registrations do
+    for %{name: name, macro: kind} <- @surface do
+      {name, if(kind == :skip, do: :skip, else: :routing)}
+    end
+  end
 
-  @doc "Clause macros whose expression may contain an aggregate call."
-  @spec aggregate_macros() :: [atom()]
-  def aggregate_macros, do: @aggregate_macros
+  @doc "Whether `name` is a query-building macro whose nested query should remain reachable."
+  @spec query_builder?(atom()) :: boolean()
+  def query_builder?(name), do: macro_kind(name) in [:from, :condition, :join, :clause]
 
-  @doc "`from` clause keys whose expression may contain an aggregate call."
-  @spec aggregate_query_keys() :: [atom()]
-  def aggregate_query_keys, do: @aggregate_query_keys
+  @doc "The standalone mutation capabilities attached to a query macro."
+  @spec mutations(atom()) :: [mutation_capability()]
+  def mutations(name), do: get(name, :mutations, [])
+
+  @doc "Whether a routed macro accepts a binding list eligible for positional reordering."
+  @spec binding_list_macro?(atom()) :: boolean()
+  def binding_list_macro?(name), do: macro_kind(name) in [:join, :clause]
 
   @doc "The family used when a composable stage is removed, or `nil` when it is not droppable."
-  @spec drop_family(atom()) :: :filter_drop | :bound | :clause_drop | nil
-  def drop_family(name), do: Map.get(@drop_families, name)
+  @spec stage_drop_family(atom()) :: drop_family() | nil
+  def stage_drop_family(name), do: get(name, :stage_drop)
+
+  @doc "Whether a `from` clause key carries a particular mutation/routing capability."
+  @spec from_clause?(atom(), from_capability()) :: boolean()
+  def from_clause?(name, capability), do: capability in get(name, :from, [])
+
+  @doc "Every `from` clause key carrying `capability`, in descriptor order."
+  @spec from_keys(from_capability()) :: [atom()]
+  def from_keys(capability),
+    do: for(%{name: name} <- @surface, from_clause?(name, capability), do: name)
+
+  @doc "The family used when a whole-`from` clause is removed, or `nil` when it is retained."
+  @spec from_drop_family(atom()) :: drop_family() | nil
+  def from_drop_family(name), do: get(name, :from_drop)
+
+  defp get(name, key, default \\ nil) do
+    case descriptor(name) do
+      nil -> default
+      descriptor -> Map.get(descriptor, key, default)
+    end
+  end
 end

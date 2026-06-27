@@ -35,13 +35,6 @@ defmodule Mutare.Ecto.Host.Routing do
   alias Mutare.Ecto.Host.Bindings
   alias Mutare.Transform.Calls
 
-  # The where/having family and the plain composable clause macros, as compile-time guard constants.
-  # The canonical lists live on `Mutare.Ecto.Surface`; the
-  # condition macros double as the `from`-clause condition keys (`where`/`or_where`/`having`/…).
-  @condition_macros Surface.condition_macros()
-  @hosted_clause_keys Surface.hosted_clause_keys()
-  @plain_clause_macros Surface.clause_macros()
-  @query_builders Surface.query_builders()
   @query_key AST.query_module_key()
 
   @doc """
@@ -92,7 +85,13 @@ defmodule Mutare.Ecto.Host.Routing do
     [:skip | List.duplicate(clause_treatment, length(rest))]
   end
 
-  def macro_routing({macro, _meta, args}) when macro in @condition_macros and is_list(args) do
+  def macro_routing({macro, _meta, args}) when is_atom(macro) and is_list(args) do
+    route_macro(Surface.macro_kind(macro), args)
+  end
+
+  def macro_routing(_node), do: []
+
+  defp route_macro(:condition, args) do
     # The threaded query (the first arg, when written directly) is an ordinary expression; its own
     # data positions stay raw. The condition/shorthand overlay then marks what the host/core own.
     base = query_threading_route(args)
@@ -105,19 +104,19 @@ defmodule Mutare.Ecto.Host.Routing do
     end
   end
 
-  def macro_routing({:join, _meta, args}) when is_list(args) do
+  defp route_macro(:join, args) do
     args
     |> query_threading_route()
     |> host_join_options(args)
   end
 
-  def macro_routing({macro, _meta, args}) when macro in @plain_clause_macros and is_list(args) do
+  defp route_macro(:clause, args) do
     # No hosted fragment, no shorthand: just thread the query (first arg → `:expression` when it is
     # one) and leave every data position raw for the plugin's own `mutate/2` mutators.
     query_threading_route(args)
   end
 
-  def macro_routing(_node), do: []
+  defp route_macro(_kind, _args), do: []
 
   # The base routing for a query-threading macro: mark the first argument `:expression` **iff it is
   # the threaded query** (a bare query variable, a `from(…)`, or a nested pipe — not a binding list,
@@ -137,8 +136,10 @@ defmodule Mutare.Ecto.Host.Routing do
   # variable (`q`), any nested query-builder macro (`from(…)`, `where(…)`, …), or a nested pipe.
   # A binding list, keyword list, literal, or other DSL-data shape is not — that is a piped call's
   # own first data argument (the threaded query is the `|>` left side, routed separately).
-  defp query_arg?({name, _meta, args}) when name in @query_builders and is_list(args), do: true
   defp query_arg?({:|>, _meta, _args}), do: true
+
+  defp query_arg?({name, _meta, args}) when is_atom(name) and is_list(args),
+    do: Surface.query_builder?(name)
 
   defp query_arg?(node) do
     Binding.variable?(node) or query_builder_call?(node)
@@ -146,7 +147,7 @@ defmodule Mutare.Ecto.Host.Routing do
 
   defp query_builder_call?(node) do
     case QueryCall.parse(node) do
-      %QueryCall{name: name} -> name in @query_builders
+      %QueryCall{name: name} -> Surface.query_builder?(name)
       nil -> qualified_query_builder?(Calls.resolved_call(node))
     end
   end
@@ -156,7 +157,7 @@ defmodule Mutare.Ecto.Host.Routing do
   # authoritative through ordinary call resolution; once routed `:expression`, descent stamps and
   # analyzes it normally. Bare query builders are recognized by the clause above.
   defp qualified_query_builder?({@query_key, name, _args, _rebuild}),
-    do: name in @query_builders
+    do: Surface.query_builder?(name)
 
   defp qualified_query_builder?(_call), do: false
 
@@ -197,7 +198,7 @@ defmodule Mutare.Ecto.Host.Routing do
     case KeywordList.parse(clauses) do
       %KeywordList{entries: entries} ->
         Enum.map(entries, fn entry ->
-          if entry.key in @hosted_clause_keys,
+          if Surface.from_clause?(entry.key, :hosted),
             do: condition_treatment(entry.value, source_kind),
             else: :skip
         end)

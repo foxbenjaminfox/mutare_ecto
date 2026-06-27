@@ -33,10 +33,6 @@ defmodule Mutare.Ecto.Clause do
 
   @behaviour Mutare.Ecto.SubMutator
 
-  @ordering_macros Surface.ordering_macros()
-  @bound_macros Surface.bound_macros()
-  @aggregate_macros Surface.aggregate_macros()
-
   @doc "Standalone/pipe clause-macro mutations for `node` as `{family, node}` pairs, or `[]`."
   @spec mutations(Macro.t() | QueryCall.t(), Mutare.Mutator.context()) ::
           [{atom(), Macro.t()}]
@@ -45,19 +41,11 @@ defmodule Mutare.Ecto.Clause do
   # and aliased (`Q.order_by`) forms mutate exactly like the bare/imported one; `rebuild` re-emits each
   # mutant in the source's written form. Each clause guards `args != []` to protect the
   # `{init, [last]} = Enum.split(args, -1)` destructuring on a degenerate zero-arg macro node.
-  def mutations(%QueryCall{name: macro, args: args} = call, _context)
-      when macro in @ordering_macros and args != [],
-      do: order_by_mutations(call)
+  def mutations(%QueryCall{args: []}, _context), do: []
 
-  def mutations(%QueryCall{name: macro, args: args} = call, _context)
-      when macro in @bound_macros and args != [],
-      do: bound_mutations(call)
-
-  def mutations(%QueryCall{name: macro, args: args} = call, _context)
-      when macro in @aggregate_macros and args != [],
-      do: select_mutations(call)
-
-  def mutations(%QueryCall{}, _context), do: []
+  def mutations(%QueryCall{name: macro} = call, _context) do
+    Enum.flat_map(Surface.mutations(macro), &capability_mutations(&1, call))
+  end
 
   def mutations(node, context) do
     case QueryCall.parse(node) do
@@ -66,16 +54,9 @@ defmodule Mutare.Ecto.Clause do
     end
   end
 
-  defp order_by_mutations(call) do
-    mutate_last(call, fn ordering ->
-      # mutare:ignore[operand_swap] direction flips and aggregate swaps are consumed as a set — order is irrelevant
-      Ordering.flips(ordering) ++ Aggregate.swaps(ordering)
-    end)
-  end
-
-  defp bound_mutations(call), do: mutate_last(call, &bound_flips/1)
-
-  defp select_mutations(call), do: mutate_last(call, &Aggregate.swaps/1)
+  defp capability_mutations(:ordering, call), do: mutate_last(call, &Ordering.flips/1)
+  defp capability_mutations(:bound, call), do: mutate_last(call, &bound_flips/1)
+  defp capability_mutations(:aggregate, call), do: mutate_last(call, &Aggregate.swaps/1)
 
   # The shape all three clause-macro mutators share: split the mutated **last argument** off (the
   # ordering / bound / selector — `init` keeps the binding list when one is written), map it to

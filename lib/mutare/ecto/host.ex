@@ -13,9 +13,6 @@ defmodule Mutare.Ecto.Host do
   alias Mutare.Ecto.AST.KeywordList.Entry
   alias Mutare.Ecto.Host.{Bindings, Catalog, Target}
 
-  @condition_macros Surface.condition_macros()
-  @hosted_clause_keys Surface.hosted_clause_keys()
-
   @doc "The selector-host targets for an Ecto.Query macro node."
   @spec host(Macro.t(), Mutare.Mutator.context()) :: [Target.t()]
   def host(node, context) do
@@ -28,11 +25,12 @@ defmodule Mutare.Ecto.Host do
           nil -> []
         end
 
-      %QueryCall{name: macro, args: args} when macro in @condition_macros ->
-        condition_target(args, config)
-
-      %QueryCall{name: :join, args: args} ->
-        join_target(args, config)
+      %QueryCall{name: macro, args: args} ->
+        case Surface.macro_kind(macro) do
+          :condition -> condition_target(args, config)
+          :join -> join_target(args, config)
+          _other -> []
+        end
 
       _ ->
         []
@@ -50,7 +48,7 @@ defmodule Mutare.Ecto.Host do
 
   defp from_target({%Entry{key: key, value: condition}, index}, bindings, opts) do
     with [_ | _] <- bindings,
-         true <- key in @hosted_clause_keys,
+         true <- Surface.from_clause?(key, :hosted),
          [_ | _] = mutants <- Catalog.mutants(condition, bindings, opts) do
       [Target.from_clause(condition, mutants, bindings, index)]
     else

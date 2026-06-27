@@ -2,7 +2,7 @@ defmodule Mutare.Ecto.HostTest do
   use ExUnit.Case, async: true
 
   import Mutare.Ecto.TestSupport
-  alias Mutare.Ecto.{Host, Surface}
+  alias Mutare.Ecto.Host
 
   # The localized `where`/`having` mutations the selector host delivers via Ecto's `^`/`dynamic`
   # injection. These tests prove three things end to end: the right call positions route `:hosted`,
@@ -650,19 +650,6 @@ defmodule Mutare.Ecto.HostTest do
   # The end-to-end tests above confirm delivery. The focused classifier checks below keep routing
   # shape failures easy to diagnose without manufacturing resolver metadata or bypassing the
   # public transform for mutation delivery.
-
-  describe "the registered macro lists" do
-    test "condition_macros are the where/having family" do
-      assert Surface.condition_macros() == ~w(where or_where having or_having)a
-    end
-
-    test "clause_macros are the plain composable builders" do
-      assert Surface.clause_macros() ==
-               ~w(select select_merge order_by prepend_order_by group_by distinct limit offset
-                  with_ties join preload lock update with_cte windows union union_all except
-                  except_all intersect intersect_all)a
-    end
-  end
 
   describe "macro_routing/1 — per-argument treatment" do
     defp routing(code), do: code |> Sourceror.parse_string!() |> Host.Routing.macro_routing()

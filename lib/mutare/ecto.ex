@@ -98,7 +98,7 @@ defmodule Mutare.Ecto do
   # `from` opener and the standalone/pipe condition macros — via the `:routing` classifier, which
   # decides per call shape whether a position carries a hosted DSL fragment (a binding-referencing
   # `where`/`having` condition) or plain data. See `Mutare.Ecto.Host`.
-  # The plain composable clause macros (`Mutare.Ecto.Surface.clause_macros/0`) — `order_by`, `limit`,
+  # The composable clause descriptors (`Mutare.Ecto.Surface`) — `order_by`, `limit`,
   # `select`, `join`, … — also route via the `:routing` classifier, for two reasons: (1) it marks
   # the **threaded query** (the first argument / the piped left side) an `:expression`, so core
   # mutates the upstream query through a pipe stage (a static `:skip` would stamp the piped value
@@ -133,12 +133,14 @@ defmodule Mutare.Ecto do
       {Ecto.Schema, :embedded_schema, :skip}
     ]
 
-    hosted = for macro <- Surface.hosted_macros(), do: {Ecto.Query, macro, :any, :routing}
-    clauses = for macro <- Surface.clause_macros(), do: {Ecto.Query, macro, :any, :routing}
-    skipped = for macro <- Surface.skipped_macros(), do: {Ecto.Query, macro, :any, :skip}
+    query =
+      Enum.map(Surface.macro_registrations(), fn
+        {macro, :routing} -> {Ecto.Query, macro, :any, :routing}
+        {macro, :skip} -> {Ecto.Query, macro, :any, :skip}
+      end)
 
     # mutare:ignore[operand_swap] concat order is irrelevant — entries registered as a set
-    schema ++ hosted ++ clauses ++ skipped
+    schema ++ query
   end
 
   # Shape-aware routing for the `:routing` query macros — which positions carry a hosted DSL

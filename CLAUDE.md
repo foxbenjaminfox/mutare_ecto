@@ -105,7 +105,7 @@ The surface divides by **how a mutation is delivered**, not by what it mutates:
 |---|---|
 | `ecto.ex` | `Mutare.Mutator` callbacks: normalizes config, delegates node classification, filters by `families:`, applies the note |
 | `dispatcher.ex` | Classifies each node once and invokes only the sub-mutators relevant to that query macro, Ecto call, or configured Repo call |
-| `surface.ex` | Canonical metadata for the `Ecto.Query` surface (macro sets + per-clause families) every other module derives from, so routing/mutation/drop can't drift apart |
+| `surface.ex` | Single descriptor table for every owned query macro and `from` key: routing kind, standalone mutation capabilities, stage/whole-`from` drop families, and hosted/binding/join capabilities |
 | `sub_mutator.ex` | The uniform `mutations(node, context)` behaviour implemented by each mutation producer |
 | `host.ex` | Selector-host **coordinator** (#3): turns a hosted node into `Target`s, delegating to the `host/*` parts below |
 | `host/routing.ex` | `macro_routing/1` — the per-argument routing classifier (`:hosted`/`:expression`/`:skip`/`:pinned`/`{:keyword,…}`) |

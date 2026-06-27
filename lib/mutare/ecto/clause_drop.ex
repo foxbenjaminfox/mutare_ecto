@@ -55,5 +55,5 @@ defmodule Mutare.Ecto.ClauseDrop do
   @spec mutations(Macro.t(), Mutare.Mutator.context()) :: [{atom(), Macro.t()}]
   @impl Mutare.Ecto.SubMutator
   def mutations(node, %{pipe_mode: pipe_mode}),
-    do: StageDrop.mutations(node, @query_key, &Surface.drop_family/1, pipe_mode)
+    do: StageDrop.mutations(node, @query_key, &Surface.stage_drop_family/1, pipe_mode)
 end

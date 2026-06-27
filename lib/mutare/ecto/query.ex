@@ -41,10 +41,6 @@ defmodule Mutare.Ecto.Query do
 
   @type family :: atom()
 
-  @droppable Surface.condition_macros()
-  @bound_keys Surface.bound_macros()
-  @aggregate_keys Surface.aggregate_query_keys()
-
   # JoinType: each join-clause key's kind swaps. `join` is the keyword-form default inner join.
   # The portable pair (`INNER`↔`LEFT`) is always offered; the non-portable pairs are added only
   # under a dialect that supports them:
@@ -97,8 +93,8 @@ defmodule Mutare.Ecto.Query do
 
   defp from_mutations(source, clauses, call, config) do
     Enum.concat([
-      drops(call, source, clauses, @droppable, :filter_drop),
-      drops(call, source, clauses, @bound_keys, :bound),
+      drops(call, source, clauses, :filter_drop),
+      drops(call, source, clauses, :bound),
       order_flips(call, source, clauses),
       bound_bumps(call, source, clauses),
       join_swaps(call, source, clauses, config),
@@ -109,8 +105,9 @@ defmodule Mutare.Ecto.Query do
   # Remove each clause whose key is in `keys`, keeping the others — so the query still
   # compiles (it reuses the surviving clauses). Used for both the filter drops (where/having,
   # tagged `:filter_drop`) and the bound drops (limit/offset, tagged `:bound`).
-  defp drops(call, source, %KeywordList{entries: entries} = clauses, keys, family) do
-    for {%Entry{key: key}, index} <- Enum.with_index(entries), key in keys do
+  defp drops(call, source, %KeywordList{entries: entries} = clauses, family) do
+    for {%Entry{key: key}, index} <- Enum.with_index(entries),
+        Surface.from_drop_family(key) == family do
       {family, rebuild_from(call, source, KeywordList.delete(clauses, index))}
     end
   end
@@ -120,7 +117,7 @@ defmodule Mutare.Ecto.Query do
   # mutated where it is bound, in ordinary Elixir.
   defp bound_bumps(call, source, %KeywordList{entries: entries} = clauses) do
     for {%Entry{key: key, value: value}, index} <- Enum.with_index(entries),
-        key in @bound_keys,
+        Surface.from_clause?(key, :bound),
         n = AST.int_value(value),
         is_integer(n),
         bumped <- AST.bumps(n) do
@@ -141,6 +138,7 @@ defmodule Mutare.Ecto.Query do
     flips = join_flips(config)
 
     for {%Entry{key: key}, index} <- Enum.with_index(entries),
+        Surface.from_clause?(key, :join_type),
         to <- Map.get(flips, key, []) do
       {:join_type, rebuild_from(call, source, KeywordList.replace_key(clauses, index, to))}
     end
@@ -164,7 +162,7 @@ defmodule Mutare.Ecto.Query do
   # (`Mutare.Ecto.Host.catalog/3`) rather than being delivered as a whole-`from` rewrite.
   defp aggregate_swaps(call, source, %KeywordList{entries: entries} = clauses) do
     for {%Entry{key: key, value: value}, index} <- Enum.with_index(entries),
-        key in @aggregate_keys,
+        Surface.from_clause?(key, :aggregate),
         {family, swapped} <- Aggregate.swaps(value) do
       {family, rebuild_from(call, source, KeywordList.replace_value(clauses, index, swapped))}
     end
@@ -174,7 +172,8 @@ defmodule Mutare.Ecto.Query do
   # per axis per direction key, tagged with its family (`:ordering` direction / `:ordering_nulls`
   # placement; see `Mutare.Ecto.Ordering`).
   defp order_flips(call, source, %KeywordList{entries: entries} = clauses) do
-    for {%Entry{key: :order_by, value: value}, index} <- Enum.with_index(entries),
+    for {%Entry{key: key, value: value}, index} <- Enum.with_index(entries),
+        Surface.from_clause?(key, :ordering),
         {family, flipped} <- Ordering.flips(value) do
       {family, rebuild_from(call, source, KeywordList.replace_value(clauses, index, flipped))}
     end

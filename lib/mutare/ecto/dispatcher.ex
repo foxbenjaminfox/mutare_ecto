@@ -23,44 +23,45 @@ defmodule Mutare.Ecto.Dispatcher do
 
   @query_key AST.query_module_key()
   @changeset_key AST.module_key(Ecto.Changeset)
-  @condition_macros Surface.condition_macros()
-  @clause_macros Surface.clause_macros()
-
   @doc "The tagged mutations applicable to one AST node."
   @spec mutations(Macro.t(), map()) :: [{atom(), Macro.t()}]
   def mutations(node, context) do
     case QueryCall.parse(node) do
-      %QueryCall{name: name} = call -> query_macro_mutations(name, call, context)
-      nil -> call_mutations(Calls.resolved_call(node), node, context)
+      %QueryCall{name: name} = call ->
+        query_macro_mutations(Surface.macro_kind(name), call, context)
+
+      nil ->
+        call_mutations(Calls.resolved_call(node), node, context)
     end
   end
 
   defp query_macro_mutations(:from, call, context), do: Query.mutations(call, context)
 
-  defp query_macro_mutations(name, %QueryCall{node: node}, context)
-       when name in @condition_macros,
-       do: ClauseDrop.mutations(node, context)
+  defp query_macro_mutations(:condition, %QueryCall{node: node}, context),
+    do: ClauseDrop.mutations(node, context)
 
-  defp query_macro_mutations(name, %QueryCall{node: node} = call, context)
-       when name in @clause_macros do
+  defp query_macro_mutations(kind, %QueryCall{node: node} = call, context)
+       when kind in [:clause, :join] do
     Clause.mutations(call, context) ++
       BindingReorder.mutations(call, context) ++ ClauseDrop.mutations(node, context)
   end
 
-  defp query_macro_mutations(_name, _node, _context), do: []
+  defp query_macro_mutations(_kind, _node, _context), do: []
 
   # A query macro normally takes the branch above. Keeping the query-call classification here makes
   # the dispatcher tolerant of a resolved call that has not received its macro-identity stamp yet.
-  defp call_mutations({@query_key, name, _args, _rebuild}, node, context)
-       when name in @condition_macros,
-       do: ClauseDrop.mutations(node, context)
+  defp call_mutations({@query_key, name, _args, _rebuild}, node, context) do
+    case Surface.macro_kind(name) do
+      :condition ->
+        ClauseDrop.mutations(node, context)
 
-  defp call_mutations({@query_key, name, _args, _rebuild}, node, context)
-       when name in @clause_macros,
-       do: invoke([Clause, BindingReorder, ClauseDrop], node, context)
+      kind when kind in [:clause, :join] ->
+        invoke([Clause, BindingReorder, ClauseDrop], node, context)
 
-  defp call_mutations({@query_key, _name, _args, _rebuild}, node, context),
-    do: QueryTerminal.mutations(node, context)
+      _other ->
+        QueryTerminal.mutations(node, context)
+    end
+  end
 
   defp call_mutations({@changeset_key, _name, _args, _rebuild}, node, context),
     do: Changeset.mutations(node, context)
