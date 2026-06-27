@@ -45,13 +45,16 @@ defmodule Mutare.Ecto do
       repos**, or with different `families:`/`as:` to split the catalog into separately-named
       report families.
 
-  **Equivalence-sensitive families.** Mutants of `:comparison`, `:connective`, `:null_predicate`,
-  and `:ordering_nulls` (whose equivalence reasoning is SQL's three-valued logic) carry a **report
-  note** — a survivor reads `… SURVIVED  — kill may require NULL/boundary data` — so it is
-  recognised as honest signal, not a plain test gap. The note rides onto the `Mutare.Site` via a
-  `%Mutare.Mutator.Mutation{}` (`Mutare.Ecto.Config.noted/2`), which core accepts on both delivery
-  paths — so the three in-fragment families surface it through the **host** and `:ordering_nulls`
-  through its `mutate/2` whole-`from`/clause-macro rewrite.
+  **Equivalence-sensitive families.** Some mutants carry a **report note** — a survivor reads
+  `… SURVIVED  — kill may require …` — so it is recognised as honest signal, not a plain test gap.
+  Two equivalence reasons, two notes: `:comparison`, `:connective`, `:null_predicate`, and
+  `:ordering_nulls` reason in SQL's three-valued logic (`… kill may require NULL/boundary data`),
+  while `:join_type` reasons in join cardinality (`… kill may require an orphan row` — an
+  INNER↔LEFT↔RIGHT↔FULL swap only changes the result when a preserved-side row has no match, so a
+  mandatory/complete FK makes it legitimately equivalent). The note rides onto the `Mutare.Site` via
+  a `%Mutare.Mutator.Mutation{}` (`Mutare.Ecto.Config.noted/2`), which core accepts on both delivery
+  paths — so the in-fragment families surface it through the **host** and the
+  whole-`from`/clause-macro families (`:ordering_nulls`, `:join_type`) through `mutate/2`.
   `equivalence_sensitive_families/0` returns that set; with the `:as` convention you can
   additionally *group* them under their own report name:
 
@@ -126,10 +129,10 @@ defmodule Mutare.Ecto do
   defdelegate families, to: Config, as: :all_families
 
   @doc """
-  The families whose survivors may be legitimately unkillable without a `NULL`/boundary fixture
-  (`:comparison`, `:connective`, `:null_predicate`, `:ordering_nulls`) — their equivalence
-  reasoning is SQL's three-valued logic. Run them under their own `:as` name to surface "kill
-  requires boundary/NULL data" in the report (see the "Configuration" section).
+  The families whose survivors may be legitimately unkillable for a data reason, not a test gap —
+  `:comparison`, `:connective`, `:null_predicate`, `:ordering_nulls` (SQL's three-valued logic) and
+  `:join_type` (join cardinality — an orphan row). Each carries a report note; run them under their
+  own `:as` name to group "kill requires …" survivors in the report (see "Configuration").
   """
   @spec equivalence_sensitive_families() :: [atom()]
   defdelegate equivalence_sensitive_families, to: Config

@@ -131,12 +131,13 @@ defmodule Mutare.Ecto.ConfigTest do
   end
 
   describe "equivalence-sensitive families + validation" do
-    test "the helper lists the NULL/boundary three-valued families" do
+    test "the helper lists the data-equivalence families (three-valued logic + join cardinality)" do
       assert Mutare.Ecto.equivalence_sensitive_families() == [
                :comparison,
                :connective,
                :null_predicate,
-               :ordering_nulls
+               :ordering_nulls,
+               :join_type
              ]
 
       # …and they're a subset of the full set.
@@ -250,6 +251,32 @@ defmodule Mutare.Ecto.ConfigTest do
         Enum.find(sites, &(&1.mutated_code =~ "desc_nulls_first" and &1.mutator == :ecto))
 
       assert direction.note == nil
+    end
+
+    test "a join_type mutant carries the join-cardinality note (mutate/2 delivery)" do
+      # `:join_type` is equivalence-sensitive for a *data* reason, not three-valued logic: the
+      # INNER↔LEFT swap is equivalent whenever no orphan row exists (e.g. a mandatory FK). Its note
+      # differs from the NULL/boundary one, and like `:ordering_nulls` it rides the `mutate/2`
+      # whole-`from` rewrite, not the host.
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q, do: from(p in Post, join: c in assoc(p, :comments), on: c.ok, select: p.id)
+      end
+      """
+
+      {_meta, sites, _next} =
+        Mutare.transform_string(src,
+          mutators: [{Mutare.Ecto, repo: MyApp.Repo}],
+          expand_uses: true
+        )
+
+      join = Enum.find(sites, &(&1.mutated_code =~ "left_join" and &1.mutator == :ecto))
+
+      assert join.note ==
+               "kill may require an orphan row — a preserved-side row with no match (join kinds coincide when every row matches)"
+
+      assert Mutare.Report.header(join) =~ "SURVIVED  — kill may require an orphan row"
     end
   end
 

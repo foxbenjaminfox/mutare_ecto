@@ -31,23 +31,38 @@ defmodule Mutare.Ecto.Config do
     persistence on_conflict validation_drop hook_drop
   )a
 
-  # The families whose survivors may be **legitimately unkillable without a `NULL`/boundary
-  # fixture** — their equivalence reasoning is SQL's three-valued logic, so a surviving `==`/`!=`
-  # or `and`/`or` mutant on a nullable column (or an `is_nil` flip) can be honest signal that the
-  # kill needs boundary/NULL data, distinct from a plain "your test is missing". `ordering_nulls`
-  # joins them: a `*_nulls_first`↔`*_nulls_last` flip is only killable when the result actually
-  # holds NULL rows in the ordered column. Surfaced under their own report name via the `:as`
-  # convention (see `Mutare.Ecto.equivalence_sensitive_families/0`).
+  # The families whose survivors may be **legitimately unkillable for a data reason**, not a test
+  # gap — each carrying its own report *note* (below) so the report reads as honest signal. Two
+  # distinct equivalence reasons, hence two notes:
   #
-  # The per-mutant *note* (below) rides onto a Site via a `%Mutare.Mutator.Mutation{}` (`noted/2`),
-  # which core accepts on **both** delivery paths — the selector host's `:mutants` and a plain
-  # `mutate/2` return. So all four families surface the advisory inline: the three in-fragment ones
-  # through the host, and `ordering_nulls` (a whole-`from`/clause-macro rewrite) through `mutate/2`.
-  @equivalence_sensitive ~w(comparison connective null_predicate ordering_nulls)a
+  #   * three-valued logic (`@three_valued_note`) — `:comparison`/`:connective`/`:null_predicate`
+  #     (a surviving `==`/`!=` or `and`/`or` on a nullable column, or an `is_nil` flip) and
+  #     `:ordering_nulls` (a `*_nulls_first`↔`*_nulls_last` flip, only killable when the result
+  #     actually holds NULL rows in the ordered column). Their equivalence reasoning is SQL's
+  #     three-valued logic, so the kill needs boundary/NULL data.
+  #   * join cardinality (`@join_note`) — `:join_type`. An INNER↔LEFT↔RIGHT↔FULL swap only changes
+  #     the result when an *orphan* row exists (a preserved-side row with no match on the other);
+  #     a mandatory/complete FK makes every row match, so the swap is legitimately equivalent. The
+  #     kill needs an orphan row in the data, distinct from a missing-fixture gap.
+  #
+  # The per-mutant note rides onto a Site via a `%Mutare.Mutator.Mutation{}` (`noted/2`), which core
+  # accepts on **both** delivery paths — the selector host's `:mutants` and a plain `mutate/2`
+  # return. So the in-fragment families surface the advisory through the host, and the
+  # whole-`from`/clause-macro families (`:ordering_nulls`, `:join_type`) through `mutate/2`. Surfaced
+  # under their own report name via the `:as` convention (`equivalence_sensitive_families/0`).
+  @three_valued_note "kill may require NULL/boundary data (SQL three-valued logic)"
+  @join_note "kill may require an orphan row — a preserved-side row with no match (join kinds coincide when every row matches)"
 
-  # The advisory recorded on an equivalence-sensitive mutant's `Mutare.Site` (and shown in the
-  # report) — honest signal that a survivor may need a fixture to kill, distinct from a test gap.
-  @equivalence_note "kill may require NULL/boundary data (SQL three-valued logic)"
+  # The note for each equivalence-sensitive family; the single source of truth for the set (a family
+  # is equivalence-sensitive iff it has a note here). `equivalence_sensitive_families/0` derives the
+  # ordered set from this map by filtering `@families`.
+  @equivalence_notes %{
+    comparison: @three_valued_note,
+    connective: @three_valued_note,
+    null_predicate: @three_valued_note,
+    ordering_nulls: @three_valued_note,
+    join_type: @join_note
+  }
 
   @enforce_keys [:families, :dialects, :repo_key]
   defstruct [:families, :dialects, :repo_key]
@@ -85,17 +100,17 @@ defmodule Mutare.Ecto.Config do
   @spec all_families() :: [atom()]
   def all_families, do: @families
 
-  @doc "The families whose survivors may need a `NULL`/boundary fixture to kill (see the report note)."
+  @doc "The families whose survivors may be unkillable for a data reason (see the report note)."
   @spec equivalence_sensitive_families() :: [atom()]
-  def equivalence_sensitive_families, do: @equivalence_sensitive
+  def equivalence_sensitive_families,
+    do: Enum.filter(@families, &Map.has_key?(@equivalence_notes, &1))
 
   @doc """
   The report note for a `family`'s mutants — a string for an equivalence-sensitive family
   (surfaced on each such mutant's Site), or `nil` for an ordinary family (a bare mutant).
   """
   @spec equivalence_note(atom()) :: String.t() | nil
-  def equivalence_note(family) when family in @equivalence_sensitive, do: @equivalence_note
-  def equivalence_note(_family), do: nil
+  def equivalence_note(family), do: Map.get(@equivalence_notes, family)
 
   @doc """
   Tag a mutant `node` with its family's report note, ready to return from `mutate/2` or a host
