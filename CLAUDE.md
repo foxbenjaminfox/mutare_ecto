@@ -76,9 +76,10 @@ node it sees** to a family of sub-mutators. It implements three core callbacks:
   `:routing`. The classifier hosts SQL conditions, keeps DSL data raw, and marks a directly passed
   query argument `:expression` so upstream query mutations remain reachable through a stage.
 - `macro_routing/1` and `host/2` — both delegate to `Mutare.Ecto.Host` (the selector host).
-- `mutate/2` — gathers `{family, node}` pairs from every sub-mutator, then filters by the
-  configured `families:`. Everything runs through `mutate/2` (not `mutate/1`) because all
-  mutations read `context.opts`.
+- `mutate/2` — normalizes configuration, asks `Mutare.Ecto.Dispatcher` to classify the node and
+  invoke only relevant sub-mutators, then filters the resulting `{family, node}` pairs by the
+  configured `families:`. Everything runs through `mutate/2` because all mutations read
+  `context.opts`.
 
 ### The three delivery buckets (the spine of the design)
 
@@ -102,9 +103,10 @@ The surface divides by **how a mutation is delivered**, not by what it mutates:
 
 | Module | Role |
 |---|---|
-| `ecto.ex` | Dispatcher + `Mutare.Mutator` callbacks: folds every sub-mutator's `mutations/2`, filters by `families:`, applies the note |
+| `ecto.ex` | `Mutare.Mutator` callbacks: normalizes config, delegates node classification, filters by `families:`, applies the note |
+| `dispatcher.ex` | Classifies each node once and invokes only the sub-mutators relevant to that query macro, Ecto call, or configured Repo call |
 | `surface.ex` | Canonical metadata for the `Ecto.Query` surface (macro sets + per-clause families) every other module derives from, so routing/mutation/drop can't drift apart |
-| `sub_mutator.ex` | The uniform `mutations(node, context)` behaviour every sub-mutator implements (so the dispatcher is a plain fold) |
+| `sub_mutator.ex` | The uniform `mutations(node, context)` behaviour implemented by each mutation producer |
 | `host.ex` | Selector-host **coordinator** (#3): turns a hosted node into `Target`s, delegating to the `host/*` parts below |
 | `host/routing.ex` | `macro_routing/1` — the per-argument routing classifier (`:hosted`/`:expression`/`:skip`/`:pinned`/`{:keyword,…}`) |
 | `host/bindings.ex` | Interprets Ecto binding declarations; renders the binding list re-declared by a woven `dynamic/2` |

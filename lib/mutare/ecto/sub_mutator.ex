@@ -1,9 +1,8 @@
 defmodule Mutare.Ecto.SubMutator do
   @moduledoc false
-  # The uniform contract every Ecto sub-mutator implements. `Mutare.Ecto` is a thin front that runs
-  # each node past a family of sub-mutators (`RepoAggregate`, `Changeset`, `Query`, …) and merges
-  # their results; this behaviour gives them one shape so the dispatcher is a plain fold over a list
-  # rather than a hand-written call per mutator with its own arity.
+  # The uniform contract every Ecto sub-mutator implements. `Mutare.Ecto.Dispatcher` classifies a
+  # node, invokes only the relevant producers (`RepoAggregate`, `Changeset`, `Query`, …), and merges
+  # their results through this shared callback shape.
   #
   # `mutations/2` takes the AST `node` and the mutation `context` (carrying `:opts` — the
   # `families:`/`dialects:` config — and `:pipe_mode`), and returns the `{family, node}` mutation

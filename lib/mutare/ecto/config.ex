@@ -11,6 +11,7 @@ defmodule Mutare.Ecto.Config do
 
   @valid_options ~w(repo families dialects)a
   @valid_dialects ~w(postgres mysql sqlite)a
+  @empty_dialect_set MapSet.new()
 
   # Every SQL family the plugin can emit, the source of truth for `families: :all` and for
   # validating a configured subset. Grouped by the surface they mutate:
@@ -31,6 +32,7 @@ defmodule Mutare.Ecto.Config do
     filter_drop ordering ordering_nulls bound join_type aggregate query_terminal clause_drop
     persistence on_conflict validation_drop hook_drop
   )a
+  @all_family_set MapSet.new(@families)
 
   # The families whose survivors may be **legitimately unkillable for a data reason**, not a test
   # gap — each carrying its own report *note* (below) so the report reads as honest signal. Two
@@ -197,7 +199,7 @@ defmodule Mutare.Ecto.Config do
     end
   end
 
-  defp parse_families!(:all), do: MapSet.new(@families)
+  defp parse_families!(:all), do: @all_family_set
 
   defp parse_families!(families) when is_list(families) do
     case families -- @families do
@@ -215,6 +217,8 @@ defmodule Mutare.Ecto.Config do
     raise ArgumentError,
           "Mutare.Ecto :families must be :all or a list, got: #{inspect(other)}"
   end
+
+  defp parse_dialects!([]), do: @empty_dialect_set
 
   defp parse_dialects!(dialects) when is_list(dialects) do
     case dialects -- @valid_dialects do

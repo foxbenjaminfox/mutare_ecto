@@ -92,19 +92,7 @@ defmodule Mutare.Ecto do
   @behaviour Mutare.Mutator
   @behaviour Mutare.Mutator.MacroAware
 
-  alias Mutare.Ecto.{
-    BindingReorder,
-    Changeset,
-    Clause,
-    ClauseDrop,
-    Config,
-    Host,
-    Query,
-    QueryTerminal,
-    RepoAggregate,
-    RepoWrite,
-    Surface
-  }
+  alias Mutare.Ecto.{Config, Dispatcher, Host, Surface}
 
   # Query macros routed through the plugin's **selector host** (`c:Mutare.Mutator.MacroAware.host/2`) — the
   # `from` opener and the standalone/pipe condition macros — via the `:routing` classifier, which
@@ -163,20 +151,6 @@ defmodule Mutare.Ecto do
   @impl Mutare.Mutator.MacroAware
   defdelegate host(node, context), to: Host
 
-  # The sub-mutators dispatched by `mutate/2`, each a `Mutare.Ecto.SubMutator` (uniform
-  # `mutations(node, context)`). A node is offered to every one; the configured Repo (RepoAggregate/
-  # RepoWrite), pipe shape (the drops), and `families:`/`dialects:` all ride the shared context.
-  @submutators [
-    Query,
-    Clause,
-    BindingReorder,
-    ClauseDrop,
-    QueryTerminal,
-    RepoAggregate,
-    RepoWrite,
-    Changeset
-  ]
-
   # Every node mutation runs through `mutate/2` (not `mutate/1`), because all of them now read
   # `context.opts` — the `families:` filter (every family is independently toggleable) and the
   # `dialects:` gate (so a non-portable mutation only fires under a supporting adapter).
@@ -187,7 +161,7 @@ defmodule Mutare.Ecto do
   def mutate(node, %{opts: opts} = context) do
     config = Config.parse!(opts)
     context = Map.put(context, :ecto_config, config)
-    tagged = Enum.flat_map(@submutators, & &1.mutations(node, context))
+    tagged = Dispatcher.mutations(node, context)
 
     case for {family, mutated} <- tagged,
              Config.family_enabled?(config, family),
