@@ -38,7 +38,7 @@ defmodule Mutare.Ecto.RepoWrite do
   `Mutare.Transform.Calls`, so it is pipe-position-agnostic.
   """
 
-  alias Mutare.Ecto.{AST, RepoCall}
+  alias Mutare.Ecto.{AST, Pair, RepoCall}
 
   @behaviour Mutare.Ecto.SubMutator
 
@@ -129,23 +129,18 @@ defmodule Mutare.Ecto.RepoWrite do
         nil
 
       index ->
-        {key, value} = Enum.at(list, index)
-
-        List.replace_at(
-          list,
-          index,
-          {key, AST.atom_literal(@on_conflict_swaps[AST.atom_value(value)])}
-        )
+        pair = Enum.at(list, index)
+        swapped = @on_conflict_swaps[AST.atom_value(Pair.value(pair))]
+        List.replace_at(list, index, Pair.put_value(pair, AST.atom_literal(swapped)))
     end
   end
 
   defp swap_on_conflict(_other), do: nil
 
-  defp on_conflict_pair?({key, value}),
+  # A non-pair short-circuits on the key check (`Pair.key/1` returns `nil`), so `Pair.value/1` is
+  # never reached on one — no separate fallback clause is needed.
+  defp on_conflict_pair?(pair),
     do:
-      AST.atom_value(key) == :on_conflict and
-        Map.has_key?(@on_conflict_swaps, AST.atom_value(value))
-
-  # mutare:ignore[clause_drop] equivalent — a Sourceror-parsed opts keyword list is all `key: value` pairs, so the non-pair fallback is unreachable from valid Ecto
-  defp on_conflict_pair?(_node), do: false
+      Pair.key(pair) == :on_conflict and
+        Map.has_key?(@on_conflict_swaps, AST.atom_value(Pair.value(pair)))
 end

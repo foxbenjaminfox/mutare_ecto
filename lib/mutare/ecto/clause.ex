@@ -60,30 +60,34 @@ defmodule Mutare.Ecto.Clause do
   end
 
   defp order_by_mutations(macro, args, rebuild) do
-    {init, [ordering]} = Enum.split(args, -1)
-
-    # mutare:ignore[operand_swap] direction flips and aggregate swaps are consumed as a set — order is irrelevant
-    for {family, mutated} <- Ordering.flips(ordering) ++ Aggregate.swaps(ordering),
-        do: {family, rebuild.(macro, init ++ [mutated])}
+    mutate_last(macro, args, rebuild, fn ordering ->
+      # mutare:ignore[operand_swap] direction flips and aggregate swaps are consumed as a set — order is irrelevant
+      Ordering.flips(ordering) ++ Aggregate.swaps(ordering)
+    end)
   end
 
-  defp bound_mutations(macro, args, rebuild) do
-    {init, [value]} = Enum.split(args, -1)
+  defp bound_mutations(macro, args, rebuild),
+    do: mutate_last(macro, args, rebuild, &bound_flips/1)
 
+  defp select_mutations(macro, args, rebuild),
+    do: mutate_last(macro, args, rebuild, &Aggregate.swaps/1)
+
+  # The shape all three clause-macro mutators share: split the mutated **last argument** off (the
+  # ordering / bound / selector — `init` keeps the binding list when one is written), map it to
+  # `{family, mutated}` pairs via `catalog`, and rebuild the call around each, keeping the source's
+  # written form. The `args != []` guard in `mutations/2` makes the `[last]` destructure total.
+  defp mutate_last(macro, args, rebuild, catalog) do
+    {init, [last]} = Enum.split(args, -1)
+    for {family, mutated} <- catalog.(last), do: {family, rebuild.(macro, init ++ [mutated])}
+  end
+
+  # `limit`/`offset` boundary bumps as `{:bound, literal}` pairs: bump a literal integer by `±1`
+  # (non-negative only). A `^pinned`/expression bound has no literal here, so it yields nothing —
+  # its value is mutated where it is bound, in ordinary Elixir.
+  defp bound_flips(value) do
     case AST.int_value(value) do
-      nil ->
-        []
-
-      n ->
-        for bumped <- AST.bumps(n),
-            do: {:bound, rebuild.(macro, init ++ [AST.int_literal(bumped)])}
+      nil -> []
+      n -> for bumped <- AST.bumps(n), do: {:bound, AST.int_literal(bumped)}
     end
-  end
-
-  defp select_mutations(macro, args, rebuild) do
-    {init, [expr]} = Enum.split(args, -1)
-
-    for {family, swapped} <- Aggregate.swaps(expr),
-        do: {family, rebuild.(macro, init ++ [swapped])}
   end
 end

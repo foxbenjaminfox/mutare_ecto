@@ -33,7 +33,7 @@ defmodule Mutare.Ecto.Query do
   `{:__block__, [format: :keyword], [atom]}`). `from/1` (`from(Post)`, no clauses) yields nothing.
   """
 
-  alias Mutare.Ecto.{Aggregate, AST, Config, Ordering, Surface}
+  alias Mutare.Ecto.{Aggregate, AST, Config, Ordering, Pair, Surface}
 
   @behaviour Mutare.Ecto.SubMutator
 
@@ -100,7 +100,7 @@ defmodule Mutare.Ecto.Query do
   # compiles (it reuses the surviving clauses). Used for both the filter drops (where/having)
   # and the bound drops (limit/offset).
   defp drops(rebuild, source, clauses, keys) do
-    for {pair, index} <- Enum.with_index(clauses), clause_key(pair) in keys do
+    for {pair, index} <- Enum.with_index(clauses), Pair.key(pair) in keys do
       drop_clause(rebuild, source, clauses, index)
     end
   end
@@ -110,8 +110,8 @@ defmodule Mutare.Ecto.Query do
   # mutated where it is bound, in ordinary Elixir.
   defp bound_bumps(rebuild, source, clauses) do
     flat_map_clauses(clauses, fn pair, index ->
-      with true <- clause_key(pair) in @bound_keys,
-           n when is_integer(n) <- AST.int_value(clause_value(pair)) do
+      with true <- Pair.key(pair) in @bound_keys,
+           n when is_integer(n) <- AST.int_value(Pair.value(pair)) do
         for bumped <- AST.bumps(n),
             do:
               replace_clause(
@@ -119,7 +119,7 @@ defmodule Mutare.Ecto.Query do
                 source,
                 clauses,
                 index,
-                with_value(pair, AST.int_literal(bumped))
+                Pair.put_value(pair, AST.int_literal(bumped))
               )
       else
         _ -> []
@@ -135,8 +135,15 @@ defmodule Mutare.Ecto.Query do
     flips = join_flips(opts)
 
     flat_map_clauses(clauses, fn pair, index ->
-      for to <- Map.get(flips, clause_key(pair), []),
-          do: replace_clause(rebuild, source, clauses, index, with_key(pair, AST.keyword_key(to)))
+      for to <- Map.get(flips, Pair.key(pair), []),
+          do:
+            replace_clause(
+              rebuild,
+              source,
+              clauses,
+              index,
+              Pair.put_key(pair, AST.keyword_key(to))
+            )
     end)
   end
 
@@ -158,10 +165,11 @@ defmodule Mutare.Ecto.Query do
   # (`Mutare.Ecto.Host.catalog/3`) rather than being delivered as a whole-`from` rewrite.
   defp aggregate_swaps(rebuild, source, clauses) do
     flat_map_clauses(clauses, fn pair, index ->
-      if clause_key(pair) in @aggregate_keys do
-        for {family, swapped} <- Aggregate.swaps(clause_value(pair)),
+      if Pair.key(pair) in @aggregate_keys do
+        for {family, swapped} <- Aggregate.swaps(Pair.value(pair)),
             do:
-              {family, replace_clause(rebuild, source, clauses, index, with_value(pair, swapped))}
+              {family,
+               replace_clause(rebuild, source, clauses, index, Pair.put_value(pair, swapped))}
       else
         []
       end
@@ -173,10 +181,11 @@ defmodule Mutare.Ecto.Query do
   # placement; see `Mutare.Ecto.Ordering`).
   defp order_flips(rebuild, source, clauses) do
     flat_map_clauses(clauses, fn pair, index ->
-      if clause_key(pair) == :order_by do
-        for {family, flipped} <- Ordering.flips(clause_value(pair)),
+      if Pair.key(pair) == :order_by do
+        for {family, flipped} <- Ordering.flips(Pair.value(pair)),
             do:
-              {family, replace_clause(rebuild, source, clauses, index, with_value(pair, flipped))}
+              {family,
+               replace_clause(rebuild, source, clauses, index, Pair.put_value(pair, flipped))}
       else
         []
       end
@@ -198,13 +207,4 @@ defmodule Mutare.Ecto.Query do
   defp drop_clause(rebuild, source, clauses, index) do
     rebuild.(:from, [source, List.delete_at(clauses, index)])
   end
-
-  defp clause_key({key, _value}), do: AST.atom_value(key)
-
-  # mutare:ignore[clause_drop] equivalent — a Sourceror-parsed from clause list is all `key: value` pairs, so the non-pair fallback is unreachable from valid Ecto
-  defp clause_key(_node), do: nil
-
-  defp clause_value({_key, value}), do: value
-  defp with_value({key, _old}, value), do: {key, value}
-  defp with_key({_key, value}, key), do: {key, value}
 end

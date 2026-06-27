@@ -3,7 +3,7 @@ defmodule Mutare.Ecto.Host.Target do
   # Builds the host-target map consumed by Mutare core and owns every delivery transform: wrapping
   # logical fragments in `dynamic/2`, pinning the selector, and splicing it into the original call.
 
-  alias Mutare.Ecto.AST
+  alias Mutare.Ecto.{AST, Pair}
 
   @type wrap :: (Macro.t() -> Macro.t())
   @type splice :: (Macro.t(), Macro.t() -> Macro.t())
@@ -50,9 +50,12 @@ defmodule Mutare.Ecto.Host.Target do
   def keyword_condition(original, mutants, bindings, arg_index, pair_index) do
     new(original, mutants, bindings, fn node, case_node ->
       {name, args, rebuild} = AST.query_macro_call(node)
-      options = Enum.at(args, arg_index)
-      {key, _value} = Enum.at(options, pair_index)
-      options = List.replace_at(options, pair_index, {key, pin(case_node)})
+
+      options =
+        args
+        |> Enum.at(arg_index)
+        |> List.update_at(pair_index, &Pair.put_value(&1, pin(case_node)))
+
       rebuild.(name, List.replace_at(args, arg_index, options))
     end)
   end
