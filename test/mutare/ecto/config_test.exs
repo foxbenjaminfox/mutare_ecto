@@ -187,6 +187,19 @@ defmodule Mutare.Ecto.ConfigTest do
       end
     end
 
+    test "unknown option names fail loudly" do
+      assert_raise ArgumentError,
+                   ~r/\Aunknown Mutare.Ecto options: \[:familes\].*valid options are \[:repo, :families, :dialects\]/,
+                   fn ->
+                     Mutare.Ecto.Config.parse!(familes: [:comparison])
+                   end
+
+      # `:as` is a Mutare convention stripped before callbacks run; it is not plugin config.
+      assert_raise ArgumentError, ~r/unknown Mutare.Ecto options: \[:as\]/, fn ->
+        Mutare.Ecto.Config.parse!(as: :sql)
+      end
+    end
+
     test "a malformed repo and non-keyword options fail deliberately" do
       assert_raise ArgumentError, ~r/:repo must be a module atom/, fn ->
         Mutare.Ecto.Config.parse!(repo: "MyApp.Repo")

@@ -1,12 +1,12 @@
 # Mutare.Ecto — a mutation-testing plugin for Ecto
 
-**Codename:** mutare_ecto · **Status:** design draft · **Depends on:** Mutare ≥ (the release shipping the delivery-host + `:hosted` routing extensions), Ecto ≥ 3.x
+**Codename:** mutare_ecto · **Status:** implemented, pre-release · **Depends on:** compatible Mutare 0.1 core extensions, Ecto `~> 3.10`
 
 Mutare mutates the Elixir source the author wrote. Ecto code *is* Elixir source — but its highest-value parts are a **compile-time DSL that evaluates under SQL semantics, not Elixir's**. A `where` clause is not an Elixir boolean expression; it is a fragment of SQL whose three-valued logic, `NULL` propagation, and operator set differ from the host language it is embedded in. `mutare_ecto` is the external plugin that teaches Mutare to mutate the Ecto surface — Repo calls, changeset pipelines, and above all the `from`/query DSL — **without ever pretending SQL is Elixir.**
 
-**The thesis, in one line.** `mutare_ecto` is a *delivery adapter* plus a *native SQL-semantics mutator catalog*. It reuses **none** of Mutare's built-in mutation logic inside the query DSL — the semantics don't match, and the mismatch silently manufactures false negatives (see *The semantic boundary*, below) — but it reuses **all** of Mutare's plumbing: lexical identity resolution, the selector / coverage / poison / Site machinery, and (newly) a delivery host for weaving a mutation into a DSL position via `^` + `dynamic`.
+**The thesis, in one line.** `mutare_ecto` is a *delivery adapter* plus a *native SQL-semantics mutator catalog*. It reuses **none** of Mutare's built-in mutation logic inside the query DSL — the semantics don't match, and the mismatch silently manufactures false negatives (see *The semantic boundary*, below) — but it reuses **all** of Mutare's plumbing: lexical identity resolution, the selector / coverage / poison / Site machinery, and a delivery host for weaving a mutation into a DSL position via `^` + `dynamic`.
 
-**Assumed core extensions.** This design assumes two Mutare-core extensions, specified in Mutare's `NOTES.md` under *"Mutating inside a foreign-semantics DSL — the Ecto `from` host"*:
+**Required core extensions.** The implementation uses two Mutare-core extensions, specified in Mutare's `NOTES.md` under *"Mutating inside a foreign-semantics DSL — the Ecto `from` host"*:
 
 - **(#1) A mutator-supplied selector host.** Per mutation target, the plugin hands Mutare `{logical original, logical mutants}` plus two pure transforms — `wrap` (each selector branch → `dynamic([bindings], _)`, or identity) and `splice`/`pin?` (where the woven node goes, `^`-pinned). Mutare still assigns the ids, builds the `case` from its own selector subject, records the Site from the logical pair, and emits the coverage catch-all.
 - **(#2) A `:hosted` macro-argument treatment + shape-aware routing.** A fifth argument treatment meaning "don't splice a bare selector here — route this position's mutations through the host," plus a per-call `macro_routing/1` classifier consulted during lexical resolution (so the keyword and binding forms of `where` route differently).
@@ -17,7 +17,7 @@ Everything else the plugin needs already exists in Mutare today: the known-macro
 
 - **Mutate the Ecto an author writes** — query clauses, changeset validations, repo calls — at source level, in the forms idiomatic apps use (`from` keyword syntax *and* the composable pipe form; bare, aliased, and `use`-bundled imports).
 - **Respect SQL semantics.** Every mutation is one a SQL engine will actually run, and the catalog's equivalence reasoning is SQL's three-valued logic, not Elixir's boolean lattice.
-- **Stay inside the one compile.** Each mutation is delivered behind Mutare's runtime selector via `^`/`dynamic`, so the metamutant still compiles once and selects the active mutant at query-build time. No mutation may risk the single build.
+- **Stay inside the one compile.** Hosted fragment mutations use `^`/`dynamic`; whole-query and plain-call mutations use Mutare's ordinary selector. Both paths keep one metamutant build and select the active mutant at query-build or call time. No mutation may risk the single build.
 - **Localized, reviewable mutations.** A mutation touches one clause, not the whole query; survivors render as one-line diffs of the logical change (`where: u.x == u.y` → `!=`), never the `dynamic` scaffolding.
 
 ## Non-goals
@@ -50,11 +50,11 @@ Ecto's mutatable surface divides cleanly by *how a mutation is delivered* — an
 
 | Bucket | Examples | Delivery | Core machinery used |
 |---|---|---|---|
-| **Plain calls** | `Repo.aggregate`, changeset validators, `Repo.get`↔`get!` | Mutare's ordinary in-place selector / pipe→identity | `Calls.resolved_call/1`, `{module, opts}` |
+| **Ordinary delivery** | Repo calls, changeset validators, whole-`from` and clause rewrites | Mutare's ordinary in-place selector / pipe→identity | `Calls.resolved_call/1`, `mutate/2`, `{module, opts}` |
 | **Skipped** | `schema`, `embedded_schema` | not mutated | known-macro registry (`:skip`) |
-| **Hosted DSL** | `where`/`having`/`order_by`/`join`/… conditions | the `^`/`dynamic` host (#1), routed by `:hosted` (#2) | delivery host, shape-aware routing |
+| **Hosted DSL** | `where`/`having` conditions and join `on:` expressions | the `^`/`dynamic` host (#1), routed by `:hosted` (#2) | delivery host, shape-aware routing |
 
-The first two buckets need **no new core machinery** — a basic plugin restricted to them ships against Mutare as it stands today. The third bucket is the heart, and what the two assumed extensions exist for.
+The first two buckets need **no special core machinery**. The third bucket is the heart, and what the two required extensions exist for.
 
 ### Bucket 1 — plain calls (ordinary delivery)
 
@@ -129,25 +129,25 @@ The plugin's `macros/0` declares the query macros and, via the shape-aware class
 
 | Macro / form | Argument | Treatment |
 |---|---|---|
-| `from(p in S, where: p.x == v, ...)` (binding) | each clause expression | `:hosted` |
-| `from(S, where: [x: v], ...)` (**bindingless**) | each clause's shorthand values | `:expression` (plain interpolated Elixir — *not* hosted) |
-| `where(q, [bind], cond)` / `having`/`on`/… | binding list | `:pattern` (don't mutate in place; reorder is a host body-swap) |
+| `from(p in S, where: p.x == v, ...)` (binding) | each condition expression | `:hosted` |
+| `from(S, where: [x: v], ...)` (**bindingless**) | shorthand pairs | `{:keyword, ...}`; scalar values are `:pinned` |
+| `where(q, [bind], cond)` / `having` | query / binding list | `:expression` / `:skip` |
 | | condition | `:hosted` |
-| `where(q, x: v)` (keyword shorthand) | the keyword values | `:expression` (plain interpolated Elixir — *not* hosted) |
-| `order_by`/`group_by`/`distinct` | direction/expr | `:hosted` (pinned-keyword shape) |
-| `limit`/`offset` | value | `:hosted` (pinned-literal shape) |
-| `Ecto.Query.dynamic(...)` (nested) | binding / expr | `:pattern` / `:hosted` |
+| `where(q, x: v)` (keyword shorthand) | shorthand pairs | `{:keyword, ...}`; scalar values are `:pinned` |
+| `join(q, ..., on: cond)` | trailing `on:` condition | `:hosted` |
+| `order_by`/`group_by`/`limit`/`select`/… | query / DSL data | `:expression` / `:skip`; plugin mutations rewrite the whole call |
+| `Ecto.Query.dynamic(...)` / `is_named_binding(...)` | all arguments | `:skip` |
 
-The shorthand-vs-expression split is exactly why shape-aware routing is required, and it appears at **two levels**. At the **macro** level: `where(q, category: "Foo")` is plain interpolated data (mutate `"Foo"` in place, no host) while `where(q, [u], u.category == "Foo")` is a hosted fragment. And **inside `from` itself**: a bindingless `from(Post, where: [category: "Foo"])` carries shorthand clause values (mutated in place), while a binding `from(p in Post, where: p.category == "Foo")` carries hosted expressions. The reliable signal is the clause value's **own shape** — a keyword list is shorthand (`:expression`); an expression referencing a binding is hosted — so a `from`'s first argument (`p in Post` vs bare `Post`) tells you which world its clauses can live in (and a binding `from` may still *mix* in shorthand clauses). A static per-position treatment can't express any of this; the `macro_routing/1` classifier inspects the actual node. The shorthand values are interpolated Elixir, so they fall under "pinned values are core's" — mutated by Mutare's normal literal families, not the SQL catalog (with the `nil`-pair exclusion below).
+The shorthand-vs-expression split is exactly why shape-aware routing is required, and it appears at **two levels**. At the **macro** level, `where(q, category: "Foo")` is interpolated data while `where(q, [u], u.category == "Foo")` is a hosted fragment. Inside `from`, a keyword-list condition is shorthand even when the source has bindings, while a binding-referencing expression is hosted. The classifier therefore inspects each condition's own shape rather than applying one treatment to the whole argument. Shorthand pairs route through `{:keyword, value_treatments}`: scalar values are mutated by Mutare's normal literal families and delivered `:pinned`; keys, `nil`, and compound values remain `:skip`.
 
-**`nil`-valued keyword pairs are excluded.** `where(q, deleted_at: nil)` compiles to `IS NULL`, not `= NULL`; the classifier routes a `nil`-valued shorthand pair to `:skip` so no value mutator perturbs it into nonsense. Null is the SQL family's job (below), delivered deliberately, not as an accident of literal mutation.
+**`nil`-valued keyword pairs are excluded.** Modern Ecto rejects unsafe comparisons with `nil` and directs callers to `is_nil/1`; the classifier nevertheless routes a `nil` shorthand value to `:skip` defensively. Null-predicate mutation belongs to the SQL catalog below, not accidental literal mutation.
 
 > **Implementation note (Milestone 3).** The shorthand split needed **two** core extensions beyond the original two, both since shipped:
 >
 > 1. *Per-keyword-pair routing.* `macro_routing/1` is per *visible argument*, and a shorthand clause list (`[category: "Foo", deleted_at: nil]`) is a single argument: routing it `:expression` mutates the column-name keys (meaningless) and the `nil` pair too; `:skip` mutates nothing; `call_option_keys: false` is all-or-nothing per mutator. So the classifier now returns `{:keyword, value_treatments}` for a keyword-list argument — core routes each pair's *value* by its own treatment and leaves every *key* raw, nesting for the `from(S, where: [x: v])` keyword-list-of-keyword-lists.
 > 2. *Pinned in-place delivery (`:pinned`).* A second, subtler wall: a shorthand value sits **inside** Ecto's query macro, which rejects a bare selector `case` (`where(q, category: case … end)`) but accepts `where(q, category: ^(case … end))`. So core can't mutate a shorthand value with its ordinary in-place selector. The `:pinned` value treatment mutates the value with the configured literal families (their *own* names on the Site — the value mutation stays core's, recorded as `:literal`/`:string`, not `:ecto`) but `^`-pins the selector. Scalar-only (a compound value mutates nested nodes, where an inner `^` still poisons).
 >
-> The plugin routes each scalar `where`/`having` shorthand value `:pinned` and the `nil`/compound/key positions `:skip`. (Modern Ecto in fact *forbids* `where(q, col: nil)` outright — "comparison with nil is unsafe, use is_nil/1" — so the `nil`-pair exclusion is defensive; it can't arise in compiling code.) One known gap: a shorthand clause *mixed into a binding* `from` (`from(p in Post, where: [category: "Foo"])`) routes `:hosted` (for its binding conditions), so its shorthand value isn't split — the common shorthand forms are the bindingless `from` and the standalone/pipe `where`.
+> The plugin routes each scalar `where`/`having` shorthand value `:pinned` and the `nil`/compound/key positions `:skip`, including shorthand clauses mixed into a binding `from` such as `from(p in Post, where: [category: "Foo"])`.
 
 ## The SQL-semantics mutator catalog
 
@@ -210,7 +210,7 @@ Multiple repos: list the entry twice with different `repo:` and `:as` names.
 
 ## Deployment
 
-`mutare_ecto` requires Mutare to run **as a dependency of the app under test** (`{:mutare, …}` + `{:mutare_ecto, …}` in the app's `:dev`/`:test` deps), so the task process has Ecto and the schemas on its code path. This is what lets `use`-expansion expand `use Ecto.Schema`, reflection learn exported arities, and the host build valid `dynamic` calls. Running against an **external path** degrades: `use Ecto.Schema` won't expand, schema-skip silently fails, and the schema body poisons. The plugin should detect "Ecto not loadable" at startup and refuse loudly rather than degrade.
+`mutare_ecto` requires Mutare to run **as a dependency of the app under test** (`{:mutare, …}` + `{:mutare_ecto, …}` in the app's `:dev`/`:test` deps), so the task process has Ecto and the schemas on its code path. This is what lets `use`-expansion expand `use Ecto.Schema`, reflection learn exported arities, and the host build valid `dynamic` calls. External-source operation is unsupported and currently has no startup guard; unresolved target-app modules can make routing incomplete or invalid.
 
 Ecto **version sensitivity** is real and owned here: which clauses accept `^dynamic` (e.g. `select: ^dynamic` is newer), the binding accumulation across joins, and dialect operators all drift with Ecto/adapters. The macro registry and the catalog's clause list are versioned artifacts the plugin maintains; Mutare core stays version-agnostic.
 
@@ -233,7 +233,7 @@ Ecto **version sensitivity** is real and owned here: which clauses accept `^dyna
 
 > **Implementation note (Milestone 6, shipped).** **Standalone/pipe clause-stage removal** — the pipe form `q |> where(…)` / `q |> order_by(…)` / `q |> limit(…)` (and the direct `where(q, …)`) can now be *dropped*, the query-side twin of the changeset validator drop (`Mutare.Ecto.ClauseDrop`, resolved through `Calls`, pipe-aware via `mutate/2`, family mirroring the `from`-keyword drop: `:filter_drop` / `:bound` / `:clause_drop`). Two findings drove it. (1) The composable clause macros were registered a uniform static `:skip`; a static-`:skip` macro stamps its **piped value** `:skip`, so `from(…) |> limit(10)` silently *suppressed every mutation of the upstream `from`*. Routing them through the `:routing` classifier instead (their data positions still raw) marks the **threaded query** an `:expression`, restoring upstream mutation through a pipe stage — this is the load-bearing fix. (2) Stage removal itself rides `mutate/2` with `pipe_mode` (the whole macro node is offered to the mutator regardless of routing), exactly as the changeset drop does. A dropped stage may leave a later stage referencing a binding/CTE/window the query no longer has — but these macros build the query at *runtime*, so that is a runtime error that kills the mutant, never compile-time poison of the single build.
 
-> **Implementation note (Milestone 5, shipped).** Plain-call families, no new core machinery (all Bucket 1 — resolved through `Calls`, delivered by the in-place selector): **`:persistence`** + **`:on_conflict`** (`Mutare.Ecto.RepoWrite`), **`:query_terminal`** (`first`↔`last`, `Mutare.Ecto.QueryTerminal`), and **`:hook_drop`** (`prepare_changes`/`optimistic_lock`, split off `Mutare.Ecto.Changeset`). See the Bucket-1 section for each. Two notes on the design: the generated `apply_action`/`change` references are emitted **`Elixir.`-prefixed** (`Elixir.Ecto.Changeset.…`) — the metamutant recompiles in the *author's* aliasing scope, where a bare `Ecto.Changeset` can be retargeted by a submodule (`defmodule Ecto.Changeset` nested in `Foo` aliases `Ecto`→`Foo.Ecto`) or a plain `alias Foo, as: Ecto`, so only the absolute name is poison-proof (same stance as the `Function.identity` drop). And the **Ordering** family is now split along its two axes: `:ordering` flips the direction (`:asc`↔`:desc`, keeping any NULLs qualifier) and **`:ordering_nulls`** flips the placement (`*_nulls_first`↔`*_nulls_last`, keeping the direction) — never both at once, which the old combined flip did (a weaker mutant any order-pinning test killed). `:ordering_nulls` is **equivalence-sensitive** (a placement flip needs NULL rows in the result to kill), so it joins `equivalence_sensitive_families/0`; its inline survivor *note*, though, awaits ordering being routed through the host — the note channel exists only on the host delivery path (`emit_hosted_site`), and Ordering is delivered as a non-hosted whole-`from`/clause-macro rewrite today.
+> **Implementation note (Milestone 5, shipped).** Plain-call families added **`:persistence`** + **`:on_conflict`** (`Mutare.Ecto.RepoWrite`), **`:query_terminal`** (`first`↔`last`, `Mutare.Ecto.QueryTerminal`), and **`:hook_drop`** (`prepare_changes`/`optimistic_lock`, split from `Mutare.Ecto.Changeset`). Generated `apply_action`/`change` references are `Elixir.`-prefixed so aliases in the target module cannot retarget them. Ordering is split into independent `:ordering` direction and `:ordering_nulls` placement axes; `:ordering_nulls` is equivalence-sensitive, and its report note is carried by the plain `mutate/2` delivery path just like `:join_type`.
 
 ## Open questions
 

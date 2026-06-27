@@ -41,8 +41,8 @@ end
 
 It must run **as a dependency of the app under test** (not against an external source path), so
 your `Repo` and schemas are loadable in the Mutare process — that's what lets `use Ecto.Schema`
-expand and the query macros resolve. If Ecto isn't loadable, the plugin refuses loudly rather than
-silently producing junk.
+expand and the query macros resolve. External-source operation is unsupported: there is currently
+no startup check for it, and unresolved target-app modules can make routing incomplete or invalid.
 
 ## Usage
 
@@ -127,6 +127,9 @@ Each `{Mutare.Ecto, …}` entry takes:
   `repo:`/`as:` to cover **multiple repos**, or different `families:`/`as:` to report a sub-family
   under its own name.
 
+Unknown plugin option names raise an `ArgumentError`; `as:` is handled and removed by Mutare before
+the remaining options reach this plugin.
+
 ## Equivalence reporting
 
 Some survivors are honest signal rather than a flat "your test is missing." A surviving
@@ -161,4 +164,3 @@ Because the catalog is SQL-native, it also never emits the always-equivalent mut
 [`DESIGN.md`](DESIGN.md) is the full blueprint: the SQL-semantics boundary, how the `^`/`dynamic`
 delivery host weaves a mutation into a query while keeping the single compile, and the routing that
 tells query fragments apart from plain interpolated data.
-</content>

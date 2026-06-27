@@ -9,6 +9,7 @@ defmodule Mutare.Ecto.Config do
   alias Mutare.Ecto.AST
   alias Mutare.Mutator.Mutation
 
+  @valid_options ~w(repo families dialects)a
   @valid_dialects ~w(postgres mysql sqlite)a
 
   # Every SQL family the plugin can emit, the source of truth for `families: :all` and for
@@ -80,6 +81,8 @@ defmodule Mutare.Ecto.Config do
       raise ArgumentError,
             "Mutare.Ecto options must be a keyword list, got a non-keyword list: #{inspect(opts)}"
     end
+
+    validate_option_keys!(opts)
 
     %__MODULE__{
       families: opts |> Keyword.get(:families, :all) |> parse_families!(),
@@ -181,6 +184,18 @@ defmodule Mutare.Ecto.Config do
     do: Enum.any?(supported, &MapSet.member?(dialects, &1))
 
   def dialect_enabled?(opts, supported), do: opts |> parse!() |> dialect_enabled?(supported)
+
+  defp validate_option_keys!(opts) do
+    case Keyword.keys(opts) -- @valid_options do
+      [] ->
+        :ok
+
+      unknown ->
+        raise ArgumentError,
+              "unknown Mutare.Ecto options: #{inspect(unknown)} — valid options are " <>
+                inspect(@valid_options)
+    end
+  end
 
   defp parse_families!(:all), do: MapSet.new(@families)
 

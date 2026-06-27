@@ -62,7 +62,8 @@ surface for plugins is `Mutare.Test` (wrapped here by `Mutare.Ecto.TestSupport`)
 Deployment requirement: Mutare must run **as a dependency of the app under test** so Ecto and the
 app's schemas are on the BEAM code path. This is what lets `use`-expansion expand `use Ecto.Schema`
 (so `schema do … end` resolves and the `:skip` routing fires) and lets the host build valid
-`dynamic` calls. Running against an external path degrades silently.
+`dynamic` calls. External-source operation is unsupported and has no startup guard; unresolved
+target-app modules can make routing incomplete or invalid.
 
 ## Architecture
 
@@ -71,8 +72,9 @@ node it sees** to a family of sub-mutators. It implements three core callbacks:
 
 - `macros/0` — registers the compile-time DSL routing so core never splices a runtime selector
   into a query expression (which would poison the single build). `schema`/`embedded_schema` →
-  `:skip`; the `from`/`where`/`having` family → `:routing`; the other query macros (`order_by`,
-  `limit`, `select`, `join`, …) → `:skip` (but still offered to `mutate/2`).
+  `:skip`; query-building macros (`from`, `where`, `order_by`, `limit`, `select`, `join`, …) →
+  `:routing`. The classifier hosts SQL conditions, keeps DSL data raw, and marks a directly passed
+  query argument `:expression` so upstream query mutations remain reachable through a stage.
 - `macro_routing/1` and `host/2` — both delegate to `Mutare.Ecto.Host` (the selector host).
 - `mutate/2` — gathers `{family, node}` pairs from every sub-mutator, then filters by the
   configured `families:`. Everything runs through `mutate/2` (not `mutate/1`) because all
@@ -165,7 +167,5 @@ rewrite.
   via `site_id/2`), runs the query against the seeded SQLite `MyApp.Repo`, and asserts the result
   set changed the way the mutation predicts. Fixtures: `test/support/myapp.ex` (schemas) and
   `test/support/seed.ex` (boundary/NULL rows chosen so each family is distinguishable).
-- Because `Code.compile_string` is global, `TestSupport.uniquify_module/1` suffixes the top-level
-  module name so `async` tests defining the same `defmodule` don't race the compiler.
-</content>
-</invoke>
+- Because `Code.compile_string` is global, Mutare's public test helpers compile fixtures inside
+  uniquely named wrapper modules so async tests defining the same module name do not race.
