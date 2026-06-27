@@ -9,7 +9,7 @@ defmodule Mutare.Ecto do
       # .mutare.exs
       [mutators: [:all, {Mutare.Ecto, repo: MyApp.Repo}]]
 
-  Listing it both registers the plugin's macro routing (via `c:Mutare.Mutator.macros/0`,
+  Listing it both registers the plugin's macro routing (via `c:Mutare.Mutator.MacroAware.macros/0`,
   discovered automatically) and enables its mutations. Query, changeset, and schema handling do
   not require `repo:`; that option only identifies the module matched by the Repo-call families.
 
@@ -90,6 +90,7 @@ defmodule Mutare.Ecto do
   """
 
   @behaviour Mutare.Mutator
+  @behaviour Mutare.Mutator.MacroAware
 
   alias Mutare.Ecto.{
     BindingReorder,
@@ -105,7 +106,7 @@ defmodule Mutare.Ecto do
     Surface
   }
 
-  # Query macros routed through the plugin's **selector host** (`c:Mutare.Mutator.host/2`) — the
+  # Query macros routed through the plugin's **selector host** (`c:Mutare.Mutator.MacroAware.host/2`) — the
   # `from` opener and the standalone/pipe condition macros — via the `:routing` classifier, which
   # decides per call shape whether a position carries a hosted DSL fragment (a binding-referencing
   # `where`/`having` condition) or plain data. See `Mutare.Ecto.Host`.
@@ -137,7 +138,7 @@ defmodule Mutare.Ecto do
   @spec equivalence_sensitive_families() :: [atom()]
   defdelegate equivalence_sensitive_families, to: Config
 
-  @impl Mutare.Mutator
+  @impl Mutare.Mutator.MacroAware
   def macros do
     schema = [
       {Ecto.Schema, :schema, :skip},
@@ -154,12 +155,12 @@ defmodule Mutare.Ecto do
 
   # Shape-aware routing for the `:routing` query macros — which positions carry a hosted DSL
   # fragment vs. plain data. Delegated to `Mutare.Ecto.Host.Routing` (the classifier half of the host).
-  @impl Mutare.Mutator
+  @impl Mutare.Mutator.MacroAware
   defdelegate macro_routing(node), to: Host.Routing
 
   # The selector host: per hosted `where`/`having` condition, the `{original, mutants}` pair plus
   # the `dynamic`/`^` `wrap`/`splice` transforms. Delegated to `Mutare.Ecto.Host`.
-  @impl Mutare.Mutator
+  @impl Mutare.Mutator.MacroAware
   defdelegate host(node, context), to: Host
 
   # The sub-mutators dispatched by `mutate/2`, each a `Mutare.Ecto.SubMutator` (uniform

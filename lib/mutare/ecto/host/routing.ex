@@ -1,7 +1,7 @@
 defmodule Mutare.Ecto.Host.Routing do
   @moduledoc """
   The **routing classifier** half of the selector host (`Mutare.Ecto.Host`): the
-  `c:Mutare.Mutator.macro_routing/1` callback that decides, per visible argument of a
+  `c:Mutare.Mutator.MacroAware.macro_routing/1` callback that decides, per visible argument of a
   `:routing`-registered query macro, how core should treat that position — `:hosted` (the plugin's
   host weaves it), `:expression` (mutate it normally), `:skip` (leave it raw), `:pinned` (core
   mutates a scalar value, delivered `^`-pinned), or `{:keyword, …}` (per-pair shorthand routing).
@@ -27,7 +27,7 @@ defmodule Mutare.Ecto.Host.Routing do
       `mutate/2` mutators.
 
   This relies on core's recursive per-pair routing, hosted values, and `:pinned` extensions; see
-  `c:Mutare.Mutator.macro_routing/1`.
+  `c:Mutare.Mutator.MacroAware.macro_routing/1`.
   """
 
   alias Mutare.Ecto.{AST, Binding, Surface}
