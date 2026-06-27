@@ -116,7 +116,7 @@ defmodule Mutare.Ecto do
   #
   # Only `dynamic` stays `:skip`: it is not a query-threading pipe stage but an in-fragment helper
   # (`dynamic([u], expr)` inside a `where`/`select`), so core must descend nothing in it.
-  @skipped_macros ~w(dynamic)a
+  @skipped_macros ~w(dynamic is_named_binding)a
 
   @impl Mutare.Mutator
   def name, do: :ecto

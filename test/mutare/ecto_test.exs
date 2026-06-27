@@ -29,6 +29,41 @@ defmodule Mutare.EctoTest do
       # `dynamic` is an in-fragment helper, not a query-threading stage, so it stays :skip.
       assert {Ecto.Query, :dynamic, :any, :skip} in macros
     end
+
+    test "classifies every macro exported by the supported Ecto.Query version" do
+      registered =
+        Mutare.Ecto.macros()
+        |> Enum.flat_map(fn
+          {Ecto.Query, name, _treatment} -> [name]
+          {Ecto.Query, name, _arity, _treatment} -> [name]
+          _other -> []
+        end)
+        |> MapSet.new()
+
+      exported = Ecto.Query.__info__(:macros) |> Enum.map(&elem(&1, 0)) |> MapSet.new()
+
+      assert MapSet.subset?(exported, registered),
+             "unclassified Ecto.Query macros: #{inspect(MapSet.difference(exported, registered))}"
+    end
+
+    test "an omitted query macro cannot leak core mutations into its binding list" do
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q(query), do: prepend_order_by(query, [u], asc: u.id)
+      end
+      """
+
+      all = [:all, {Mutare.Ecto, repo: MyApp.Repo}]
+
+      refute Enum.any?(diffs(src, mutators: all), fn {mutator, original, _mutated} ->
+               mutator in [:list, :atom] and original in ["[u]", "asc:"]
+             end)
+
+      assert {"prepend_order_by(query, [u], asc: u.id)", "query"} in ecto_diffs(src)
+
+      assert_compiles(src, mutators: all)
+    end
   end
 
   describe "schema skip" do

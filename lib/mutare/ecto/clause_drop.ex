@@ -55,9 +55,9 @@ defmodule Mutare.Ecto.ClauseDrop do
   @bound ~w(limit offset)a
   # Every other composable clause builder → `:clause_drop`.
   @other ~w(
-    order_by group_by distinct select select_merge
-    join preload lock with_cte windows
-    union union_all except intersect
+    order_by prepend_order_by group_by distinct select select_merge
+    join preload lock update with_ties with_cte windows
+    union union_all except except_all intersect intersect_all
   )a
 
   @doc """

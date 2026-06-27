@@ -583,8 +583,9 @@ defmodule Mutare.Ecto.HostTest do
 
     test "clause_macros are the plain composable builders" do
       assert Host.clause_macros() ==
-               ~w(select select_merge order_by group_by distinct limit offset join preload
-                  lock with_cte windows union union_all except intersect)a
+               ~w(select select_merge order_by prepend_order_by group_by distinct limit offset
+                  with_ties join preload lock update with_cte windows union union_all except
+                  except_all intersect intersect_all)a
     end
   end
 

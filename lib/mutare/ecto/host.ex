@@ -47,9 +47,9 @@ defmodule Mutare.Ecto.Host do
   # own data positions (binding list, ordering, bound, selector) stay `:skip` — the plugin owns
   # those via `mutate/2` (`Mutare.Ecto.Clause`) and `Mutare.Ecto.ClauseDrop` (stage removal).
   @plain_clause_macros ~w(
-    select select_merge order_by group_by distinct
-    limit offset join preload lock with_cte
-    windows union union_all except intersect
+    select select_merge order_by prepend_order_by group_by distinct
+    limit offset with_ties join preload lock update with_cte
+    windows union union_all except except_all intersect intersect_all
   )a
 
   # `from` keyword keys that introduce an extra positional binding (`join: p in assoc(u, :x)`),
