@@ -85,23 +85,21 @@ defmodule Mutare.Ecto.Query do
 
   defp from_mutations(source, clauses, rebuild, config) do
     Enum.concat([
-      tag(:filter_drop, drops(rebuild, source, clauses, @droppable)),
-      tag(:bound, drops(rebuild, source, clauses, @bound_keys)),
+      drops(rebuild, source, clauses, @droppable, :filter_drop),
+      drops(rebuild, source, clauses, @bound_keys, :bound),
       order_flips(rebuild, source, clauses),
-      tag(:bound, bound_bumps(rebuild, source, clauses)),
-      tag(:join_type, join_swaps(rebuild, source, clauses, config)),
+      bound_bumps(rebuild, source, clauses),
+      join_swaps(rebuild, source, clauses, config),
       aggregate_swaps(rebuild, source, clauses)
     ])
   end
 
-  defp tag(family, nodes), do: Enum.map(nodes, &{family, &1})
-
   # Remove each clause whose key is in `keys`, keeping the others — so the query still
-  # compiles (it reuses the surviving clauses). Used for both the filter drops (where/having)
-  # and the bound drops (limit/offset).
-  defp drops(rebuild, source, clauses, keys) do
+  # compiles (it reuses the surviving clauses). Used for both the filter drops (where/having,
+  # tagged `:filter_drop`) and the bound drops (limit/offset, tagged `:bound`).
+  defp drops(rebuild, source, clauses, keys, family) do
     for {pair, index} <- Enum.with_index(clauses), Pair.key(pair) in keys do
-      drop_clause(rebuild, source, clauses, index)
+      {family, drop_clause(rebuild, source, clauses, index)}
     end
   end
 
@@ -109,50 +107,42 @@ defmodule Mutare.Ecto.Query do
   # A `^pinned`/expression bound has no literal here, so it yields nothing — its value is
   # mutated where it is bound, in ordinary Elixir.
   defp bound_bumps(rebuild, source, clauses) do
-    flat_map_clauses(clauses, fn pair, index ->
-      with true <- Pair.key(pair) in @bound_keys,
-           n when is_integer(n) <- AST.int_value(Pair.value(pair)) do
-        for bumped <- AST.bumps(n),
-            do:
-              replace_clause(
-                rebuild,
-                source,
-                clauses,
-                index,
-                Pair.put_value(pair, AST.int_literal(bumped))
-              )
-      else
-        _ -> []
-      end
-    end)
+    for {pair, index} <- Enum.with_index(clauses),
+        Pair.key(pair) in @bound_keys,
+        n = AST.int_value(Pair.value(pair)),
+        is_integer(n),
+        bumped <- AST.bumps(n) do
+      {:bound,
+       replace_clause(
+         rebuild,
+         source,
+         clauses,
+         index,
+         Pair.put_value(pair, AST.int_literal(bumped))
+       )}
+    end
   end
 
   # Swap each join clause's *kind* by rewriting its key (`join`/`inner_join` ↔ `left_join`, plus
   # `left_join`↔`right_join` under a `RIGHT`-capable dialect and `*`→`full_join` under a
   # `FULL`-capable one), keeping the join's value (`c in assoc(p, :x)`). One mutant per enabled
   # target.
-  defp join_swaps(rebuild, source, clauses, opts) do
-    flips = join_flips(opts)
+  defp join_swaps(rebuild, source, clauses, config) do
+    flips = join_flips(config)
 
-    flat_map_clauses(clauses, fn pair, index ->
-      for to <- Map.get(flips, Pair.key(pair), []),
-          do:
-            replace_clause(
-              rebuild,
-              source,
-              clauses,
-              index,
-              Pair.put_key(pair, AST.keyword_key(to))
-            )
-    end)
+    for {pair, index} <- Enum.with_index(clauses),
+        to <- Map.get(flips, Pair.key(pair), []) do
+      {:join_type,
+       replace_clause(rebuild, source, clauses, index, Pair.put_key(pair, AST.keyword_key(to)))}
+    end
   end
 
-  # The portable flips, plus each dialect-gated map whose dialects `opts` enables (`RIGHT`,
+  # The portable flips, plus each dialect-gated map whose dialects the `config` enables (`RIGHT`,
   # `FULL`). Independently gated, so a config can enable one without the other.
-  defp join_flips(opts) do
+  defp join_flips(config) do
     @portable_join_flips
-    |> maybe_merge(@right_join_flips, Config.dialect_enabled?(opts, @right_join_dialects))
-    |> maybe_merge(@full_join_flips, Config.dialect_enabled?(opts, @full_join_dialects))
+    |> maybe_merge(@right_join_flips, Config.dialect_enabled?(config, @right_join_dialects))
+    |> maybe_merge(@full_join_flips, Config.dialect_enabled?(config, @full_join_dialects))
   end
 
   defp maybe_merge(flips, _added, false), do: flips
@@ -164,38 +154,22 @@ defmodule Mutare.Ecto.Query do
   # its condition is hosted (`^`/`dynamic`), so the swap rides the host alongside the operator swaps
   # (`Mutare.Ecto.Host.catalog/3`) rather than being delivered as a whole-`from` rewrite.
   defp aggregate_swaps(rebuild, source, clauses) do
-    flat_map_clauses(clauses, fn pair, index ->
-      if Pair.key(pair) in @aggregate_keys do
-        for {family, swapped} <- Aggregate.swaps(Pair.value(pair)),
-            do:
-              {family,
-               replace_clause(rebuild, source, clauses, index, Pair.put_value(pair, swapped))}
-      else
-        []
-      end
-    end)
+    for {pair, index} <- Enum.with_index(clauses),
+        Pair.key(pair) in @aggregate_keys,
+        {family, swapped} <- Aggregate.swaps(Pair.value(pair)) do
+      {family, replace_clause(rebuild, source, clauses, index, Pair.put_value(pair, swapped))}
+    end
   end
 
   # Flip each `order_by` clause's directions, reusing the shared ordering catalog — one mutant
   # per axis per direction key, tagged with its family (`:ordering` direction / `:ordering_nulls`
   # placement; see `Mutare.Ecto.Ordering`).
   defp order_flips(rebuild, source, clauses) do
-    flat_map_clauses(clauses, fn pair, index ->
-      if Pair.key(pair) == :order_by do
-        for {family, flipped} <- Ordering.flips(Pair.value(pair)),
-            do:
-              {family,
-               replace_clause(rebuild, source, clauses, index, Pair.put_value(pair, flipped))}
-      else
-        []
-      end
-    end)
-  end
-
-  # The clause-rewrite skeleton every whole-`from` mutator shares: map each indexed clause to a list
-  # of mutants and flatten, then rebuild the `from` with the chosen clause replaced (or removed).
-  defp flat_map_clauses(clauses, fun) do
-    clauses |> Enum.with_index() |> Enum.flat_map(fn {pair, index} -> fun.(pair, index) end)
+    for {pair, index} <- Enum.with_index(clauses),
+        Pair.key(pair) == :order_by,
+        {family, flipped} <- Ordering.flips(Pair.value(pair)) do
+      {family, replace_clause(rebuild, source, clauses, index, Pair.put_value(pair, flipped))}
+    end
   end
 
   # Rebuild the `from` with the chosen clause replaced/removed via the node's own `rebuild`, so the
