@@ -9,8 +9,9 @@ defmodule Mutare.Ecto.Host.Routing do
 
   Both query syntaxes are covered, routed by call shape:
 
-    * the `from` keyword form — `from(p in S, where: p.x == v, …)`: the clause-bearing argument routes
-      `:hosted` when the source is a binding (`p in S`). A bindingless `from(S, where: [x: v])` carries
+    * the `from` keyword form — `from(p in S, where: p.x == v, …)`: each binding-referencing
+      condition routes `:hosted` while shorthand conditions route their values individually. A
+      bindingless `from(S, where: [x: v])` carries
       no hosted *fragment* — its values are plain interpolated data, core's literal families to
       mutate, not the SQL catalog — so its `where`/`having` shorthand *values* route `{:keyword, …}`:
       each scalar value `:pinned` (core mutates it, `^`-pinned — Ecto rejects a bare selector `case`
@@ -25,7 +26,8 @@ defmodule Mutare.Ecto.Host.Routing do
       query (first arg → `:expression`) and leave every data position raw for the plugin's own
       `mutate/2` mutators.
 
-  This relies on core's per-pair routing + `:pinned` extensions; see `c:Mutare.Mutator.macro_routing/1`.
+  This relies on core's recursive per-pair routing, hosted values, and `:pinned` extensions; see
+  `c:Mutare.Mutator.macro_routing/1`.
   """
 
   alias Mutare.Ecto.{AST, Binding, Surface}
@@ -36,6 +38,7 @@ defmodule Mutare.Ecto.Host.Routing do
   # The canonical lists live on `Mutare.Ecto.Surface`; the
   # condition macros double as the `from`-clause condition keys (`where`/`or_where`/`having`/…).
   @condition_macros Surface.condition_macros()
+  @hosted_clause_keys Surface.hosted_clause_keys()
   @plain_clause_macros Surface.clause_macros()
   @query_builders Surface.query_builders()
   @query_key AST.module_key(Ecto.Query)
@@ -64,17 +67,18 @@ defmodule Mutare.Ecto.Host.Routing do
   # mutare:ignore[guard_drop] equivalent — `rest` is the tail of the `[source | rest]` cons match, so it is always a list; the guard is redundant
   def macro_routing({:from, _meta, [source | rest]}) when is_list(rest) do
     # Source is never mutated (a table/schema swap is a broken query, not a mutant). A binding
-    # `from` hosts its clause-bearing argument (the where/having conditions); a bindingless
-    # `from`'s clauses are keyword-shorthand data, routed per-pair so core mutates the
+    # `from` routes each clause independently: binding-referencing conditions are hosted, while
+    # shorthand conditions are routed per pair. A bindingless `from`'s clauses are
+    # keyword-shorthand data, routed per-pair so core mutates the
     # `where`/`having` shorthand *values* (`^`-pinned) while leaving keys, nil pairs, and the
     # other clauses (select/order_by/… — whole-`from`'s job) alone.
     clause_treatment =
       case rest do
         [clauses] ->
           cond do
-            binding_source?(source) -> :hosted
+            binding_source?(source) -> {:keyword, clause_value_treatments(clauses, :binding)}
             # mutare:ignore[if_condition] equivalent — a bindingless from's clause argument is always a keyword list in parsed Ecto; a non-list reaches this branch only via malformed AST
-            is_list(clauses) -> {:keyword, clause_value_treatments(clauses)}
+            is_list(clauses) -> {:keyword, clause_value_treatments(clauses, :bindingless)}
             true -> :skip
           end
 
@@ -96,6 +100,12 @@ defmodule Mutare.Ecto.Host.Routing do
       # keyword-shorthand form (`where(q, col: v)`) — route the trailing keyword list per-pair.
       nil -> shorthand_route(args, base)
     end
+  end
+
+  def macro_routing({:join, _meta, args}) when is_list(args) do
+    args
+    |> query_threading_route()
+    |> host_join_options(args)
   end
 
   def macro_routing({macro, _meta, args}) when macro in @plain_clause_macros and is_list(args) do
@@ -152,6 +162,18 @@ defmodule Mutare.Ecto.Host.Routing do
   defp binding_source?({:in, _, [_var, _src]}), do: true
   defp binding_source?(_node), do: false
 
+  defp host_join_options(routing, args) do
+    with [_ | _] = options <- List.last(args),
+         true <- Enum.any?(options, &on_pair?/1) do
+      List.replace_at(routing, length(args) - 1, :hosted)
+    else
+      _ -> routing
+    end
+  end
+
+  defp on_pair?({key, _value}), do: AST.atom_value(key) == :on
+  defp on_pair?(_node), do: false
+
   # === keyword-shorthand routing =============================================
 
   # No binding list → maybe a keyword-shorthand condition (`where(q, col: v)`). Route the trailing
@@ -171,15 +193,26 @@ defmodule Mutare.Ecto.Host.Routing do
   # A bindingless `from`'s clause list: route each `where`/`having` clause's shorthand value
   # per-pair (`{:keyword, …}`, nested — the value is itself a keyword list), and leave every other
   # clause raw (select/order_by/limit are whole-`from`'s job, or carry field names).
-  defp clause_value_treatments(clauses) do
+  defp clause_value_treatments(clauses, source_kind) do
     Enum.map(clauses, fn
       {key, value} ->
-        if AST.atom_value(key) in @condition_macros, do: where_value_treatment(value), else: :skip
+        if AST.atom_value(key) in @hosted_clause_keys,
+          do: condition_value_treatment(value, source_kind),
+          else: :skip
 
       _other ->
         :skip
     end)
   end
+
+  defp condition_value_treatment(value, :binding) do
+    case shorthand_pairs(value) do
+      nil -> :hosted
+      pairs -> {:keyword, pair_value_treatments(pairs)}
+    end
+  end
+
+  defp condition_value_treatment(value, :bindingless), do: where_value_treatment(value)
 
   defp where_value_treatment(value) do
     case shorthand_pairs(value) do

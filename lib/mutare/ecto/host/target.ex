@@ -39,6 +39,24 @@ defmodule Mutare.Ecto.Host.Target do
     end)
   end
 
+  @doc "A target nested under one keyword option in a standalone query macro."
+  @spec keyword_condition(
+          Macro.t(),
+          [Mutare.Mutator.mutation()],
+          [Macro.t()],
+          non_neg_integer(),
+          non_neg_integer()
+        ) :: t()
+  def keyword_condition(original, mutants, bindings, arg_index, pair_index) do
+    new(original, mutants, bindings, fn node, case_node ->
+      {name, args, rebuild} = AST.query_macro_call(node)
+      options = Enum.at(args, arg_index)
+      {key, _value} = Enum.at(options, pair_index)
+      options = List.replace_at(options, pair_index, {key, pin(case_node)})
+      rebuild.(name, List.replace_at(args, arg_index, options))
+    end)
+  end
+
   defp new(original, mutants, bindings, splice) do
     %{original: original, mutants: mutants, wrap: dynamic_wrap(bindings), splice: splice}
   end

@@ -12,6 +12,7 @@ defmodule Mutare.Ecto.Host do
   alias Mutare.Ecto.Host.{Bindings, Catalog, Target}
 
   @condition_macros Surface.condition_macros()
+  @hosted_clause_keys Surface.hosted_clause_keys()
 
   @doc "The hosted condition macros (`where`/`having` family), registered `:routing` by the plugin."
   @spec condition_macros() :: [atom()]
@@ -33,25 +34,26 @@ defmodule Mutare.Ecto.Host do
       {macro, args, _rebuild} when macro in @condition_macros and is_list(args) ->
         condition_target(args, config)
 
+      {:join, args, _rebuild} when is_list(args) ->
+        join_target(args, config)
+
       _ ->
         []
     end
   end
 
   defp from_targets(source, clauses, opts) do
-    case Bindings.from(source, clauses) do
-      [] ->
-        []
-
-      bindings ->
-        clauses
-        |> Enum.with_index()
-        |> Enum.flat_map(&from_target(&1, bindings, opts))
-    end
+    clauses
+    |> Enum.with_index()
+    |> Enum.flat_map(fn {pair, index} ->
+      bindings = Bindings.from(source, Enum.take(clauses, index + 1))
+      from_target({pair, index}, bindings, opts)
+    end)
   end
 
   defp from_target({{key, condition}, index}, bindings, opts) do
-    with true <- AST.atom_value(key) in @condition_macros,
+    with [_ | _] <- bindings,
+         true <- AST.atom_value(key) in @hosted_clause_keys,
          [_ | _] = mutants <- Catalog.mutants(condition, bindings, opts) do
       [Target.from_clause(condition, mutants, bindings, index, key)]
     else
@@ -69,4 +71,28 @@ defmodule Mutare.Ecto.Host do
       _ -> []
     end
   end
+
+  defp join_target(args, config) do
+    with {arg_index, options} <- trailing_options(args),
+         pair_index when not is_nil(pair_index) <- Enum.find_index(options, &on_pair?/1),
+         {_key, condition} = Enum.at(options, pair_index),
+         [_ | _] = bindings <- Bindings.join(args),
+         [_ | _] = mutants <- Catalog.mutants(condition, bindings, config) do
+      [Target.keyword_condition(condition, mutants, bindings, arg_index, pair_index)]
+    else
+      _ -> []
+    end
+  end
+
+  defp trailing_options(args) do
+    index = length(args) - 1
+
+    case List.last(args) do
+      [_ | _] = options -> {index, options}
+      _ -> nil
+    end
+  end
+
+  defp on_pair?({key, _value}), do: AST.atom_value(key) == :on
+  defp on_pair?(_node), do: false
 end

@@ -60,11 +60,9 @@ defmodule Mutare.Ecto.ShorthandTest do
       assert treatments == [{:keyword, [:pinned]}, :skip]
     end
 
-    test "a binding from still hosts (its shorthand-clause mixing is a known gap)" do
-      # `p in "posts"` is a binding source, so the clause arg is :hosted (the host handles
-      # binding-referencing conditions); a shorthand clause mixed into a binding from is not
-      # yet split — see the module note.
-      assert routing(~s|from(p in "posts", where: p.x == p.y)|) == [:skip, :hosted]
+    test "a binding from can mix hosted expressions with shorthand values" do
+      assert routing(~s|from(p in "posts", where: p.x == p.y, where: [active: true])|) ==
+               [:skip, {:keyword, [:hosted, {:keyword, [:pinned]}]}]
     end
   end
 
@@ -105,6 +103,28 @@ defmodule Mutare.Ecto.ShorthandTest do
       assert Enum.any?(diffs, fn {_m, original, _mutated} -> original == "\"Foo\"" end)
       # The select field name :id is not a value to mutate.
       refute Enum.any?(diffs, fn {_m, original, _mutated} -> original == ":id" end)
+
+      assert_compiles(src, mutators: @all)
+    end
+
+    test "a binding from hosts an expression and core-mutates shorthand in the same clause list" do
+      src = """
+      defmodule M do
+        import Ecto.Query
+
+        def q do
+          from(p in "posts", where: p.score > 1, where: [active: true], select: p.id)
+        end
+      end
+      """
+
+      all_diffs = diffs(src, mutators: @all)
+
+      assert {:ecto, "p.score > 1", "p.score >= 1"} in all_diffs
+
+      assert Enum.any?(all_diffs, fn {_family, original, mutated} ->
+               original == "true" and mutated == "false"
+             end)
 
       assert_compiles(src, mutators: @all)
     end

@@ -50,7 +50,30 @@ defmodule Mutare.Ecto.HostTest do
       """
 
       assert Enum.any?(hosted(src), fn {original, _mutated} -> original == "p.views > 1" end)
+      assert {"p.user_id == u.id", "p.user_id != u.id"} in hosted(src)
       assert metamutant(src) =~ "dynamic([u, p]"
+      assert_compiles(src)
+    end
+
+    test "each join condition sees bindings introduced up to that join, not future joins" do
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q do
+          from u in User,
+            join: p in Post,
+            on: p.user_id == u.id,
+            join: c in Comment,
+            on: c.post_id == p.id,
+            select: u.id
+        end
+      end
+      """
+
+      assert {"p.user_id == u.id", "p.user_id != u.id"} in hosted(src)
+      assert {"c.post_id == p.id", "c.post_id != p.id"} in hosted(src)
+      assert metamutant(src) =~ "dynamic([u, p]"
+      assert metamutant(src) =~ "dynamic([u, p, c]"
       assert_compiles(src)
     end
 
@@ -347,6 +370,23 @@ defmodule Mutare.Ecto.HostTest do
       assert Enum.any?(hosted(src), fn {_original, mutated} -> mutated == "u.x != u.y" end)
       assert_compiles(src)
     end
+
+    test "a piped join hosts its on condition with the joined binding" do
+      src = """
+      defmodule M do
+        import Ecto.Query
+
+        def q(query) do
+          query
+          |> join(:inner, [u], p in Post, on: p.user_id == u.id)
+        end
+      end
+      """
+
+      assert {"p.user_id == u.id", "p.user_id != u.id"} in hosted(src)
+      assert metamutant(src) =~ "dynamic([u, p]"
+      assert_compiles(src)
+    end
   end
 
   describe "nothing hostable" do
@@ -592,8 +632,9 @@ defmodule Mutare.Ecto.HostTest do
   describe "macro_routing/1 — per-argument treatment" do
     defp routing(code), do: code |> Sourceror.parse_string!() |> Host.Routing.macro_routing()
 
-    test "from keyword form: a binding source hosts its clause argument" do
-      assert routing("from(u in User, where: u.x == u.y, select: u.id)") == [:skip, :hosted]
+    test "from keyword form routes each binding condition independently" do
+      assert routing("from(u in User, where: u.x == u.y, select: u.id)") ==
+               [:skip, {:keyword, [:hosted, :skip]}]
     end
 
     test "from keyword form: a bindingless source routes where-shorthand values per-pair" do
@@ -657,6 +698,14 @@ defmodule Mutare.Ecto.HostTest do
     test "a piped clause macro's first data argument is not the query" do
       # `q |> limit(10)` → `limit(10)`: the `10` is a bound, not the threaded query, so `:skip`.
       assert routing("limit(10)") == [:skip]
+    end
+
+    test "join hosts the trailing on option in direct and piped forms" do
+      assert routing("join(query, :inner, [u], p in Post, on: p.user_id == u.id)") ==
+               [:expression, :skip, :skip, :skip, :hosted]
+
+      assert routing("join(:inner, [u], p in Post, on: p.user_id == u.id)") ==
+               [:skip, :skip, :skip, :hosted]
     end
 
     test "a non-routing macro yields []" do

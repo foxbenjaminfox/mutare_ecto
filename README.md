@@ -46,7 +46,7 @@ silently producing junk.
 
 ## Usage
 
-Enable it in `.mutare.exs`, naming your Repo:
+Enable it in `.mutare.exs`, naming your Repo when Repo-call mutations are needed:
 
 ```elixir
 # .mutare.exs
@@ -59,8 +59,8 @@ Enable it in `.mutare.exs`, naming your Repo:
 ```
 
 Then run Mutare as usual. Listing the entry both registers the plugin's query-DSL routing and
-enables its mutations; `repo:` is what lets it recognise `Repo.*` calls regardless of how they're
-aliased or imported.
+enables its mutations; `repo:` is optional for query and changeset mutations, and is what lets it
+recognise `Repo.*` calls regardless of how they're aliased or imported.
 
 ## What it mutates
 
@@ -111,11 +111,13 @@ Each `{Mutare.Ecto, …}` entry takes:
 
 ```elixir
 {Mutare.Ecto,
- repo: MyApp.Repo,                 # required — identifies Repo.* calls
+ repo: MyApp.Repo,                 # optional — identifies Repo.* calls
  families: :all,                   # or a subset, e.g. [:comparison, :null_predicate]
  dialects: [:postgres]}            # gate dialect-specific mutations (default: portable core)
 ```
 
+- **`repo:`** — identify the Repo module for aggregate and write-call mutations. Omit it when only
+  query/changeset families are needed; Repo-call families then produce no mutations.
 - **`families:`** — narrow the catalog to a subset. Every family above is independently
   toggleable; an unknown name fails loudly. `Mutare.Ecto.families/0` returns the full set.
 - **`dialects:`** — enable mutations that aren't portable across all adapters. The default `[]` is

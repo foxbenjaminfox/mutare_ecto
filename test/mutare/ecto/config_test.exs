@@ -42,6 +42,21 @@ defmodule Mutare.Ecto.ConfigTest do
     end
   end
 
+  describe "repo: scope" do
+    test "query mutations do not require a configured repo" do
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q, do: from(u in User, where: u.age > 18, select: u.id)
+      end
+      """
+
+      assert {"u.age > 18", "u.age >= 18"} in ecto_diffs(src,
+               mutators: [{Mutare.Ecto, families: [:comparison]}]
+             )
+    end
+  end
+
   describe "dialects: gates non-portable mutations" do
     test "left↔right join only under a RIGHT-capable dialect" do
       src = """

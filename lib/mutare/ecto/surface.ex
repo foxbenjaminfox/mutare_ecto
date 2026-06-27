@@ -5,6 +5,7 @@ defmodule Mutare.Ecto.Surface do
   # cannot silently drift apart when Ecto adds a builder.
 
   @condition_macros ~w(where or_where having or_having)a
+  @hosted_clause_keys [:on | @condition_macros]
   @ordering_macros ~w(order_by prepend_order_by)a
   @bound_macros ~w(limit offset)a
   @aggregate_macros ~w(select select_merge)a
@@ -26,6 +27,10 @@ defmodule Mutare.Ecto.Surface do
   @doc "The condition builders whose expression is delivered through the selector host."
   @spec condition_macros() :: [atom()]
   def condition_macros, do: @condition_macros
+
+  @doc "`from` clause keys whose SQL condition is selector-hosted."
+  @spec hosted_clause_keys() :: [atom()]
+  def hosted_clause_keys, do: @hosted_clause_keys
 
   @doc "The composable query-building macros routed by the plugin."
   @spec clause_macros() :: [atom()]

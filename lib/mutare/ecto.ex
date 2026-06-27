@@ -4,14 +4,14 @@ defmodule Mutare.Ecto do
   surface (Repo calls, changeset pipelines, and the query DSL) while respecting
   SQL semantics.
 
-  Enable it with a single configured entry that names your Repo:
+  Enable it with a module entry, adding `repo:` when Repo-call mutations are needed:
 
       # .mutare.exs
       [mutators: [:all, {Mutare.Ecto, repo: MyApp.Repo}]]
 
   Listing it both registers the plugin's macro routing (via `c:Mutare.Mutator.macros/0`,
-  discovered automatically) and enables its mutations. The `repo:` option arrives as
-  `context.opts` in `mutate/2`.
+  discovered automatically) and enables its mutations. Query, changeset, and schema handling do
+  not require `repo:`; that option only identifies the module matched by the Repo-call families.
 
   This module is a thin front for a family of sub-mutators, dispatched by the node it
   sees: `Mutare.Ecto.RepoAggregate` and `Mutare.Ecto.RepoWrite` (Repo calls), `Mutare.Ecto.Changeset`
@@ -24,7 +24,10 @@ defmodule Mutare.Ecto do
 
   ## Configuration
 
-  Beyond the required `repo:`, each entry takes:
+  Each entry takes:
+
+    * `repo:` — the Repo module recognized by `Repo.aggregate` and write-call families. Optional
+      when only query/changeset mutations are wanted; without it, Repo-call families are inert.
 
     * `families:` — narrow the SQL catalog to a subset (default `:all`). Every family is
       independently toggleable; see `families/0` for the full set. Combined with `:as` (which

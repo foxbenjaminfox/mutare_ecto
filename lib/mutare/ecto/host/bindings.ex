@@ -20,10 +20,21 @@ defmodule Mutare.Ecto.Host.Bindings do
         _ -> []
       end
 
-    {source_named, source_front} = Enum.split_with(source_decls, &named?/1)
     {join_positional, []} = Enum.split_with(join_bindings(clauses), &Binding.variable?/1)
+    append_positionals(source_decls, join_positional)
+  end
 
-    source_front ++ positioned_joins(source_front, source_named, join_positional) ++ source_named
+  @doc "The dynamic binding list visible to a standalone `join` on-condition."
+  @spec join([Macro.t()]) :: [Macro.t()]
+  def join(args) do
+    with index when not is_nil(index) <- Enum.find_index(args, &list?/1),
+         binding_list = declarations(Enum.at(args, index)),
+         {:in, _, [lhs, _source]} <- Enum.find(Enum.drop(args, index + 1), &join_expression?/1),
+         [_ | _] = join_declarations <- declarations(lhs) do
+      append_positionals(binding_list, join_declarations)
+    else
+      _ -> []
+    end
   end
 
   @doc "The condition argument immediately following a binding list, or `nil`."
@@ -69,6 +80,9 @@ defmodule Mutare.Ecto.Host.Bindings do
   defp named?({_key, _var}), do: true
   defp named?(_node), do: false
 
+  defp join_expression?({:in, _, [_lhs, _source]}), do: true
+  defp join_expression?(_node), do: false
+
   defp join_bindings(clauses) do
     for {key, {:in, _, [lhs, _src]}} <- clauses,
         AST.atom_value(key) in @join_keys,
@@ -80,6 +94,11 @@ defmodule Mutare.Ecto.Host.Bindings do
     if Enum.any?(source_front, &Binding.ellipsis?/1),
       do: join_positional,
       else: join_anchor(source_front, source_named, join_positional)
+  end
+
+  defp append_positionals(declarations, added) do
+    {named, front} = Enum.split_with(declarations, &named?/1)
+    front ++ positioned_joins(front, named, added) ++ named
   end
 
   defp join_anchor(source_positional, source_named, join_positional) do
