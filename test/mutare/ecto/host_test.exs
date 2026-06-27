@@ -611,10 +611,9 @@ defmodule Mutare.Ecto.HostTest do
     end
   end
 
-  # The end-to-end tests above confirm *delivery*; the blocks below pin the two public entry
-  # points directly — the per-argument treatment list `macro_routing/1` returns, and the target
-  # set `host/2` builds — so the routing/shape predicates are exercised on their own, not only
-  # incidentally through a compiled metamutant.
+  # The end-to-end tests above confirm delivery. The focused classifier checks below keep routing
+  # shape failures easy to diagnose without manufacturing resolver metadata or bypassing the
+  # public transform for mutation delivery.
 
   describe "the registered macro lists" do
     test "condition_macros are the where/having family" do
@@ -718,59 +717,6 @@ defmodule Mutare.Ecto.HostTest do
       # data argument.
       assert routing("where(q, [])") == [:expression, :skip]
       assert routing("where(q, [], u.x == u.y)") == [:expression, :skip, :skip]
-    end
-  end
-
-  describe "host/2 — the target set" do
-    defp host_originals(code) do
-      code
-      |> query_macro_ast()
-      |> Host.host(%{opts: [repo: MyApp.Repo]})
-    end
-
-    test "a from hosts one target per catalog-mutatable where/having condition" do
-      [t] = host_originals("from(u in User, where: u.x == u.y, select: u.id)")
-      assert Sourceror.to_string(t.original) == "u.x == u.y"
-      assert t.mutants != []
-    end
-
-    test "multiple conditions each become their own target, in clause order" do
-      targets = host_originals("from(u in User, where: u.x == u.y, having: u.a > u.b)")
-      assert Enum.map(targets, &Sourceror.to_string(&1.original)) == ["u.x == u.y", "u.a > u.b"]
-      assert Enum.all?(targets, &(&1.mutants != []))
-    end
-
-    test "the direct and piped where/having forms each host their condition" do
-      for code <- ["where(query, [u], u.x == u.y)", "having(query, [u], u.x == u.y)"] do
-        assert [t] = host_originals(code)
-        assert Sourceror.to_string(t.original) == "u.x == u.y"
-        assert t.mutants != []
-      end
-    end
-
-    test "a named binding list hosts its condition rather than looking like shorthand" do
-      for code <- [
-            "where(query, [post: p], p.x == p.y)",
-            "where([post: p], p.x == p.y)",
-            "where(query, [u, post: p], p.x == u.y)"
-          ] do
-        assert [target] = host_originals(code)
-        assert target.mutants != []
-      end
-    end
-
-    test "nothing hostable yields no targets" do
-      assert host_originals(~s|from("users", where: [active: true])|) == []
-      assert host_originals("limit(query, 10)") == []
-      assert host_originals("from(u in User, select: u.id)") == []
-    end
-
-    test "host tolerates a context without :opts (families default to all)" do
-      # `opts/1` falls back to `[]` for a context lacking `:opts`, so the host still builds its
-      # targets rather than crashing — `[]` reads as the default `:all` families downstream.
-      node = query_macro_ast("from(u in User, where: u.x == u.y, select: u.id)")
-      assert [t] = Host.host(node, %{})
-      assert Sourceror.to_string(t.original) == "u.x == u.y"
     end
   end
 

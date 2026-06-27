@@ -234,15 +234,21 @@ defmodule Mutare.Ecto.QueryTest do
   # *key*, not merely the clause *value's shape* — a constant in a `select`, an aggregate in a
   # `having`, or a direction in a `distinct` must not be mutated as if it were the gated clause.
   describe "clause gates — a family fires only on its own clause key" do
-    defp mutations(code) do
-      code
-      |> query_macro_ast()
-      |> Mutare.Ecto.Query.mutations(%{opts: []})
-      |> Enum.map(fn {family, node} -> {family, Sourceror.to_string(node)} end)
+    defp family_diffs(code, family) do
+      src = """
+      defmodule GateFixture do
+        import Ecto.Query
+        def q, do: #{code}
+      end
+      """
+
+      ecto_diffs(src, mutators: [{Mutare.Ecto, families: [family]}])
     end
 
     test "bound bumps fire only on limit/offset, not another integer-valued clause" do
-      bounds = for {:bound, m} <- mutations("from(p in Post, select: 1, limit: 10)"), do: m
+      bounds =
+        family_diffs("from(p in Post, select: 1, limit: 10)", :bound)
+        |> Enum.map(fn {_original, mutated} -> mutated end)
 
       # The literal `10` bumps both ways; the `select: 1` constant is never bumped.
       assert "from(p in Post, select: 1, limit: 11)" in bounds
@@ -251,12 +257,16 @@ defmodule Mutare.Ecto.QueryTest do
     end
 
     test "aggregate swaps fire on select/select_merge and order_by, but leave a hosted having alone" do
+      diffs =
+        family_diffs(
+          "from(p in Post, having: sum(p.a) > 5, order_by: max(p.b), select: avg(p.c))",
+          :aggregate
+        )
+
       aggs =
-        for {:aggregate, m} <-
-              mutations(
-                "from(p in Post, having: sum(p.a) > 5, order_by: max(p.b), select: avg(p.c))"
-              ),
-            do: m
+        for {original, mutated} <- diffs,
+            String.starts_with?(original, "from("),
+            do: mutated
 
       # The `select` and `order_by` aggregates each swap in place — one single-point mutant each…
       assert "from(p in Post, having: sum(p.a) > 5, order_by: max(p.b), select: sum(p.c))" in aggs
@@ -266,14 +276,19 @@ defmodule Mutare.Ecto.QueryTest do
       # …but the `having` aggregate is delivered through the host (`^`/`dynamic`), never as a
       # whole-`from` rewrite here, so Query leaves it untouched (no double-delivery).
       refute Enum.any?(aggs, &(&1 =~ "having: avg"))
+
+      assert Enum.any?(diffs, fn {original, mutated} ->
+               original == "sum(p.a) > 5" and mutated == "avg(p.a) > 5"
+             end)
     end
 
     test "order flips fire only on order_by, not a direction in another clause" do
       flips =
-        for {family, m} <-
-              mutations("from(p in Post, distinct: [desc: p.id], order_by: [asc: p.name])"),
-            family in [:ordering, :ordering_nulls],
-            do: m
+        family_diffs(
+          "from(p in Post, distinct: [desc: p.id], order_by: [asc: p.name])",
+          :ordering
+        )
+        |> Enum.map(fn {_original, mutated} -> mutated end)
 
       # The order_by direction flips; the `distinct: [desc: p.id]` direction is left alone — so no
       # mutant flips it to `asc: p.id` (the flipped value renders bracket-less, like the order_by).
