@@ -8,7 +8,9 @@ defmodule Mutare.Ecto.Host do
   selector splice consumed by Mutare core.
   """
 
-  alias Mutare.Ecto.{AST, Config, Surface}
+  alias Mutare.Ecto.{Config, Surface}
+  alias Mutare.Ecto.AST.{KeywordList, QueryCall}
+  alias Mutare.Ecto.AST.KeywordList.Entry
   alias Mutare.Ecto.Host.{Bindings, Catalog, Target}
 
   @condition_macros Surface.condition_macros()
@@ -19,14 +21,17 @@ defmodule Mutare.Ecto.Host do
   def host(node, context) do
     config = Config.from_context(context)
 
-    case AST.query_macro_call(node) do
-      {:from, [source, clauses], _rebuild} when is_list(clauses) ->
-        from_targets(source, clauses, config)
+    case QueryCall.parse(node) do
+      %QueryCall{name: :from, args: [source, clauses]} ->
+        case KeywordList.parse(clauses) do
+          %KeywordList{} = clauses -> from_targets(source, clauses, config)
+          nil -> []
+        end
 
-      {macro, args, _rebuild} when macro in @condition_macros and is_list(args) ->
+      %QueryCall{name: macro, args: args} when macro in @condition_macros ->
         condition_target(args, config)
 
-      {:join, args, _rebuild} when is_list(args) ->
+      %QueryCall{name: :join, args: args} ->
         join_target(args, config)
 
       _ ->
@@ -34,20 +39,20 @@ defmodule Mutare.Ecto.Host do
     end
   end
 
-  defp from_targets(source, clauses, opts) do
-    clauses
+  defp from_targets(source, %KeywordList{entries: entries} = clauses, opts) do
+    entries
     |> Enum.with_index()
-    |> Enum.flat_map(fn {pair, index} ->
-      bindings = Bindings.from(source, Enum.take(clauses, index + 1))
-      from_target({pair, index}, bindings, opts)
+    |> Enum.flat_map(fn {entry, index} ->
+      bindings = Bindings.from(source, %{clauses | entries: Enum.take(entries, index + 1)})
+      from_target({entry, index}, bindings, opts)
     end)
   end
 
-  defp from_target({{key, condition}, index}, bindings, opts) do
+  defp from_target({%Entry{key: key, value: condition}, index}, bindings, opts) do
     with [_ | _] <- bindings,
-         true <- AST.atom_value(key) in @hosted_clause_keys,
+         true <- key in @hosted_clause_keys,
          [_ | _] = mutants <- Catalog.mutants(condition, bindings, opts) do
-      [Target.from_clause(condition, mutants, bindings, index, key)]
+      [Target.from_clause(condition, mutants, bindings, index)]
     else
       _ -> []
     end
@@ -64,8 +69,9 @@ defmodule Mutare.Ecto.Host do
 
   defp join_target(args, config) do
     with {arg_index, options} <- trailing_options(args),
-         pair_index when not is_nil(pair_index) <- Enum.find_index(options, &Bindings.on_pair?/1),
-         {_key, condition} = Enum.at(options, pair_index),
+         pair_index when not is_nil(pair_index) <-
+           Enum.find_index(options.entries, &(&1.key == :on)),
+         %Entry{value: condition} = Enum.at(options.entries, pair_index),
          [_ | _] = bindings <- Bindings.join(args),
          [_ | _] = mutants <- Catalog.mutants(condition, bindings, config) do
       [Target.keyword_condition(condition, mutants, bindings, arg_index, pair_index)]
@@ -77,8 +83,8 @@ defmodule Mutare.Ecto.Host do
   defp trailing_options(args) do
     index = length(args) - 1
 
-    case List.last(args) do
-      [_ | _] = options -> {index, options}
+    case KeywordList.nonempty(List.last(args)) do
+      %KeywordList{} = options -> {index, options}
       _ -> nil
     end
   end

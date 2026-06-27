@@ -3,7 +3,8 @@ defmodule Mutare.Ecto.Host.Target do
   # Builds the host-target map consumed by Mutare core and owns every delivery transform: wrapping
   # logical fragments in `dynamic/2`, pinning the selector, and splicing it into the original call.
 
-  alias Mutare.Ecto.{AST, Pair}
+  alias Mutare.Ecto.AST
+  alias Mutare.Ecto.AST.{KeywordList, QueryCall}
 
   @type wrap :: (Macro.t() -> Macro.t())
   @type splice :: (Macro.t(), Macro.t() -> Macro.t())
@@ -19,14 +20,14 @@ defmodule Mutare.Ecto.Host.Target do
           Macro.t(),
           [Mutare.Mutator.mutation()],
           [Macro.t()],
-          non_neg_integer(),
-          Macro.t()
+          non_neg_integer()
         ) ::
           t()
-  def from_clause(original, mutants, bindings, index, key) do
+  def from_clause(original, mutants, bindings, index) do
     new(original, mutants, bindings, fn node, case_node ->
-      {:from, [source, clauses], rebuild} = AST.query_macro_call(node)
-      rebuild.(:from, [source, List.replace_at(clauses, index, {key, pin(case_node)})])
+      %QueryCall{name: :from, args: [source, clauses]} = call = QueryCall.parse(node)
+      clauses = KeywordList.parse(clauses)
+      QueryCall.rebuild(call, [source, KeywordList.replace_value(clauses, index, pin(case_node))])
     end)
   end
 
@@ -34,8 +35,8 @@ defmodule Mutare.Ecto.Host.Target do
   @spec condition(Macro.t(), [Mutare.Mutator.mutation()], [Macro.t()], non_neg_integer()) :: t()
   def condition(original, mutants, bindings, index) do
     new(original, mutants, bindings, fn node, case_node ->
-      {name, args, rebuild} = AST.query_macro_call(node)
-      rebuild.(name, List.replace_at(args, index, pin(case_node)))
+      %QueryCall{} = call = QueryCall.parse(node)
+      QueryCall.replace_arg(call, index, pin(case_node))
     end)
   end
 
@@ -49,14 +50,14 @@ defmodule Mutare.Ecto.Host.Target do
         ) :: t()
   def keyword_condition(original, mutants, bindings, arg_index, pair_index) do
     new(original, mutants, bindings, fn node, case_node ->
-      {name, args, rebuild} = AST.query_macro_call(node)
+      %QueryCall{args: args} = call = QueryCall.parse(node)
+      options = args |> Enum.at(arg_index) |> KeywordList.parse()
 
-      options =
-        args
-        |> Enum.at(arg_index)
-        |> List.update_at(pair_index, &Pair.put_value(&1, pin(case_node)))
-
-      rebuild.(name, List.replace_at(args, arg_index, options))
+      QueryCall.replace_arg(
+        call,
+        arg_index,
+        KeywordList.replace_value(options, pair_index, pin(case_node))
+      )
     end)
   end
 

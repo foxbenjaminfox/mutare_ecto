@@ -31,6 +31,7 @@ defmodule Mutare.Ecto.Host.Routing do
   """
 
   alias Mutare.Ecto.{AST, Binding, Surface}
+  alias Mutare.Ecto.AST.{KeywordList, QueryCall}
   alias Mutare.Ecto.Host.Bindings
   alias Mutare.Transform.Calls
 
@@ -52,14 +53,14 @@ defmodule Mutare.Ecto.Host.Routing do
           [Mutare.Macro.Spec.treatment() | :pinned | {:keyword, [term()]}]
   # A qualified/aliased call (`Ecto.Query.where(…)`, `Q.where(…)`) — its head is a `{:., …}` remote
   # node, not a bare macro atom, so the per-name clauses below never match it. Normalize it to its
-  # bare equivalent (`Mutare.Ecto.AST.query_macro_call/1`, reading the resolved-macro identity core
+  # bare equivalent (`Mutare.Ecto.AST.QueryCall.parse/1`, reading the resolved-macro identity core
   # stamped) and re-dispatch: routing is a list indexed by *visible argument position*, identical for
   # every written form, so the head and meta are irrelevant here. A remote head core didn't resolve
   # to a known macro yields `[]` (not a routing macro).
   # mutare:ignore[guard_drop] equivalent — `args` is a `{head, meta, args}` node's argument slot, always a list; the guard is redundant
   def macro_routing({head, _meta, args} = node) when not is_atom(head) and is_list(args) do
-    case AST.query_macro_call(node) do
-      {name, visible_args, _rebuild} -> macro_routing({name, [], visible_args})
+    case QueryCall.parse(node) do
+      %QueryCall{name: name, args: visible_args} -> macro_routing({name, [], visible_args})
       nil -> []
     end
   end
@@ -144,8 +145,8 @@ defmodule Mutare.Ecto.Host.Routing do
   end
 
   defp query_builder_call?(node) do
-    case AST.query_macro_call(node) do
-      {name, _args, _rebuild} -> name in @query_builders
+    case QueryCall.parse(node) do
+      %QueryCall{name: name} -> name in @query_builders
       nil -> qualified_query_builder?(Calls.resolved_call(node))
     end
   end
@@ -165,8 +166,8 @@ defmodule Mutare.Ecto.Host.Routing do
   defp binding_source?(_node), do: false
 
   defp host_join_options(routing, args) do
-    with [_ | _] = options <- List.last(args),
-         true <- Enum.any?(options, &Bindings.on_pair?/1) do
+    with %KeywordList{entries: entries} <- KeywordList.nonempty(List.last(args)),
+         true <- Enum.any?(entries, &(&1.key == :on)) do
       List.replace_at(routing, length(args) - 1, :hosted)
     else
       _ -> routing
@@ -179,7 +180,7 @@ defmodule Mutare.Ecto.Host.Routing do
   # keyword-list argument `{:keyword, value_treatments}` so core mutates each scalar value
   # `^`-pinned, leaving keys and nil/compound values alone. A non-shorthand trailing arg → default.
   defp shorthand_route(args, default) do
-    case args |> List.last() |> shorthand_pairs() do
+    case args |> List.last() |> KeywordList.nonempty() do
       nil ->
         default
 
@@ -193,15 +194,17 @@ defmodule Mutare.Ecto.Host.Routing do
   # condition value (below); every other clause (select/order_by/limit — whole-`from`'s job, or a
   # field-name carrier) is left raw.
   defp clause_treatments(clauses, source_kind) do
-    Enum.map(clauses, fn
-      {key, value} ->
-        if AST.atom_value(key) in @hosted_clause_keys,
-          do: condition_treatment(value, source_kind),
-          else: :skip
+    case KeywordList.parse(clauses) do
+      %KeywordList{entries: entries} ->
+        Enum.map(entries, fn entry ->
+          if entry.key in @hosted_clause_keys,
+            do: condition_treatment(entry.value, source_kind),
+            else: :skip
+        end)
 
-      _other ->
-        :skip
-    end)
+      nil ->
+        []
+    end
   end
 
   # The treatment for one `where`/`having` condition value. A keyword-shorthand value
@@ -209,7 +212,7 @@ defmodule Mutare.Ecto.Host.Routing do
   # value (an expression `where: u.x == v`) is `:hosted` under a binding source but carries no
   # fragment under a bindingless one — so it is left raw.
   defp condition_treatment(value, source_kind) do
-    case shorthand_pairs(value) do
+    case KeywordList.nonempty(value) do
       nil -> nonshorthand_treatment(source_kind)
       pairs -> {:keyword, pair_treatments(pairs)}
     end
@@ -218,25 +221,8 @@ defmodule Mutare.Ecto.Host.Routing do
   defp nonshorthand_treatment(:binding), do: :hosted
   defp nonshorthand_treatment(:bindingless), do: :skip
 
-  # A shorthand value list, unwrapped from the Sourceror `{:__block__, _, [list]}` it takes in a
-  # keyword *value* position (the `from` form) or bare (a trailing keyword argument). `nil` when
-  # the value isn't a non-empty keyword list (so it isn't shorthand — e.g. a binding list, a bare
-  # field list `[:id]`, an expression).
-  # mutare:ignore[guard_drop] equivalent — Sourceror block-wraps list literals, so this block clause always wraps a list; a non-list inside the block arrives only from malformed AST
-  defp shorthand_pairs({:__block__, _meta, [list]}) when is_list(list), do: keyword_pairs(list)
-  defp shorthand_pairs(list) when is_list(list), do: keyword_pairs(list)
-  defp shorthand_pairs(_value), do: nil
-
-  defp keyword_pairs(list) do
-    # mutare:ignore[collection] equivalent — all?/any? differ only on a list mixing pairs and non-pairs, which a real binding/shorthand list never is
-    if list != [] and Enum.all?(list, &match?({_k, _v}, &1)), do: list, else: nil
-  end
-
-  defp pair_treatments(pairs) do
-    Enum.map(pairs, fn
-      {_key, value} -> pair_treatment(value)
-      _other -> :skip
-    end)
+  defp pair_treatments(%KeywordList{entries: entries}) do
+    Enum.map(entries, &pair_treatment(&1.value))
   end
 
   # The treatment for one shorthand pair's *value*: a scalar literal (string, number, boolean — but

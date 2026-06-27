@@ -34,17 +34,4 @@ defmodule Mutare.Ecto.Binding do
   @doc "A fresh clean-meta `...` node, for re-emitting the anchor in a synthesized binding list."
   @spec ellipsis() :: Macro.t()
   def ellipsis, do: {:..., [], []}
-
-  @doc """
-  The element list of a binding list — unwrapped from the Sourceror block (`{:__block__, _, [list]}`)
-  a parsed list literal takes, or a bare list, or `nil` when the node is neither (a lone variable,
-  any non-list).
-  """
-  @spec unwrap_list(Macro.t()) :: [Macro.t()] | nil
-  # mutare:ignore[guard_drop] equivalent — Sourceror block-wraps list literals, so this block clause always wraps a list
-  def unwrap_list({:__block__, _meta, [list]}) when is_list(list), do: list
-
-  # mutare:ignore[clause_drop, return_value] equivalent — a parsed binding list reaches here block-wrapped (clause above); the bare-list clause guards a non-block list Sourceror-parsed input never produces, and a non-list falls through to the same nil
-  def unwrap_list(list) when is_list(list), do: list
-  def unwrap_list(_node), do: nil
 end

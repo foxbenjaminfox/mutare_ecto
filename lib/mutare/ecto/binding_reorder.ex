@@ -22,33 +22,35 @@ defmodule Mutare.Ecto.BindingReorder do
   exchange and avoids manufacturing an equivalent mutant when a declared binding is unused.
   """
 
-  alias Mutare.Ecto.{AST, Binding, Surface}
+  alias Mutare.Ecto.{AST, Surface}
+  alias Mutare.Ecto.AST.{BindingList, QueryCall}
 
   @behaviour Mutare.Ecto.SubMutator
 
   @doc "Binding-reorder mutants for `node` as `{:binding_reorder, node}` pairs, or `[]`."
-  @spec mutations(Macro.t(), Mutare.Mutator.context()) :: [{:binding_reorder, Macro.t()}]
+  @spec mutations(Macro.t() | QueryCall.t(), Mutare.Mutator.context()) ::
+          [{:binding_reorder, Macro.t()}]
   @impl Mutare.Ecto.SubMutator
-  # Normalize the call (`Mutare.Ecto.AST.query_macro_call/1`) so the qualified (`Ecto.Query.select`)
+  # Normalize the call (`Mutare.Ecto.AST.QueryCall.parse/1`) so the qualified (`Ecto.Query.select`)
   # and aliased (`Q.select`) forms reorder exactly like the bare/imported one; `rebuild` re-emits the
   # swap in the source's written form.
-  def mutations(node, _context) do
-    case AST.query_macro_call(node) do
-      {macro, args, rebuild} ->
-        if macro in Surface.clause_macros(), do: reorders(macro, args, rebuild), else: []
+  def mutations(%QueryCall{name: macro} = call, _context) do
+    if macro in Surface.clause_macros(), do: reorders(call), else: []
+  end
 
-      nil ->
-        []
+  def mutations(node, context) do
+    case QueryCall.parse(node) do
+      %QueryCall{} = call -> mutations(call, context)
+      nil -> []
     end
   end
 
   # One mutant per pair of *positional* bindings both referenced in the body (the arguments after
   # the binding list — where `from`-less macros reference their bindings). The binding list itself
   # carries only declarations, so it is excluded from the reference test.
-  defp reorders(macro, args, rebuild) do
-    with {index, blist} <- find_binding_list(args),
-         list = Binding.unwrap_list(blist),
-         positions = positional_positions(list),
+  defp reorders(%QueryCall{args: args} = call) do
+    with {index, binding_list} <- find_binding_list(args),
+         positions = BindingList.positionals(binding_list),
          # mutare:ignore[literal, conditional] equivalent — a fast-path guard; the `i < j` loop below already yields [] for fewer than two positions, so weakening or dropping this bound changes nothing
          true <- length(positions) >= 2 do
       body = Enum.drop(args, index + 1)
@@ -59,8 +61,8 @@ defmodule Mutare.Ecto.BindingReorder do
           i < j,
           AST.references_var?(body, a),
           AST.references_var?(body, b) do
-        new_args = List.replace_at(args, index, swap(blist, list, i, j))
-        {:binding_reorder, rebuild.(macro, new_args)}
+        new_args = List.replace_at(args, index, BindingList.swap(binding_list, i, j))
+        {:binding_reorder, QueryCall.rebuild(call, new_args)}
       end
     else
       _ -> []
@@ -75,37 +77,11 @@ defmodule Mutare.Ecto.BindingReorder do
   defp find_binding_list(args) do
     args
     |> Enum.with_index()
-    |> Enum.find_value(fn {arg, index} -> if binding_list?(arg), do: {index, arg} end)
+    |> Enum.find_value(fn {arg, index} ->
+      case BindingList.parse(arg) do
+        %BindingList{} = list -> {index, list}
+        nil -> nil
+      end
+    end)
   end
-
-  defp binding_list?(node) do
-    case Binding.unwrap_list(node) do
-      # mutare:ignore[return_value, collection] equivalent — the binding list is always the first list-shaped argument and is all binding entries; a partial/non-entry list at that position never occurs, so all?/any? and the boolean return are indistinguishable on reachable input
-      [_ | _] = list -> Enum.all?(list, &Binding.entry?/1)
-      _ -> false
-    end
-  end
-
-  # The `{index_in_list, name}` of each *positional* binding, in order. Named bindings and the `...`
-  # anchor are skipped (`Binding.variable?/1` rejects both): they never move under a positional swap.
-  defp positional_positions(list) do
-    for {entry, index} <- Enum.with_index(list),
-        Binding.variable?(entry),
-        do: {index, Binding.variable_name(entry)}
-  end
-
-  # Swap the two entries at positions `i`/`j` in the already-unwrapped `list`, preserving the binding
-  # list's wrapper (`blist` — Sourceror block-wraps a list literal) and every entry's own metadata —
-  # entries are *reordered*, not rewritten, so each renders with its original text in its new position.
-  defp swap(blist, list, i, j) do
-    a = Enum.at(list, i)
-    b = Enum.at(list, j)
-    rewrap(blist, list |> List.replace_at(i, b) |> List.replace_at(j, a))
-  end
-
-  # mutare:ignore[clause_drop, atom] equivalent — the block wrapper carries only source-formatting meta; the reordered list renders identically whether re-wrapped or returned bare, so matching or dropping this clause is unobservable
-  defp rewrap({:__block__, meta, [_list]}, new_list), do: {:__block__, meta, [new_list]}
-
-  # mutare:ignore[clause_drop] equivalent — a parsed binding list reaches swap/2 block-wrapped, so this bare-list fallback is unreachable from valid Ecto
-  defp rewrap(_blist, new_list), do: new_list
 end

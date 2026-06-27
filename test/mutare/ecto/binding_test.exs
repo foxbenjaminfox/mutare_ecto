@@ -53,19 +53,4 @@ defmodule Mutare.Ecto.BindingTest do
       refute Binding.entry?({:not_a_binding, [], []})
     end
   end
-
-  describe "unwrap_list/1" do
-    test "returns the element list of a block-wrapped or bare list, nil otherwise" do
-      # Sourceror block-wraps a parsed list literal; unwrap_list peels it.
-      assert [a, b] = Binding.unwrap_list(parse("[a, b]"))
-      assert Binding.variable?(a) and Binding.variable?(b)
-
-      # a bare list passes through.
-      assert Binding.unwrap_list([{:a, [], nil}]) == [{:a, [], nil}]
-
-      # a lone variable and any non-list yield nil.
-      assert Binding.unwrap_list({:u, [], nil}) == nil
-      assert Binding.unwrap_list(parse("u.id")) == nil
-    end
-  end
 end

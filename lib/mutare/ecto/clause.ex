@@ -29,6 +29,7 @@ defmodule Mutare.Ecto.Clause do
   """
 
   alias Mutare.Ecto.{Aggregate, AST, Ordering, Surface}
+  alias Mutare.Ecto.AST.QueryCall
 
   @behaviour Mutare.Ecto.SubMutator
 
@@ -37,48 +38,54 @@ defmodule Mutare.Ecto.Clause do
   @aggregate_macros Surface.aggregate_macros()
 
   @doc "Standalone/pipe clause-macro mutations for `node` as `{family, node}` pairs, or `[]`."
-  @spec mutations(Macro.t(), Mutare.Mutator.context()) :: [{atom(), Macro.t()}]
+  @spec mutations(Macro.t() | QueryCall.t(), Mutare.Mutator.context()) ::
+          [{atom(), Macro.t()}]
   @impl Mutare.Ecto.SubMutator
-  # Normalize the call (`Mutare.Ecto.AST.query_macro_call/1`) so the qualified (`Ecto.Query.order_by`)
+  # Normalize the call (`Mutare.Ecto.AST.QueryCall.parse/1`) so the qualified (`Ecto.Query.order_by`)
   # and aliased (`Q.order_by`) forms mutate exactly like the bare/imported one; `rebuild` re-emits each
   # mutant in the source's written form. Each clause guards `args != []` to protect the
   # `{init, [last]} = Enum.split(args, -1)` destructuring on a degenerate zero-arg macro node.
-  def mutations(node, _context) do
-    case AST.query_macro_call(node) do
-      {macro, args, rebuild} when macro in @ordering_macros and args != [] ->
-        order_by_mutations(macro, args, rebuild)
+  def mutations(%QueryCall{name: macro, args: args} = call, _context)
+      when macro in @ordering_macros and args != [],
+      do: order_by_mutations(call)
 
-      {macro, args, rebuild} when macro in @bound_macros and args != [] ->
-        bound_mutations(macro, args, rebuild)
+  def mutations(%QueryCall{name: macro, args: args} = call, _context)
+      when macro in @bound_macros and args != [],
+      do: bound_mutations(call)
 
-      {macro, args, rebuild} when macro in @aggregate_macros and args != [] ->
-        select_mutations(macro, args, rebuild)
+  def mutations(%QueryCall{name: macro, args: args} = call, _context)
+      when macro in @aggregate_macros and args != [],
+      do: select_mutations(call)
 
-      _ ->
-        []
+  def mutations(%QueryCall{}, _context), do: []
+
+  def mutations(node, context) do
+    case QueryCall.parse(node) do
+      %QueryCall{} = call -> mutations(call, context)
+      nil -> []
     end
   end
 
-  defp order_by_mutations(macro, args, rebuild) do
-    mutate_last(macro, args, rebuild, fn ordering ->
+  defp order_by_mutations(call) do
+    mutate_last(call, fn ordering ->
       # mutare:ignore[operand_swap] direction flips and aggregate swaps are consumed as a set — order is irrelevant
       Ordering.flips(ordering) ++ Aggregate.swaps(ordering)
     end)
   end
 
-  defp bound_mutations(macro, args, rebuild),
-    do: mutate_last(macro, args, rebuild, &bound_flips/1)
+  defp bound_mutations(call), do: mutate_last(call, &bound_flips/1)
 
-  defp select_mutations(macro, args, rebuild),
-    do: mutate_last(macro, args, rebuild, &Aggregate.swaps/1)
+  defp select_mutations(call), do: mutate_last(call, &Aggregate.swaps/1)
 
   # The shape all three clause-macro mutators share: split the mutated **last argument** off (the
   # ordering / bound / selector — `init` keeps the binding list when one is written), map it to
   # `{family, mutated}` pairs via `catalog`, and rebuild the call around each, keeping the source's
   # written form. The `args != []` guard in `mutations/2` makes the `[last]` destructure total.
-  defp mutate_last(macro, args, rebuild, catalog) do
+  defp mutate_last(%QueryCall{args: args} = call, catalog) do
     {init, [last]} = Enum.split(args, -1)
-    for {family, mutated} <- catalog.(last), do: {family, rebuild.(macro, init ++ [mutated])}
+
+    for {family, mutated} <- catalog.(last),
+        do: {family, QueryCall.rebuild(call, init ++ [mutated])}
   end
 
   # `limit`/`offset` boundary bumps as `{:bound, literal}` pairs: bump a literal integer by `±1`

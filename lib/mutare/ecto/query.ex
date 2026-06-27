@@ -33,7 +33,9 @@ defmodule Mutare.Ecto.Query do
   `{:__block__, [format: :keyword], [atom]}`). `from/1` (`from(Post)`, no clauses) yields nothing.
   """
 
-  alias Mutare.Ecto.{Aggregate, AST, Config, Ordering, Pair, Surface}
+  alias Mutare.Ecto.{Aggregate, AST, Config, Ordering, Surface}
+  alias Mutare.Ecto.AST.{KeywordList, QueryCall}
+  alias Mutare.Ecto.AST.KeywordList.Entry
 
   @behaviour Mutare.Ecto.SubMutator
 
@@ -65,60 +67,68 @@ defmodule Mutare.Ecto.Query do
   @full_join_dialects [:postgres, :sqlite]
 
   @doc "Whole-`from` mutations for a `from(...)` node as `{family, node}` pairs, or `[]`."
-  @spec mutations(Macro.t(), Mutare.Mutator.context()) :: [{family(), Macro.t()}]
+  @spec mutations(Macro.t() | QueryCall.t(), Mutare.Mutator.context()) ::
+          [{family(), Macro.t()}]
   @impl Mutare.Ecto.SubMutator
-  # Normalize the call (`Mutare.Ecto.AST.query_macro_call/1`) so a qualified `Ecto.Query.from(…)` or
+  # Normalize the call (`Mutare.Ecto.AST.QueryCall.parse/1`) so a qualified `Ecto.Query.from(…)` or
   # aliased `Q.from(…)` is rewritten exactly like the bare/imported `from(…)`; `rebuild` re-emits each
   # mutant in the source's written form.
-  def mutations(node, context) do
+  def mutations(%QueryCall{} = call, context) do
     config = Config.from_context(context)
 
-    case AST.query_macro_call(node) do
-      # mutare:ignore[guard_drop] equivalent — a from's clause argument is always a keyword list; a non-list is malformed AST (a `from(S)` with no clauses is a one-element arg list, caught by the fallthrough clause)
-      {:from, [source, clauses], rebuild} when is_list(clauses) ->
-        from_mutations(source, clauses, rebuild, config)
+    case call do
+      %QueryCall{name: :from, args: [source, clauses]} ->
+        case KeywordList.parse(clauses) do
+          %KeywordList{} = clauses -> from_mutations(source, clauses, call, config)
+          nil -> []
+        end
 
       _ ->
         []
     end
   end
 
-  defp from_mutations(source, clauses, rebuild, config) do
+  def mutations(node, context) do
+    case QueryCall.parse(node) do
+      %QueryCall{} = call -> mutations(call, context)
+      nil -> []
+    end
+  end
+
+  defp from_mutations(source, clauses, call, config) do
     Enum.concat([
-      drops(rebuild, source, clauses, @droppable, :filter_drop),
-      drops(rebuild, source, clauses, @bound_keys, :bound),
-      order_flips(rebuild, source, clauses),
-      bound_bumps(rebuild, source, clauses),
-      join_swaps(rebuild, source, clauses, config),
-      aggregate_swaps(rebuild, source, clauses)
+      drops(call, source, clauses, @droppable, :filter_drop),
+      drops(call, source, clauses, @bound_keys, :bound),
+      order_flips(call, source, clauses),
+      bound_bumps(call, source, clauses),
+      join_swaps(call, source, clauses, config),
+      aggregate_swaps(call, source, clauses)
     ])
   end
 
   # Remove each clause whose key is in `keys`, keeping the others — so the query still
   # compiles (it reuses the surviving clauses). Used for both the filter drops (where/having,
   # tagged `:filter_drop`) and the bound drops (limit/offset, tagged `:bound`).
-  defp drops(rebuild, source, clauses, keys, family) do
-    for {pair, index} <- Enum.with_index(clauses), Pair.key(pair) in keys do
-      {family, drop_clause(rebuild, source, clauses, index)}
+  defp drops(call, source, %KeywordList{entries: entries} = clauses, keys, family) do
+    for {%Entry{key: key}, index} <- Enum.with_index(entries), key in keys do
+      {family, rebuild_from(call, source, KeywordList.delete(clauses, index))}
     end
   end
 
   # Bump each `limit`/`offset` whose value is a literal integer by `±1` (non-negative only).
   # A `^pinned`/expression bound has no literal here, so it yields nothing — its value is
   # mutated where it is bound, in ordinary Elixir.
-  defp bound_bumps(rebuild, source, clauses) do
-    for {pair, index} <- Enum.with_index(clauses),
-        Pair.key(pair) in @bound_keys,
-        n = AST.int_value(Pair.value(pair)),
+  defp bound_bumps(call, source, %KeywordList{entries: entries} = clauses) do
+    for {%Entry{key: key, value: value}, index} <- Enum.with_index(entries),
+        key in @bound_keys,
+        n = AST.int_value(value),
         is_integer(n),
         bumped <- AST.bumps(n) do
       {:bound,
-       replace_clause(
-         rebuild,
+       rebuild_from(
+         call,
          source,
-         clauses,
-         index,
-         Pair.put_value(pair, AST.int_literal(bumped))
+         KeywordList.replace_value(clauses, index, AST.int_literal(bumped))
        )}
     end
   end
@@ -127,13 +137,12 @@ defmodule Mutare.Ecto.Query do
   # `left_join`↔`right_join` under a `RIGHT`-capable dialect and `*`→`full_join` under a
   # `FULL`-capable one), keeping the join's value (`c in assoc(p, :x)`). One mutant per enabled
   # target.
-  defp join_swaps(rebuild, source, clauses, config) do
+  defp join_swaps(call, source, %KeywordList{entries: entries} = clauses, config) do
     flips = join_flips(config)
 
-    for {pair, index} <- Enum.with_index(clauses),
-        to <- Map.get(flips, Pair.key(pair), []) do
-      {:join_type,
-       replace_clause(rebuild, source, clauses, index, Pair.put_key(pair, AST.keyword_key(to)))}
+    for {%Entry{key: key}, index} <- Enum.with_index(entries),
+        to <- Map.get(flips, key, []) do
+      {:join_type, rebuild_from(call, source, KeywordList.replace_key(clauses, index, to))}
     end
   end
 
@@ -153,32 +162,25 @@ defmodule Mutare.Ecto.Query do
   # aggregate position (`Mutare.Ecto.Aggregate`). A `having` aggregate is deliberately *not* here:
   # its condition is hosted (`^`/`dynamic`), so the swap rides the host alongside the operator swaps
   # (`Mutare.Ecto.Host.catalog/3`) rather than being delivered as a whole-`from` rewrite.
-  defp aggregate_swaps(rebuild, source, clauses) do
-    for {pair, index} <- Enum.with_index(clauses),
-        Pair.key(pair) in @aggregate_keys,
-        {family, swapped} <- Aggregate.swaps(Pair.value(pair)) do
-      {family, replace_clause(rebuild, source, clauses, index, Pair.put_value(pair, swapped))}
+  defp aggregate_swaps(call, source, %KeywordList{entries: entries} = clauses) do
+    for {%Entry{key: key, value: value}, index} <- Enum.with_index(entries),
+        key in @aggregate_keys,
+        {family, swapped} <- Aggregate.swaps(value) do
+      {family, rebuild_from(call, source, KeywordList.replace_value(clauses, index, swapped))}
     end
   end
 
   # Flip each `order_by` clause's directions, reusing the shared ordering catalog — one mutant
   # per axis per direction key, tagged with its family (`:ordering` direction / `:ordering_nulls`
   # placement; see `Mutare.Ecto.Ordering`).
-  defp order_flips(rebuild, source, clauses) do
-    for {pair, index} <- Enum.with_index(clauses),
-        Pair.key(pair) == :order_by,
-        {family, flipped} <- Ordering.flips(Pair.value(pair)) do
-      {family, replace_clause(rebuild, source, clauses, index, Pair.put_value(pair, flipped))}
+  defp order_flips(call, source, %KeywordList{entries: entries} = clauses) do
+    for {%Entry{key: :order_by, value: value}, index} <- Enum.with_index(entries),
+        {family, flipped} <- Ordering.flips(value) do
+      {family, rebuild_from(call, source, KeywordList.replace_value(clauses, index, flipped))}
     end
   end
 
   # Rebuild the `from` with the chosen clause replaced/removed via the node's own `rebuild`, so the
   # mutant keeps the source's written form (bare/qualified/aliased) — a minimal, shape-correct diff.
-  defp replace_clause(rebuild, source, clauses, index, new_pair) do
-    rebuild.(:from, [source, List.replace_at(clauses, index, new_pair)])
-  end
-
-  defp drop_clause(rebuild, source, clauses, index) do
-    rebuild.(:from, [source, List.delete_at(clauses, index)])
-  end
+  defp rebuild_from(call, source, clauses), do: QueryCall.rebuild(call, [source, clauses])
 end

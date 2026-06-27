@@ -38,7 +38,8 @@ defmodule Mutare.Ecto.RepoWrite do
   `Mutare.Transform.Calls`, so it is pipe-position-agnostic.
   """
 
-  alias Mutare.Ecto.{AST, Pair, RepoCall}
+  alias Mutare.Ecto.{AST, RepoCall}
+  alias Mutare.Ecto.AST.KeywordList
 
   use Mutare.Ecto.SubMutator
 
@@ -124,14 +125,20 @@ defmodule Mutare.Ecto.RepoWrite do
   # reading the pair's value once. A non-`:on_conflict` pair or an unswappable value yields `nil`
   # (skipped via the `else`, never mistaken for a result), so a list with no such pair returns `nil`.
   defp swap_on_conflict(list) when is_list(list) do
-    Enum.find_value(Enum.with_index(list), fn {pair, index} ->
-      with :on_conflict <- Pair.key(pair),
-           to when not is_nil(to) <- @on_conflict_swaps[AST.atom_value(Pair.value(pair))] do
-        List.replace_at(list, index, Pair.put_value(pair, AST.atom_literal(to)))
-      else
-        _ -> nil
-      end
-    end)
+    case KeywordList.parse(list) do
+      %KeywordList{entries: entries} = options ->
+        Enum.find_value(Enum.with_index(entries), fn {entry, index} ->
+          with :on_conflict <- entry.key,
+               to when not is_nil(to) <- @on_conflict_swaps[AST.atom_value(entry.value)] do
+            KeywordList.replace_value(options, index, AST.atom_literal(to))
+          else
+            _ -> nil
+          end
+        end)
+
+      nil ->
+        nil
+    end
   end
 
   defp swap_on_conflict(_other), do: nil

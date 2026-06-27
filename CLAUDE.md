@@ -113,7 +113,8 @@ The surface divides by **how a mutation is delivered**, not by what it mutates:
 | `host/catalog.ex` | The enabled, noted logical mutants for one hosted condition (Fragment + Aggregate + binding-reorder) |
 | `host/target.ex` | The `dynamic`-wrap + `^`-pin + splice transforms consumed by core |
 | `fragment.ex` | The **SQL-semantics catalog** for `where`/`having` conditions (Comparison, Connective, NullPredicate, Membership, FragmentLiteral, binding-reorder) |
-| `binding.ex` | Shared binding-AST vocabulary (`variable?`/`ellipsis?`/`entry?`/`unwrap_list`) used by the host and `binding_reorder.ex` |
+| `ast/query_call.ex` / `ast/binding_list.ex` / `ast/keyword_list.ex` | Normalized query-call, binding-list, and keyword/clause-list values; preserve written form while centralizing validation and reconstruction |
+| `binding.ex` | Primitive binding-entry vocabulary (`variable?`/`ellipsis?`/`entry?`) used by the normalized binding list |
 | `binding_reorder.ex` | Positional binding-reorder (`[a, b]`→`[b, a]`) for the **other** binding-list macros (`select`/`order_by`/`join`/…), delivered in-place; `where`/`having` get theirs via the host. Named bindings are never moved |
 | `query.ex` | Whole-`from` rewrites (clause drop, order flip, bound, join-type, `select`/`order_by` aggregate) |
 | `clause.ex` | Standalone/pipe cousins of `query.ex` (`order_by`/`limit`/`offset`/`select`) |
@@ -124,7 +125,7 @@ The surface divides by **how a mutation is delivered**, not by what it mutates:
 | `stage_drop.ex` | Shared pipe-aware stage-drop delivery for `clause_drop.ex` and `changeset.ex` |
 | `changeset.ex` | Changeset pipeline drops (`:validation_drop`, `:hook_drop`) |
 | `config.ex` | `families:`/`dialects:`/`repo:` reading + validation; equivalence-sensitive set + note |
-| `ast.ex` | Small Sourceror AST helpers (literal wrapping, clean-meta emission, query-macro-call normalization, module keys) |
+| `ast.ex` | Small Sourceror AST helpers (literal wrapping, clean-meta emission, module keys) |
 
 ### Families and configuration
 

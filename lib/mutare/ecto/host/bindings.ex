@@ -5,6 +5,8 @@ defmodule Mutare.Ecto.Host.Bindings do
   # placement.
 
   alias Mutare.Ecto.{AST, Binding}
+  alias Mutare.Ecto.AST.{BindingList, KeywordList}
+  alias Mutare.Ecto.AST.KeywordList.Entry
 
   @join_keys ~w(
     join inner_join left_join right_join full_join cross_join
@@ -12,8 +14,8 @@ defmodule Mutare.Ecto.Host.Bindings do
   )a
 
   @doc "The dynamic binding list established by a `from` source and its join clauses."
-  @spec from(Macro.t(), [Macro.t()]) :: [Macro.t()]
-  def from(source, clauses) do
+  @spec from(Macro.t(), KeywordList.t()) :: [Macro.t()]
+  def from(source, %KeywordList{} = clauses) do
     {source_decls, composed?} =
       case source do
         # `x in <var>` composes an *external* query: the source rebinds its leading bindings, but the
@@ -35,8 +37,8 @@ defmodule Mutare.Ecto.Host.Bindings do
   @doc "The dynamic binding list visible to a standalone `join` on-condition."
   @spec join([Macro.t()]) :: [Macro.t()]
   def join(args) do
-    with index when not is_nil(index) <- Enum.find_index(args, &list?/1),
-         binding_list = declarations(Enum.at(args, index)),
+    with {index, %BindingList{} = list} <- find(args),
+         binding_list = declarations(list),
          {:in, _, [lhs, _source]} <- Enum.find(Enum.drop(args, index + 1), &join_expression?/1),
          [_ | _] = join_declarations <- declarations(lhs) do
       # A standalone `join` always composes an external query, so the new binding anchors to the tail.
@@ -50,7 +52,7 @@ defmodule Mutare.Ecto.Host.Bindings do
   @spec condition_index([Macro.t()]) :: non_neg_integer() | nil
   def condition_index(args) do
     case locate(args) do
-      {_binding_index, condition_index} -> condition_index
+      {_binding_index, _list, condition_index} -> condition_index
       nil -> nil
     end
   end
@@ -63,9 +65,8 @@ defmodule Mutare.Ecto.Host.Bindings do
   @spec hosted_condition([Macro.t()]) :: {[Macro.t()], Macro.t(), non_neg_integer()} | nil
   def hosted_condition(args) do
     case locate(args) do
-      {binding_index, condition_index} ->
-        {declarations(Enum.at(args, binding_index)), Enum.at(args, condition_index),
-         condition_index}
+      {_binding_index, binding_list, condition_index} ->
+        {declarations(binding_list), Enum.at(args, condition_index), condition_index}
 
       nil ->
         nil
@@ -77,21 +78,23 @@ defmodule Mutare.Ecto.Host.Bindings do
   # after the binding list — both `condition_index/1` (routing) and `hosted_condition/1` (the host)
   # derive from it, so the offset lives here, not in callers.
   defp locate(args) do
-    with binding_index when not is_nil(binding_index) <- Enum.find_index(args, &list?/1),
+    with {binding_index, binding_list} <- find(args),
          condition_index = binding_index + 1,
          true <- condition_index < length(args) do
-      {binding_index, condition_index}
+      {binding_index, binding_list, condition_index}
     else
       _ -> nil
     end
   end
 
   @doc "Normalize a lone binding or binding list for a synthesized `dynamic/2`."
-  @spec declarations(Macro.t()) :: [Macro.t()]
+  @spec declarations(Macro.t() | BindingList.t()) :: [Macro.t()]
+  def declarations(%BindingList{entries: entries}), do: Enum.flat_map(entries, &declaration/1)
+
   def declarations(node) do
-    case Binding.unwrap_list(node) do
+    case BindingList.parse(node) do
+      %BindingList{} = list -> declarations(list)
       nil -> declaration(node)
-      list -> Enum.flat_map(list, &declaration/1)
     end
   end
 
@@ -100,16 +103,15 @@ defmodule Mutare.Ecto.Host.Bindings do
   def positional_names(bindings),
     do: for(binding <- bindings, Binding.variable?(binding), do: Binding.variable_name(binding))
 
-  @doc "Whether a keyword pair is a join's `on:` option — the hosted condition of a `join`."
-  @spec on_pair?(Macro.t()) :: boolean()
-  def on_pair?({key, _value}), do: AST.atom_value(key) == :on
-  def on_pair?(_node), do: false
-
-  defp list?(node) do
-    case Binding.unwrap_list(node) do
-      [_ | _] = list -> Enum.all?(list, &Binding.entry?/1)
-      _ -> false
-    end
+  defp find(args) do
+    args
+    |> Enum.with_index()
+    |> Enum.find_value(fn {arg, index} ->
+      case BindingList.parse(arg) do
+        %BindingList{} = list -> {index, list}
+        nil -> nil
+      end
+    end)
   end
 
   defp declaration({name, _meta, ctx} = var) when is_atom(name) and is_atom(ctx),
@@ -127,9 +129,9 @@ defmodule Mutare.Ecto.Host.Bindings do
   defp join_expression?({:in, _, [_lhs, _source]}), do: true
   defp join_expression?(_node), do: false
 
-  defp join_bindings(clauses) do
-    for {key, {:in, _, [lhs, _src]}} <- clauses,
-        AST.atom_value(key) in @join_keys,
+  defp join_bindings(%KeywordList{entries: entries}) do
+    for %Entry{key: key, value: {:in, _, [lhs, _src]}} <- entries,
+        key in @join_keys,
         declaration <- declarations(lhs),
         do: declaration
   end

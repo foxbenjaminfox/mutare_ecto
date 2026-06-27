@@ -6,36 +6,7 @@ defmodule Mutare.Ecto.AST do
   # and emitting must use **clean meta** (no `:token`), or the renderer re-emits the original
   # text even after the value changed (a silent equivalent no-op; see Mutare's NOTES).
 
-  alias Mutare.Transform.Calls
-
   @query_module_key Ecto.Query |> Module.split() |> Enum.map(&String.to_atom/1)
-
-  @doc """
-  Normalize a query-macro call node to `{name, visible_args, rebuild}`, transparent to the form
-  the source wrote — **bare/imported** (`where(q, …)`), **qualified** (`Ecto.Query.where(q, …)`),
-  and **aliased** (`Q.where(q, …)`). A classifier/mutator that guards on a bare atom head silently
-  misses the qualified and aliased forms (core still routes them, so an unrecognized DSL fragment is
-  then mutated by core's families / poisoned by a spliced selector); matching the normalized `name`
-  instead covers all three.
-
-  Resolution reads the `{module_key, name}` identity `Mutare.Transform.Resolve` stamps on a
-  known-macro call (`Mutare.Transform.Calls.resolved_macro_call/1`) and requires that module to be
-  `Ecto.Query`. An unstamped bare call is deliberately rejected: accepting it would make a local
-  user function named `select`/`limit`/`from` look like Ecto's macro. `nil` when the node is not a
-  resolved `Ecto.Query` macro call.
-
-  `rebuild.(name, new_args)` re-emits the call in the source's **written** form (bare stays bare,
-  qualified keeps its `Ecto.Query.`, aliased keeps its `Q.`), so a host splice or whole-node rewrite
-  stays a minimal, shape-correct diff.
-  """
-  @spec query_macro_call(Macro.t()) ::
-          {atom(), [Macro.t()], (atom(), [Macro.t()] -> Macro.t())} | nil
-  def query_macro_call(node) do
-    case Calls.resolved_macro_call(node) do
-      {@query_module_key, name, args, rebuild} -> {name, args, rebuild}
-      _other -> nil
-    end
-  end
 
   @doc """
   The resolved-call/macro module key `Mutare.Transform.Calls` stamps on an `Ecto.Query` call

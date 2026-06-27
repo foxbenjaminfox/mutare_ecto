@@ -19,6 +19,7 @@ defmodule Mutare.Ecto.Dispatcher do
   }
 
   alias Mutare.Transform.Calls
+  alias Mutare.Ecto.AST.QueryCall
 
   @query_key AST.query_module_key()
   @changeset_key AST.module_key(Ecto.Changeset)
@@ -28,19 +29,22 @@ defmodule Mutare.Ecto.Dispatcher do
   @doc "The tagged mutations applicable to one AST node."
   @spec mutations(Macro.t(), map()) :: [{atom(), Macro.t()}]
   def mutations(node, context) do
-    case AST.query_macro_call(node) do
-      {name, _args, _rebuild} -> query_macro_mutations(name, node, context)
+    case QueryCall.parse(node) do
+      %QueryCall{name: name} = call -> query_macro_mutations(name, call, context)
       nil -> call_mutations(Calls.resolved_call(node), node, context)
     end
   end
 
-  defp query_macro_mutations(:from, node, context), do: Query.mutations(node, context)
+  defp query_macro_mutations(:from, call, context), do: Query.mutations(call, context)
 
-  defp query_macro_mutations(name, node, context) when name in @condition_macros,
-    do: ClauseDrop.mutations(node, context)
+  defp query_macro_mutations(name, %QueryCall{node: node}, context)
+       when name in @condition_macros,
+       do: ClauseDrop.mutations(node, context)
 
-  defp query_macro_mutations(name, node, context) when name in @clause_macros do
-    invoke([Clause, BindingReorder, ClauseDrop], node, context)
+  defp query_macro_mutations(name, %QueryCall{node: node} = call, context)
+       when name in @clause_macros do
+    Clause.mutations(call, context) ++
+      BindingReorder.mutations(call, context) ++ ClauseDrop.mutations(node, context)
   end
 
   defp query_macro_mutations(_name, _node, _context), do: []
