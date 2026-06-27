@@ -29,28 +29,13 @@ defmodule Mutare.Ecto.Host do
   shape detection) is shared by both and lives here.
   """
 
-  alias Mutare.Ecto.{Aggregate, AST, Binding, Config, Fragment}
+  alias Mutare.Ecto.{Aggregate, AST, Binding, Config, Fragment, Surface}
 
   # The query macros whose condition argument is hosted (the `where`/`having` family). The same set
   # doubles as the `from`-clause condition *keys* (`where:`/`having:`/…) — they are one and the same.
   # Their binding list precedes the condition both directly (`where(q, [p], cond)`) and piped
   # (`q |> where([p], cond)`). Public via `condition_macros/0` so `Mutare.Ecto.Host.Routing` shares it.
-  @condition_macros ~w(where or_where having or_having)a
-
-  # The remaining composable query macros — the standalone/pipe clause builders. They neither host
-  # a fragment nor carry shorthand data, but they *thread a query* (the first argument, or the
-  # pipe's left side), so they route through the `:routing` classifier for one reason: to mark that
-  # threaded query an **`:expression`** (mutate it normally) instead of `:skip`. Routing them via
-  # the classifier (rather than a static `:skip`) is also what lets core mutate the **piped left
-  # side** — a static `:skip` macro stamps its piped value `:skip`, silently suppressing every
-  # mutation of the upstream query (`from(…) |> limit(10)` would lose the `from`'s mutations). Their
-  # own data positions (binding list, ordering, bound, selector) stay `:skip` — the plugin owns
-  # those via `mutate/2` (`Mutare.Ecto.Clause`) and `Mutare.Ecto.ClauseDrop` (stage removal).
-  @plain_clause_macros ~w(
-    select select_merge order_by prepend_order_by group_by distinct
-    limit offset with_ties join preload lock update with_cte
-    windows union union_all except except_all intersect intersect_all
-  )a
+  @condition_macros Surface.condition_macros()
 
   # `from` keyword keys that introduce an extra positional binding (`join: p in assoc(u, :x)`),
   # so the woven `dynamic` re-declares the full binding list the query establishes.
@@ -65,7 +50,7 @@ defmodule Mutare.Ecto.Host do
 
   @doc "The plain composable clause macros (`limit`/`order_by`/…), registered `:routing` by the plugin."
   @spec clause_macros() :: [atom()]
-  def clause_macros, do: @plain_clause_macros
+  defdelegate clause_macros, to: Surface
 
   @doc """
   The selector-host targets for a query macro node — one per binding-referencing `where`/`having`

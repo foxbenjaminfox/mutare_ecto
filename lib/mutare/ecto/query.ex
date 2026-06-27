@@ -33,15 +33,15 @@ defmodule Mutare.Ecto.Query do
   `{:__block__, [format: :keyword], [atom]}`). `from/1` (`from(Post)`, no clauses) yields nothing.
   """
 
-  alias Mutare.Ecto.{Aggregate, AST, Config, Ordering}
+  alias Mutare.Ecto.{Aggregate, AST, Config, Ordering, Surface}
 
   @behaviour Mutare.Ecto.SubMutator
 
   @type family :: atom()
 
-  @droppable ~w(where having or_where or_having)a
-  @bound_keys ~w(limit offset)a
-  @aggregate_keys ~w(select select_merge order_by)a
+  @droppable Surface.condition_macros()
+  @bound_keys Surface.bound_macros()
+  @aggregate_keys Surface.aggregate_query_keys()
 
   # JoinType: each join-clause key's kind swaps. `join` is the keyword-form default inner join.
   # The portable pair (`INNER`↔`LEFT`) is always offered; the non-portable pairs are added only

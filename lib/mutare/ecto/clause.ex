@@ -28,13 +28,13 @@ defmodule Mutare.Ecto.Clause do
   pipe-mode bookkeeping is required.
   """
 
-  alias Mutare.Ecto.{Aggregate, AST, Ordering}
+  alias Mutare.Ecto.{Aggregate, AST, Ordering, Surface}
 
   @behaviour Mutare.Ecto.SubMutator
 
-  @ordering_macros ~w(order_by prepend_order_by)a
-  @bound_macros ~w(limit offset)a
-  @select_macros ~w(select select_merge)a
+  @ordering_macros Surface.ordering_macros()
+  @bound_macros Surface.bound_macros()
+  @aggregate_macros Surface.aggregate_macros()
 
   @doc "Standalone/pipe clause-macro mutations for `node` as `{family, node}` pairs, or `[]`."
   @spec mutations(Macro.t(), Mutare.Mutator.context()) :: [{atom(), Macro.t()}]
@@ -51,7 +51,7 @@ defmodule Mutare.Ecto.Clause do
       {macro, args, rebuild} when macro in @bound_macros and args != [] ->
         bound_mutations(macro, args, rebuild)
 
-      {macro, args, rebuild} when macro in @select_macros and args != [] ->
+      {macro, args, rebuild} when macro in @aggregate_macros and args != [] ->
         select_mutations(macro, args, rebuild)
 
       _ ->

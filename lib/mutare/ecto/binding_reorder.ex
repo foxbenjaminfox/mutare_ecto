@@ -2,7 +2,7 @@ defmodule Mutare.Ecto.BindingReorder do
   @moduledoc """
   Positional **binding-reorder** mutants for the standalone/pipe query macros that take a binding
   pattern list — `select`, `select_merge`, `order_by`, `group_by`, `distinct`, `join`, `preload`,
-  `windows`, … (the `Mutare.Ecto.Host.clause_macros/0` set).
+  `windows`, … (the `Mutare.Ecto.Surface.clause_macros/0` set).
 
   A binding list maps names to the query's bindings **by position**: `[a, b]` binds `a`→1st,
   `b`→2nd. Transposing two positional entries (`[a, b]` → `[b, a]`) therefore reaches each
@@ -22,7 +22,7 @@ defmodule Mutare.Ecto.BindingReorder do
   exchange and avoids manufacturing an equivalent mutant when a declared binding is unused.
   """
 
-  alias Mutare.Ecto.{AST, Binding, Host}
+  alias Mutare.Ecto.{AST, Binding, Surface}
 
   @behaviour Mutare.Ecto.SubMutator
 
@@ -35,7 +35,7 @@ defmodule Mutare.Ecto.BindingReorder do
   def mutations(node, _context) do
     case AST.query_macro_call(node) do
       {macro, args, rebuild} ->
-        if macro in Host.clause_macros(), do: reorders(macro, args, rebuild), else: []
+        if macro in Surface.clause_macros(), do: reorders(macro, args, rebuild), else: []
 
       nil ->
         []

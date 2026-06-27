@@ -74,8 +74,8 @@ defmodule Mutare.Ecto do
       but the **threaded query** (the first argument / the piped left side) is routed `:expression`
       so the upstream query is mutated through the stage (a static `:skip` would suppress it). Their
       own `mutate/2` mutations still fire — direction/bound/aggregate (`Mutare.Ecto.Clause`) and
-      **stage removal** (`q |> where(…)` → `q`, `Mutare.Ecto.ClauseDrop`). Only `dynamic` stays
-      `:skip` (an in-fragment helper, not a query-threading stage).
+      **stage removal** (`q |> where(…)` → `q`, `Mutare.Ecto.ClauseDrop`). `dynamic` and the
+      `is_named_binding` guard helper stay `:skip` because neither is a query-threading stage.
 
   Resolution of these macros relies on Mutare's `use`-expansion (so the
   `use Ecto.Schema`-injected `import Ecto.Schema`, and a `use MyAppWeb, :live_view`-bundled
@@ -95,16 +95,15 @@ defmodule Mutare.Ecto do
     Query,
     QueryTerminal,
     RepoAggregate,
-    RepoWrite
+    RepoWrite,
+    Surface
   }
 
   # Query macros routed through the plugin's **selector host** (`c:Mutare.Mutator.host/2`) — the
   # `from` opener and the standalone/pipe condition macros — via the `:routing` classifier, which
   # decides per call shape whether a position carries a hosted DSL fragment (a binding-referencing
   # `where`/`having` condition) or plain data. See `Mutare.Ecto.Host`.
-  @hosted_macros ~w(from where or_where having or_having)a
-
-  # The plain composable clause macros (`Mutare.Ecto.Host.clause_macros/0`) — `order_by`, `limit`,
+  # The plain composable clause macros (`Mutare.Ecto.Surface.clause_macros/0`) — `order_by`, `limit`,
   # `select`, `join`, … — also route via the `:routing` classifier, for two reasons: (1) it marks
   # the **threaded query** (the first argument / the piped left side) an `:expression`, so core
   # mutates the upstream query through a pipe stage (a static `:skip` would stamp the piped value
@@ -114,10 +113,8 @@ defmodule Mutare.Ecto do
   # `Mutare.Ecto.BindingReorder` (positional binding transpositions), and
   # `Mutare.Ecto.ClauseDrop` (stage removal — `q |> where(…)` → `q`).
   #
-  # Only `dynamic` stays `:skip`: it is not a query-threading pipe stage but an in-fragment helper
-  # (`dynamic([u], expr)` inside a `where`/`select`), so core must descend nothing in it.
-  @skipped_macros ~w(dynamic is_named_binding)a
-
+  # `dynamic` and `is_named_binding` stay `:skip`: neither is a query-threading pipe stage, so core
+  # must not descend into their DSL/guard arguments.
   @impl Mutare.Mutator
   def name, do: :ecto
 
@@ -141,9 +138,9 @@ defmodule Mutare.Ecto do
       {Ecto.Schema, :embedded_schema, :skip}
     ]
 
-    hosted = for macro <- @hosted_macros, do: {Ecto.Query, macro, :any, :routing}
-    clauses = for macro <- Host.clause_macros(), do: {Ecto.Query, macro, :any, :routing}
-    skipped = for macro <- @skipped_macros, do: {Ecto.Query, macro, :any, :skip}
+    hosted = for macro <- Surface.hosted_macros(), do: {Ecto.Query, macro, :any, :routing}
+    clauses = for macro <- Surface.clause_macros(), do: {Ecto.Query, macro, :any, :routing}
+    skipped = for macro <- Surface.skipped_macros(), do: {Ecto.Query, macro, :any, :skip}
 
     # mutare:ignore[operand_swap] concat order is irrelevant — entries registered as a set
     schema ++ hosted ++ clauses ++ skipped

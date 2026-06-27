@@ -40,25 +40,13 @@ defmodule Mutare.Ecto.ClauseDrop do
   the mutant is exercised (killing it), never a compile error of the single metamutant build.
   """
 
-  alias Mutare.Ecto.{AST, StageDrop}
+  alias Mutare.Ecto.{AST, StageDrop, Surface}
 
   @behaviour Mutare.Ecto.SubMutator
 
   # The resolved-call module key `Mutare.Transform.Calls` returns for an `Ecto.Query` call, derived
   # from the canonical `AST.module_key/1` rather than hardcoding its `[:Ecto, :Query]` split form.
   @query_key AST.module_key(Ecto.Query)
-
-  # `where`/`having` removal → `:filter_drop` (parity with the `from`-keyword drop in
-  # `Mutare.Ecto.Query`). Same semantic mutation, same family across both syntaxes.
-  @filter ~w(where or_where having or_having)a
-  # `limit`/`offset` removal → `:bound` (the family that also owns their `n`→`n±1` bumps).
-  @bound ~w(limit offset)a
-  # Every other composable clause builder → `:clause_drop`.
-  @other ~w(
-    order_by prepend_order_by group_by distinct select select_merge
-    join preload lock update with_ties with_cte windows
-    union union_all except except_all intersect intersect_all
-  )a
 
   @doc """
   Stage-drop mutations for an `Ecto.Query` clause macro as `{family, node}` pairs, or `[]`.
@@ -67,13 +55,8 @@ defmodule Mutare.Ecto.ClauseDrop do
   @spec mutations(Macro.t(), Mutare.Mutator.context()) :: [{atom(), Macro.t()}]
   @impl Mutare.Ecto.SubMutator
   def mutations(node, %{pipe_mode: pipe_mode}),
-    do: StageDrop.mutations(node, @query_key, &family/1, pipe_mode)
+    do: StageDrop.mutations(node, @query_key, &Surface.drop_family/1, pipe_mode)
 
   # mutare:ignore[clause_drop] equivalent — the first clause matches every node given core's `%{pipe_mode:}` context; this fallback only guards a context without that key, which core never sends
   def mutations(_node, _context), do: []
-
-  defp family(fun) when fun in @filter, do: :filter_drop
-  defp family(fun) when fun in @bound, do: :bound
-  defp family(fun) when fun in @other, do: :clause_drop
-  defp family(_fun), do: nil
 end

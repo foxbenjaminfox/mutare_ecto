@@ -28,15 +28,15 @@ defmodule Mutare.Ecto.Host.Routing do
   This relies on core's per-pair routing + `:pinned` extensions; see `c:Mutare.Mutator.macro_routing/1`.
   """
 
-  alias Mutare.Ecto.{AST, Binding, Host}
+  alias Mutare.Ecto.{AST, Binding, Host, Surface}
   alias Mutare.Transform.Calls
 
   # The where/having family and the plain composable clause macros, as compile-time guard constants.
-  # The canonical lists live on `Mutare.Ecto.Host` (`condition_macros/0`/`clause_macros/0`); the
+  # The canonical lists live on `Mutare.Ecto.Surface`; the
   # condition macros double as the `from`-clause condition keys (`where`/`or_where`/`having`/…).
-  @condition_macros Host.condition_macros()
-  @plain_clause_macros Host.clause_macros()
-  @query_builders [:from | @condition_macros ++ @plain_clause_macros]
+  @condition_macros Surface.condition_macros()
+  @plain_clause_macros Surface.clause_macros()
+  @query_builders Surface.query_builders()
   @query_key AST.module_key(Ecto.Query)
 
   @doc """
