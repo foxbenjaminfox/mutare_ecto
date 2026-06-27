@@ -90,7 +90,7 @@ defmodule Mutare.Ecto.Query do
       order_flips(rebuild, source, clauses),
       tag(:bound, bound_bumps(rebuild, source, clauses)),
       tag(:join_type, join_swaps(rebuild, source, clauses, config)),
-      tag(:aggregate, aggregate_swaps(rebuild, source, clauses))
+      aggregate_swaps(rebuild, source, clauses)
     ])
   end
 
@@ -159,8 +159,9 @@ defmodule Mutare.Ecto.Query do
   defp aggregate_swaps(rebuild, source, clauses) do
     flat_map_clauses(clauses, fn pair, index ->
       if clause_key(pair) in @aggregate_keys do
-        for swapped <- Aggregate.swaps(clause_value(pair)),
-            do: replace_clause(rebuild, source, clauses, index, with_value(pair, swapped))
+        for {family, swapped} <- Aggregate.swaps(clause_value(pair)),
+            do:
+              {family, replace_clause(rebuild, source, clauses, index, with_value(pair, swapped))}
       else
         []
       end

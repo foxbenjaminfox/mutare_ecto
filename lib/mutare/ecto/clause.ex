@@ -62,16 +62,9 @@ defmodule Mutare.Ecto.Clause do
   defp order_by_mutations(macro, args, rebuild) do
     {init, [ordering]} = Enum.split(args, -1)
 
-    flips =
-      for {family, flipped} <- Ordering.flips(ordering),
-          do: {family, rebuild.(macro, init ++ [flipped])}
-
-    aggregates =
-      for swapped <- Aggregate.swaps(ordering),
-          do: {:aggregate, rebuild.(macro, init ++ [swapped])}
-
     # mutare:ignore[operand_swap] direction flips and aggregate swaps are consumed as a set — order is irrelevant
-    flips ++ aggregates
+    for {family, mutated} <- Ordering.flips(ordering) ++ Aggregate.swaps(ordering),
+        do: {family, rebuild.(macro, init ++ [mutated])}
   end
 
   defp bound_mutations(macro, args, rebuild) do
@@ -89,6 +82,8 @@ defmodule Mutare.Ecto.Clause do
 
   defp select_mutations(macro, args, rebuild) do
     {init, [expr]} = Enum.split(args, -1)
-    for swapped <- Aggregate.swaps(expr), do: {:aggregate, rebuild.(macro, init ++ [swapped])}
+
+    for {family, swapped} <- Aggregate.swaps(expr),
+        do: {family, rebuild.(macro, init ++ [swapped])}
   end
 end

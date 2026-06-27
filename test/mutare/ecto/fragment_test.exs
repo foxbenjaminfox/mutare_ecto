@@ -32,7 +32,7 @@ defmodule Mutare.Ecto.FragmentTest do
     code
     |> Sourceror.parse_string!()
     |> Fragment.binding_reorders(names)
-    |> Enum.map(&Sourceror.to_string/1)
+    |> Enum.map(fn {:binding_reorder, node} -> Sourceror.to_string(node) end)
     |> MapSet.new()
   end
 
@@ -184,6 +184,11 @@ defmodule Mutare.Ecto.FragmentTest do
 
     test "a single-binding query has nothing to reorder" do
       assert reorders("a.x == a.y", [:a]) == MapSet.new([])
+    end
+
+    test "each reorder is self-tagged with the :binding_reorder family" do
+      tagged = "a.x == b.y" |> Sourceror.parse_string!() |> Fragment.binding_reorders([:a, :b])
+      assert [{:binding_reorder, _node}] = tagged
     end
   end
 end

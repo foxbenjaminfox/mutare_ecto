@@ -9,11 +9,8 @@ defmodule Mutare.Ecto.Host.Catalog do
   @doc "The configured logical mutants for a condition and its dynamic binding declarations."
   @spec mutants(Macro.t(), [Macro.t()], Config.t()) :: [Mutare.Mutator.mutation()]
   def mutants(condition, bindings, config) do
-    reorders =
-      for node <- Fragment.binding_reorders(condition, Bindings.positional_names(bindings)),
-          do: {:binding_reorder, node}
-
-    aggregates = for node <- Aggregate.swaps(condition), do: {:aggregate, node}
+    reorders = Fragment.binding_reorders(condition, Bindings.positional_names(bindings))
+    aggregates = Aggregate.swaps(condition)
 
     for {family, node} <- Fragment.mutants(condition, config) ++ reorders ++ aggregates,
         Config.family_enabled?(config, family),

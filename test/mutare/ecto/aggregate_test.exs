@@ -12,7 +12,7 @@ defmodule Mutare.Ecto.AggregateTest do
     code
     |> Sourceror.parse_string!()
     |> Aggregate.swaps()
-    |> Enum.map(&Sourceror.to_string/1)
+    |> Enum.map(fn {:aggregate, node} -> Sourceror.to_string(node) end)
     |> MapSet.new()
   end
 
@@ -21,6 +21,11 @@ defmodule Mutare.Ecto.AggregateTest do
     assert swaps("avg(u.amount)") == MapSet.new(["sum(u.amount)"])
     assert swaps("min(u.x)") == MapSet.new(["max(u.x)"])
     assert swaps("max(u.x)") == MapSet.new(["min(u.x)"])
+  end
+
+  test "each swap is self-tagged with the :aggregate family" do
+    tagged = "sum(u.amount)" |> Sourceror.parse_string!() |> Aggregate.swaps()
+    assert [{:aggregate, _node}] = tagged
   end
 
   test "count is left alone (arity/meaning contract)" do

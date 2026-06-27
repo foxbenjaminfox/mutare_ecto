@@ -18,9 +18,14 @@ defmodule Mutare.Ecto.Aggregate do
   @agg_swaps %{sum: :avg, avg: :sum, min: :max, max: :min}
   @agg_funcs Map.keys(@agg_swaps)
 
-  @doc "Every single-point aggregate swap of select-expression `expr`, or `[]`."
-  @spec swaps(Macro.t()) :: [Macro.t()]
-  def swaps(expr), do: walk(expr)
+  @doc """
+  Every single-point aggregate swap of select-expression `expr` as `{:aggregate, node}` pairs, or
+  `[]` — the same self-tagging `{family, node}` contract the other shared catalogs
+  (`Mutare.Ecto.Fragment.mutants/2`, `Mutare.Ecto.Ordering.flips/1`) use, so a caller threads the
+  family uniformly when it rebuilds the surrounding clause.
+  """
+  @spec swaps(Macro.t()) :: [{:aggregate, Macro.t()}]
+  def swaps(expr), do: for(node <- walk(expr), do: {:aggregate, node})
 
   @doc """
   The SQL-meaningful swap of a single aggregate function name (`:sum`↔`:avg`, `:min`↔`:max`), or

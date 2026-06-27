@@ -70,8 +70,11 @@ defmodule Mutare.Ecto.Fragment do
   emits the swapped *body* and rides the host. Requiring both bindings to appear keeps the mutant
   a genuine reference swap (and avoids reaching for a column on the wrong schema). The host calls
   this with the binding list it already extracted; for a single-binding query it returns `[]`.
+
+  Returned as `{:binding_reorder, node}` pairs — the self-tagging `{family, node}` contract shared
+  by `mutants/2` above and the other catalogs (`Mutare.Ecto.Ordering`, `Mutare.Ecto.Aggregate`).
   """
-  @spec binding_reorders(Macro.t(), [atom()]) :: [Macro.t()]
+  @spec binding_reorders(Macro.t(), [atom()]) :: [{:binding_reorder, Macro.t()}]
   # mutare:ignore[guard_drop] equivalent — defensive contract guard; the host always passes the binding list it extracted, and the body's Enum.filter/2 would raise on a non-list anyway, so no reachable input distinguishes the guarded and unguarded clause
   def binding_reorders(condition, binding_names) when is_list(binding_names) do
     present = Enum.filter(binding_names, &AST.references_var?(condition, &1))
@@ -79,7 +82,7 @@ defmodule Mutare.Ecto.Fragment do
     for {a, i} <- Enum.with_index(present),
         {b, j} <- Enum.with_index(present),
         i < j,
-        do: swap_vars(condition, a, b)
+        do: {:binding_reorder, swap_vars(condition, a, b)}
   end
 
   # Swap every variable node named `a` with `b` and vice versa (a transposition of the two
