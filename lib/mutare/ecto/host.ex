@@ -8,7 +8,7 @@ defmodule Mutare.Ecto.Host do
   selector splice consumed by Mutare core.
   """
 
-  alias Mutare.Ecto.{AST, Surface}
+  alias Mutare.Ecto.{AST, Config, Surface}
   alias Mutare.Ecto.Host.{Bindings, Catalog, Target}
 
   @condition_macros Surface.condition_macros()
@@ -24,12 +24,14 @@ defmodule Mutare.Ecto.Host do
   @doc "The selector-host targets for an Ecto.Query macro node."
   @spec host(Macro.t(), Mutare.Mutator.context()) :: [Target.t()]
   def host(node, context) do
+    config = Config.from_context(context)
+
     case AST.query_macro_call(node) do
       {:from, [source, clauses], _rebuild} when is_list(clauses) ->
-        from_targets(source, clauses, opts(context))
+        from_targets(source, clauses, config)
 
       {macro, args, _rebuild} when macro in @condition_macros and is_list(args) ->
-        condition_target(args, opts(context))
+        condition_target(args, config)
 
       _ ->
         []
@@ -67,7 +69,4 @@ defmodule Mutare.Ecto.Host do
       _ -> []
     end
   end
-
-  defp opts(%{opts: opts}) when is_list(opts), do: opts
-  defp opts(_context), do: []
 end

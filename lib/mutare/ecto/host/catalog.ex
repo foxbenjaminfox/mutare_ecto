@@ -7,16 +7,16 @@ defmodule Mutare.Ecto.Host.Catalog do
   alias Mutare.Ecto.Host.Bindings
 
   @doc "The configured logical mutants for a condition and its dynamic binding declarations."
-  @spec mutants(Macro.t(), [Macro.t()], keyword()) :: [Mutare.Mutator.mutation()]
-  def mutants(condition, bindings, opts) do
+  @spec mutants(Macro.t(), [Macro.t()], Config.t()) :: [Mutare.Mutator.mutation()]
+  def mutants(condition, bindings, config) do
     reorders =
       for node <- Fragment.binding_reorders(condition, Bindings.positional_names(bindings)),
           do: {:binding_reorder, node}
 
     aggregates = for node <- Aggregate.swaps(condition), do: {:aggregate, node}
 
-    for {family, node} <- Fragment.mutants(condition, opts) ++ reorders ++ aggregates,
-        Config.family_enabled?(opts, family),
+    for {family, node} <- Fragment.mutants(condition, config) ++ reorders ++ aggregates,
+        Config.family_enabled?(config, family),
         do: Config.noted(family, node)
   end
 end

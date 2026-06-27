@@ -9,6 +9,8 @@ defmodule Mutare.Ecto.Config do
   alias Mutare.Ecto.AST
   alias Mutare.Mutator.Mutation
 
+  @valid_dialects ~w(postgres mysql sqlite)a
+
   # Every SQL family the plugin can emit, the source of truth for `families: :all` and for
   # validating a configured subset. Grouped by the surface they mutate:
   #
@@ -47,6 +49,38 @@ defmodule Mutare.Ecto.Config do
   # report) — honest signal that a survivor may need a fixture to kill, distinct from a test gap.
   @equivalence_note "kill may require NULL/boundary data (SQL three-valued logic)"
 
+  @enforce_keys [:families, :dialects, :repo_key]
+  defstruct [:families, :dialects, :repo_key]
+
+  @type t :: %__MODULE__{
+          families: MapSet.t(atom()),
+          dialects: MapSet.t(atom()),
+          repo_key: [atom()] | atom() | nil
+        }
+
+  @doc "Validate and normalize one plugin option list."
+  @spec parse!(keyword()) :: t()
+  def parse!(opts) when is_list(opts) do
+    unless Keyword.keyword?(opts) do
+      raise ArgumentError, "Mutare.Ecto options must be a keyword list, got: #{inspect(opts)}"
+    end
+
+    %__MODULE__{
+      families: opts |> Keyword.get(:families, :all) |> parse_families!(),
+      dialects: opts |> Keyword.get(:dialects, []) |> parse_dialects!(),
+      repo_key: opts |> Keyword.get(:repo) |> parse_repo!()
+    }
+  end
+
+  def parse!(other),
+    do: raise(ArgumentError, "Mutare.Ecto options must be a keyword list, got: #{inspect(other)}")
+
+  @doc "The normalized config already attached to a callback context, or one parsed from its opts."
+  @spec from_context(map()) :: t()
+  def from_context(%{ecto_config: %__MODULE__{} = config}), do: config
+  def from_context(%{opts: opts}), do: parse!(opts)
+  def from_context(_context), do: parse!([])
+
   @doc "Every family the plugin can emit (the `:all` set)."
   @spec all_families() :: [atom()]
   def all_families, do: @families
@@ -84,18 +118,52 @@ defmodule Mutare.Ecto.Config do
   `:all` (the default) or unset. Raises on an unknown family name, so a typo'd `families:` entry
   fails loudly rather than silently mutating nothing.
   """
-  @spec families(keyword()) :: [atom()]
-  def families(opts) do
-    case Keyword.get(opts, :families, :all) do
-      :all -> @families
-      list when is_list(list) -> validate!(list)
-    end
-  end
+  @spec families(keyword() | t()) :: [atom()]
+  def families(%__MODULE__{families: enabled}),
+    do: Enum.filter(@families, &MapSet.member?(enabled, &1))
 
-  defp validate!(list) do
-    case list -- @families do
+  def families(opts), do: opts |> parse!() |> families()
+
+  @doc "Whether `family` is enabled by `opts`."
+  @spec family_enabled?(keyword() | t(), atom()) :: boolean()
+  def family_enabled?(%__MODULE__{families: families}, family),
+    do: MapSet.member?(families, family)
+
+  def family_enabled?(opts, family), do: opts |> parse!() |> family_enabled?(family)
+
+  @doc """
+  The configured `repo`'s resolved module key (`Mutare.Ecto.AST.module_key/1`), ready to compare
+  against a `Mutare.Transform.Calls.resolved_call/1` module, or `nil` when no `repo:` is set.
+  Shared by the Repo-call families (`Mutare.Ecto.RepoWrite`, `Mutare.Ecto.RepoAggregate`).
+  """
+  @spec repo_key(keyword() | t()) :: [atom()] | atom() | nil
+  def repo_key(%__MODULE__{repo_key: repo_key}), do: repo_key
+  def repo_key(opts), do: opts |> parse!() |> repo_key()
+
+  @doc "The dialects `opts` enables (default `[]` — the portable core only)."
+  @spec dialects(keyword() | t()) :: [atom()]
+  def dialects(%__MODULE__{dialects: enabled}),
+    do: Enum.filter(@valid_dialects, &MapSet.member?(enabled, &1))
+
+  def dialects(opts), do: opts |> parse!() |> dialects()
+
+  @doc """
+  Whether a mutation gated to the dialects in `supported` is enabled by `opts` — true when any
+  configured dialect supports it. With no `dialects:` configured nothing dialect-specific fires,
+  so the portable core is the conservative default.
+  """
+  @spec dialect_enabled?(keyword() | t(), [atom()]) :: boolean()
+  def dialect_enabled?(%__MODULE__{dialects: dialects}, supported),
+    do: Enum.any?(supported, &MapSet.member?(dialects, &1))
+
+  def dialect_enabled?(opts, supported), do: opts |> parse!() |> dialect_enabled?(supported)
+
+  defp parse_families!(:all), do: MapSet.new(@families)
+
+  defp parse_families!(families) when is_list(families) do
+    case families -- @families do
       [] ->
-        list
+        MapSet.new(families)
 
       unknown ->
         raise ArgumentError,
@@ -104,32 +172,31 @@ defmodule Mutare.Ecto.Config do
     end
   end
 
-  @doc "Whether `family` is enabled by `opts`."
-  @spec family_enabled?(keyword(), atom()) :: boolean()
-  def family_enabled?(opts, family), do: family in families(opts)
+  defp parse_families!(other) do
+    raise ArgumentError,
+          "Mutare.Ecto :families must be :all or a list, got: #{inspect(other)}"
+  end
 
-  @doc """
-  The configured `repo`'s resolved module key (`Mutare.Ecto.AST.module_key/1`), ready to compare
-  against a `Mutare.Transform.Calls.resolved_call/1` module, or `nil` when no `repo:` is set.
-  Shared by the Repo-call families (`Mutare.Ecto.RepoWrite`, `Mutare.Ecto.RepoAggregate`).
-  """
-  @spec repo_key(keyword()) :: [atom()] | atom() | nil
-  def repo_key(opts) do
-    case Keyword.get(opts, :repo) do
-      nil -> nil
-      module -> AST.module_key(module)
+  defp parse_dialects!(dialects) when is_list(dialects) do
+    case dialects -- @valid_dialects do
+      [] ->
+        MapSet.new(dialects)
+
+      unknown ->
+        raise ArgumentError,
+              "unknown Mutare.Ecto dialects: #{inspect(unknown)} — valid dialects are " <>
+                inspect(@valid_dialects)
     end
   end
 
-  @doc "The dialects `opts` enables (default `[]` — the portable core only)."
-  @spec dialects(keyword()) :: [atom()]
-  def dialects(opts), do: Keyword.get(opts, :dialects, [])
+  defp parse_dialects!(other) do
+    raise ArgumentError, "Mutare.Ecto :dialects must be a list, got: #{inspect(other)}"
+  end
 
-  @doc """
-  Whether a mutation gated to the dialects in `supported` is enabled by `opts` — true when any
-  configured dialect supports it. With no `dialects:` configured nothing dialect-specific fires,
-  so the portable core is the conservative default.
-  """
-  @spec dialect_enabled?(keyword(), [atom()]) :: boolean()
-  def dialect_enabled?(opts, supported), do: Enum.any?(dialects(opts), &(&1 in supported))
+  defp parse_repo!(nil), do: nil
+  defp parse_repo!(module) when is_atom(module), do: AST.module_key(module)
+
+  defp parse_repo!(other) do
+    raise ArgumentError, "Mutare.Ecto :repo must be a module atom, got: #{inspect(other)}"
+  end
 end

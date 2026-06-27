@@ -26,8 +26,8 @@ defmodule Mutare.Ecto.RepoAggregate do
   @doc "Aggregate-swap mutations for a `Repo.aggregate/3` node as `{:aggregate, node}` pairs, or `[]`."
   @spec mutations(Macro.t(), Mutare.Mutator.context()) :: [{:aggregate, Macro.t()}]
   @impl Mutare.Ecto.SubMutator
-  def mutations(node, %{opts: opts, pipe_mode: pipe_mode}) do
-    with repo when not is_nil(repo) <- Config.repo_key(opts),
+  def mutations(node, %{pipe_mode: pipe_mode} = context) do
+    with repo when not is_nil(repo) <- context |> Config.from_context() |> Config.repo_key(),
          {^repo, :aggregate, args, rebuild} <- Calls.resolved_call(node) do
       for mutated <- swap(args, rebuild, pipe_mode), do: {:aggregate, mutated}
     else

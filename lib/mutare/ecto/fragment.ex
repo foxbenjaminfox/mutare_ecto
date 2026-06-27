@@ -57,7 +57,7 @@ defmodule Mutare.Ecto.Fragment do
   `families:`). `opts` carries `dialects:` — the `like`↔`ilike` swap is emitted only under
   `:postgres`.
   """
-  @spec mutants(Macro.t(), keyword()) :: [{family(), Macro.t()}]
+  @spec mutants(Macro.t(), keyword() | Config.t()) :: [{family(), Macro.t()}]
   def mutants(condition, opts \\ []), do: do_mutants(condition, opts)
 
   @doc """

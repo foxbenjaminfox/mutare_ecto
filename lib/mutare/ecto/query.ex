@@ -70,24 +70,26 @@ defmodule Mutare.Ecto.Query do
   # Normalize the call (`Mutare.Ecto.AST.query_macro_call/1`) so a qualified `Ecto.Query.from(…)` or
   # aliased `Q.from(…)` is rewritten exactly like the bare/imported `from(…)`; `rebuild` re-emits each
   # mutant in the source's written form.
-  def mutations(node, %{opts: opts}) do
+  def mutations(node, context) do
+    config = Config.from_context(context)
+
     case AST.query_macro_call(node) do
       # mutare:ignore[guard_drop] equivalent — a from's clause argument is always a keyword list; a non-list is malformed AST (a `from(S)` with no clauses is a one-element arg list, caught by the fallthrough clause)
       {:from, [source, clauses], rebuild} when is_list(clauses) ->
-        from_mutations(source, clauses, rebuild, opts)
+        from_mutations(source, clauses, rebuild, config)
 
       _ ->
         []
     end
   end
 
-  defp from_mutations(source, clauses, rebuild, opts) do
+  defp from_mutations(source, clauses, rebuild, config) do
     Enum.concat([
       tag(:filter_drop, drops(rebuild, source, clauses, @droppable)),
       tag(:bound, drops(rebuild, source, clauses, @bound_keys)),
       order_flips(rebuild, source, clauses),
       tag(:bound, bound_bumps(rebuild, source, clauses)),
-      tag(:join_type, join_swaps(rebuild, source, clauses, opts)),
+      tag(:join_type, join_swaps(rebuild, source, clauses, config)),
       tag(:aggregate, aggregate_swaps(rebuild, source, clauses))
     ])
   end

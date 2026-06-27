@@ -72,8 +72,8 @@ defmodule Mutare.Ecto.RepoWrite do
   @doc "RepoWrite mutations for `node` as `{family, node}` pairs, or `[]`."
   @spec mutations(Macro.t(), Mutare.Mutator.context()) :: [{atom(), Macro.t()}]
   @impl Mutare.Ecto.SubMutator
-  def mutations(node, %{opts: opts, pipe_mode: pipe_mode}) do
-    with repo when not is_nil(repo) <- Config.repo_key(opts),
+  def mutations(node, %{pipe_mode: pipe_mode} = context) do
+    with repo when not is_nil(repo) <- context |> Config.from_context() |> Config.repo_key(),
          {^repo, fun, args, rebuild} <- Calls.resolved_call(node) do
       # mutare:ignore[operand_swap] family order is irrelevant — mutations are consumed as a set
       persistence(fun, args, pipe_mode) ++ on_conflict(fun, args, rebuild)

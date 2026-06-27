@@ -156,11 +156,28 @@ defmodule Mutare.Ecto.ConfigTest do
     end
 
     test "a families: that is neither :all nor a list is rejected" do
-      # The `is_list` guard routes only a *list* to validate!/1; a bare atom — a user who wrote
-      # `families: :comparison` instead of `[:comparison]` — matches no case clause and fails
-      # loudly, rather than being silently fed to `--`/2 (which would raise a vaguer ArgumentError).
-      assert_raise CaseClauseError, fn ->
+      assert_raise ArgumentError, ~r/:families must be :all or a list/, fn ->
         Mutare.Ecto.Config.families(families: :comparison)
+      end
+    end
+
+    test "unknown and malformed dialects fail deliberately" do
+      assert_raise ArgumentError, ~r/unknown Mutare.Ecto dialects: \[:oracle\]/, fn ->
+        Mutare.Ecto.Config.parse!(dialects: [:oracle])
+      end
+
+      assert_raise ArgumentError, ~r/:dialects must be a list/, fn ->
+        Mutare.Ecto.Config.parse!(dialects: :postgres)
+      end
+    end
+
+    test "a malformed repo and non-keyword options fail deliberately" do
+      assert_raise ArgumentError, ~r/:repo must be a module atom/, fn ->
+        Mutare.Ecto.Config.parse!(repo: "MyApp.Repo")
+      end
+
+      assert_raise ArgumentError, ~r/options must be a keyword list/, fn ->
+        Mutare.Ecto.Config.parse!([:not_a_pair])
       end
     end
 

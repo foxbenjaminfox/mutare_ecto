@@ -178,10 +178,12 @@ defmodule Mutare.Ecto do
 
   @impl Mutare.Mutator
   def mutate(node, %{opts: opts} = context) do
+    config = Config.parse!(opts)
+    context = Map.put(context, :ecto_config, config)
     tagged = Enum.flat_map(@submutators, & &1.mutations(node, context))
 
     case for {family, mutated} <- tagged,
-             Config.family_enabled?(opts, family),
+             Config.family_enabled?(config, family),
              do: Config.noted(family, mutated) do
       [] -> :skip
       mutations -> mutations
