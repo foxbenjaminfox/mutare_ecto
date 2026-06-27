@@ -14,14 +14,6 @@ defmodule Mutare.Ecto.Host do
   @condition_macros Surface.condition_macros()
   @hosted_clause_keys Surface.hosted_clause_keys()
 
-  @doc "The hosted condition macros (`where`/`having` family), registered `:routing` by the plugin."
-  @spec condition_macros() :: [atom()]
-  defdelegate condition_macros, to: Surface
-
-  @doc "The plain composable clause macros (`limit`/`order_by`/…), registered `:routing` by the plugin."
-  @spec clause_macros() :: [atom()]
-  defdelegate clause_macros, to: Surface
-
   @doc "The selector-host targets for an Ecto.Query macro node."
   @spec host(Macro.t(), Mutare.Mutator.context()) :: [Target.t()]
   def host(node, context) do

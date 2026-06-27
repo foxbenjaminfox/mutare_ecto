@@ -100,17 +100,27 @@ The surface divides by **how a mutation is delivered**, not by what it mutates:
 
 | Module | Role |
 |---|---|
-| `ecto.ex` | Dispatcher + `Mutare.Mutator` callbacks |
-| `host.ex` | Selector host (#3): `macro_routing/1` + `host/2`, the `^`/`dynamic` weaving |
+| `ecto.ex` | Dispatcher + `Mutare.Mutator` callbacks: folds every sub-mutator's `mutations/2`, filters by `families:`, applies the note |
+| `surface.ex` | Canonical metadata for the `Ecto.Query` surface (macro sets + per-clause families) every other module derives from, so routing/mutation/drop can't drift apart |
+| `sub_mutator.ex` | The uniform `mutations(node, context)` behaviour every sub-mutator implements (so the dispatcher is a plain fold) |
+| `host.ex` | Selector-host **coordinator** (#3): turns a hosted node into `Target`s, delegating to the `host/*` parts below |
+| `host/routing.ex` | `macro_routing/1` — the per-argument routing classifier (`:hosted`/`:expression`/`:skip`/`:pinned`/`{:keyword,…}`) |
+| `host/bindings.ex` | Interprets Ecto binding declarations; renders the binding list re-declared by a woven `dynamic/2` |
+| `host/catalog.ex` | The enabled, noted logical mutants for one hosted condition (Fragment + Aggregate + binding-reorder) |
+| `host/target.ex` | The `dynamic`-wrap + `^`-pin + splice transforms consumed by core |
 | `fragment.ex` | The **SQL-semantics catalog** for `where`/`having` conditions (Comparison, Connective, NullPredicate, Membership, FragmentLiteral, binding-reorder) |
+| `binding.ex` | Shared binding-AST vocabulary (`variable?`/`ellipsis?`/`entry?`/`unwrap_list`) used by the host and `binding_reorder.ex` |
 | `binding_reorder.ex` | Positional binding-reorder (`[a, b]`→`[b, a]`) for the **other** binding-list macros (`select`/`order_by`/`join`/…), delivered in-place; `where`/`having` get theirs via the host. Named bindings are never moved |
 | `query.ex` | Whole-`from` rewrites (clause drop, order flip, bound, join-type, `select`/`order_by` aggregate) |
 | `clause.ex` | Standalone/pipe cousins of `query.ex` (`order_by`/`limit`/`offset`/`select`) |
-| `ordering.ex` / `aggregate.ex` | Shared catalogs used by `query.ex`, `clause.ex`, and (aggregate) the `having` host |
+| `clause_drop.ex` | Drop a standalone/pipe clause stage (`q \|> where(…)` → `q`), via `stage_drop.ex` |
+| `ordering.ex` / `aggregate.ex` | Shared `{family, node}` catalogs used by `query.ex`, `clause.ex`, and (aggregate) the `having` host |
 | `repo_aggregate.ex` / `repo_write.ex` / `query_terminal.ex` | Bucket-1 Repo/query-function families |
+| `repo_call.ex` | Shared "resolve a call on the configured `repo:`" preamble for `repo_aggregate.ex`/`repo_write.ex` |
+| `stage_drop.ex` | Shared pipe-aware stage-drop delivery for `clause_drop.ex` and `changeset.ex` |
 | `changeset.ex` | Changeset pipeline drops (`:validation_drop`, `:hook_drop`) |
-| `config.ex` | `families:`/`dialects:` reading + validation; equivalence-sensitive set + note |
-| `ast.ex` | Small Sourceror AST helpers (literal wrapping, clean-meta emission) |
+| `config.ex` | `families:`/`dialects:`/`repo:` reading + validation; equivalence-sensitive set + note |
+| `ast.ex` | Small Sourceror AST helpers (literal wrapping, clean-meta emission, query-macro-call normalization, module keys) |
 
 ### Families and configuration
 
@@ -121,8 +131,10 @@ SQLite lacks `RIGHT JOIN`). Multi-repo and per-family report naming fall out of 
 convention (list the plugin twice). The **equivalence-sensitive** families (`:comparison`,
 `:connective`, `:null_predicate`, `:ordering_nulls`) carry a report `note` — a survivor reads
 `… kill may require NULL/boundary data` — because their unkillability can be honest signal under
-three-valued logic, not a test gap. The note currently renders inline only on the host delivery
-path (`emit_hosted_site`).
+three-valued logic, not a test gap. The note rides onto the `Site` via `Config.noted/2` (wrapping
+the node in a `%Mutare.Mutator.Mutation{}`), which core accepts on **both** delivery paths — so the
+three in-fragment families surface it through the host and `:ordering_nulls` through its `mutate/2`
+rewrite.
 
 ## Conventions and gotchas
 
