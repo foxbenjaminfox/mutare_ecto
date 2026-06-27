@@ -38,8 +38,7 @@ defmodule Mutare.Ecto.RepoWrite do
   `Mutare.Transform.Calls`, so it is pipe-position-agnostic.
   """
 
-  alias Mutare.Ecto.{AST, Config}
-  alias Mutare.Transform.Calls
+  alias Mutare.Ecto.{AST, RepoCall}
 
   @behaviour Mutare.Ecto.SubMutator
 
@@ -73,12 +72,10 @@ defmodule Mutare.Ecto.RepoWrite do
   @spec mutations(Macro.t(), Mutare.Mutator.context()) :: [{atom(), Macro.t()}]
   @impl Mutare.Ecto.SubMutator
   def mutations(node, %{pipe_mode: pipe_mode} = context) do
-    with repo when not is_nil(repo) <- context |> Config.from_context() |> Config.repo_key(),
-         {^repo, fun, args, rebuild} <- Calls.resolved_call(node) do
+    case RepoCall.resolve(node, context) do
       # mutare:ignore[operand_swap] family order is irrelevant — mutations are consumed as a set
-      persistence(fun, args, pipe_mode) ++ on_conflict(fun, args, rebuild)
-    else
-      _ -> []
+      {fun, args, rebuild} -> persistence(fun, args, pipe_mode) ++ on_conflict(fun, args, rebuild)
+      nil -> []
     end
   end
 

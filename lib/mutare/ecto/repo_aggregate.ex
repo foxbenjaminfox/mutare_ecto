@@ -15,8 +15,7 @@ defmodule Mutare.Ecto.RepoAggregate do
   the visible args — `Mutare.Mutator.visible_index/2` recovers where.
   """
 
-  alias Mutare.Ecto.{Aggregate, AST, Config}
-  alias Mutare.Transform.Calls
+  alias Mutare.Ecto.{Aggregate, AST, RepoCall}
 
   @behaviour Mutare.Ecto.SubMutator
 
@@ -27,11 +26,12 @@ defmodule Mutare.Ecto.RepoAggregate do
   @spec mutations(Macro.t(), Mutare.Mutator.context()) :: [{:aggregate, Macro.t()}]
   @impl Mutare.Ecto.SubMutator
   def mutations(node, %{pipe_mode: pipe_mode} = context) do
-    with repo when not is_nil(repo) <- context |> Config.from_context() |> Config.repo_key(),
-         {^repo, :aggregate, args, rebuild} <- Calls.resolved_call(node) do
-      for mutated <- swap(args, rebuild, pipe_mode), do: {:aggregate, mutated}
-    else
-      _ -> []
+    case RepoCall.resolve(node, context) do
+      {:aggregate, args, rebuild} ->
+        for mutated <- swap(args, rebuild, pipe_mode), do: {:aggregate, mutated}
+
+      _ ->
+        []
     end
   end
 

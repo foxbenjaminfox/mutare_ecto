@@ -44,9 +44,9 @@ defmodule Mutare.Ecto.ClauseDrop do
 
   @behaviour Mutare.Ecto.SubMutator
 
-  # The resolved-call module key `Mutare.Transform.Calls` returns for an `Ecto.Query` call, derived
-  # from the canonical `AST.module_key/1` rather than hardcoding its `[:Ecto, :Query]` split form.
-  @query_key AST.module_key(Ecto.Query)
+  # The resolved-call module key `Mutare.Transform.Calls` returns for an `Ecto.Query` call — the
+  # canonical one owned by `AST.query_module_key/0`, never the hardcoded `[:Ecto, :Query]` split.
+  @query_key AST.query_module_key()
 
   @doc """
   Stage-drop mutations for an `Ecto.Query` clause macro as `{family, node}` pairs, or `[]`.

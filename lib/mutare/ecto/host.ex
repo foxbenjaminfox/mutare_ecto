@@ -74,7 +74,7 @@ defmodule Mutare.Ecto.Host do
 
   defp join_target(args, config) do
     with {arg_index, options} <- trailing_options(args),
-         pair_index when not is_nil(pair_index) <- Enum.find_index(options, &on_pair?/1),
+         pair_index when not is_nil(pair_index) <- Enum.find_index(options, &Bindings.on_pair?/1),
          {_key, condition} = Enum.at(options, pair_index),
          [_ | _] = bindings <- Bindings.join(args),
          [_ | _] = mutants <- Catalog.mutants(condition, bindings, config) do
@@ -92,7 +92,4 @@ defmodule Mutare.Ecto.Host do
       _ -> nil
     end
   end
-
-  defp on_pair?({key, _value}), do: AST.atom_value(key) == :on
-  defp on_pair?(_node), do: false
 end

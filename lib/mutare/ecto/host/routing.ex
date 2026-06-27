@@ -41,7 +41,7 @@ defmodule Mutare.Ecto.Host.Routing do
   @hosted_clause_keys Surface.hosted_clause_keys()
   @plain_clause_macros Surface.clause_macros()
   @query_builders Surface.query_builders()
-  @query_key AST.module_key(Ecto.Query)
+  @query_key AST.query_module_key()
 
   @doc """
   Per-visible-argument routing for a `:routing`-registered query macro (`from`, the `where`/`having`
@@ -164,15 +164,12 @@ defmodule Mutare.Ecto.Host.Routing do
 
   defp host_join_options(routing, args) do
     with [_ | _] = options <- List.last(args),
-         true <- Enum.any?(options, &on_pair?/1) do
+         true <- Enum.any?(options, &Bindings.on_pair?/1) do
       List.replace_at(routing, length(args) - 1, :hosted)
     else
       _ -> routing
     end
   end
-
-  defp on_pair?({key, _value}), do: AST.atom_value(key) == :on
-  defp on_pair?(_node), do: false
 
   # === keyword-shorthand routing =============================================
 

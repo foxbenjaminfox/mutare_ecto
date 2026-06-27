@@ -61,6 +61,11 @@ defmodule Mutare.Ecto.Host.Bindings do
   def positional_names(bindings),
     do: for(binding <- bindings, Binding.variable?(binding), do: elem(binding, 0))
 
+  @doc "Whether a keyword pair is a join's `on:` option — the hosted condition of a `join`."
+  @spec on_pair?(Macro.t()) :: boolean()
+  def on_pair?({key, _value}), do: AST.atom_value(key) == :on
+  def on_pair?(_node), do: false
+
   defp list?(node) do
     case Binding.unwrap_list(node) do
       [_ | _] = list -> Enum.all?(list, &Binding.entry?/1)

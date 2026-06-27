@@ -37,6 +37,15 @@ defmodule Mutare.Ecto.AST do
     end
   end
 
+  @doc """
+  The resolved-call/macro module key `Mutare.Transform.Calls` stamps on an `Ecto.Query` call
+  (`[:Ecto, :Query]`) — the single source of truth shared by every family that matches a query
+  function or macro (`Mutare.Ecto.ClauseDrop`, `Mutare.Ecto.QueryTerminal`,
+  `Mutare.Ecto.Host.Routing`), so the split form is never re-derived per module.
+  """
+  @spec query_module_key() :: [atom()]
+  def query_module_key, do: @query_module_key
+
   @doc "The atom value of an atom literal node (Sourceror-wrapped or bare), or `nil`."
   @spec atom_value(Macro.t()) :: atom() | nil
   def atom_value({:__block__, _meta, [atom]}) when is_atom(atom), do: atom
