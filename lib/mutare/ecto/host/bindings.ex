@@ -24,6 +24,10 @@ defmodule Mutare.Ecto.Host.Bindings do
         _ -> {[], false}
       end
 
+    # A keyword `from` join LHS is always a plain positional variable (`join: c in assoc(p, :x)`) —
+    # it has no `key: var` named form — so `join_bindings/1` never yields a named declaration and the
+    # named half of the split is always empty. The `[]` match asserts that invariant loudly: if a
+    # future/foreign shape ever violates it, fail here rather than silently drop a binding.
     {join_positional, []} = Enum.split_with(join_bindings(clauses), &Binding.variable?/1)
     append_positionals(source_decls, join_positional, composed?)
   end
@@ -42,12 +46,42 @@ defmodule Mutare.Ecto.Host.Bindings do
     end
   end
 
-  @doc "The condition argument immediately following a binding list, or `nil`."
+  @doc "The index of the condition argument immediately following a binding list, or `nil`."
   @spec condition_index([Macro.t()]) :: non_neg_integer() | nil
   def condition_index(args) do
-    case Enum.find_index(args, &list?/1) do
+    case locate(args) do
+      {_binding_index, condition_index} -> condition_index
       nil -> nil
-      index when index + 1 < length(args) -> index + 1
+    end
+  end
+
+  @doc """
+  The pieces a host needs for a binding-form condition (`where(q, [u], u.x == ^v)`): the binding
+  declarations re-emitted by the woven `dynamic/2`, the condition node, and its argument index — or
+  `nil` when the args carry no hosted condition (the keyword-shorthand form).
+  """
+  @spec hosted_condition([Macro.t()]) :: {[Macro.t()], Macro.t(), non_neg_integer()} | nil
+  def hosted_condition(args) do
+    case locate(args) do
+      {binding_index, condition_index} ->
+        {declarations(Enum.at(args, binding_index)), Enum.at(args, condition_index),
+         condition_index}
+
+      nil ->
+        nil
+    end
+  end
+
+  # The binding-list index and the condition index one slot past it, or `nil` when the args carry no
+  # binding list (or nothing follows it). The single place that knows the condition sits immediately
+  # after the binding list — both `condition_index/1` (routing) and `hosted_condition/1` (the host)
+  # derive from it, so the offset lives here, not in callers.
+  defp locate(args) do
+    with binding_index when not is_nil(binding_index) <- Enum.find_index(args, &list?/1),
+         condition_index = binding_index + 1,
+         true <- condition_index < length(args) do
+      {binding_index, condition_index}
+    else
       _ -> nil
     end
   end
@@ -64,7 +98,7 @@ defmodule Mutare.Ecto.Host.Bindings do
   @doc "The positional names eligible for a binding-reorder mutation."
   @spec positional_names([Macro.t()]) :: [atom()]
   def positional_names(bindings),
-    do: for(binding <- bindings, Binding.variable?(binding), do: elem(binding, 0))
+    do: for(binding <- bindings, Binding.variable?(binding), do: Binding.variable_name(binding))
 
   @doc "Whether a keyword pair is a join's `on:` option — the hosted condition of a `join`."
   @spec on_pair?(Macro.t()) :: boolean()
@@ -101,14 +135,14 @@ defmodule Mutare.Ecto.Host.Bindings do
   end
 
   defp append_positionals(declarations, added, composed?) do
-    {named, front} = Enum.split_with(declarations, &named?/1)
-    front ++ positioned_joins(front, named, added, composed?) ++ named
+    {named, source_positional} = Enum.split_with(declarations, &named?/1)
+    source_positional ++ positioned_joins(source_positional, named, added, composed?) ++ named
   end
 
-  defp positioned_joins(source_front, source_named, join_positional, composed?) do
-    if Enum.any?(source_front, &Binding.ellipsis?/1),
+  defp positioned_joins(source_positional, source_named, join_positional, composed?) do
+    if Enum.any?(source_positional, &Binding.ellipsis?/1),
       do: join_positional,
-      else: join_anchor(source_front, source_named, join_positional, composed?)
+      else: join_anchor(source_positional, source_named, join_positional, composed?)
   end
 
   # Anchor the appended joins to the tail with a leading `...` when their slot isn't contiguous with

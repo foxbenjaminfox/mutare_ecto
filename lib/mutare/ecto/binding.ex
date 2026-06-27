@@ -17,6 +17,10 @@ defmodule Mutare.Ecto.Binding do
   # mutare:ignore[literal] equivalent — flipping the fallback to true misclassifies a non-variable element as a variable, observable only for a non-binding node a binding position never holds
   def variable?(_node), do: false
 
+  @doc "The atom name of a positional binding variable node (`{name, _meta, _ctx}` → `name`)."
+  @spec variable_name(Macro.t()) :: atom()
+  def variable_name({name, _meta, _ctx}), do: name
+
   @doc "The `...` tail-anchor node (`[a, ..., c]`) — a leaf with head `:...`; no legal binding shares it."
   @spec ellipsis?(Macro.t()) :: boolean()
   def ellipsis?({:..., _meta, _ctx}), do: true

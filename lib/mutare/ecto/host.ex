@@ -54,9 +54,7 @@ defmodule Mutare.Ecto.Host do
   end
 
   defp condition_target(args, opts) do
-    with index when not is_nil(index) <- Bindings.condition_index(args),
-         bindings = Bindings.declarations(Enum.at(args, index - 1)),
-         condition = Enum.at(args, index),
+    with {bindings, condition, index} <- Bindings.hosted_condition(args),
          [_ | _] = mutants <- Catalog.mutants(condition, bindings, opts) do
       [Target.condition(condition, mutants, bindings, index)]
     else

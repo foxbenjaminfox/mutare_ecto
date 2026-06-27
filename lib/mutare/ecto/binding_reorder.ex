@@ -47,18 +47,19 @@ defmodule Mutare.Ecto.BindingReorder do
   # carries only declarations, so it is excluded from the reference test.
   defp reorders(macro, args, rebuild) do
     with {index, blist} <- find_binding_list(args),
-         positions = positional_positions(Binding.unwrap_list(blist)),
+         list = Binding.unwrap_list(blist),
+         positions = positional_positions(list),
          # mutare:ignore[literal, conditional] equivalent — a fast-path guard; the `i < j` loop below already yields [] for fewer than two positions, so weakening or dropping this bound changes nothing
          true <- length(positions) >= 2 do
       body = Enum.drop(args, index + 1)
 
       for {i, a} <- positions,
           {j, b} <- positions,
-          # mutare:ignore[relational] equivalent — `i < j` and `i > j` both pick each unordered pair once, and `swap(blist, i, j) == swap(blist, j, i)` with a symmetric reference test, so the produced mutant set is identical (consumed as a set)
+          # mutare:ignore[relational] equivalent — `i < j` and `i > j` both pick each unordered pair once, and `swap(blist, list, i, j) == swap(blist, list, j, i)` with a symmetric reference test, so the produced mutant set is identical (consumed as a set)
           i < j,
           AST.references_var?(body, a),
           AST.references_var?(body, b) do
-        new_args = List.replace_at(args, index, swap(blist, i, j))
+        new_args = List.replace_at(args, index, swap(blist, list, i, j))
         {:binding_reorder, rebuild.(macro, new_args)}
       end
     else
@@ -90,14 +91,13 @@ defmodule Mutare.Ecto.BindingReorder do
   defp positional_positions(list) do
     for {entry, index} <- Enum.with_index(list),
         Binding.variable?(entry),
-        do: {index, elem(entry, 0)}
+        do: {index, Binding.variable_name(entry)}
   end
 
-  # Swap the two list entries at positions `i`/`j`, preserving the binding list's wrapper (Sourceror
-  # block-wraps a list literal) and every entry's own metadata — entries are *reordered*, not
-  # rewritten, so each renders with its original text in its new position.
-  defp swap(blist, i, j) do
-    list = Binding.unwrap_list(blist)
+  # Swap the two entries at positions `i`/`j` in the already-unwrapped `list`, preserving the binding
+  # list's wrapper (`blist` — Sourceror block-wraps a list literal) and every entry's own metadata —
+  # entries are *reordered*, not rewritten, so each renders with its original text in its new position.
+  defp swap(blist, list, i, j) do
     a = Enum.at(list, i)
     b = Enum.at(list, j)
     rewrap(blist, list |> List.replace_at(i, b) |> List.replace_at(j, a))
