@@ -125,10 +125,12 @@ defmodule Mutare.Ecto.HostTest do
       assert_compiles(src)
     end
 
-    test "a positional-only source with a join stays contiguous (no `...`)" do
-      # The counterpart: an all-positional rebind `[a, b] in base` pins positions 0/1, so the join
-      # follows contiguously at position 2 — no anchor, `[a, b, j]` unchanged. Guards against
-      # over-eagerly anchoring every join.
+    test "a positional-only source with a join anchors to the tail (composed query)" do
+      # `[a, b] in base` rebinds base's *leading* bindings, but base is an external query that can
+      # carry more bindings the host can't see — so an appended join lands at the tail, not
+      # contiguously at position 2. The woven dynamic must anchor it: `[a, b, ..., j]`. Asserting
+      # `[a, b, j]` binds `j` to position 2 — a silently wrong baseline whenever base has a binding
+      # between `b` and `j` (see BUG-named-binding-misresolution.md).
       src = """
       defmodule M do
         import Ecto.Query
@@ -142,8 +144,38 @@ defmodule Mutare.Ecto.HostTest do
       end
       """
 
-      assert metamutant(src) =~ "dynamic([a, b, j]"
-      refute metamutant(src) =~ "dynamic([a, b, ..."
+      assert metamutant(src) =~ "dynamic([a, b, ..., j]"
+      refute metamutant(src) =~ "dynamic([a, b, j]"
+      assert_compiles(src)
+    end
+
+    test "a lone positional source composing a query anchors appended joins (BUG-named-binding-misresolution)" do
+      # The reported bug: `from(s in query, inner_join: o, inner_join: uc, where: uc.…)` composes an
+      # *external* `query` that already carries hidden bindings. Each appended join lands at the tail,
+      # so every hosted condition referencing `uc` must weave the anchored `[s, ..., o, uc]`. The old
+      # contiguous `[s, o, uc]` bound `uc` to position 2 — a hidden binding of the base — corrupting
+      # the *baseline* (mutant 0) into a query that raises at runtime, not just a bad mutant.
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q(query, uid) do
+          from(s in query,
+            inner_join: o in assoc(s, :org),
+            inner_join: uc in assoc(o, :uploader_contacts),
+            where: uc.uploader_user_id == ^uid,
+            where: uc.rank > 0,
+            select: s.id
+          )
+        end
+      end
+      """
+
+      assert {"uc.uploader_user_id == ^uid", "uc.uploader_user_id != ^uid"} in hosted(src)
+      assert {"uc.rank > 0", "uc.rank >= 0"} in hosted(src)
+
+      # Every hosted condition re-declares the anchored list; none uses the contiguous (wrong) one.
+      assert metamutant(src) =~ "dynamic([s, ..., o, uc]"
+      refute metamutant(src) =~ "dynamic([s, o, uc]"
       assert_compiles(src)
     end
 
@@ -371,7 +403,11 @@ defmodule Mutare.Ecto.HostTest do
       assert_compiles(src)
     end
 
-    test "a piped join hosts its on condition with the joined binding" do
+    test "a piped join hosts its on condition, anchoring the joined binding to the tail" do
+      # `query` is external (a standalone/piped join always composes one), so the joined `p` lands at
+      # the tail of query's bindings, not contiguously at position 1. The woven dynamic anchors it:
+      # `[u, ..., p]`. A contiguous `[u, p]` binds `p` to position 1 — wrong whenever query carries a
+      # binding before the join (the standalone twin of BUG-named-binding-misresolution.md).
       src = """
       defmodule M do
         import Ecto.Query
@@ -384,7 +420,7 @@ defmodule Mutare.Ecto.HostTest do
       """
 
       assert {"p.user_id == u.id", "p.user_id != u.id"} in hosted(src)
-      assert metamutant(src) =~ "dynamic([u, p]"
+      assert metamutant(src) =~ "dynamic([u, ..., p]"
       assert_compiles(src)
     end
   end

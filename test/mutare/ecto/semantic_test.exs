@@ -599,4 +599,70 @@ defmodule Mutare.Ecto.SemanticTest do
       MyApp.Repo.all(from([..., c] in base, where: c.age > 18, select: c.id))
     end
   end
+
+  describe "Regression — an implicit-anchor source rebind (BUG-named-binding-misresolution)" do
+    # The reported bug at the DB layer: composing `from(u1 in base, inner_join: u4 …, where: u4 …)`
+    # onto an external `base` that carries *hidden* bindings. `u4` is appended at the tail (position 3
+    # here), but the host wove `dynamic([u1, u4], …)` — binding `u4` to position 1 (`base`'s hidden
+    # `u2`) — instead of `dynamic([u1, ..., u4], …)`. The hosted `where` then filtered the wrong
+    # binding, corrupting the *baseline*. Unlike the `[..., c]` sibling above, the source here writes
+    # *no* `...`: the host must insert one for the composed (variable) source itself.
+    test "the baseline filters the appended join, not a hidden base binding" do
+      {mod, _sites} =
+        build("""
+        defmodule Q do
+          import Ecto.Query
+          alias MyApp.User
+
+          def q do
+            base =
+              from(u1 in User,
+                join: u2 in User, on: u2.id == u1.id + 1,
+                join: u3 in User, on: u3.id == u1.id + 2
+              )
+
+            from(u1 in base,
+              inner_join: u4 in User,
+              on: u4.id == u1.id,
+              where: u4.age > 18,
+              select: u1.id
+            )
+          end
+        end
+        """)
+
+      # `u4` is `u1` itself (`u4.id == u1.id`), so `u4.age > 18` keeps the u1 rows over 18. base exists
+      # for u1 ∈ {1,2,3,4} (it needs u1+1 and u1+2 as user ids); of those only Bob (u1=2, age 25)
+      # clears 18 → [2].
+      reference = Enum.sort(reference_appended_join())
+
+      assert reference == [2]
+
+      # Pre-fix the woven `[u1, u4]` bound `u4` to base's hidden `u2` (id u1+1), filtering the wrong
+      # user — a corrupted baseline. The anchored `[u1, ..., u4]` filters the real appended join.
+      assert ids(mod, 0) == reference
+    end
+
+    # The hand-written twin of the fixture's `q/0`, run directly (no metamutant).
+    defp reference_appended_join do
+      import Ecto.Query
+
+      base =
+        from(u1 in MyApp.User,
+          join: u2 in MyApp.User,
+          on: u2.id == u1.id + 1,
+          join: u3 in MyApp.User,
+          on: u3.id == u1.id + 2
+        )
+
+      MyApp.Repo.all(
+        from(u1 in base,
+          inner_join: u4 in MyApp.User,
+          on: u4.id == u1.id,
+          where: u4.age > 18,
+          select: u1.id
+        )
+      )
+    end
+  end
 end
