@@ -80,23 +80,10 @@ defmodule Mutare.Ecto.BindingReorder do
   defp binding_list?(node) do
     case Binding.unwrap_list(node) do
       # mutare:ignore[return_value, collection] equivalent — the binding list is always the first list-shaped argument and is all binding entries; a partial/non-entry list at that position never occurs, so all?/any? and the boolean return are indistinguishable on reachable input
-      [_ | _] = list -> Enum.all?(list, &binding_entry?/1)
+      [_ | _] = list -> Enum.all?(list, &Binding.entry?/1)
       _ -> false
     end
   end
-
-  # A binding-list element: a named binding (`key: var`, a 2-tuple), or — for any other node — a
-  # positional variable or the `...` anchor. The named clause precedes the catch-all so a 2-tuple is
-  # tested by its bound var, not mistaken for a (non-variable) leaf.
-  #
-  # Both clauses only gate *list recognition*; `positional_positions/1` re-filters every entry with
-  # `Binding.variable?/1`, and `find_binding_list/1` already takes the first list-shaped argument
-  # (always the real binding list), so over-accepting an entry changes neither selection nor the swap.
-  # mutare:ignore[return_value] equivalent — a named pair's truthiness only flags the list as a binding list; a non-variable value yields no position downstream, so any truthy return is indistinguishable from `variable?(var)`
-  defp binding_entry?({_key, var}), do: Binding.variable?(var)
-
-  # mutare:ignore[conditional] equivalent — forcing this to `true` only widens which lists are recognized; the first list-shaped arg is still the binding list and positional_positions re-filters to variables, so no swap changes
-  defp binding_entry?(node), do: Binding.variable?(node) or Binding.ellipsis?(node)
 
   # The `{index_in_list, name}` of each *positional* binding, in order. Named bindings and the `...`
   # anchor are skipped (`Binding.variable?/1` rejects both): they never move under a positional swap.

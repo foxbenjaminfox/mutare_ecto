@@ -7,6 +7,8 @@ defmodule Mutare.Ecto.Binding do
   # and decl handling on these primitives, so "what is a binding variable / the `...` anchor / a
   # block-wrapped list literal" is decided in exactly one place rather than re-derived per module.
 
+  alias Mutare.Ecto.AST
+
   @doc "A positional binding variable node — `{name, meta, ctx}` with an atom name and hygiene context."
   @spec variable?(Macro.t()) :: boolean()
   # mutare:ignore[pattern_swap, logical, conditional] equivalent — symmetric guard with a constant body (swap is a no-op), and the guard only separates a variable from a same-shaped call node, never present in a binding list
@@ -19,6 +21,11 @@ defmodule Mutare.Ecto.Binding do
   @spec ellipsis?(Macro.t()) :: boolean()
   def ellipsis?({:..., _meta, _ctx}), do: true
   def ellipsis?(_node), do: false
+
+  @doc "Whether a node is a positional, named, or ellipsis binding-list entry."
+  @spec entry?(Macro.t()) :: boolean()
+  def entry?({key, var}), do: not is_nil(AST.atom_value(key)) and variable?(var)
+  def entry?(node), do: variable?(node) or ellipsis?(node)
 
   @doc "A fresh clean-meta `...` node, for re-emitting the anchor in a synthesized binding list."
   @spec ellipsis() :: Macro.t()

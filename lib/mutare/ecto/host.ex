@@ -276,10 +276,10 @@ defmodule Mutare.Ecto.Host do
     end
   end
 
-  # A binding list is a (Sourceror block-wrapped) non-empty list of plain variables — `[p]`, `[p, q]`
-  # — and the optional `...` tail anchor (`[..., p]`), distinguishing the binding form from a
-  # keyword-shorthand value (a list of `key: value` pairs) and from the query argument (a single
-  # variable, not a list).
+  # A binding list is a (Sourceror block-wrapped) non-empty list of positional variables, named
+  # bindings, and/or an optional `...` anchor. A named list (`[post: p]`) is distinguished from
+  # keyword shorthand by `condition_index/1`: only a list with a following condition is a binding
+  # declaration; a trailing keyword list remains shorthand.
   defp binding_list?(node) do
     case Binding.unwrap_list(node) do
       # mutare:ignore[collection, return_value] equivalent — a real binding list is all binding-list elements (all? and any? agree, both truthy); only a non-binding list at a non-last position would distinguish, which never occurs
@@ -288,11 +288,7 @@ defmodule Mutare.Ecto.Host do
     end
   end
 
-  # A positional binding variable or the `...` anchor — the elements a (positional) binding list is
-  # made of. A named pair is not one here: the standalone/pipe binding-list *detection* only needs to
-  # recognize positional lists (the `from` keyword form handles named binds via `binding_decls/1`).
-  # mutare:ignore[conditional] equivalent — forcing this to `true` only widens which lists count as binding lists; the standalone form's binding list is always a list of plain variables/`...` (a non-binding list never sits at that argument position), so over-accepting an element changes no routing on reachable input
-  defp binding_list_element?(node), do: Binding.variable?(node) or Binding.ellipsis?(node)
+  defp binding_list_element?(node), do: Binding.entry?(node)
 
   # The binding declarations a binding node establishes, normalized for re-declaration in the woven
   # `dynamic([…], _)`: a binding list — positional (`[a, b]`), named (`[post: p]`), mixed

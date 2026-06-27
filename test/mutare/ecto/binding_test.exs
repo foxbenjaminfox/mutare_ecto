@@ -41,6 +41,19 @@ defmodule Mutare.Ecto.BindingTest do
     end
   end
 
+  describe "entry?/1" do
+    test "accepts positional, named, and ellipsis entries" do
+      assert Binding.entry?({:u, [], nil})
+      assert Binding.entry?({{:__block__, [], [:post]}, {:p, [], nil}})
+      assert Binding.entry?({:..., [], nil})
+    end
+
+    test "rejects shorthand-like pairs whose value is not a binding variable" do
+      refute Binding.entry?({{:__block__, [], [:active]}, {:__block__, [], [true]}})
+      refute Binding.entry?({:not_a_binding, [], []})
+    end
+  end
+
   describe "unwrap_list/1" do
     test "returns the element list of a block-wrapped or bare list, nil otherwise" do
       # Sourceror block-wraps a parsed list literal; unwrap_list peels it.

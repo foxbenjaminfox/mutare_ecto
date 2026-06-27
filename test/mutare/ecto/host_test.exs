@@ -623,6 +623,8 @@ defmodule Mutare.Ecto.HostTest do
     test "condition macros (direct + piped) host the condition after the binding list" do
       assert routing("where(query, [u], u.x == u.y)") == [:expression, :skip, :hosted]
       assert routing("having(query, [u], u.x == u.y)") == [:expression, :skip, :hosted]
+      assert routing("where(query, [post: p], p.x == p.y)") == [:expression, :skip, :hosted]
+      assert routing("where(query, [u, post: p], p.x == u.y)") == [:expression, :skip, :hosted]
       # piped form — the binding list is the first *argument* (the query is the `|>` LHS).
       assert routing("where([u], u.x == u.y)") == [:skip, :hosted]
       # a piped query as the first arg is still recognized as the threaded expression.
@@ -697,6 +699,17 @@ defmodule Mutare.Ecto.HostTest do
       end
     end
 
+    test "a named binding list hosts its condition rather than looking like shorthand" do
+      for code <- [
+            "where(query, [post: p], p.x == p.y)",
+            "where([post: p], p.x == p.y)",
+            "where(query, [u, post: p], p.x == u.y)"
+          ] do
+        assert [target] = host_originals(code)
+        assert target.mutants != []
+      end
+    end
+
     test "nothing hostable yields no targets" do
       assert host_originals(~s|from("users", where: [active: true])|) == []
       assert host_originals("limit(query, 10)") == []
@@ -713,6 +726,23 @@ defmodule Mutare.Ecto.HostTest do
   end
 
   describe "the recorded diff is a clean logical change" do
+    test "a standalone named binding produces live hosted mutations" do
+      src = """
+      defmodule M do
+        import Ecto.Query
+
+        def q do
+          from(p in "posts", as: :post)
+          |> where([post: p], p.age > 18)
+        end
+      end
+      """
+
+      assert {"p.age > 18", "p.age >= 18"} in ecto_diffs(src)
+      assert metamutant(src) =~ "dynamic([post: p]"
+      assert_compiles(src)
+    end
+
     test "neither side leaks the dynamic / ^ / case scaffolding the host weaves" do
       src = """
       defmodule M do
