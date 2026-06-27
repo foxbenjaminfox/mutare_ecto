@@ -192,9 +192,29 @@ defmodule Mutare.Ecto.ConfigTest do
         Mutare.Ecto.Config.parse!(repo: "MyApp.Repo")
       end
 
-      assert_raise ArgumentError, ~r/options must be a keyword list/, fn ->
+      # A non-keyword list and a non-list each get their own message.
+      assert_raise ArgumentError, ~r/keyword list, got a non-keyword list/, fn ->
         Mutare.Ecto.Config.parse!([:not_a_pair])
       end
+
+      assert_raise ArgumentError, ~r/keyword list, got: 42/, fn ->
+        Mutare.Ecto.Config.parse!(42)
+      end
+    end
+
+    test "from_context/1 raises when the context carries neither :ecto_config nor :opts" do
+      # The permissive default is gone: a context missing both keys is a programming error, not an
+      # implicit all-families/no-repo config.
+      assert_raise ArgumentError, ~r/expected a context with :ecto_config or :opts/, fn ->
+        Mutare.Ecto.Config.from_context(%{})
+      end
+
+      # A well-formed context still resolves: :opts is parsed, a pre-parsed :ecto_config passes through.
+      assert %Mutare.Ecto.Config{} =
+               Mutare.Ecto.Config.from_context(%{opts: [families: [:comparison]]})
+
+      config = Mutare.Ecto.Config.parse!(families: [:bound])
+      assert Mutare.Ecto.Config.from_context(%{ecto_config: config}) == config
     end
 
     test "an equivalence-sensitive mutant carries the report note; an ordinary one does not" do

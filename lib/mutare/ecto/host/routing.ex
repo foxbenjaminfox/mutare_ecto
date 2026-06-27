@@ -82,6 +82,8 @@ defmodule Mutare.Ecto.Host.Routing do
             true -> :skip
           end
 
+        # `rest` is `[clauses]` for the usual `from(source, kw)`. It is `[]` for a clause-less
+        # `from(Post)` (nothing to host) and anything else is malformed AST — both route `:skip`.
         _ ->
           :skip
       end

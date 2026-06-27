@@ -24,6 +24,13 @@ defmodule Mutare.Ecto.Surface do
                  |> Map.merge(Map.new(@bound_macros, &{&1, :bound}))
                  |> Map.merge(Map.new(@clause_macros -- @bound_macros, &{&1, :clause_drop}))
 
+  # @drop_families layers three groups and lets the last merge win on a key collision, so a macro in
+  # both @condition_macros and @clause_macros would silently lose its :filter_drop to :clause_drop.
+  # Assert disjointness at compile time, so a mis-registered future Ecto builder fails loudly here.
+  unless MapSet.disjoint?(MapSet.new(@condition_macros), MapSet.new(@clause_macros)) do
+    raise "Mutare.Ecto.Surface: @condition_macros and @clause_macros must be disjoint"
+  end
+
   @doc "The condition builders whose expression is delivered through the selector host."
   @spec condition_macros() :: [atom()]
   def condition_macros, do: @condition_macros

@@ -120,24 +120,19 @@ defmodule Mutare.Ecto.RepoWrite do
 
   defp on_conflict(_fun, _args, _rebuild), do: []
 
+  # Find the swappable `on_conflict:` pair and flip its value in one pass (`:nothing` → `:raise`),
+  # reading the pair's value once. A non-`:on_conflict` pair or an unswappable value yields `nil`
+  # (skipped via the `else`, never mistaken for a result), so a list with no such pair returns `nil`.
   defp swap_on_conflict(list) when is_list(list) do
-    case Enum.find_index(list, &on_conflict_pair?/1) do
-      nil ->
-        nil
-
-      index ->
-        pair = Enum.at(list, index)
-        swapped = @on_conflict_swaps[AST.atom_value(Pair.value(pair))]
-        List.replace_at(list, index, Pair.put_value(pair, AST.atom_literal(swapped)))
-    end
+    Enum.find_value(Enum.with_index(list), fn {pair, index} ->
+      with :on_conflict <- Pair.key(pair),
+           to when not is_nil(to) <- @on_conflict_swaps[AST.atom_value(Pair.value(pair))] do
+        List.replace_at(list, index, Pair.put_value(pair, AST.atom_literal(to)))
+      else
+        _ -> nil
+      end
+    end)
   end
 
   defp swap_on_conflict(_other), do: nil
-
-  # A non-pair short-circuits on the key check (`Pair.key/1` returns `nil`), so `Pair.value/1` is
-  # never reached on one — no separate fallback clause is needed.
-  defp on_conflict_pair?(pair),
-    do:
-      Pair.key(pair) == :on_conflict and
-        Map.has_key?(@on_conflict_swaps, AST.atom_value(Pair.value(pair)))
 end

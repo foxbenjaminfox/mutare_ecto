@@ -20,7 +20,7 @@ defmodule Mutare.Ecto.Host.Target do
           [Mutare.Mutator.mutation()],
           [Macro.t()],
           non_neg_integer(),
-          tuple()
+          Macro.t()
         ) ::
           t()
   def from_clause(original, mutants, bindings, index, key) do

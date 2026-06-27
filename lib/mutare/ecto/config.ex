@@ -77,7 +77,8 @@ defmodule Mutare.Ecto.Config do
   @spec parse!(keyword()) :: t()
   def parse!(opts) when is_list(opts) do
     unless Keyword.keyword?(opts) do
-      raise ArgumentError, "Mutare.Ecto options must be a keyword list, got: #{inspect(opts)}"
+      raise ArgumentError,
+            "Mutare.Ecto options must be a keyword list, got a non-keyword list: #{inspect(opts)}"
     end
 
     %__MODULE__{
@@ -94,7 +95,15 @@ defmodule Mutare.Ecto.Config do
   @spec from_context(map()) :: t()
   def from_context(%{ecto_config: %__MODULE__{} = config}), do: config
   def from_context(%{opts: opts}), do: parse!(opts)
-  def from_context(_context), do: parse!([])
+
+  # No legitimate callback context omits both keys (`mutate/2` injects `:ecto_config`; every Mutare
+  # context carries `:opts`), so a miss is a programming error — fail loudly rather than silently
+  # defaulting to an all-families, no-repo config.
+  def from_context(other) do
+    raise ArgumentError,
+          "Mutare.Ecto.Config.from_context/1 expected a context with :ecto_config or :opts, " <>
+            "got: #{inspect(other)}"
+  end
 
   @doc "Every family the plugin can emit (the `:all` set)."
   @spec all_families() :: [atom()]
