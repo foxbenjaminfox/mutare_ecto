@@ -3,6 +3,13 @@ defmodule Mutare.EctoTest do
 
   import Mutare.Ecto.TestSupport
 
+  test "the installed Ecto release is in the supported range" do
+    version = :ecto |> Application.spec(:vsn) |> to_string()
+
+    assert Version.match?(version, "~> 3.12"),
+           "expected Ecto >= 3.12 and < 4.0, got #{version}"
+  end
+
   describe "macros/0" do
     test "skips schema, routes the host macros and the clause macros, skips dynamic" do
       macros = Mutare.Ecto.macros()

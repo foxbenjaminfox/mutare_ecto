@@ -72,6 +72,7 @@ defmodule Mutare.Ecto.Host.Bindings do
   # binding list (or nothing follows it). The single place that knows the condition sits immediately
   # after the binding list — both `condition_index/1` (routing) and `hosted_condition/1` (the host)
   # derive from it, so the offset lives here, not in callers.
+  @spec locate([Macro.t()]) :: {non_neg_integer(), BindingList.t(), pos_integer()} | nil
   defp locate(args) do
     with {binding_index, binding_list} <- find(args),
          condition_index = binding_index + 1,
@@ -98,6 +99,7 @@ defmodule Mutare.Ecto.Host.Bindings do
   def positional_names(bindings),
     do: for(binding <- bindings, Binding.variable?(binding), do: Binding.variable_name(binding))
 
+  @spec find([Macro.t()]) :: {non_neg_integer(), BindingList.t()} | nil
   defp find(args) do
     args
     |> Enum.with_index()

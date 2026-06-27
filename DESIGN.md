@@ -1,6 +1,6 @@
 # Mutare.Ecto — a mutation-testing plugin for Ecto
 
-**Codename:** mutare_ecto · **Status:** implemented, pre-release · **Depends on:** compatible Mutare 0.1 core extensions, Ecto `~> 3.10`
+**Codename:** mutare_ecto · **Status:** implemented, pre-release · **Depends on:** compatible Mutare 0.1 core extensions, Ecto `~> 3.12`
 
 Mutare mutates the Elixir source the author wrote. Ecto code *is* Elixir source — but its highest-value parts are a **compile-time DSL that evaluates under SQL semantics, not Elixir's**. A `where` clause is not an Elixir boolean expression; it is a fragment of SQL whose three-valued logic, `NULL` propagation, and operator set differ from the host language it is embedded in. `mutare_ecto` is the external plugin that teaches Mutare to mutate the Ecto surface — Repo calls, changeset pipelines, and above all the `from`/query DSL — **without ever pretending SQL is Elixir.**
 

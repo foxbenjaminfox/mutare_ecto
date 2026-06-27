@@ -42,18 +42,20 @@ first failure:
 3. `mix dialyzer` — discrepancy/type analysis via [Dialyxir] (the Mix wrapper over Erlang's
    Dialyzer).
 
-Both tools are `only: [:dev, :test], runtime: false` deps and are never shipped. Dialyzer's PLTs
-live in `priv/plts/` (gitignored, set via the `dialyzer:` key in `mix.exs`) so they can be cached
-rather than rebuilt every run — the **first** `mix dialyzer` builds the PLT and takes a few minutes;
-subsequent runs are fast. `mix check` runs in the default (`:dev`) env, so it analyzes `lib/`, not
-the test-only fixtures.
+Both tools are `only: :dev, runtime: false` deps and are never shipped or fetched by test jobs.
+Dialyzer's PLTs live in `priv/plts/` (gitignored, set via the `dialyzer:` key in `mix.exs`) so they
+can be cached rather than rebuilt every run — the **first** `mix dialyzer` builds the PLT and takes
+a few minutes; subsequent runs are fast. `mix check` runs in the default (`:dev`) env, so it
+analyzes `lib/`, not the test-only fixtures.
 
 [Credo]: https://github.com/rrrene/credo
 [Dialyxir]: https://github.com/jeremyjh/dialyxir
 
 ## The `../mutare` path dependency
 
-`mix.exs` pins `{:mutare, path: "../mutare"}`. Several features here required **new Mutare-core
+`mix.exs` uses `{:mutare, path: System.get_env("MUTARE_PATH", "../mutare")}`. Local development
+therefore uses the sibling checkout; CI checks Mutare out inside the workspace and sets
+`MUTARE_PATH` to that directory. Several features here required **new Mutare-core
 extensions** (the selector host, `:routing`/`:hosted` macro routing, `{:keyword, …}` per-pair
 routing, `:pinned` in-place delivery, the `Site` `note` channel). When a task needs core
 machinery that doesn't exist yet, it is added to `../mutare`. Core's public test 
@@ -64,6 +66,11 @@ app's schemas are on the BEAM code path. This is what lets `use`-expansion expan
 (so `schema do … end` resolves and the `:skip` routing fires) and lets the host build valid
 `dynamic` calls. External-source operation is unsupported and has no startup guard; unresolved
 target-app modules can make routing incomplete or invalid.
+
+CI also overrides `ECTO_REQUIREMENT`, `ECTO_SQL_REQUIREMENT`, and
+`ECTO_SQLITE3_REQUIREMENT` to run the complete suite against both the oldest supported Ecto line
+and the current locked stack. `MIX_LOCKFILE` gives those compatibility jobs isolated generated
+lockfiles; normal local commands continue to use `mix.lock`.
 
 ## Architecture
 

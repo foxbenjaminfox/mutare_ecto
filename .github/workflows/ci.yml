@@ -1,0 +1,145 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  # The package is developed with Mutare as a sibling path dependency. Actions
+  # cannot check a second repository out above GITHUB_WORKSPACE, so CI puts it
+  # here and overrides the local default from mix.exs.
+  MUTARE_PATH: mutare-core
+
+jobs:
+  check:
+    name: mix check
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+
+      - name: Check out Mutare
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          repository: foxbenjaminfox/mutare
+          path: mutare-core
+
+      - name: Set up Elixir / OTP
+        id: beam
+        uses: erlef/setup-beam@fc68ffb90438ef2936bbb3251622353b3dcb2f93 # v1.24.0
+        with:
+          elixir-version: "1.19"
+          otp-version: "27"
+
+      - name: Cache deps and _build
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            deps
+            _build
+          key: ${{ runner.os }}-mix-dev-${{ steps.beam.outputs.elixir-version }}-${{ steps.beam.outputs.otp-version }}-${{ hashFiles('mix.lock', 'mutare-core/mix.lock', 'mutare-core/lib/**/*.ex') }}
+          restore-keys: |
+            ${{ runner.os }}-mix-dev-${{ steps.beam.outputs.elixir-version }}-${{ steps.beam.outputs.otp-version }}-
+
+      - name: Cache Dialyzer PLTs
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: priv/plts
+          key: ${{ runner.os }}-plt-${{ steps.beam.outputs.elixir-version }}-${{ steps.beam.outputs.otp-version }}-${{ hashFiles('mix.lock', 'mutare-core/mix.lock', 'mutare-core/lib/**/*.ex') }}
+          restore-keys: |
+            ${{ runner.os }}-plt-${{ steps.beam.outputs.elixir-version }}-${{ steps.beam.outputs.otp-version }}-
+
+      - run: mix deps.get --check-locked
+      - run: mix deps.compile
+      - run: mix compile --warnings-as-errors
+      - run: mix check
+
+  test:
+    name: test (Elixir ${{ matrix.elixir }} / OTP ${{ matrix.otp }})
+    runs-on: ubuntu-24.04
+    continue-on-error: ${{ matrix.allow-failure || false }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { elixir: "1.18", otp: "25" }
+          - { elixir: "1.18", otp: "27" }
+          - { elixir: "1.19", otp: "26" }
+          - { elixir: "1.19", otp: "28" }
+          - { elixir: "1.20", otp: "28" }
+          - { elixir: "main", otp: "28", allow-failure: true }
+    env:
+      MIX_ENV: test
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+
+      - name: Check out Mutare
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          repository: foxbenjaminfox/mutare
+          path: mutare-core
+
+      - name: Set up Elixir / OTP
+        id: beam
+        uses: erlef/setup-beam@fc68ffb90438ef2936bbb3251622353b3dcb2f93 # v1.24.0
+        with:
+          elixir-version: ${{ matrix.elixir }}
+          otp-version: ${{ matrix.otp }}
+
+      - name: Cache deps and _build
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            deps
+            _build
+          key: ${{ runner.os }}-mix-test-${{ steps.beam.outputs.elixir-version }}-${{ steps.beam.outputs.otp-version }}-${{ hashFiles('mix.lock', 'mutare-core/mix.lock', 'mutare-core/lib/**/*.ex') }}
+          restore-keys: |
+            ${{ runner.os }}-mix-test-${{ steps.beam.outputs.elixir-version }}-${{ steps.beam.outputs.otp-version }}-
+
+      - run: mix deps.get --check-locked
+      - run: mix compile --warnings-as-errors
+      - run: mix test
+
+  ecto-minimum:
+    name: test (Ecto 3.12 minimum)
+    runs-on: ubuntu-24.04
+    env:
+      MIX_ENV: test
+      MIX_LOCKFILE: mix-ecto-3.12.lock
+      ECTO_REQUIREMENT: "== 3.12.0"
+      ECTO_SQL_REQUIREMENT: "== 3.12.0"
+      ECTO_SQLITE3_REQUIREMENT: "== 0.17.0"
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+
+      - name: Check out Mutare
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          repository: foxbenjaminfox/mutare
+          path: mutare-core
+
+      - name: Set up Elixir / OTP
+        id: beam
+        uses: erlef/setup-beam@fc68ffb90438ef2936bbb3251622353b3dcb2f93 # v1.24.0
+        with:
+          elixir-version: "1.19"
+          otp-version: "27"
+
+      - name: Cache deps and _build
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            deps
+            _build
+          key: ${{ runner.os }}-mix-ecto-3.12-minimum-${{ steps.beam.outputs.elixir-version }}-${{ steps.beam.outputs.otp-version }}-${{ hashFiles('mix.exs', 'mutare-core/mix.lock', 'mutare-core/lib/**/*.ex') }}
+
+      - run: mix deps.get
+      - run: mix compile --warnings-as-errors
+      - run: mix test
