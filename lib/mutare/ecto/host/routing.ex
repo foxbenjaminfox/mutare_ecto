@@ -28,7 +28,8 @@ defmodule Mutare.Ecto.Host.Routing do
   This relies on core's per-pair routing + `:pinned` extensions; see `c:Mutare.Mutator.macro_routing/1`.
   """
 
-  alias Mutare.Ecto.{AST, Binding, Host, Surface}
+  alias Mutare.Ecto.{AST, Binding, Surface}
+  alias Mutare.Ecto.Host.Bindings
   alias Mutare.Transform.Calls
 
   # The where/having family and the plain composable clause macros, as compile-time guard constants.
@@ -89,7 +90,7 @@ defmodule Mutare.Ecto.Host.Routing do
     # data positions stay raw. The condition/shorthand overlay then marks what the host/core own.
     base = query_threading_route(args)
 
-    case Host.condition_index(args) do
+    case Bindings.condition_index(args) do
       # binding form (`where(q, [u], cond)`) — host the condition after the binding list.
       index when is_integer(index) -> List.replace_at(base, index, :hosted)
       # keyword-shorthand form (`where(q, col: v)`) — route the trailing keyword list per-pair.
