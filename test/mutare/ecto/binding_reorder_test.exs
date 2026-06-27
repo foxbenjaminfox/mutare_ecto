@@ -141,18 +141,72 @@ defmodule Mutare.Ecto.BindingReorderTest do
       refute Enum.any?(mutated(src), &(&1 =~ "order_by(query, [p, u]"))
       assert_compiles(src)
     end
+  end
 
-    test "a `...`-anchored list still reorders its positional bindings, keeping the anchor in place" do
-      # `[..., a, b]` is a binding list (the `...` is a recognized element); the two positionals `a`/`b`
-      # transpose around the anchor — `[..., b, a]` — and the `...` keeps its place.
+  describe "the `...` anchor across positions (every combination with positional bindings)" do
+    # The `...` tail-anchor is never itself a positional (`Binding.variable?/1` rejects it), so it
+    # never moves: the positional bindings transpose *around* it, wherever it sits. These pin the swap
+    # for the anchor in each position and in combination with named binds and the reference/arity
+    # suppression rules. The catalog is asserted exactly (`reorder_renders`, defined below); a final
+    # case proves every anchor-position mutant is valid Ecto that compiles.
+
+    test "leading anchor `[..., a, b]` swaps the positionals, anchor stays first" do
+      assert reorder_renders("select(q, [..., a, b], [a.x, b.y])") ==
+               ["select(q, [..., b, a], [a.x, b.y])"]
+    end
+
+    test "trailing anchor `[a, b, ...]` swaps the positionals, anchor stays last" do
+      assert reorder_renders("select(q, [a, b, ...], [a.x, b.y])") ==
+               ["select(q, [b, a, ...], [a.x, b.y])"]
+    end
+
+    test "interior anchor `[a, ..., b]` transposes the front- and tail-anchored bindings" do
+      # `a` binds the query's first source, `b` its last; the swap (`[b, ..., a]`) exchanges which
+      # source each reads — a genuine reorder across the `...`, not a no-op.
+      assert reorder_renders("select(q, [a, ..., b], [a.x, b.y])") ==
+               ["select(q, [b, ..., a], [a.x, b.y])"]
+    end
+
+    test "three positionals around a leading anchor yield every pairwise transposition" do
+      assert reorder_renders("select(q, [..., a, b, c], [a.x, b.y, c.z])") == [
+               "select(q, [..., b, a, c], [a.x, b.y, c.z])",
+               "select(q, [..., c, b, a], [a.x, b.y, c.z])",
+               "select(q, [..., a, c, b], [a.x, b.y, c.z])"
+             ]
+    end
+
+    test "a lone positional beside the anchor (`[..., a]`) yields no swap" do
+      # One positional, so there is no pair to transpose — the `...` is never counted as one.
+      assert reorder_renders("select(q, [..., a], [a.x])") == []
+    end
+
+    test "a positional + named binding around the anchor never swaps (one positional only)" do
+      # `comments: c` is name-addressed (never moved) and `a` is the lone positional, so there is no
+      # positional pair; the `...` and the named pair both ride untouched.
+      assert reorder_renders("order_by(q, [a, ..., comments: c], asc: [a.x, c.y])") == []
+    end
+
+    test "the suppression rule still applies across the anchor (unreferenced binding ⇒ no swap)" do
+      # `b` is unreferenced, so swapping `[a, ..., b]` would manufacture an equivalent mutant — not
+      # emitted, exactly as without an anchor.
+      assert reorder_renders("select(q, [a, ..., b], [a.x])") == []
+    end
+
+    test "every anchor-position mutant is valid Ecto that compiles" do
       src = """
       defmodule M do
         import Ecto.Query
-        def q(query), do: select(query, [..., a, b], {a.id, b.id})
+
+        def lead(query), do: select(query, [..., a, b], {a.id, b.id})
+        def trail(query), do: select(query, [a, b, ...], {a.id, b.id})
+        def interior(query), do: select(query, [a, ..., b], {a.id, b.id})
       end
       """
 
-      assert Enum.any?(mutated(src), &(&1 =~ "select(query, [..., b, a]"))
+      muts = mutated(src)
+      assert Enum.any?(muts, &(&1 =~ "select(query, [..., b, a]"))
+      assert Enum.any?(muts, &(&1 =~ "select(query, [b, a, ...]"))
+      assert Enum.any?(muts, &(&1 =~ "select(query, [b, ..., a]"))
       assert_compiles(src)
     end
   end

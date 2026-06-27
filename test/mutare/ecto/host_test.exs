@@ -247,6 +247,25 @@ defmodule Mutare.Ecto.HostTest do
       assert_compiles(src)
     end
 
+    test "the standalone form preserves an interior `...` (`[a, ..., b]`) in the woven dynamic" do
+      # The anchor can sit *between* positionals — `a` rebinds the first source, `b` the last. The
+      # woven dynamic must re-declare it verbatim (`[a, ..., b]`); collapsing or dropping it would
+      # re-map `b` off the tail, corrupting the baseline the host weaves the mutant behind.
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q(query), do: where(query, [a, ..., b], a.age > b.age)
+      end
+      """
+
+      assert Enum.any?(hosted(src), fn {original, mutated} ->
+               original == "a.age > b.age" and mutated == "a.age >= b.age"
+             end)
+
+      assert metamutant(src) =~ "dynamic([a, ..., b]"
+      assert_compiles(src)
+    end
+
     test "the pipe form re-declares its stage binding list" do
       src = """
       defmodule M do
