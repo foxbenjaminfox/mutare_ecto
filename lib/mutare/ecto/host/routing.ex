@@ -43,6 +43,20 @@ defmodule Mutare.Ecto.Host.Routing do
   """
   @spec macro_routing(Macro.t()) ::
           [Mutare.Macro.Spec.treatment() | :pinned | {:keyword, [term()]}]
+  # A qualified/aliased call (`Ecto.Query.where(…)`, `Q.where(…)`) — its head is a `{:., …}` remote
+  # node, not a bare macro atom, so the per-name clauses below never match it. Normalize it to its
+  # bare equivalent (`Mutare.Ecto.AST.query_macro_call/1`, reading the resolved-macro identity core
+  # stamped) and re-dispatch: routing is a list indexed by *visible argument position*, identical for
+  # every written form, so the head and meta are irrelevant here. A remote head core didn't resolve
+  # to a known macro yields `[]` (not a routing macro).
+  # mutare:ignore[guard_drop] equivalent — `args` is a `{head, meta, args}` node's argument slot, always a list; the guard is redundant
+  def macro_routing({head, _meta, args} = node) when not is_atom(head) and is_list(args) do
+    case AST.query_macro_call(node) do
+      {name, visible_args, _rebuild} -> macro_routing({name, [], visible_args})
+      nil -> []
+    end
+  end
+
   # mutare:ignore[guard_drop] equivalent — `rest` is the tail of the `[source | rest]` cons match, so it is always a list; the guard is redundant
   def macro_routing({:from, _meta, [source | rest]}) when is_list(rest) do
     # Source is never mutated (a table/schema swap is a broken query, not a mutant). A binding

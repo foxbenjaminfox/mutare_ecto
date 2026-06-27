@@ -10,6 +10,8 @@ defmodule Mutare.Ecto.TestSupport do
   # it) still get the `use Ecto.Schema` / `use MyAppWeb` expansion the schema/query routing needs.
 
   @repo MyApp.Repo
+  @macro_call_key Mutare.Transform.MetaKeys.macro_call_key()
+  @query_key Mutare.Ecto.AST.module_key(Ecto.Query)
 
   @doc "Every recorded `{mutator, original_code, mutated_code}` for `source` (all families)."
   def diffs(source, opts \\ []), do: Mutare.Test.diffs(source, mutators(opts))
@@ -50,4 +52,14 @@ defmodule Mutare.Ecto.TestSupport do
       other -> [other]
     end)
   end
+
+  @doc "Parse and resolver-stamp an Ecto.Query macro for direct sub-mutator unit tests."
+  def query_macro_ast(source) do
+    {head, meta, args} = Sourceror.parse_string!(source)
+    name = macro_name(head)
+    {head, Keyword.put(meta, @macro_call_key, {@query_key, name}), args}
+  end
+
+  defp macro_name(name) when is_atom(name), do: name
+  defp macro_name({:., _meta, [_receiver, name]}), do: name
 end

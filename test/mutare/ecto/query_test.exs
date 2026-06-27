@@ -236,7 +236,7 @@ defmodule Mutare.Ecto.QueryTest do
   describe "clause gates — a family fires only on its own clause key" do
     defp mutations(code) do
       code
-      |> Sourceror.parse_string!()
+      |> query_macro_ast()
       |> Mutare.Ecto.Query.mutations(%{opts: []})
       |> Enum.map(fn {family, node} -> {family, Sourceror.to_string(node)} end)
     end

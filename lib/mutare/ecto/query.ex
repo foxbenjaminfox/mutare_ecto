@@ -67,42 +67,53 @@ defmodule Mutare.Ecto.Query do
   @doc "Whole-`from` mutations for a `from(...)` node as `{family, node}` pairs, or `[]`."
   @spec mutations(Macro.t(), Mutare.Mutator.context()) :: [{family(), Macro.t()}]
   @impl Mutare.Ecto.SubMutator
-  # mutare:ignore[guard_drop] equivalent — a from's clause argument is always a keyword list; a non-list is malformed AST (a `from(S)` with no clauses is a one-element arg list, caught by the fallthrough clause)
-  def mutations({:from, meta, [source, clauses]}, %{opts: opts}) when is_list(clauses) do
-    Enum.concat([
-      tag(:filter_drop, drops(meta, source, clauses, @droppable)),
-      tag(:bound, drops(meta, source, clauses, @bound_keys)),
-      order_flips(meta, source, clauses),
-      tag(:bound, bound_bumps(meta, source, clauses)),
-      tag(:join_type, join_swaps(meta, source, clauses, opts)),
-      tag(:aggregate, aggregate_swaps(meta, source, clauses))
-    ])
+  # Normalize the call (`Mutare.Ecto.AST.query_macro_call/1`) so a qualified `Ecto.Query.from(…)` or
+  # aliased `Q.from(…)` is rewritten exactly like the bare/imported `from(…)`; `rebuild` re-emits each
+  # mutant in the source's written form.
+  def mutations(node, %{opts: opts}) do
+    case AST.query_macro_call(node) do
+      # mutare:ignore[guard_drop] equivalent — a from's clause argument is always a keyword list; a non-list is malformed AST (a `from(S)` with no clauses is a one-element arg list, caught by the fallthrough clause)
+      {:from, [source, clauses], rebuild} when is_list(clauses) ->
+        from_mutations(source, clauses, rebuild, opts)
+
+      _ ->
+        []
+    end
   end
 
-  def mutations(_node, _context), do: []
+  defp from_mutations(source, clauses, rebuild, opts) do
+    Enum.concat([
+      tag(:filter_drop, drops(rebuild, source, clauses, @droppable)),
+      tag(:bound, drops(rebuild, source, clauses, @bound_keys)),
+      order_flips(rebuild, source, clauses),
+      tag(:bound, bound_bumps(rebuild, source, clauses)),
+      tag(:join_type, join_swaps(rebuild, source, clauses, opts)),
+      tag(:aggregate, aggregate_swaps(rebuild, source, clauses))
+    ])
+  end
 
   defp tag(family, nodes), do: Enum.map(nodes, &{family, &1})
 
   # Remove each clause whose key is in `keys`, keeping the others — so the query still
   # compiles (it reuses the surviving clauses). Used for both the filter drops (where/having)
   # and the bound drops (limit/offset).
-  defp drops(meta, source, clauses, keys) do
+  defp drops(rebuild, source, clauses, keys) do
     for {pair, index} <- Enum.with_index(clauses), clause_key(pair) in keys do
-      drop_clause(meta, source, clauses, index)
+      drop_clause(rebuild, source, clauses, index)
     end
   end
 
   # Bump each `limit`/`offset` whose value is a literal integer by `±1` (non-negative only).
   # A `^pinned`/expression bound has no literal here, so it yields nothing — its value is
   # mutated where it is bound, in ordinary Elixir.
-  defp bound_bumps(meta, source, clauses) do
+  defp bound_bumps(rebuild, source, clauses) do
     flat_map_clauses(clauses, fn pair, index ->
       with true <- clause_key(pair) in @bound_keys,
            n when is_integer(n) <- AST.int_value(clause_value(pair)) do
         for bumped <- AST.bumps(n),
             do:
               replace_clause(
-                meta,
+                rebuild,
                 source,
                 clauses,
                 index,
@@ -118,12 +129,12 @@ defmodule Mutare.Ecto.Query do
   # `left_join`↔`right_join` under a `RIGHT`-capable dialect and `*`→`full_join` under a
   # `FULL`-capable one), keeping the join's value (`c in assoc(p, :x)`). One mutant per enabled
   # target.
-  defp join_swaps(meta, source, clauses, opts) do
+  defp join_swaps(rebuild, source, clauses, opts) do
     flips = join_flips(opts)
 
     flat_map_clauses(clauses, fn pair, index ->
       for to <- Map.get(flips, clause_key(pair), []),
-          do: replace_clause(meta, source, clauses, index, with_key(pair, AST.keyword_key(to)))
+          do: replace_clause(rebuild, source, clauses, index, with_key(pair, AST.keyword_key(to)))
     end)
   end
 
@@ -143,11 +154,11 @@ defmodule Mutare.Ecto.Query do
   # aggregate position (`Mutare.Ecto.Aggregate`). A `having` aggregate is deliberately *not* here:
   # its condition is hosted (`^`/`dynamic`), so the swap rides the host alongside the operator swaps
   # (`Mutare.Ecto.Host.catalog/3`) rather than being delivered as a whole-`from` rewrite.
-  defp aggregate_swaps(meta, source, clauses) do
+  defp aggregate_swaps(rebuild, source, clauses) do
     flat_map_clauses(clauses, fn pair, index ->
       if clause_key(pair) in @aggregate_keys do
         for swapped <- Aggregate.swaps(clause_value(pair)),
-            do: replace_clause(meta, source, clauses, index, with_value(pair, swapped))
+            do: replace_clause(rebuild, source, clauses, index, with_value(pair, swapped))
       else
         []
       end
@@ -157,11 +168,12 @@ defmodule Mutare.Ecto.Query do
   # Flip each `order_by` clause's directions, reusing the shared ordering catalog — one mutant
   # per axis per direction key, tagged with its family (`:ordering` direction / `:ordering_nulls`
   # placement; see `Mutare.Ecto.Ordering`).
-  defp order_flips(meta, source, clauses) do
+  defp order_flips(rebuild, source, clauses) do
     flat_map_clauses(clauses, fn pair, index ->
       if clause_key(pair) == :order_by do
         for {family, flipped} <- Ordering.flips(clause_value(pair)),
-            do: {family, replace_clause(meta, source, clauses, index, with_value(pair, flipped))}
+            do:
+              {family, replace_clause(rebuild, source, clauses, index, with_value(pair, flipped))}
       else
         []
       end
@@ -174,12 +186,14 @@ defmodule Mutare.Ecto.Query do
     clauses |> Enum.with_index() |> Enum.flat_map(fn {pair, index} -> fun.(pair, index) end)
   end
 
-  defp replace_clause(meta, source, clauses, index, new_pair) do
-    {:from, meta, [source, List.replace_at(clauses, index, new_pair)]}
+  # Rebuild the `from` with the chosen clause replaced/removed via the node's own `rebuild`, so the
+  # mutant keeps the source's written form (bare/qualified/aliased) — a minimal, shape-correct diff.
+  defp replace_clause(rebuild, source, clauses, index, new_pair) do
+    rebuild.(:from, [source, List.replace_at(clauses, index, new_pair)])
   end
 
-  defp drop_clause(meta, source, clauses, index) do
-    {:from, meta, [source, List.delete_at(clauses, index)]}
+  defp drop_clause(rebuild, source, clauses, index) do
+    rebuild.(:from, [source, List.delete_at(clauses, index)])
   end
 
   defp clause_key({key, _value}), do: AST.atom_value(key)

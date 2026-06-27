@@ -232,7 +232,7 @@ defmodule Mutare.Ecto.BindingReorderTest do
   describe "the reorder catalog directly (mutations/1)" do
     defp reorder_renders(code) do
       code
-      |> Sourceror.parse_string!()
+      |> query_macro_ast()
       |> Mutare.Ecto.BindingReorder.mutations(%{})
       |> Enum.map(fn {:binding_reorder, node} -> Sourceror.to_string(node) end)
     end

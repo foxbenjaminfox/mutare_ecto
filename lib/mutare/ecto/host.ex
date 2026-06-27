@@ -72,17 +72,34 @@ defmodule Mutare.Ecto.Host do
   condition with something the SQL catalog can mutate. `[]` when nothing is hostable (a
   bindingless source, a shorthand value, a condition with no catalog operators).
   """
+  # Normalize the call to its bare equivalent (`Mutare.Ecto.AST.query_macro_call/1`) before matching,
+  # so the qualified (`Ecto.Query.where(…)`) and aliased (`Q.where(…)`) forms host their conditions
+  # exactly like the bare/imported form — core hands `host/2` the visible call node in whatever form
+  # the source wrote it.
   @spec host(Macro.t(), Mutare.Mutator.context()) :: [map()]
-  # mutare:ignore[guard_drop] equivalent — a from's clause argument is always a keyword list; a non-list is malformed AST
-  def host({:from, _meta, [source, clauses]}, context) when is_list(clauses) do
+  def host(node, context) do
+    case AST.query_macro_call(node) do
+      # mutare:ignore[guard_drop] equivalent — a from's clause argument is always a keyword list; a non-list is malformed AST
+      {:from, [source, clauses], _rebuild} when is_list(clauses) ->
+        from_host(source, clauses, context)
+
+      # mutare:ignore[logical, conditional] equivalent — widening the guard admits only non-condition macros / non-list args, none of which expose a catalog-mutatable condition, so host still yields []
+      {macro, args, _rebuild} when macro in @condition_macros and is_list(args) ->
+        condition_host(args, context)
+
+      _ ->
+        []
+    end
+  end
+
+  defp from_host(source, clauses, context) do
     case from_bindings(source, clauses) do
       [] -> []
       bindings -> from_targets(clauses, bindings, opts(context))
     end
   end
 
-  # mutare:ignore[logical, conditional] equivalent — widening the guard admits only non-condition macros / non-list args, none of which expose a catalog-mutatable condition, so host still yields []
-  def host({macro, _meta, args}, context) when macro in @condition_macros and is_list(args) do
+  defp condition_host(args, context) do
     with index when not is_nil(index) <- condition_index(args),
          bindings = binding_decls(Enum.at(args, index - 1)),
          condition = Enum.at(args, index),
@@ -92,8 +109,6 @@ defmodule Mutare.Ecto.Host do
       _ -> []
     end
   end
-
-  def host(_node, _context), do: []
 
   # mutare:ignore[guard_drop] equivalent — context.opts is always a keyword list; a non-list never reaches here
   defp opts(%{opts: opts}) when is_list(opts), do: opts
@@ -221,10 +236,14 @@ defmodule Mutare.Ecto.Host do
         do: decl
   end
 
-  # Replace clause `index`'s value with the `^`-pinned selector `case`, preserving the key.
+  # Replace clause `index`'s value with the `^`-pinned selector `case`, preserving the key — and the
+  # source's written form. The node is re-normalized each fold (`AST.query_macro_call/1`) rather than
+  # destructured, so a qualified/aliased `from` weaves correctly and `rebuild` re-emits in its own
+  # form; multiple targets fold over the same node, each re-reading the (partly spliced) clause list.
   defp from_clause_splice(index, key) do
-    fn {:from, meta, [source, clauses]}, case_node ->
-      {:from, meta, [source, List.replace_at(clauses, index, {key, pin(case_node)})]}
+    fn node, case_node ->
+      {:from, [source, clauses], rebuild} = AST.query_macro_call(node)
+      rebuild.(:from, [source, List.replace_at(clauses, index, {key, pin(case_node)})])
     end
   end
 
@@ -248,9 +267,12 @@ defmodule Mutare.Ecto.Host do
     end
   end
 
+  # Pin the condition at `index`, preserving the macro and the source's written form (bare/qualified/
+  # aliased) via the node's own `rebuild` — re-normalized from the node core hands the splice.
   defp condition_splice(index) do
-    fn {macro, meta, args}, case_node ->
-      {macro, meta, List.replace_at(args, index, pin(case_node))}
+    fn node, case_node ->
+      {name, args, rebuild} = AST.query_macro_call(node)
+      rebuild.(name, List.replace_at(args, index, pin(case_node)))
     end
   end
 

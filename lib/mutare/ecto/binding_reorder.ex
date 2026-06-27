@@ -29,17 +29,23 @@ defmodule Mutare.Ecto.BindingReorder do
   @doc "Binding-reorder mutants for `node` as `{:binding_reorder, node}` pairs, or `[]`."
   @spec mutations(Macro.t(), Mutare.Mutator.context()) :: [{:binding_reorder, Macro.t()}]
   @impl Mutare.Ecto.SubMutator
-  # mutare:ignore[guard_drop] equivalent — `args` is a `{form, meta, args}` node's argument slot, always a list; the guard is redundant
-  def mutations({macro, meta, args}, _context) when is_list(args) do
-    if macro in Host.clause_macros(), do: reorders(macro, meta, args), else: []
-  end
+  # Normalize the call (`Mutare.Ecto.AST.query_macro_call/1`) so the qualified (`Ecto.Query.select`)
+  # and aliased (`Q.select`) forms reorder exactly like the bare/imported one; `rebuild` re-emits the
+  # swap in the source's written form.
+  def mutations(node, _context) do
+    case AST.query_macro_call(node) do
+      {macro, args, rebuild} ->
+        if macro in Host.clause_macros(), do: reorders(macro, args, rebuild), else: []
 
-  def mutations(_node, _context), do: []
+      nil ->
+        []
+    end
+  end
 
   # One mutant per pair of *positional* bindings both referenced in the body (the arguments after
   # the binding list — where `from`-less macros reference their bindings). The binding list itself
   # carries only declarations, so it is excluded from the reference test.
-  defp reorders(macro, meta, args) do
+  defp reorders(macro, args, rebuild) do
     with {index, blist} <- find_binding_list(args),
          positions = positional_positions(Binding.unwrap_list(blist)),
          # mutare:ignore[literal, conditional] equivalent — a fast-path guard; the `i < j` loop below already yields [] for fewer than two positions, so weakening or dropping this bound changes nothing
@@ -53,7 +59,7 @@ defmodule Mutare.Ecto.BindingReorder do
           AST.references_var?(body, a),
           AST.references_var?(body, b) do
         new_args = List.replace_at(args, index, swap(blist, i, j))
-        {:binding_reorder, {macro, meta, new_args}}
+        {:binding_reorder, rebuild.(macro, new_args)}
       end
     else
       _ -> []

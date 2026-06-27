@@ -32,29 +32,49 @@ defmodule Mutare.Ecto.Clause do
 
   @behaviour Mutare.Ecto.SubMutator
 
+  @ordering_macros ~w(order_by prepend_order_by)a
   @bound_macros ~w(limit offset)a
   @select_macros ~w(select select_merge)a
 
   @doc "Standalone/pipe clause-macro mutations for `node` as `{family, node}` pairs, or `[]`."
   @spec mutations(Macro.t(), Mutare.Mutator.context()) :: [{atom(), Macro.t()}]
   @impl Mutare.Ecto.SubMutator
-  def mutations({:order_by, meta, args}, _context) when is_list(args) and args != [] do
+  # Normalize the call (`Mutare.Ecto.AST.query_macro_call/1`) so the qualified (`Ecto.Query.order_by`)
+  # and aliased (`Q.order_by`) forms mutate exactly like the bare/imported one; `rebuild` re-emits each
+  # mutant in the source's written form. Each clause guards `args != []` to protect the
+  # `{init, [last]} = Enum.split(args, -1)` destructuring on a degenerate zero-arg macro node.
+  def mutations(node, _context) do
+    case AST.query_macro_call(node) do
+      {macro, args, rebuild} when macro in @ordering_macros and args != [] ->
+        order_by_mutations(macro, args, rebuild)
+
+      {macro, args, rebuild} when macro in @bound_macros and args != [] ->
+        bound_mutations(macro, args, rebuild)
+
+      {macro, args, rebuild} when macro in @select_macros and args != [] ->
+        select_mutations(macro, args, rebuild)
+
+      _ ->
+        []
+    end
+  end
+
+  defp order_by_mutations(macro, args, rebuild) do
     {init, [ordering]} = Enum.split(args, -1)
 
     flips =
       for {family, flipped} <- Ordering.flips(ordering),
-          do: {family, {:order_by, meta, init ++ [flipped]}}
+          do: {family, rebuild.(macro, init ++ [flipped])}
 
     aggregates =
       for swapped <- Aggregate.swaps(ordering),
-          do: {:aggregate, {:order_by, meta, init ++ [swapped]}}
+          do: {:aggregate, rebuild.(macro, init ++ [swapped])}
 
     # mutare:ignore[operand_swap] direction flips and aggregate swaps are consumed as a set — order is irrelevant
     flips ++ aggregates
   end
 
-  def mutations({macro, meta, args}, _context)
-      when macro in @bound_macros and is_list(args) and args != [] do
+  defp bound_mutations(macro, args, rebuild) do
     {init, [value]} = Enum.split(args, -1)
 
     case AST.int_value(value) do
@@ -62,15 +82,13 @@ defmodule Mutare.Ecto.Clause do
         []
 
       n ->
-        for bumped <- AST.bumps(n), do: {:bound, {macro, meta, init ++ [AST.int_literal(bumped)]}}
+        for bumped <- AST.bumps(n),
+            do: {:bound, rebuild.(macro, init ++ [AST.int_literal(bumped)])}
     end
   end
 
-  def mutations({macro, meta, args}, _context)
-      when macro in @select_macros and is_list(args) and args != [] do
+  defp select_mutations(macro, args, rebuild) do
     {init, [expr]} = Enum.split(args, -1)
-    for swapped <- Aggregate.swaps(expr), do: {:aggregate, {macro, meta, init ++ [swapped]}}
+    for swapped <- Aggregate.swaps(expr), do: {:aggregate, rebuild.(macro, init ++ [swapped])}
   end
-
-  def mutations(_node, _context), do: []
 end

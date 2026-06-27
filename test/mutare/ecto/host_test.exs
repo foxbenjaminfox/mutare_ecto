@@ -673,7 +673,7 @@ defmodule Mutare.Ecto.HostTest do
   describe "host/2 — the target set" do
     defp host_originals(code) do
       code
-      |> Sourceror.parse_string!()
+      |> query_macro_ast()
       |> Host.host(%{opts: [repo: MyApp.Repo]})
     end
 
@@ -706,7 +706,7 @@ defmodule Mutare.Ecto.HostTest do
     test "host tolerates a context without :opts (families default to all)" do
       # `opts/1` falls back to `[]` for a context lacking `:opts`, so the host still builds its
       # targets rather than crashing — `[]` reads as the default `:all` families downstream.
-      node = Sourceror.parse_string!("from(u in User, where: u.x == u.y, select: u.id)")
+      node = query_macro_ast("from(u in User, where: u.x == u.y, select: u.id)")
       assert [t] = Host.host(node, %{})
       assert Sourceror.to_string(t.original) == "u.x == u.y"
     end
