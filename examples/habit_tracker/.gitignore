@@ -1,0 +1,7 @@
+/_build/
+/cover/
+/deps/
+/habit_tracker
+/*.db
+/*.db-*
+erl_crash.dump

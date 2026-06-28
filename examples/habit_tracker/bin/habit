@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Run the habit tracker CLI against its SQLite file (./habit_tracker.db by
+# default; override with HABIT_TRACKER_DB). The app starts and self-migrates on
+# boot, so the database is always ready.
+#
+#   bin/habit add "Read" --target 1
+#   bin/habit check "Read"
+#   bin/habit stats
+set -euo pipefail
+cd "$(dirname "$0")/.."
+exec mix run -e "HabitTracker.CLI.main(System.argv())" -- "$@"
