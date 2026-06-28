@@ -120,7 +120,7 @@ The surface divides by **how a mutation is delivered**, not by what it mutates:
 | `host/catalog.ex` | The enabled, noted logical mutants for one hosted condition (Fragment + Aggregate + binding-reorder) |
 | `host/join_on.ex` | Which join `on:` conditions are safe to host: only a join's **sole, top-level** on-expression (not a multi-`on:` or `assoc` join, whose conditions Ecto folds into one `and` where a `^dynamic` operand is illegal) |
 | `host/target.ex` | The `dynamic`-wrap + `^`-pin + splice transforms consumed by core |
-| `fragment.ex` | The **SQL-semantics catalog** for `where`/`having` conditions (Comparison, Connective, NullPredicate, Membership, FragmentLiteral, binding-reorder) |
+| `fragment.ex` | The **SQL-semantics catalog** for `where`/`having` conditions (Comparison, Connective, NullPredicate, Membership, the literal arms IntegerLiteral/FloatLiteral/StringLiteral/AtomLiteral/BooleanLiteral, binding-reorder) |
 | `ast/query_call.ex` / `ast/binding_list.ex` / `ast/keyword_list.ex` | Normalized query-call, binding-list, and keyword/clause-list values; preserve written form while centralizing validation and reconstruction |
 | `binding.ex` | Primitive binding-entry vocabulary (`variable?`/`ellipsis?`/`entry?`) used by the normalized binding list |
 | `binding_reorder.ex` | Positional binding-reorder (`[a, b]`→`[b, a]`) for the **other** binding-list macros (`select`/`order_by`/`join`/…), delivered in-place; `where`/`having` get theirs via the host. Named bindings are never moved |

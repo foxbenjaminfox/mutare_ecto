@@ -19,11 +19,11 @@ defmodule Mutare.Ecto.ConfigTest do
     """
 
     test "a single in-fragment family keeps only its mutants" do
-      # :comparison → just the boundary swap (no fragment-literal bumps, no filter drop).
+      # :comparison → just the boundary swap (no integer-literal bumps, no filter drop).
       assert ecto_diffs(@src, ecto(families: [:comparison])) == [{"u.age > 18", "u.age >= 18"}]
 
-      # :fragment_literal → just the literal bumps.
-      lit = mutated(ecto_diffs(@src, ecto(families: [:fragment_literal])))
+      # :integer_literal → just the literal bumps.
+      lit = mutated(ecto_diffs(@src, ecto(families: [:integer_literal])))
       assert Enum.sort(lit) == Enum.sort(["u.age > 19", "u.age > 17", "u.age > 0"])
     end
 
@@ -153,7 +153,16 @@ defmodule Mutare.Ecto.ConfigTest do
       assert :hook_drop in Mutare.Ecto.families()
       assert :ordering_nulls in Mutare.Ecto.families()
       assert :clause_drop in Mutare.Ecto.families()
-      assert length(Mutare.Ecto.families()) == 18
+
+      # The in-fragment literal arms (one per literal type), replacing the former single
+      # `:fragment_literal`.
+      assert :integer_literal in Mutare.Ecto.families()
+      assert :float_literal in Mutare.Ecto.families()
+      assert :atom_literal in Mutare.Ecto.families()
+      assert :string_literal in Mutare.Ecto.families()
+      assert :boolean_literal in Mutare.Ecto.families()
+
+      assert length(Mutare.Ecto.families()) == 22
     end
 
     test "an unknown family name fails loudly" do

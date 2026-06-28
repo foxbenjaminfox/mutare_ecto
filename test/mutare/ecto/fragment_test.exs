@@ -100,7 +100,11 @@ defmodule Mutare.Ecto.FragmentTest do
 
   describe "family tags" do
     test "each mutant is tagged with the SQL family that produced it" do
-      assert families("u.age > 18") == MapSet.new([:comparison, :fragment_literal])
+      assert families("u.age > 18") == MapSet.new([:comparison, :integer_literal])
+      assert families("u.score > 2.5") == MapSet.new([:comparison, :float_literal])
+      assert families(~s|u.name == "ok"|) == MapSet.new([:comparison, :string_literal])
+      assert families("u.status == :active") == MapSet.new([:comparison, :atom_literal])
+      assert families("u.active == true") == MapSet.new([:comparison, :boolean_literal])
       assert families("u.a and u.b") == MapSet.new([:connective])
       assert families("is_nil(u.x)") == MapSet.new([:null_predicate])
       assert families("u.role in ^r") == MapSet.new([:membership])
@@ -116,7 +120,7 @@ defmodule Mutare.Ecto.FragmentTest do
     end
   end
 
-  describe "FragmentLiteral" do
+  describe "IntegerLiteral" do
     test "an in-fragment integer literal gets boundary ±1 and the zero sentinel" do
       # `u.age >= 18` offers the comparison swap *and* three literal variants for `18`.
       assert mutants("u.age >= 18") ==
@@ -138,7 +142,7 @@ defmodule Mutare.Ecto.FragmentTest do
         "u.age > 1"
         |> Sourceror.parse_string!()
         |> Fragment.mutants()
-        |> Enum.filter(fn {family, _node} -> family == :fragment_literal end)
+        |> Enum.filter(fn {family, _node} -> family == :integer_literal end)
         |> Enum.map(fn {_family, node} -> Sourceror.to_string(node) end)
         |> Enum.sort()
 
@@ -149,10 +153,80 @@ defmodule Mutare.Ecto.FragmentTest do
       # `^min_age` is ordinary Elixir bound upstream — the catalog only swaps the operator.
       assert mutants("u.age > ^min_age") == MapSet.new(["u.age >= ^min_age"])
     end
+  end
 
-    test "a string literal in the fragment is not mutated" do
-      # Only integers are SQL-boundary mutated; the `==` swap is the lone variant.
-      assert mutants(~s|u.name == "ok"|) == MapSet.new([~s|u.name != "ok"|])
+  describe "FloatLiteral" do
+    test "an in-fragment float literal gets boundary ±1.0 and the 0.0 sentinel" do
+      assert mutants("u.score > 2.5") ==
+               MapSet.new(["u.score >= 2.5", "u.score > 3.5", "u.score > 1.5", "u.score > 0.0"])
+    end
+
+    test "n - 1.0 may go negative (a valid SQL value) and renders with a unary minus" do
+      assert mutants("u.x > 0.5") ==
+               MapSet.new(["u.x >= 0.5", "u.x > 1.5", "u.x > -0.5", "u.x > 0.0"])
+    end
+
+    test "colliding float variants dedupe against the 0.0 sentinel" do
+      # `1.0`: n+1.0 = 2.0, n-1.0 = 0.0, sentinel 0.0 — so {2.0, 0.0}, not a repeated 0.0.
+      assert mutants("u.price > 1.0") ==
+               MapSet.new(["u.price >= 1.0", "u.price > 2.0", "u.price > 0.0"])
+    end
+  end
+
+  describe "StringLiteral" do
+    test "a plain string yields the empty string and the \"mutare\" sentinel" do
+      assert mutants(~s|u.name == "ok"|) ==
+               MapSet.new([~s|u.name != "ok"|, ~s|u.name == ""|, ~s|u.name == "mutare"|])
+    end
+
+    test "the sentinel value itself drops to just the empty string" do
+      assert mutants(~s|u.name == "mutare"|) ==
+               MapSet.new([~s|u.name != "mutare"|, ~s|u.name == ""|])
+    end
+
+    test "the empty string itself drops to just the sentinel" do
+      assert mutants(~s|u.name == ""|) ==
+               MapSet.new([~s|u.name != ""|, ~s|u.name == "mutare"|])
+    end
+  end
+
+  describe "AtomLiteral" do
+    test "a literal atom collapses to the :mutare sentinel" do
+      assert mutants("u.status == :active") ==
+               MapSet.new(["u.status != :active", "u.status == :mutare"])
+    end
+
+    test "the sentinel atom itself yields no atom mutant (only the operator swap)" do
+      assert mutants("u.status == :mutare") == MapSet.new(["u.status != :mutare"])
+    end
+
+    test "true / false are BooleanLiteral's, not atoms; nil is left alone" do
+      # The atom arm excludes them — booleans get the true↔false flip below, and `nil` (NULL/
+      # absence) carries no atom mutant, only the operator swap.
+      assert :atom_literal not in families("u.active == true")
+      assert :atom_literal not in families("u.flag == false")
+      assert mutants("u.x == nil") == MapSet.new(["u.x != nil"])
+    end
+  end
+
+  describe "BooleanLiteral" do
+    test "true and false flip to each other" do
+      assert mutants("u.active == true") ==
+               MapSet.new(["u.active != true", "u.active == false"])
+
+      assert mutants("u.flag == false") ==
+               MapSet.new(["u.flag != false", "u.flag == true"])
+    end
+
+    test "a boolean in a non-comparison position is flipped (descends into the fragment)" do
+      # The point of the family: not the direct comparison, but a boolean used deeper in a
+      # fragment — here the literal operand of an `and` flips while the connective swaps too.
+      assert mutants("u.flag and true") ==
+               MapSet.new(["u.flag or true", "u.flag and false"])
+    end
+
+    test "nil is not a boolean — it yields no boolean mutant" do
+      assert :boolean_literal not in families("u.x == nil")
     end
   end
 

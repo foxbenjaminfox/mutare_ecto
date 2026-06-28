@@ -76,7 +76,11 @@ the query still compiles once and the active mutant is chosen at build time:
 | `null_predicate` | `is_nil(u.x)` → `not is_nil(u.x)` | Is the `NULL` case tested? |
 | `connective` | `a and b` → `a or b` | Does any row distinguish the two? |
 | `membership` | `x in ^list` → `x not in ^list`; `like` → `ilike` | Polarity / case-sensitivity |
-| `fragment_literal` | `u.age > 18` → `19` / `17` / `0` | Off-by-one in a literal |
+| `integer_literal` | `u.age > 18` → `19` / `17` / `0` | Off-by-one in an integer literal |
+| `float_literal` | `u.score > 2.5` → `3.5` / `1.5` / `0.0` | Off-by-one in a float literal |
+| `string_literal` | `u.name == "ok"` → `""` / `"mutare"` | Is the string value tested? |
+| `atom_literal` | `u.status == :active` → `:mutare` | Is the atom value tested? |
+| `boolean_literal` | `… and true` → `… and false` | Is the boolean operand tested? |
 | `binding_reorder` | `a.x == b.y` → `b.x == a.y` | Are the two bindings distinguished? |
 | `filter_drop` | drop a whole `where`/`having` clause | Is this filter tested at all? |
 

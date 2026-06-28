@@ -49,6 +49,28 @@ defmodule Mutare.Ecto.AST do
     do: {:__block__, [token: Integer.to_string(int)], [int]}
 
   @doc """
+  A fresh float literal node that renders the new value. Like `int_literal/1` it carries a
+  `:token` (the float's source text) so the formatter has a form to re-emit in an embedded query
+  position, and represents a negative float as the canonical unary-minus-over-literal shape
+  (`{:-, [], [1.5]}` for `-1.5`), matching how Elixir and `Mutare.AST.literal/1` render it.
+  """
+  @spec float_literal(float()) :: Macro.t()
+  def float_literal(f) when is_float(f) and f < 0, do: {:-, [], [float_literal(-f)]}
+
+  # mutare:ignore[guard_drop] equivalent — constructor guard; every caller passes a float (the prior clause handles negatives, this one the non-negative rest), so no reachable input distinguishes the guarded clause from a bare one
+  def float_literal(f) when is_float(f),
+    do: {:__block__, [token: Float.to_string(f)], [f]}
+
+  @doc """
+  A fresh string literal node that renders the new value, carrying the `delimiter` meta (`"`) the
+  formatter needs to re-emit it as a quoted string in an embedded query position — the same
+  representation core's `Mutare.AST.literal/1` uses for a binary.
+  """
+  @spec string_literal(String.t()) :: Macro.t()
+  # mutare:ignore[guard_drop] equivalent — defensive constructor guard; every caller passes a binary, so no reachable input distinguishes the guarded clause from a bare one
+  def string_literal(s) when is_binary(s), do: {:__block__, [delimiter: ~s(")], [s]}
+
+  @doc """
   The off-by-one boundary bumps for an integer `limit`/`offset` bound: `n+1` always, and `n-1`
   only when it stays non-negative (a negative bound is invalid SQL). Shared by the whole-`from`
   bound mutator (`Mutare.Ecto.Query`) and the standalone/pipe one (`Mutare.Ecto.Clause`), which

@@ -17,7 +17,8 @@ defmodule Mutare.Ecto.Config do
   # validating a configured subset. Grouped by the surface they mutate:
   #
   #   * in-fragment (`where`/`having`, via the host): comparison, connective, null_predicate,
-  #     membership, fragment_literal, binding_reorder;
+  #     membership, integer_literal, float_literal, atom_literal, string_literal, boolean_literal,
+  #     binding_reorder;
   #   * binding_reorder also fires **in place** on every other binding-list macro (`select`,
   #     `order_by`, `join`, … — `Mutare.Ecto.BindingReorder`): a positional binding transposition;
   #   * whole-query / clause-macro: filter_drop (drop a where/having), bound (limit/offset),
@@ -28,7 +29,8 @@ defmodule Mutare.Ecto.Config do
   #   * repo write: persistence (insert/update/delete → apply_action), on_conflict (`:nothing`↔`:raise`);
   #   * changeset: validation_drop (validators/constraints), hook_drop (prepare_changes/optimistic_lock).
   @families ~w(
-    comparison connective null_predicate membership fragment_literal binding_reorder
+    comparison connective null_predicate membership binding_reorder
+    integer_literal float_literal atom_literal string_literal boolean_literal
     filter_drop ordering ordering_nulls bound join_type aggregate query_terminal clause_drop
     persistence on_conflict validation_drop hook_drop
   )a

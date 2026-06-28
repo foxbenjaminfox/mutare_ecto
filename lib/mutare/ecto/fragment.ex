@@ -24,18 +24,31 @@ defmodule Mutare.Ecto.Fragment do
       `like`↔`ilike` (case-sensitivity; an atom-form swap). `ilike` is Postgres-specific, so the
       `like`↔`ilike` swap is **dialect-gated** — emitted only when `dialects:` includes `:postgres`
       (the `x in ^list` polarity is portable and always emitted).
-    * **FragmentLiteral** — a *non-pinned* integer literal written into the fragment
-      (`u.age > 18` → `19`/`17`/`0`). The library owns these so it can keep them SQL-safe:
-      they are part of the SQL the query runs, not interpolated Elixir, so core never sees
-      them (the clause is raw/`:hosted`). Boundary (`n±1`) plus the zero sentinel, deduped
-      and never equal to the original — the same boundary convention as core's `Literal`, but
-      decided here under SQL semantics.
+    * **IntegerLiteral** — a *non-pinned* integer literal written into the fragment
+      (`u.age > 18` → `19`/`17`/`0`): boundary (`n±1`) plus the zero sentinel, deduped and never
+      equal to the original.
+    * **FloatLiteral** — a *non-pinned* float literal (`u.score > 2.5` → `3.5`/`1.5`/`0.0`):
+      boundary (`n±1.0`) plus the `0.0` sentinel, the same shape as the integer arm.
+    * **StringLiteral** — a plain string literal (`u.name == "ok"` → `""`/`"mutare"`): the empty
+      string and the `"mutare"` sentinel, dropping whichever already equals the original.
+    * **BooleanLiteral** — `true`↔`false` (core's `Literal` boolean arm). A direct boolean
+      *comparison* is rarely idiomatic, but a boolean in a non-comparison position (a flag deeper
+      in a fragment) is worth flipping — it is worth mutating exactly when it is worth using.
+    * **AtomLiteral** — any *other* literal atom (`u.status == :active` → `:mutare`): the
+      `:mutare` sentinel, dropped when the atom already is the sentinel. `true`/`false` are
+      BooleanLiteral's; `nil` is excluded (it is NULL/absence, with no clean swap).
 
-  Pinned interpolations (`^min_age`), field references (`u.age`), and *string* literals are
-  left untouched: a `^value` is ordinary Elixir bound upstream and mutated there by core's
-  literal families — the catalog targets only the SQL-evaluated *operators and structure* (see
-  `DESIGN.md`, "Pinned values are core's"), plus the in-fragment integer literals core can't
-  reach.
+  These literal arms are owned here — not borrowed from core's `Literal`/`FloatLiteral`/
+  `StringLiteral`/`AtomLiteral` — for the same reason the operator families are: the literal is
+  part of the SQL the query runs, not interpolated Elixir, so core never sees it (the clause is
+  raw/`:hosted`). They follow core's value conventions but are decided here under SQL semantics.
+  Each is named after the *type* it mutates (`integer_literal`, …), never after `fragment(...)`,
+  with which it has nothing to do.
+
+  Pinned interpolations (`^min_age`) and field references (`u.age`) are left untouched: a `^value`
+  is ordinary Elixir bound upstream and mutated there by core's literal families — the catalog
+  targets the SQL-evaluated *operators and structure* (see `DESIGN.md`, "Pinned values are
+  core's"), plus the in-fragment literals core can't reach.
   """
 
   alias Mutare.Ecto.{AST, Config}
@@ -48,6 +61,12 @@ defmodule Mutare.Ecto.Fragment do
   @comparison_swaps %{:> => :>=, :>= => :>, :< => :<=, :<= => :<, :== => :!=, :!= => :==}
   @connective_swaps %{:and => :or, :or => :and}
   @membership_op_swaps %{:like => :ilike, :ilike => :like}
+
+  # The literal-arm sentinels, mirroring core's families (`Mutare.Mutators.AtomLiteral` /
+  # `StringLiteral`): a literal atom collapses to `:mutare`, a string to the empty string or
+  # `"mutare"`. Reused from core's `Mutare.AST` so the survivor marker matches the built-ins.
+  @atom_sentinel Mutare.AST.sentinel_atom()
+  @string_sentinel Mutare.AST.sentinel_string()
 
   @doc """
   Every single-point mutant of a `where`/`having` condition as `{family, node}` pairs, or `[]`
@@ -117,16 +136,47 @@ defmodule Mutare.Ecto.Fragment do
   # `x in ^list` → `x not in ^list`. A unit too. Clean meta on the fresh `not`.
   defp do_mutants({:in, _meta, [_l, _r]} = node, _opts), do: [{:membership, {:not, [], [node]}}]
 
-  # FragmentLiteral: an integer literal written into the fragment (Sourceror-wrapped). Boundary
+  # IntegerLiteral: an integer literal written into the fragment (Sourceror-wrapped). Boundary
   # (`n±1`) plus the zero sentinel, deduped and never equal to `n` — owned here so it stays
-  # SQL-safe (core can't reach it: the clause is raw). String/atom literals are left alone
-  # (their mutation is not SQL-meaningful here); a *pinned* `^value` never reaches this clause.
+  # SQL-safe (core can't reach it: the clause is raw). A *pinned* `^value` never reaches here.
   defp do_mutants({:__block__, _meta, [int]}, _opts) when is_integer(int) do
     [int + 1, int - 1, 0]
     |> Enum.uniq()
     |> Enum.reject(&(&1 == int))
-    |> Enum.map(&{:fragment_literal, AST.int_literal(&1)})
+    |> Enum.map(&{:integer_literal, AST.int_literal(&1)})
   end
+
+  # FloatLiteral: mirrors the integer arm with a `1.0` step and a `0.0` sentinel (core's
+  # `FloatLiteral` convention), deduped and never equal to `f`.
+  defp do_mutants({:__block__, _meta, [f]}, _opts) when is_float(f) do
+    [f + 1.0, f - 1.0, 0.0]
+    |> Enum.uniq()
+    |> Enum.reject(&(&1 == f))
+    |> Enum.map(&{:float_literal, AST.float_literal(&1)})
+  end
+
+  # StringLiteral: a plain string literal → the empty string and the `"mutare"` sentinel (core's
+  # `StringLiteral` convention), dropping whichever already equals the original — so a typical
+  # string yields two mutants. An interpolated string is a `<<>>` node, not this `:__block__`
+  # shape, so it is left to core upstream.
+  defp do_mutants({:__block__, _meta, [s]}, _opts) when is_binary(s) do
+    ["", @string_sentinel]
+    |> Enum.reject(&(&1 == s))
+    |> Enum.map(&{:string_literal, AST.string_literal(&1)})
+  end
+
+  # BooleanLiteral: `true` ↔ `false` (core's `Literal` boolean arm). Not aimed at direct boolean
+  # comparisons (rarely idiomatic), but at a boolean used elsewhere in a fragment — worth mutating
+  # exactly when it is worth using. `nil` is *not* a boolean and is left alone (NULL/absence).
+  defp do_mutants({:__block__, _meta, [bool]}, _opts) when is_boolean(bool),
+    do: [{:boolean_literal, AST.atom_literal(not bool)}]
+
+  # AtomLiteral: any other literal atom → the `:mutare` sentinel (core's `AtomLiteral` convention),
+  # dropped when the atom already is the sentinel. `true`/`false` are BooleanLiteral's (above) and
+  # `nil` is excluded — it is NULL/absence, with no clean swap.
+  defp do_mutants({:__block__, _meta, [atom]}, _opts)
+       when is_atom(atom) and atom not in [true, false, nil] and atom != @atom_sentinel,
+       do: [{:atom_literal, AST.atom_literal(@atom_sentinel)}]
 
   # An operator/connective (atom form): offer its own swap (if any), then descend into its
   # operands so a nested comparison/connective is mutated too (`is_nil(u.x) and u.y > 1`).
