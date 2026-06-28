@@ -25,6 +25,8 @@ defmodule MyApp.User do
     field(:active, :boolean)
     field(:role, :string)
     field(:score, :integer)
+
+    has_many(:posts, MyApp.Post)
   end
 end
 
@@ -40,5 +42,9 @@ defmodule MyApp.Post do
     field(:views, :integer)
     field(:published, :boolean)
     field(:user_id, :integer)
+
+    # `define_field: false` — `user_id` stays the plain integer column above (the orphan-pointing
+    # `99` the seed relies on), while the association still enables `assoc(u, :posts)` joins.
+    belongs_to(:user, MyApp.User, define_field: false)
   end
 end

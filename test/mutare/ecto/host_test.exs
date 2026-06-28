@@ -527,6 +527,88 @@ defmodule Mutare.Ecto.HostTest do
     end
   end
 
+  describe "multi-condition join `on:` is not hosted (BUG-multi-condition-join-on)" do
+    # A `^dynamic(...)` is legal only as a join's *entire, top-level* on-expression. Ecto folds a
+    # join's multiple/implicit on-conditions into one `and`, where a `^dynamic` operand is rejected
+    # ("dynamic expressions can only be interpolated at the top level…"). Because the host wraps even
+    # the *baseline* branch, hosting such an `on:` corrupts mutant id 0 — the whole `mix mutare` run
+    # aborts on a non-green baseline. So the host must leave these `on:` conditions raw. `where`/
+    # `having`, each its own independent clause, are unaffected and keep hosting.
+
+    test "a join with two `on:` keys hosts neither — no dynamic woven" do
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q do
+          from u in User,
+            inner_join: p in Post,
+            on: p.user_id == u.id,
+            on: p.published == true,
+            select: u.id
+        end
+      end
+      """
+
+      assert hosted(src) == []
+      refute metamutant(src) =~ "dynamic("
+      assert_compiles(src)
+    end
+
+    test "an `assoc` join (implicit on) with an explicit `on:` is not hosted" do
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q do
+          from u in User,
+            inner_join: p in assoc(u, :posts),
+            on: p.published == true,
+            select: u.id
+        end
+      end
+      """
+
+      assert hosted(src) == []
+      refute metamutant(src) =~ "dynamic("
+      assert_compiles(src)
+    end
+
+    test "a standalone `assoc` join with an `on:` is not hosted" do
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q do
+          User
+          |> join(:inner, [u], p in assoc(u, :posts), on: p.published == true)
+          |> select([u], u.id)
+        end
+      end
+      """
+
+      # The stage-drop mutants (collapse a stage to `identity()`) still fire; the guard is that the
+      # `on:` weaves no `^dynamic` — were it hosted, a `dynamic(` would appear in the metamutant.
+      refute metamutant(src) =~ "dynamic("
+      assert_compiles(src)
+    end
+
+    test "a single plain `on:` is still hosted (the sole, top-level on-expression)" do
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q do
+          from u in User,
+            inner_join: p in Post,
+            on: p.user_id == u.id,
+            select: u.id
+        end
+      end
+      """
+
+      assert {"p.user_id == u.id", "p.user_id != u.id"} in hosted(src)
+      assert metamutant(src) =~ "dynamic([u, p]"
+      assert_compiles(src)
+    end
+  end
+
   describe "the catalog families deliver through the host" do
     test "membership polarity (in / not in) is woven and compiles" do
       src = """

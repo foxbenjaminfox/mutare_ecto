@@ -11,7 +11,7 @@ defmodule Mutare.Ecto.Host do
   alias Mutare.Ecto.{Config, Surface}
   alias Mutare.Ecto.AST.{KeywordList, QueryCall}
   alias Mutare.Ecto.AST.KeywordList.Entry
-  alias Mutare.Ecto.Host.{Bindings, Catalog, Target}
+  alias Mutare.Ecto.Host.{Bindings, Catalog, JoinOn, Target}
 
   @doc "The selector-host targets for an Ecto.Query macro node."
   @spec host(Macro.t(), Mutare.Mutator.context()) :: [Target.t()]
@@ -38,16 +38,19 @@ defmodule Mutare.Ecto.Host do
   end
 
   defp from_targets(source, %KeywordList{entries: entries} = clauses, opts) do
+    hostable_on = JoinOn.hostable_from_indices(entries)
+
     entries
     |> Enum.with_index()
     |> Enum.flat_map(fn {entry, index} ->
       bindings = Bindings.from(source, %{clauses | entries: Enum.take(entries, index + 1)})
-      from_target({entry, index}, bindings, opts)
+      from_target({entry, index}, bindings, opts, hostable_on)
     end)
   end
 
-  defp from_target({%Entry{key: key, value: condition}, index}, bindings, opts) do
-    with [_ | _] <- bindings,
+  defp from_target({%Entry{key: key, value: condition}, index}, bindings, opts, hostable_on) do
+    with true <- hostable_clause?(key, index, hostable_on),
+         [_ | _] <- bindings,
          true <- Surface.from_clause?(key, :hosted),
          [_ | _] = mutants <- Catalog.mutants(condition, bindings, opts) do
       [Target.from_clause(condition, mutants, bindings, index)]
@@ -55,6 +58,12 @@ defmodule Mutare.Ecto.Host do
       _ -> []
     end
   end
+
+  # `where`/`having` always host (each is its own top-level clause). An `on:` hosts only when it is
+  # its join's sole, top-level on-expression — otherwise Ecto folds it under an `and` where a
+  # `^dynamic` operand is illegal (`Mutare.Ecto.Host.JoinOn`).
+  defp hostable_clause?(:on, index, hostable_on), do: MapSet.member?(hostable_on, index)
+  defp hostable_clause?(_key, _index, _hostable_on), do: true
 
   defp condition_target(args, opts) do
     with {bindings, condition, index} <- Bindings.hosted_condition(args),
@@ -69,6 +78,7 @@ defmodule Mutare.Ecto.Host do
     with {arg_index, options} <- trailing_options(args),
          pair_index when not is_nil(pair_index) <-
            Enum.find_index(options.entries, &(&1.key == :on)),
+         true <- JoinOn.hostable_standalone?(args, options.entries),
          %Entry{value: condition} = Enum.at(options.entries, pair_index),
          [_ | _] = bindings <- Bindings.join(args),
          [_ | _] = mutants <- Catalog.mutants(condition, bindings, config) do

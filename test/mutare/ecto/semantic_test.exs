@@ -419,6 +419,71 @@ defmodule Mutare.Ecto.SemanticTest do
     end
   end
 
+  describe "Regression — multi-condition join `on:` keeps a green baseline (BUG-multi-condition-join-on)" do
+    # The host wraps even the *baseline* branch in `^dynamic`, so hosting an `on:` that isn't its
+    # join's whole, top-level on-expression corrupts mutant id 0 itself: Ecto folds a join's
+    # multiple/implicit on-conditions into one `and`, and a `^dynamic` operand of that `and` raises
+    # ("dynamic expressions can only be interpolated at the top level…") — aborting `mix mutare`
+    # before any mutant runs. `assert_compiles` can't catch it (the metamutant compiles fine; the
+    # error is at query-build time), so only running the baseline against the DB proves the fix.
+
+    test "two `on:` keys on one join — the baseline builds and runs" do
+      {mod, _sites} =
+        build("""
+        defmodule Q do
+          import Ecto.Query
+          alias MyApp.{Post, User}
+          def q do
+            from u in User,
+              inner_join: p in Post,
+              on: p.user_id == u.id,
+              on: p.published == true,
+              select: u.id
+          end
+        end
+        """)
+
+      # The inner join keeps users with a *published* post: Alice (P1 published); Bob's P2 is not.
+      assert ids(mod, 0) == [1]
+    end
+
+    test "an `assoc` join with an explicit `on:` — the baseline builds and runs" do
+      {mod, _sites} =
+        build("""
+        defmodule Q do
+          import Ecto.Query
+          alias MyApp.User
+          def q do
+            from u in User,
+              inner_join: p in assoc(u, :posts),
+              on: p.published == true,
+              select: u.id
+          end
+        end
+        """)
+
+      # Same result through the assoc join (implicit `p.user_id == u.id`) plus the explicit filter.
+      assert ids(mod, 0) == [1]
+    end
+
+    test "a standalone `assoc` join with an `on:` — the baseline builds and runs" do
+      {mod, _sites} =
+        build("""
+        defmodule Q do
+          import Ecto.Query
+          alias MyApp.User
+          def q do
+            User
+            |> join(:inner, [u], p in assoc(u, :posts), on: p.published == true)
+            |> select([u], u.id)
+          end
+        end
+        """)
+
+      assert ids(mod, 0) == [1]
+    end
+  end
+
   describe "Aggregate — `sum` ↔ `avg` in `select` (whole-`from`)" do
     test "swapping sum for avg reduces the column to a different number" do
       {mod, sites} =
