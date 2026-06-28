@@ -260,6 +260,81 @@ defmodule Mutare.Ecto.FragmentTest do
     end
   end
 
+  describe "structural positions in known Ecto DSL forms" do
+    # A literal at a *structural* position of a known Ecto DSL form shapes the SQL the builder
+    # emits rather than carrying data — mutating it would produce a broken query, not a live
+    # mutant — so the catalog skips it. Only the named positions are skipped; data literals at
+    # *other* positions of the same form are still mutated, which is what makes these tests pin
+    # the rule rather than just "fragment forms are inert".
+
+    test "fragment's template (arg 0) is never mutated, but its data args still are" do
+      # The `"? > ?"` template is structural (no ""/\"mutare\" variants); the `18` at arg 2 is
+      # ordinary data and gets the integer boundary/sentinel mutants.
+      assert mutants(~s|fragment("? > ?", u.age, 18)|) ==
+               MapSet.new([
+                 ~s|fragment("? > ?", u.age, 19)|,
+                 ~s|fragment("? > ?", u.age, 17)|,
+                 ~s|fragment("? > ?", u.age, 0)|
+               ])
+    end
+
+    test "the same string type is skipped at the template but mutated at a data position" do
+      # Position-specific: a string literal at arg 0 (template) is skipped, while a string at the
+      # non-structural arg 2 still yields the empty-string / \"mutare\" sentinels.
+      assert mutants(~s|fragment("? = ?", u.x, "ok")|) ==
+               MapSet.new([
+                 ~s|fragment("? = ?", u.x, "")|,
+                 ~s|fragment("? = ?", u.x, "mutare")|
+               ])
+    end
+
+    test "type/2's cast type (arg 1) is never mutated" do
+      # A bare cast offers nothing (the atom is structural, the value is pinned)…
+      assert mutants("type(^v, :integer)") == MapSet.new([])
+
+      # …and nested under a comparison only the operator swaps — the `:integer` is not collapsed
+      # to the `:mutare` sentinel the way an ordinary in-fragment atom would be.
+      assert mutants("u.x == type(^v, :integer)") == MapSet.new(["u.x != type(^v, :integer)"])
+    end
+
+    test "datetime_add/date_add's interval unit (arg 2) is skipped; the count (arg 1) is not" do
+      assert mutants(~s|datetime_add(u.inserted_at, 1, "month")|) ==
+               MapSet.new([
+                 ~s|datetime_add(u.inserted_at, 2, "month")|,
+                 ~s|datetime_add(u.inserted_at, 0, "month")|
+               ])
+
+      assert mutants(~s|date_add(u.date, 1, "day")|) ==
+               MapSet.new([
+                 ~s|date_add(u.date, 2, "day")|,
+                 ~s|date_add(u.date, 0, "day")|
+               ])
+    end
+
+    test "from_now/ago's interval unit (arg 1) is skipped; the count (arg 0) is not" do
+      assert mutants(~s|from_now(3, "month")|) ==
+               MapSet.new([
+                 ~s|from_now(4, "month")|,
+                 ~s|from_now(2, "month")|,
+                 ~s|from_now(0, "month")|
+               ])
+
+      assert mutants(~s|ago(3, "day")|) ==
+               MapSet.new([
+                 ~s|ago(4, "day")|,
+                 ~s|ago(2, "day")|,
+                 ~s|ago(0, "day")|
+               ])
+    end
+
+    test "the skip is keyed to the form — a same-named position elsewhere is unaffected" do
+      # `type` is structural only at arg 1; an atom at arg 1 of a *non-registry* call is ordinary
+      # data and still collapses to the sentinel, so the rule is a registry lookup, not a blanket
+      # \"second argument is structural\".
+      assert mutants("foo(u.x, :active)") == MapSet.new(["foo(u.x, :mutare)"])
+    end
+  end
+
   describe "binding_reorders/2" do
     test "swaps two binding references that both appear" do
       assert reorders("a.x == b.y", [:a, :b]) == MapSet.new(["b.x == a.y"])

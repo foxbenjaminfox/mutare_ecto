@@ -48,6 +48,14 @@ defmodule Mutare.Ecto.Fragment do
   Pinned interpolations (`^min_age`) and field references (`u.age`) are left untouched: a `^value`
   is ordinary Elixir bound upstream and mutated there by core's literal families — the catalog
   targets the SQL-evaluated *operators and structure*, plus the in-fragment literals core can't reach.
+
+  A literal arm is also suppressed at a **structural position** of a known Ecto DSL form, where the
+  literal shapes the SQL the builder emits rather than carrying data (mutating it yields a broken
+  query, not a live mutant): the `fragment` template (arg 0), the interval unit of
+  `datetime_add`/`date_add` (arg 2) and `from_now`/`ago` (arg 1), and the cast type of `type/2`
+  (arg 1). The traversal threads each child's `{parent_form, arity, index}` down so the literal
+  arms can consult this small registry (`structural_position?/1`); data literals at every *other*
+  position of those forms are still mutated.
   """
 
   alias Mutare.Ecto.{AST, Config}
@@ -84,7 +92,7 @@ defmodule Mutare.Ecto.Fragment do
   `like`↔`ilike` swap is emitted only under `:postgres`.
   """
   @spec mutants(Macro.t(), keyword() | Config.t()) :: [{family(), Macro.t(), label()}]
-  def mutants(condition, opts \\ []), do: do_mutants(condition, opts)
+  def mutants(condition, opts \\ []), do: do_mutants(condition, opts, nil)
 
   @doc false
   # The finer variant labels every fragment family can emit — the operators the swap families mutate
@@ -144,30 +152,61 @@ defmodule Mutare.Ecto.Fragment do
   # redundant `not not is_nil(x)`).
   # Both directions are tagged `"is_nil"` (`not is_nil` has a space — not a wire-safe label), so
   # `# mutare:ignore[ecto:is_nil]` suppresses the null-predicate flip whichever way it points.
-  defp do_mutants({:not, _meta, [{:is_nil, _, [_arg]} = inner]}, _opts),
+  defp do_mutants({:not, _meta, [{:is_nil, _, [_arg]} = inner]}, _opts, _position),
     do: [{:null_predicate, inner, "is_nil"}]
 
   # `is_nil(x)` → `not is_nil(x)`. A unit too: its argument is a column reference with no
   # catalog operators, so there is nothing to descend into. Clean meta on the fresh `not`.
-  defp do_mutants({:is_nil, _meta, [_arg]} = node, _opts),
+  defp do_mutants({:is_nil, _meta, [_arg]} = node, _opts, _position),
     do: [{:null_predicate, {:not, [], [node]}, "is_nil"}]
 
   # Membership polarity, as a unit (mirrors NullPredicate). `x not in ^list` → `x in ^list`:
   # flip the whole predicate, no descent (its operands — a field and a pinned list — carry no
   # catalog target; the list's *value* is core's). Portable, always emitted. Both directions are
   # tagged `"in"` (`not in` has a space), so `# mutare:ignore[ecto:in]` names the polarity flip.
-  defp do_mutants({:not, _meta, [{:in, _, [_l, _r]} = inner]}, _opts),
+  defp do_mutants({:not, _meta, [{:in, _, [_l, _r]} = inner]}, _opts, _position),
     do: [{:membership, inner, "in"}]
 
   # `x in ^list` → `x not in ^list`. A unit too. Clean meta on the fresh `not`.
-  defp do_mutants({:in, _meta, [_l, _r]} = node, _opts),
+  defp do_mutants({:in, _meta, [_l, _r]} = node, _opts, _position),
     do: [{:membership, {:not, [], [node]}, "in"}]
+
+  # A literal (int/float/string/bool/atom) written directly into the fragment (Sourceror-wrapped).
+  # At a *structural* position of a known Ecto DSL form — the `fragment` template, an interval unit
+  # of `datetime_add`/`date_add`/`from_now`/`ago`, or the cast type of `type/2` — the literal is
+  # part of the SQL the builder emits, not data: mutating it yields a broken query, never a live
+  # mutant, so it is skipped (`structural_position?/1` consults the registry, off the
+  # `{parent_form, arity, index}` threaded down from `lift/4`). Elsewhere each type emits its own
+  # SQL-safe, labelled mutants via `literal_mutants/1`. A *pinned* `^value` is not this shape and
+  # never reaches here.
+  defp do_mutants({:__block__, _meta, [lit]} = node, _opts, position)
+       when is_integer(lit) or is_float(lit) or is_binary(lit) or is_atom(lit) do
+    if structural_position?(position), do: [], else: literal_mutants(node)
+  end
+
+  # An operator/connective (atom form): offer its own swap (if any), then descend into its
+  # operands so a nested comparison/connective is mutated too (`is_nil(u.x) and u.y > 1`).
+  defp do_mutants({form, meta, args}, opts, _position) when is_atom(form) and is_list(args) do
+    # mutare:ignore[operand_swap] local/lift order is irrelevant — mutants are consumed as a set
+    local(form, meta, args, opts) ++ lift(form, meta, args, opts)
+  end
+
+  # A non-atom-form node (e.g. a `u.age` field access, whose form is the `{:., …}` dot tuple):
+  # descend into its arguments only, never its form — exactly as core's analyzer recurses, so a
+  # field/qualifier reference is a leaf.
+  # mutare:ignore[pattern_swap, clause_drop] equivalent — the only non-atom-form node a condition yields is a field/dot access whose args are `[]`, and lift/4 over no args is a no-op, so reordering the head's bindings or dropping the clause both produce the same empty result
+  defp do_mutants({form, meta, args}, opts, _position) when is_list(args),
+    do: lift(form, meta, args, opts)
+
+  # Variables, 2-tuples, lists, bare atoms: no catalog target (interpolations are core's; the
+  # `in`/`like` membership forms are handled by their own clauses above).
+  defp do_mutants(_node, _opts, _position), do: []
 
   # IntegerLiteral: an integer literal written into the fragment (Sourceror-wrapped). Boundary
   # (`n±1`) plus the zero sentinel, deduped and never equal to `n` — owned here so it stays
-  # SQL-safe (core can't reach it: the clause is raw). A *pinned* `^value` never reaches here.
-  defp do_mutants({:__block__, _meta, [int]}, _opts) when is_integer(int) do
-    literal_mutants(
+  # SQL-safe (core can't reach it: the clause is raw).
+  defp literal_mutants({:__block__, _meta, [int]}) when is_integer(int) do
+    value_mutants(
       [{int + 1, "succ"}, {int - 1, "pred"}, {0, "zero"}],
       int,
       :integer_literal,
@@ -177,8 +216,8 @@ defmodule Mutare.Ecto.Fragment do
 
   # FloatLiteral: mirrors the integer arm with a `1.0` step and a `0.0` sentinel (core's
   # `FloatLiteral` convention), deduped and never equal to `f`.
-  defp do_mutants({:__block__, _meta, [f]}, _opts) when is_float(f) do
-    literal_mutants(
+  defp literal_mutants({:__block__, _meta, [f]}) when is_float(f) do
+    value_mutants(
       [{f + 1.0, "succ"}, {f - 1.0, "pred"}, {0.0, "zero"}],
       f,
       :float_literal,
@@ -190,8 +229,8 @@ defmodule Mutare.Ecto.Fragment do
   # (core's `StringLiteral` convention), dropping whichever already equals the original — so a
   # typical string yields two mutants. An interpolated string is a `<<>>` node, not this `:__block__`
   # shape, so it is left to core upstream.
-  defp do_mutants({:__block__, _meta, [s]}, _opts) when is_binary(s) do
-    literal_mutants(
+  defp literal_mutants({:__block__, _meta, [s]}) when is_binary(s) do
+    value_mutants(
       [{"", "empty"}, {@string_sentinel, "sentinel"}],
       s,
       :string_literal,
@@ -202,32 +241,37 @@ defmodule Mutare.Ecto.Fragment do
   # BooleanLiteral: `true` ↔ `false` (core's `Literal` boolean arm). Not aimed at direct boolean
   # comparisons (rarely idiomatic), but at a boolean used elsewhere in a fragment — worth mutating
   # exactly when it is worth using. `nil` is *not* a boolean and is left alone (NULL/absence).
-  defp do_mutants({:__block__, _meta, [bool]}, _opts) when is_boolean(bool),
+  defp literal_mutants({:__block__, _meta, [bool]}) when is_boolean(bool),
     do: [{:boolean_literal, AST.atom_literal(not bool), "negate"}]
 
   # AtomLiteral: any other literal atom → the `:mutare` sentinel (core's `AtomLiteral` convention),
   # dropped when the atom already is the sentinel. `true`/`false` are BooleanLiteral's (above) and
   # `nil` is excluded — it is NULL/absence, with no clean swap.
-  defp do_mutants({:__block__, _meta, [atom]}, _opts)
+  defp literal_mutants({:__block__, _meta, [atom]})
        when is_atom(atom) and atom not in [true, false, nil] and atom != @atom_sentinel,
        do: [{:atom_literal, AST.atom_literal(@atom_sentinel), "sentinel"}]
 
-  # An operator/connective (atom form): offer its own swap (if any), then descend into its
-  # operands so a nested comparison/connective is mutated too (`is_nil(u.x) and u.y > 1`).
-  defp do_mutants({form, meta, args}, opts) when is_atom(form) and is_list(args) do
-    # mutare:ignore[operand_swap] local/lift order is irrelevant — mutants are consumed as a set
-    local(form, meta, args, opts) ++ lift(form, meta, args, opts)
-  end
+  # `nil` and the already-sentinel atom carry no clean swap.
+  defp literal_mutants(_node), do: []
 
-  # A non-atom-form node (e.g. a `u.age` field access, whose form is the `{:., …}` dot tuple):
-  # descend into its arguments only, never its form — exactly as core's analyzer recurses, so a
-  # field/qualifier reference is a leaf.
-  # mutare:ignore[pattern_swap, clause_drop] equivalent — the only non-atom-form node a condition yields is a field/dot access whose args are `[]`, and lift/4 over no args is a no-op, so reordering the head's bindings or dropping the clause both produce the same empty result
-  defp do_mutants({form, meta, args}, opts) when is_list(args), do: lift(form, meta, args, opts)
-
-  # Literals, atoms, variables, 2-tuples, lists: no catalog target (interpolations and literals
-  # are core's; the `in`/`like` membership forms are handled by their own clauses above).
-  defp do_mutants(_node, _opts), do: []
+  # A *small registry* of known Ecto DSL forms and the argument positions whose literal is
+  # *structural* — part of the SQL the query builder emits, not data — keyed off the
+  # `{parent_form, arity, index}` threaded down from `lift/4`. The top-level condition has no
+  # parent (`nil`) and is never structural.
+  #
+  #   * `fragment(template, …)`        — arg 0 is the SQL template (any arity)
+  #   * `datetime_add(_, _, interval)` — arg 2 is the interval unit
+  #   * `date_add(_, _, interval)`     — arg 2 is the interval unit
+  #   * `from_now(_, interval)`        — arg 1 is the interval unit
+  #   * `ago(_, interval)`             — arg 1 is the interval unit
+  #   * `type(_, type)`                — arg 1 is the cast type
+  defp structural_position?({:fragment, _arity, 0}), do: true
+  defp structural_position?({:datetime_add, 3, 2}), do: true
+  defp structural_position?({:date_add, 3, 2}), do: true
+  defp structural_position?({:from_now, 2, 1}), do: true
+  defp structural_position?({:ago, 2, 1}), do: true
+  defp structural_position?({:type, 2, 1}), do: true
+  defp structural_position?(_position), do: false
 
   # The atom-form node's own single swap, tagged by family **and** by the operator it swaps (the
   # source `form`, e.g. `<`) — so `# mutare:ignore[ecto:<]` names just this swap. `like`↔`ilike` is
@@ -250,12 +294,16 @@ defmodule Mutare.Ecto.Fragment do
 
   # Rebuild `{form, meta, args}` once per single mutation of one of its arguments — so each
   # produced node differs from the original in exactly one descendant position, carrying the
-  # family **and** the finer label the descendant mutation was tagged with.
+  # family **and** the finer label the descendant mutation was tagged with. Each child is descended
+  # with its `{parent_form, arity, index}` position so `do_mutants/3` can skip a literal at a
+  # structural position of a known Ecto DSL form.
   defp lift(form, meta, args, opts) do
+    arity = length(args)
+
     args
     |> Enum.with_index()
     |> Enum.flat_map(fn {arg, index} ->
-      for {family, mutated, label} <- do_mutants(arg, opts),
+      for {family, mutated, label} <- do_mutants(arg, opts, {form, arity, index}),
           do: {family, {form, meta, List.replace_at(args, index, mutated)}, label}
     end)
   end
@@ -264,7 +312,7 @@ defmodule Mutare.Ecto.Fragment do
   # to the original, then dedup by value while **merging** the kind labels of colliding candidates —
   # so `1`'s `pred` (`n-1` = 0) and its `zero` sentinel collapse to one `0` tagged `["pred", "zero"]`
   # (mirroring core's `Literal`), and a qualifier naming *either* suppresses it. Order-stable.
-  defp literal_mutants(candidates, original, family, build) do
+  defp value_mutants(candidates, original, family, build) do
     candidates
     |> Enum.reject(fn {value, _kind} -> value == original end)
     |> Enum.reduce([], fn {value, kind}, acc ->
