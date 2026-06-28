@@ -12,8 +12,17 @@ defmodule Mutare.Ecto.AggregateTest do
     code
     |> Sourceror.parse_string!()
     |> Aggregate.swaps()
-    |> Enum.map(fn {:aggregate, node} -> Sourceror.to_string(node) end)
+    |> Enum.map(fn {:aggregate, node, _label} -> Sourceror.to_string(node) end)
     |> MapSet.new()
+  end
+
+  # The `{rendered_mutant, finer_label}` pairs, for asserting the source-function label.
+  defp swap_labels(code) do
+    code
+    |> Sourceror.parse_string!()
+    |> Aggregate.swaps()
+    |> Enum.map(fn {:aggregate, node, label} -> {Sourceror.to_string(node), label} end)
+    |> Map.new()
   end
 
   test "swaps a bare aggregate along its ladder" do
@@ -25,7 +34,16 @@ defmodule Mutare.Ecto.AggregateTest do
 
   test "each swap is self-tagged with the :aggregate family" do
     tagged = "sum(u.amount)" |> Sourceror.parse_string!() |> Aggregate.swaps()
-    assert [{:aggregate, _node}] = tagged
+    assert [{:aggregate, _node, _label}] = tagged
+  end
+
+  test "each swap carries the source function as its finer label" do
+    # `sum(u.x)` → `avg(u.x)` is the mutation *of* sum, so it's labelled `sum` — `[ecto:sum]` leaves
+    # sum alone while `avg`/`min`/`max` keep mutating.
+    assert swap_labels("sum(u.amount)") == %{"avg(u.amount)" => "sum"}
+    assert swap_labels("avg(u.amount)") == %{"sum(u.amount)" => "avg"}
+    assert swap_labels("min(u.x)") == %{"max(u.x)" => "min"}
+    assert swap_labels("max(u.x)") == %{"min(u.x)" => "max"}
   end
 
   test "count is left alone (arity/meaning contract)" do

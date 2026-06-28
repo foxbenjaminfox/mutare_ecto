@@ -17,8 +17,16 @@ defmodule Mutare.Ecto.SubMutator do
   # itself) instead writes `@behaviour Mutare.Ecto.SubMutator` directly — a `use` there would inject
   # an unreachable clause.
 
-  @callback mutations(node :: Macro.t(), context :: Mutare.Mutator.context()) ::
-              [{family :: atom(), mutated :: Macro.t()}]
+  @typedoc """
+  One produced mutation: its SQL `family` and mutated `node`, optionally with a finer
+  `# mutare:ignore` label (a swap's operator / a value's kind — see `Mutare.Ecto.Config.split_tag/1`).
+  A structural family omits the label; a swap/value family appends it.
+  """
+  @type tagged ::
+          {family :: atom(), mutated :: Macro.t()}
+          | {family :: atom(), mutated :: Macro.t(), label :: String.t() | [String.t()] | nil}
+
+  @callback mutations(node :: Macro.t(), context :: Mutare.Mutator.context()) :: [tagged()]
 
   @doc false
   defmacro __using__(_opts) do

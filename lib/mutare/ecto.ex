@@ -95,7 +95,7 @@ defmodule Mutare.Ecto do
   @behaviour Mutare.Mutator
   @behaviour Mutare.Mutator.MacroAware
 
-  alias Mutare.Ecto.{Config, Dispatcher, Fragment, Host, Surface}
+  alias Mutare.Ecto.{Aggregate, Config, Dispatcher, Fragment, Host, Ordering, Query, Surface}
 
   # Query macros routed through the plugin's **selector host** (`c:Mutare.Mutator.MacroAware.host/2`) — the
   # `from` opener and the standalone/pipe condition macros — via the `:routing` classifier, which
@@ -131,8 +131,10 @@ defmodule Mutare.Ecto do
 
   @doc """
   The `# mutare:ignore` variant vocabulary: every SQL **family** the plugin can emit (`families/0`),
-  plus the finer **operator/kind** labels the swap and value families tag (a comparison's operator, a
-  literal's kind — `Mutare.Ecto.Fragment.variant_labels/0`).
+  plus the finer **operator/kind** labels its swap and value families tag — a comparison's operator
+  (`<`), a literal's kind (`zero`), an aggregate (`sum`), a sort direction (`asc`), a NULLs placement
+  (`nulls_first`), a join kind (`left`). Assembled from each producer's own labels so the vocabulary
+  can't drift from what is emitted.
 
   Every recorded mutant carries its family label and, for a swap/value family, the finer label too —
   so a qualified directive suppresses **either** the whole family or one operator at a site, the rest
@@ -148,7 +150,13 @@ defmodule Mutare.Ecto do
   """
   @impl Mutare.Mutator
   @spec variants() :: [atom() | String.t()]
-  def variants, do: Config.all_families() ++ Fragment.variant_labels()
+  def variants do
+    Config.all_families() ++
+      Fragment.variant_labels() ++
+      Aggregate.variant_labels() ++
+      Ordering.variant_labels() ++
+      Query.variant_labels()
+  end
 
   @impl Mutare.Mutator.MacroAware
   def macros do

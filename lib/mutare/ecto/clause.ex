@@ -28,14 +28,18 @@ defmodule Mutare.Ecto.Clause do
   pipe-mode bookkeeping is required.
   """
 
-  alias Mutare.Ecto.{Aggregate, AST, Ordering, Surface}
+  alias Mutare.Ecto.{Aggregate, AST, Config, Ordering, Surface}
   alias Mutare.Ecto.AST.QueryCall
 
   @behaviour Mutare.Ecto.SubMutator
 
-  @doc "Standalone/pipe clause-macro mutations for `node` as `{family, node}` pairs, or `[]`."
+  @doc """
+  Standalone/pipe clause-macro mutations for `node` as self-tagging `{family, node, label}` entries
+  (a swap family — order/aggregate — carries the finer operator/kind label; `:bound` carries none),
+  or `[]`.
+  """
   @spec mutations(Macro.t() | QueryCall.t(), Mutare.Mutator.context()) ::
-          [{atom(), Macro.t()}]
+          [Mutare.Ecto.SubMutator.tagged()]
   @impl Mutare.Ecto.SubMutator
   # Normalize the call (`Mutare.Ecto.AST.QueryCall.parse/1`) so the qualified (`Ecto.Query.order_by`)
   # and aliased (`Q.order_by`) forms mutate exactly like the bare/imported one; `rebuild` re-emits each
@@ -60,13 +64,17 @@ defmodule Mutare.Ecto.Clause do
 
   # The shape all three clause-macro mutators share: split the mutated **last argument** off (the
   # ordering / bound / selector — `init` keeps the binding list when one is written), map it to
-  # `{family, mutated}` pairs via `catalog`, and rebuild the call around each, keeping the source's
-  # written form. The `args != []` guard in `mutations/2` makes the `[last]` destructure total.
+  # tagged mutants via `catalog`, and rebuild the call around each, keeping the source's written
+  # form. `Config.split_tag/1` normalizes the catalog's `{family, node}` / `{family, node, label}`
+  # shapes (ordering/aggregate carry a label, `bound_flips/1` does not), so the rebuilt entry threads
+  # the finer label through. The `args != []` guard in `mutations/2` makes the `[last]` destructure
+  # total.
   defp mutate_last(%QueryCall{args: args} = call, catalog) do
     {init, [last]} = Enum.split(args, -1)
 
-    for {family, mutated} <- catalog.(last),
-        do: {family, QueryCall.rebuild(call, init ++ [mutated])}
+    for tag <- catalog.(last),
+        {family, mutated, label} = Config.split_tag(tag),
+        do: {family, QueryCall.rebuild(call, init ++ [mutated]), label}
   end
 
   # `limit`/`offset` boundary bumps as `{:bound, literal}` pairs: bump a literal integer by `±1`

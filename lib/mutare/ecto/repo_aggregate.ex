@@ -22,24 +22,30 @@ defmodule Mutare.Ecto.RepoAggregate do
   # The aggregate's effective argument position: aggregate(queryable, agg, field) → 1.
   @agg_position 1
 
-  @doc "Aggregate-swap mutations for a `Repo.aggregate/3` node as `{:aggregate, node}` pairs, or `[]`."
-  @spec mutations(Macro.t(), Mutare.Mutator.context()) :: [{:aggregate, Macro.t()}]
+  @doc "Aggregate-swap mutations for a `Repo.aggregate/3` node as `{:aggregate, node, label}` triples, or `[]`."
+  @spec mutations(Macro.t(), Mutare.Mutator.context()) :: [{:aggregate, Macro.t(), String.t()}]
   @impl Mutare.Ecto.SubMutator
   def mutations(node, %{pipe_mode: pipe_mode} = context) do
     case RepoCall.resolve(node, context) do
       {:aggregate, args, rebuild} ->
-        for mutated <- swap(args, rebuild, pipe_mode), do: {:aggregate, mutated}
+        for {mutated, label} <- swap(args, rebuild, pipe_mode), do: {:aggregate, mutated, label}
 
       _ ->
         []
     end
   end
 
+  # Each swap is paired with the **source** function name (`"sum"`), the `# mutare:ignore[ecto:sum]`
+  # label naming just this swap — matching the query-side aggregate family's labelling.
   defp swap(args, rebuild, pipe_mode) do
     with index when is_integer(index) <- Mutare.Mutator.visible_index(@agg_position, pipe_mode),
          node when not is_nil(node) <- Enum.at(args, index),
-         to when not is_nil(to) <- Aggregate.swap(AST.atom_value(node)) do
-      [rebuild.(:aggregate, List.replace_at(args, index, AST.atom_literal(to)))]
+         source = AST.atom_value(node),
+         to when not is_nil(to) <- Aggregate.swap(source) do
+      [
+        {rebuild.(:aggregate, List.replace_at(args, index, AST.atom_literal(to))),
+         to_string(source)}
+      ]
     else
       _ -> []
     end

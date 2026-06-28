@@ -24,7 +24,7 @@ defmodule Mutare.Ecto.Dispatcher do
   @query_key AST.query_module_key()
   @changeset_key AST.module_key(Ecto.Changeset)
   @doc "The tagged mutations applicable to one AST node."
-  @spec mutations(Macro.t(), map()) :: [{atom(), Macro.t()}]
+  @spec mutations(Macro.t(), map()) :: [Mutare.Ecto.SubMutator.tagged()]
   def mutations(node, context) do
     case QueryCall.parse(node) do
       %QueryCall{name: name} = call ->

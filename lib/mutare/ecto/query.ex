@@ -27,7 +27,9 @@ defmodule Mutare.Ecto.Query do
       walker. "Does any test pin which aggregate the column is reduced/sorted by?" (An aggregate
       inside a `having` is delivered through the host instead — see `Mutare.Ecto.Host`.)
 
-  Each mutation is returned as `{family, node}` so the caller can filter by `families:`; `opts`
+  Each mutation is returned as `{family, node}` (or `{family, node, label}` for a swap family that
+  also names the operator/kind it mutated — order/join/aggregate) so the caller can filter by
+  `families:` and a `# mutare:ignore` qualifier; `opts`
   carries `dialects:` for the join gate. A `from` node is `{:from, meta, [source, clauses]}`
   where `clauses` is a keyword list (in Sourceror form, each key wrapped as
   `{:__block__, [format: :keyword], [atom]}`). `from/1` (`from(Post)`, no clauses) yields nothing.
@@ -62,9 +64,13 @@ defmodule Mutare.Ecto.Query do
   }
   @full_join_dialects [:postgres, :sqlite]
 
-  @doc "Whole-`from` mutations for a `from(...)` node as `{family, node}` pairs, or `[]`."
+  @doc """
+  Whole-`from` mutations for a `from(...)` node as self-tagging `{family, node}` /
+  `{family, node, label}` entries (a swap family — order/join/aggregate — appends the finer
+  operator/kind label), or `[]`.
+  """
   @spec mutations(Macro.t() | QueryCall.t(), Mutare.Mutator.context()) ::
-          [{family(), Macro.t()}]
+          [Mutare.Ecto.SubMutator.tagged()]
   @impl Mutare.Ecto.SubMutator
   # Normalize the call (`Mutare.Ecto.AST.QueryCall.parse/1`) so a qualified `Ecto.Query.from(…)` or
   # aliased `Q.from(…)` is rewritten exactly like the bare/imported `from(…)`; `rebuild` re-emits each
@@ -140,8 +146,30 @@ defmodule Mutare.Ecto.Query do
     for {%Entry{key: key}, index} <- Enum.with_index(entries),
         Surface.from_clause?(key, :join_type),
         to <- Map.get(flips, key, []) do
-      {:join_type, rebuild_from(call, source, KeywordList.replace_key(clauses, index, to))}
+      {:join_type, rebuild_from(call, source, KeywordList.replace_key(clauses, index, to)),
+       join_label(key)}
     end
+  end
+
+  # The `# mutare:ignore` label for a join swap: the **source** join kind, normalized
+  # (`inner_join`/`join` → `"inner"`), so `# mutare:ignore[ecto:left]` leaves a left join's kind
+  # alone. Derived alongside `variant_labels/0` from the flip tables' keys.
+  defp join_label(:join), do: "inner"
+  defp join_label(:inner_join), do: "inner"
+  defp join_label(:left_join), do: "left"
+  defp join_label(:right_join), do: "right"
+  defp join_label(:full_join), do: "full"
+
+  @doc false
+  # The finer `# mutare:ignore` labels the `:join_type` family can emit — each source join kind,
+  # derived from the flip tables so the vocabulary can't drift. Folded into the plugin's variant
+  # vocabulary by `Mutare.Ecto.variants/0`.
+  @spec variant_labels() :: [String.t()]
+  def variant_labels do
+    [@portable_join_flips, @right_join_flips, @full_join_flips]
+    |> Enum.flat_map(&Map.keys/1)
+    |> Enum.map(&join_label/1)
+    |> Enum.uniq()
   end
 
   # The portable flips, plus each dialect-gated map whose dialects the `config` enables (`RIGHT`,
@@ -163,8 +191,9 @@ defmodule Mutare.Ecto.Query do
   defp aggregate_swaps(call, source, %KeywordList{entries: entries} = clauses) do
     for {%Entry{key: key, value: value}, index} <- Enum.with_index(entries),
         Surface.from_clause?(key, :aggregate),
-        {family, swapped} <- Aggregate.swaps(value) do
-      {family, rebuild_from(call, source, KeywordList.replace_value(clauses, index, swapped))}
+        {family, swapped, label} <- Aggregate.swaps(value) do
+      {family, rebuild_from(call, source, KeywordList.replace_value(clauses, index, swapped)),
+       label}
     end
   end
 
@@ -174,8 +203,9 @@ defmodule Mutare.Ecto.Query do
   defp order_flips(call, source, %KeywordList{entries: entries} = clauses) do
     for {%Entry{key: key, value: value}, index} <- Enum.with_index(entries),
         Surface.from_clause?(key, :ordering),
-        {family, flipped} <- Ordering.flips(value) do
-      {family, rebuild_from(call, source, KeywordList.replace_value(clauses, index, flipped))}
+        {family, flipped, label} <- Ordering.flips(value) do
+      {family, rebuild_from(call, source, KeywordList.replace_value(clauses, index, flipped)),
+       label}
     end
   end
 

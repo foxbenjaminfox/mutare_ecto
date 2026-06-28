@@ -12,12 +12,31 @@ defmodule Mutare.Ecto.OrderingTest do
     code
     |> Sourceror.parse_string!()
     |> Ordering.flips()
-    |> Enum.map(fn {family, node} -> {family, Sourceror.to_string(node)} end)
+    |> Enum.map(fn {family, node, _label} -> {family, Sourceror.to_string(node)} end)
+  end
+
+  # The `{family, rendered, finer_label}` triples, for asserting the per-axis label.
+  defp labelled_flips(code) do
+    code
+    |> Sourceror.parse_string!()
+    |> Ordering.flips()
+    |> Enum.map(fn {family, node, label} -> {family, Sourceror.to_string(node), label} end)
   end
 
   test "a bare direction flips only its direction (no nulls placement declared)" do
     assert flips("[asc: u.name]") == [{:ordering, "[desc: u.name]"}]
     assert flips("[desc: u.name]") == [{:ordering, "[asc: u.name]"}]
+  end
+
+  test "each axis is labelled by the value it mutates (direction / placement)" do
+    # The direction flip is labelled `asc`/`desc`; the nulls-placement flip `nulls_first`/
+    # `nulls_last` — so `[ecto:asc]` and `[ecto:nulls_first]` each target one axis.
+    assert labelled_flips("[asc: u.name]") == [{:ordering, "[desc: u.name]", "asc"}]
+
+    assert labelled_flips("[asc_nulls_first: u.score]") == [
+             {:ordering, "[desc_nulls_first: u.score]", "asc"},
+             {:ordering_nulls, "[asc_nulls_last: u.score]", "nulls_first"}
+           ]
   end
 
   test "a bare field (implicit ascending) is not a flippable axis and doesn't crash the walk" do

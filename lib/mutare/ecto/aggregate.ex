@@ -19,13 +19,21 @@ defmodule Mutare.Ecto.Aggregate do
   @agg_funcs Map.keys(@agg_swaps)
 
   @doc """
-  Every single-point aggregate swap of select-expression `expr` as `{:aggregate, node}` pairs, or
-  `[]` — the same self-tagging `{family, node}` contract the other shared catalogs
+  Every single-point aggregate swap of select-expression `expr` as `{:aggregate, node, label}`
+  triples, or `[]` — the self-tagging `{family, node, label}` contract the other shared catalogs
   (`Mutare.Ecto.Fragment.mutants/2`, `Mutare.Ecto.Ordering.flips/1`) use, so a caller threads the
-  family uniformly when it rebuilds the surrounding clause.
+  family and finer label uniformly when it rebuilds the surrounding clause. `label` is the **source**
+  function the swap mutates (`"sum"` for `sum`↔`avg`), so `# mutare:ignore[ecto:sum]` names just it.
   """
-  @spec swaps(Macro.t()) :: [{:aggregate, Macro.t()}]
-  def swaps(expr), do: for(node <- walk(expr), do: {:aggregate, node})
+  @spec swaps(Macro.t()) :: [{:aggregate, Macro.t(), String.t()}]
+  def swaps(expr), do: for({node, label} <- walk(expr), do: {:aggregate, node, label})
+
+  @doc false
+  # The finer `# mutare:ignore` labels the aggregate family can emit — each swappable function name,
+  # derived from the swap table so the vocabulary can't drift from what's produced. Folded into the
+  # plugin's variant vocabulary by `Mutare.Ecto.variants/0`.
+  @spec variant_labels() :: [String.t()]
+  def variant_labels, do: @agg_swaps |> Map.keys() |> Enum.map(&to_string/1)
 
   @doc """
   The SQL-meaningful swap of a single aggregate function name (`:sum`↔`:avg`, `:min`↔`:max`), or
@@ -38,9 +46,10 @@ defmodule Mutare.Ecto.Aggregate do
   # An aggregate call: offer its swap (a same-arity rename, so it always compiles), then descend
   # into its arguments so a nested aggregate (`max(sum(...))` — degenerate but harmless) is still
   # reached. The function name is the call form atom (not a wrapped literal), so the rename keeps
-  # the call's meta and renders cleanly.
+  # the call's meta and renders cleanly. Each mutant is paired with the **source** function name
+  # (`"sum"`), the `# mutare:ignore` label naming the swap; descent carries the descendant's label.
   defp walk({f, meta, args}) when f in @agg_funcs and is_list(args) do
-    [{@agg_swaps[f], meta, args} | lift_args(f, meta, args)]
+    [{{@agg_swaps[f], meta, args}, to_string(f)} | lift_args(f, meta, args)]
   end
 
   # Any other call/operator node (atom form or a remote `{:., …}` form): descend into args.
@@ -49,7 +58,8 @@ defmodule Mutare.Ecto.Aggregate do
   # A 2-tuple literal — a `{a, b}` select, or a keyword/map pair: descend into both sides.
   defp walk({left, right}) do
     # mutare:ignore[operand_swap] branch order is irrelevant — mutants are consumed as a set
-    for(m <- walk(left), do: {m, right}) ++ for(m <- walk(right), do: {left, m})
+    for({m, label} <- walk(left), do: {{m, right}, label}) ++
+      for({m, label} <- walk(right), do: {{left, m}, label})
   end
 
   # A list — a list select, the args of a `%{}`/`{}` node, or a keyword list: descend per element.
@@ -57,7 +67,7 @@ defmodule Mutare.Ecto.Aggregate do
     list
     |> Enum.with_index()
     |> Enum.flat_map(fn {el, i} ->
-      for m <- walk(el), do: List.replace_at(list, i, m)
+      for {m, label} <- walk(el), do: {List.replace_at(list, i, m), label}
     end)
   end
 
@@ -68,7 +78,7 @@ defmodule Mutare.Ecto.Aggregate do
     args
     |> Enum.with_index()
     |> Enum.flat_map(fn {arg, i} ->
-      for m <- walk(arg), do: {form, meta, List.replace_at(args, i, m)}
+      for {m, label} <- walk(arg), do: {{form, meta, List.replace_at(args, i, m)}, label}
     end)
   end
 end

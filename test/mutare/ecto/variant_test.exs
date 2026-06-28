@@ -34,12 +34,19 @@ defmodule Mutare.Ecto.VariantTest do
       # every SQL family is targetable...
       assert Enum.all?(Mutare.Ecto.families(), &(&1 in variants))
 
-      # ...and so is each operator/value kind the swap and value families add.
+      # ...and so is each operator/value kind the swap and value families add — in-fragment
+      # (comparison/connective/null-predicate/literal)...
       assert "<" in variants
       assert ">" in variants
       assert "and" in variants
       assert "is_nil" in variants
       assert "zero" in variants
+
+      # ...and the mutate/2 swap families (aggregate / ordering / join).
+      assert "sum" in variants
+      assert "asc" in variants
+      assert "nulls_first" in variants
+      assert "left" in variants
     end
   end
 
@@ -172,6 +179,58 @@ defmodule Mutare.Ecto.VariantTest do
 
       assert site(sites, "u.age >= 18").ignored, "the comparison swap is suppressed"
       assert site(sites, "u.age > 19").ignored, "the literal sibling is suppressed too"
+    end
+  end
+
+  describe "# mutare:ignore[ecto:<operator>] on a mutate/2 swap family" do
+    test "[ecto:sum] kills the sum swap, leaving avg live (aggregate)" do
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q do
+          from(u in User, select: {sum(u.age), avg(u.age)}) # mutare:ignore[ecto:sum]
+        end
+      end
+      """
+
+      sites = sites_for(src)
+
+      assert site(sites, "avg(u.age), avg").ignored, "the sum → avg swap is suppressed"
+      refute site(sites, "sum(u.age), sum").ignored, "the avg → sum swap keeps running"
+    end
+
+    test "[ecto:asc] kills the asc direction flip, leaving desc live (ordering)" do
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q do
+          from(u in User, order_by: [asc: u.name, desc: u.age], select: u.id) # mutare:ignore[ecto:asc]
+        end
+      end
+      """
+
+      sites = sites_for(src)
+
+      assert site(sites, "desc: u.name").ignored, "the asc → desc flip is suppressed"
+      refute site(sites, "asc: u.age").ignored, "the desc → asc flip keeps running"
+    end
+
+    test "[ecto:left] kills the left-join swap, leaving the inner-join swap live (join_type)" do
+      # One line so the whole-`from` site (recorded at the `from`'s start line) sits on the same line
+      # as the trailing directive.
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q do
+          from(p in Post, left_join: u in assoc(p, :user), inner_join: a in assoc(p, :author), select: p.id) # mutare:ignore[ecto:left]
+        end
+      end
+      """
+
+      sites = sites_for(src)
+
+      assert site(sites, "inner_join: u").ignored, "the left → inner swap is suppressed"
+      refute site(sites, "left_join: a").ignored, "the inner → left swap keeps running"
     end
   end
 end
