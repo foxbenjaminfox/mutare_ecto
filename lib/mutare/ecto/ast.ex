@@ -23,6 +23,12 @@ defmodule Mutare.Ecto.AST do
   def atom_value(atom) when is_atom(atom), do: atom
   def atom_value(_node), do: nil
 
+  @doc "Whether `node` is a top-level pin, allowing for Sourceror's block wrapper."
+  @spec top_level_pin?(Macro.t()) :: boolean()
+  def top_level_pin?({:^, _meta, _args}), do: true
+  def top_level_pin?({:__block__, _meta, [inner]}), do: top_level_pin?(inner)
+  def top_level_pin?(_node), do: false
+
   @doc "A fresh atom literal node, clean-meta so it renders the new value."
   @spec atom_literal(atom()) :: Macro.t()
   # mutare:ignore[guard_drop] equivalent — defensive constructor guard; every caller passes an atom (a non-atom would be an invalid literal here), so no reachable input distinguishes the guarded clause from the bare one

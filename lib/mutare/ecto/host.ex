@@ -8,7 +8,7 @@ defmodule Mutare.Ecto.Host do
   selector splice consumed by Mutare core.
   """
 
-  alias Mutare.Ecto.{Config, Surface}
+  alias Mutare.Ecto.{AST, Config, Surface}
   alias Mutare.Ecto.AST.{KeywordList, QueryCall}
   alias Mutare.Ecto.AST.KeywordList.Entry
   alias Mutare.Ecto.Host.{Bindings, Catalog, JoinOn, Target}
@@ -55,6 +55,7 @@ defmodule Mutare.Ecto.Host do
     # binding. Hostability is decided by the clause key and a non-empty catalog, not the binding count.
     with true <- hostable_clause?(key, index, hostable_on),
          true <- Surface.from_clause?(key, :hosted),
+         false <- AST.top_level_pin?(condition),
          [_ | _] = mutants <- Catalog.mutants(condition, opts) do
       [Target.from_clause(condition, mutants, bindings, index)]
     else

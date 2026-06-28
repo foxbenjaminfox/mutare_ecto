@@ -574,6 +574,27 @@ defmodule Mutare.Ecto.HostTest do
       assert_compiles(src)
     end
 
+    test "a top-level interpolation stays raw alongside a hosted bare-source condition" do
+      src = """
+      defmodule M do
+        import Ecto.Query
+
+        def q(x) do
+          from("posts",
+            as: :post,
+            where: as(:post).views > 100,
+            where: ^(x > 1)
+          )
+        end
+      end
+      """
+
+      assert {"as(:post).views > 100", "as(:post).views >= 100"} in hosted(src)
+      refute Enum.any?(hosted(src), fn {original, _mutated} -> original == "^(x > 1)" end)
+      refute metamutant(src) =~ "^(x >= 1)"
+      assert_compiles(src)
+    end
+
     test "a bare-queryable `from` hosts a named-binding where (empty-binding dynamic)" do
       # The `from`-keyword twin: a bare source (`from("posts", …)`, no `p in S`) declares no
       # positional binding, but an `as:` lets its `where:` reference a named one — still a real SQL
