@@ -21,7 +21,8 @@ defmodule Mutare.Ecto.Config do
   #   * binding_reorder — a positional binding transposition (`[a, b]` → `[b, a]`), delivered **in
   #     place** by swapping the written list: `Mutare.Ecto.BindingReorder` for every standalone/pipe
   #     binding-list macro (`where`/`having`/`select`/`order_by`/`join`/…) and `Mutare.Ecto.Query` for
-  #     a `from` `[a, b] in q` source. Never a host/body rewrite;
+  #     a `from` `[a, b] in q` source. Unused declarations still swap; `_`-prefixed and named
+  #     bindings do not. Never a host/body rewrite;
   #   * whole-query / clause-macro: filter_drop (drop a where/having), bound (limit/offset),
   #     ordering (sort direction), ordering_nulls (NULLs placement), join_type,
   #     aggregate (`sum`↔`avg`/`min`↔`max` in `select`/`order_by`/`Repo.aggregate` delivered in

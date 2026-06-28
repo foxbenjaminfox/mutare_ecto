@@ -34,7 +34,7 @@ defmodule Mutare.Ecto.Host.Bindings do
   @doc "The dynamic binding list visible to a standalone `join` on-condition."
   @spec join([Macro.t()]) :: [Macro.t()]
   def join(args) do
-    with {index, %BindingList{} = list} <- find(args),
+    with {index, %BindingList{} = list} <- BindingList.find(args),
          binding_list = declarations(list),
          {:in, _, [lhs, _source]} <- Enum.find(Enum.drop(args, index + 1), &join_expression?/1),
          [_ | _] = join_declarations <- declarations(lhs) do
@@ -76,7 +76,7 @@ defmodule Mutare.Ecto.Host.Bindings do
   # derive from it, so the offset lives here, not in callers.
   @spec locate([Macro.t()]) :: {non_neg_integer(), BindingList.t(), pos_integer()} | nil
   defp locate(args) do
-    with {binding_index, binding_list} <- find(args),
+    with {binding_index, binding_list} <- BindingList.find(args),
          condition_index = binding_index + 1,
          true <- condition_index < length(args) do
       {binding_index, binding_list, condition_index}
@@ -94,18 +94,6 @@ defmodule Mutare.Ecto.Host.Bindings do
       %BindingList{} = list -> declarations(list)
       nil -> declaration(node)
     end
-  end
-
-  @spec find([Macro.t()]) :: {non_neg_integer(), BindingList.t()} | nil
-  defp find(args) do
-    args
-    |> Enum.with_index()
-    |> Enum.find_value(fn {arg, index} ->
-      case BindingList.parse(arg) do
-        %BindingList{} = list -> {index, list}
-        nil -> nil
-      end
-    end)
   end
 
   defp declaration({name, _meta, ctx} = var) when is_atom(name) and is_atom(ctx),

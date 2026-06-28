@@ -30,12 +30,28 @@ defmodule Mutare.Ecto.NormalizedASTTest do
   end
 
   describe "BindingList" do
-    test "validates entries, exposes positionals, and preserves the wrapper when swapping" do
+    test "validates entries and preserves the wrapper when transposing" do
       list = BindingList.parse(parse("[a, ..., b, post: p]"))
 
       assert %BindingList{} = list
-      assert BindingList.positionals(list) == [{0, :a}, {2, :b}]
-      assert list |> BindingList.swap(0, 2) |> Sourceror.to_string() == "[b, ..., a, post: p]"
+      assert [swapped] = BindingList.transpositions(list)
+      assert Sourceror.to_string(swapped) == "[b, ..., a, post: p]"
+    end
+
+    test "finds the first list and transposes only non-underscore positional bindings" do
+      args = [parse("query"), parse("[_ignored, a, _, b]"), parse("[a.x, b.y]")]
+      assert {1, %BindingList{} = list} = BindingList.find(args)
+
+      assert Enum.map(BindingList.transpositions(list), &Sourceror.to_string/1) == [
+               "[_ignored, b, _, a]"
+             ]
+
+      assert BindingList.find([parse("query"), parse("[a.x, b.y]")]) == nil
+    end
+
+    test "does not emit an unchanged transposition for repeated names" do
+      list = BindingList.parse(parse("[a, a]"))
+      assert BindingList.transpositions(list) == []
     end
 
     test "accepts a bare list and rejects non-binding or empty lists" do

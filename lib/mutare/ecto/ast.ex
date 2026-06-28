@@ -95,24 +95,6 @@ defmodule Mutare.Ecto.AST do
   def clean_var({name, _meta, ctx}) when is_atom(name) and is_atom(ctx), do: {name, [], ctx}
 
   @doc """
-  Whether `name` appears as a binding *variable* node (`{name, _meta, ctx}` with an atom hygiene
-  context) anywhere in `ast` — used to gate a binding reorder on the bindings it swaps actually
-  being referenced. A field name, atom, or pinned value that merely shares the spelling is not a
-  variable node, so it does not count.
-  """
-  @spec references_var?(Macro.t(), atom()) :: boolean()
-  # mutare:ignore[guard_drop] equivalent — defensive guard; binding names are always atoms, and a non-atom name (which the prewalk below would simply never match) never arrives to distinguish the guarded clause
-  def references_var?(ast, name) when is_atom(name) do
-    {_ast, found?} =
-      Macro.prewalk(ast, false, fn
-        {^name, _meta, ctx} = node, _acc when is_atom(ctx) -> {node, true}
-        node, acc -> {node, acc}
-      end)
-
-    found?
-  end
-
-  @doc """
   Normalize a module reference to the resolved key shape `Mutare.Transform.Calls` returns:
   an Elixir-module alias atom (`MyApp.Repo`) → its segment path (`[:MyApp, :Repo]`), an
   Erlang atom module (`:binary`) → itself. Lets a configured Repo be compared directly to a

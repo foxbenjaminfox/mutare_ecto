@@ -131,7 +131,7 @@ defmodule Mutare.Ecto.BindingReorderTest do
       assert_compiles(src)
     end
 
-    test "a swap is suppressed when one of the two bindings is unreferenced (would be equivalent)" do
+    test "unused bindings still reorder, matching core's pattern-swap policy" do
       src = """
       defmodule M do
         import Ecto.Query
@@ -139,17 +139,25 @@ defmodule Mutare.Ecto.BindingReorderTest do
       end
       """
 
-      # Only `u` is used; swapping `[u, p]` while `p` is unreferenced is not emitted.
-      refute Enum.any?(mutated(src), &(&1 =~ "order_by(query, [p, u]"))
+      # Only `u` is used, so this is an equivalent mutant that exposes a redundant declaration.
+      assert Enum.any?(mutated(src), &(&1 =~ "order_by(query, [p, u]"))
       assert_compiles(src)
+    end
+
+    test "underscore-prefixed bindings never participate in a reorder" do
+      assert reorder_renders("select(query, [_ignored, a, b], [a.x, b.y])") == [
+               "select(query, [_ignored, b, a], [a.x, b.y])"
+             ]
+
+      assert reorder_renders("select(query, [_left, _right], 1)") == []
     end
   end
 
   describe "the `...` anchor across positions (every combination with positional bindings)" do
     # The `...` tail-anchor is never itself a positional (`Binding.variable?/1` rejects it), so it
     # never moves: the positional bindings transpose *around* it, wherever it sits. These pin the swap
-    # for the anchor in each position and in combination with named binds and the reference/arity
-    # suppression rules. The catalog is asserted exactly (`reorder_renders`, defined below); a final
+    # for the anchor in each position and in combination with named and underscore-prefixed binds.
+    # The catalog is asserted exactly (`reorder_renders`, defined below); a final
     # case proves every anchor-position mutant is valid Ecto that compiles.
 
     test "leading anchor `[..., a, b]` swaps the positionals, anchor stays first" do
@@ -188,10 +196,10 @@ defmodule Mutare.Ecto.BindingReorderTest do
       assert reorder_renders("order_by(q, [a, ..., comments: c], asc: [a.x, c.y])") == []
     end
 
-    test "the suppression rule still applies across the anchor (unreferenced binding ⇒ no swap)" do
-      # `b` is unreferenced, so swapping `[a, ..., b]` would manufacture an equivalent mutant — not
-      # emitted, exactly as without an anchor.
-      assert reorder_renders("select(q, [a, ..., b], [a.x])") == []
+    test "an unused binding still reorders across the anchor" do
+      assert reorder_renders("select(q, [a, ..., b], [a.x])") == [
+               "select(q, [b, ..., a], [a.x])"
+             ]
     end
 
     test "every anchor-position mutant is valid Ecto that compiles" do
@@ -239,6 +247,18 @@ defmodule Mutare.Ecto.BindingReorderTest do
       """
 
       assert Enum.any?(mutated(src), &(&1 =~ "having(query, [p, u]"))
+      assert_compiles(src)
+    end
+
+    test "a pinned dynamic has its own scope but the redundant outer list still reorders" do
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q(query), do: where(query, [a, b], ^dynamic([a, b], a.id > b.id))
+      end
+      """
+
+      assert Enum.any?(mutated(src), &(&1 =~ "where(query, [b, a]"))
       assert_compiles(src)
     end
   end
@@ -298,6 +318,35 @@ defmodule Mutare.Ecto.BindingReorderTest do
       refute Enum.any?(mutated(src), &(&1 =~ "[b, a]"))
       assert_compiles(src)
     end
+
+    test "a pinned dynamic does not suppress a redundant source-list reorder" do
+      src = """
+      defmodule M do
+        import Ecto.Query
+
+        def q(query) do
+          from([a, b] in query, where: ^dynamic([a, b], a.id > b.id), select: 1)
+        end
+      end
+      """
+
+      assert Enum.any?(mutated(src), &(&1 =~ "from([b, a] in query"))
+      assert_compiles(src)
+    end
+
+    test "underscore-prefixed source bindings never participate in a reorder" do
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q(query), do: from([_ignored, a, b] in query, select: {a.id, b.id})
+      end
+      """
+
+      muts = mutated(src)
+      assert Enum.any?(muts, &(&1 =~ "from([_ignored, b, a] in query"))
+      refute Enum.any?(muts, &(&1 =~ "from([a, _ignored" or &1 =~ "from([b, a, _ignored"))
+      assert_compiles(src)
+    end
   end
 
   describe "the reorder catalog through the transform contract" do
@@ -314,8 +363,8 @@ defmodule Mutare.Ecto.BindingReorderTest do
       |> Enum.map(fn {_original, mutated} -> mutated end)
     end
 
-    test "two referenced positional bindings yield exactly one swap (the unordered pair, once)" do
-      # `[a, b]` both referenced → the lone transposition `[b, a]`. The pair is visited exactly once:
+    test "two positional bindings yield exactly one swap (the unordered pair, once)" do
+      # `[a, b]` → the lone transposition `[b, a]`. The pair is visited exactly once:
       # not as the (a,a)/(b,b) no-op self-swaps, nor as both (a,b) and (b,a). A count of one is the
       # discriminator (the `i < j` bound), so it is asserted as an exact, single-element list.
       assert reorder_renders("select(query, [a, b], [a.x, b.y])") == [
@@ -324,9 +373,9 @@ defmodule Mutare.Ecto.BindingReorderTest do
     end
 
     test "a list of field accesses / atoms is not a binding list (no swap, no crash)" do
-      # find_binding_list tests every list argument with binding_entry?; a select/group_by list of
-      # field accesses or field names has no variable entries, so it is never mistaken for a binding
-      # list — the entry predicate's fallback must return false, not raise on the non-binding shape.
+      # BindingList.find/1 tests every list argument through BindingList.parse/1; a select/group_by
+      # list of field accesses or field names has no binding entries, so it is never mistaken for a
+      # binding list and the non-binding shape does not raise.
       assert reorder_renders("select(query, [u.x, u.y])") == []
       assert reorder_renders("group_by(query, [:id, :name])") == []
     end

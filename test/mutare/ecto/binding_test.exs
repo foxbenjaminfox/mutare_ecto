@@ -27,6 +27,15 @@ defmodule Mutare.Ecto.BindingTest do
     end
   end
 
+  describe "reorderable_name/1" do
+    test "returns ordinary variable names and excludes underscore-prefixed bindings" do
+      assert Binding.reorderable_name({:u, [], nil}) == :u
+      refute Binding.reorderable_name({:_, [], nil})
+      refute Binding.reorderable_name({:_unused, [], nil})
+      refute Binding.reorderable_name(parse("u.id"))
+    end
+  end
+
   describe "ellipsis?/1 and ellipsis/0" do
     test "ellipsis?/1 recognizes only the `...` node" do
       assert Binding.ellipsis?(parse("..."))

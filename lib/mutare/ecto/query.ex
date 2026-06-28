@@ -28,7 +28,7 @@ defmodule Mutare.Ecto.Query do
       inside a `having` is delivered through the host instead — see `Mutare.Ecto.Host`.)
     * **Binding reorder (source list)** — when the source declares a positional binding list
       (`from [a, b] in q, …`), transpose a pair of those bindings (`[a, b]` → `[b, a]`) for every
-      pair both referenced across the clauses. "Did the author bind the sources in the right order?"
+      pair, whether referenced or not. "Did the author bind the sources in the right order?"
       The author wrote the list at the whole-`from` level, so the swap rewrites only that declaration
       and leaves every clause body untouched — one mutant per pair. The standalone/pipe macros'
       *argument* binding lists reorder in place (`Mutare.Ecto.BindingReorder`); a scalar source and
@@ -110,31 +110,22 @@ defmodule Mutare.Ecto.Query do
       bound_bumps(call, source, clauses),
       join_swaps(call, source, clauses, config),
       aggregate_swaps(call, source, clauses),
-      binding_reorders(call, source, clauses)
+      binding_reorders(call, source)
     ])
   end
 
   # Whole-`from` binding-reorder: a `from` whose **source** declares a positional binding list
   # (`from [a, b] in q, …`) wrote that list at the whole-`from` level, so its reorder belongs there —
-  # swap each pair of positional bindings both referenced across the clause values, rewriting only the
-  # source declaration (`[b, a] in q`) and never a clause body. One mutant per pair; the clauses ride
-  # along untouched (`replace_arg` on the source argument), so an author macro in a `where`/`having`
-  # body keeps the exact source the author wrote. A scalar source (`u in User`) declares no list and a
-  # join-introduced binding is synthesized, so neither reorders; the standalone/pipe macros' own
-  # written lists reorder in `Mutare.Ecto.BindingReorder` instead.
-  defp binding_reorders(call, source, %KeywordList{entries: entries}) do
+  # swap every pair of reorderable positional bindings, rewriting only the source declaration
+  # (`[b, a] in q`) and never a clause body. Usage is deliberately irrelevant: an unused declaration
+  # still earns a swap, as it does under core's pattern-swap mutator. A scalar source (`u in User`)
+  # declares no list and a join-introduced binding is synthesized, so neither reorders; the
+  # standalone/pipe macros' own written lists reorder in `Mutare.Ecto.BindingReorder` instead.
+  defp binding_reorders(call, source) do
     with {:in, meta, [lhs, rhs]} <- source,
-         %BindingList{} = list <- BindingList.parse(lhs),
-         positions = BindingList.positionals(list),
-         true <- length(positions) >= 2 do
-      values = Enum.map(entries, & &1.value)
-
-      for {i, a} <- positions,
-          {j, b} <- positions,
-          i < j,
-          AST.references_var?(values, a),
-          AST.references_var?(values, b) do
-        swapped_source = {:in, meta, [BindingList.swap(list, i, j), rhs]}
+         %BindingList{} = list <- BindingList.parse(lhs) do
+      for swapped <- BindingList.transpositions(list) do
+        swapped_source = {:in, meta, [swapped, rhs]}
         {:binding_reorder, QueryCall.replace_arg(call, 0, swapped_source)}
       end
     else

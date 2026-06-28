@@ -23,24 +23,44 @@ defmodule Mutare.Ecto.AST.BindingList do
     end
   end
 
-  @doc "The `{index, name}` pairs of the plain positional variables, skipping `...` and pins."
-  @spec positionals(t()) :: [{non_neg_integer(), atom()}]
-  def positionals(%__MODULE__{entries: entries}) do
-    for {entry, index} <- Enum.with_index(entries),
-        Binding.variable?(entry),
-        do: {index, Binding.variable_name(entry)}
+  @doc "The first binding list in `nodes`, with its index, or `nil`."
+  @spec find([Macro.t()]) :: {non_neg_integer(), t()} | nil
+  def find(nodes) when is_list(nodes) do
+    nodes
+    |> Enum.with_index()
+    |> Enum.find_value(fn {node, index} ->
+      case parse(node) do
+        %__MODULE__{} = list -> {index, list}
+        nil -> nil
+      end
+    end)
   end
 
-  @doc "Render the binding list with `entries` in place, preserving its Sourceror wrapper."
-  @spec replace_entries(t(), [Macro.t()]) :: Macro.t()
-  def replace_entries(%__MODULE__{node: {:__block__, meta, [_old]}}, entries),
+  defp reorderables(%__MODULE__{entries: entries}) do
+    for {entry, index} <- Enum.with_index(entries),
+        name = Binding.reorderable_name(entry),
+        not is_nil(name),
+        do: {index, name}
+  end
+
+  @doc "Every single pairwise transposition of the reorderable positional bindings."
+  @spec transpositions(t()) :: [Macro.t()]
+  def transpositions(%__MODULE__{} = list) do
+    bindings = reorderables(list)
+
+    for {left, left_name} <- bindings,
+        {right, right_name} <- bindings,
+        left < right,
+        left_name != right_name,
+        do: swap(list, left, right)
+  end
+
+  defp replace_entries(%__MODULE__{node: {:__block__, meta, [_old]}}, entries),
     do: {:__block__, meta, [entries]}
 
-  def replace_entries(%__MODULE__{}, entries), do: entries
+  defp replace_entries(%__MODULE__{}, entries), do: entries
 
-  @doc "Render the binding list with the entries at `left` and `right` exchanged."
-  @spec swap(t(), non_neg_integer(), non_neg_integer()) :: Macro.t()
-  def swap(%__MODULE__{entries: entries} = list, left, right) do
+  defp swap(%__MODULE__{entries: entries} = list, left, right) do
     a = Enum.at(entries, left)
     b = Enum.at(entries, right)
     replace_entries(list, entries |> List.replace_at(left, b) |> List.replace_at(right, a))

@@ -6,9 +6,9 @@ defmodule Mutare.Ecto.BindingReorder do
   `Mutare.Ecto.Surface`).
 
   A binding list maps names to the query's bindings **by position**: `[a, b]` binds `a`→1st,
-  `b`→2nd. Transposing two positional entries (`[a, b]` → `[b, a]`) therefore reaches each
-  referenced binding at a different source — a genuine behavioral mutant. **Named** bindings
-  (`comments: c`) are addressed by name, not position, so they are left in place and never swapped.
+  `b`→2nd. Transposing two positional entries (`[a, b]` → `[b, a]`) asks whether their order
+  matters. **Named** bindings (`comments: c`) are addressed by name, not position, so they are left
+  in place. `_`-prefixed bindings are intentionally ignored, matching core's pattern-swap policy.
 
   The reorder is always delivered **in place** — by swapping the written list, never by rewriting the
   condition body. The list sits in an ordinary argument position (not inside a macro-expanded query
@@ -25,12 +25,11 @@ defmodule Mutare.Ecto.BindingReorder do
   rewrite. A scalar `from` source (`u in User`) and the join-introduced bindings are synthesized, not
   written as a list, so they never reorder.
 
-  A swap is emitted only when **both** swapped bindings are referenced in the call body: it keeps the
-  mutant a real reference exchange and avoids manufacturing an equivalent mutant when a declared
-  binding is unused.
+  Every pair of eligible bindings is swapped, even when one or both are unused. Such a surviving
+  mutant identifies a redundant binding declaration, matching core's pattern-swap policy.
   """
 
-  alias Mutare.Ecto.{AST, Surface}
+  alias Mutare.Ecto.Surface
   alias Mutare.Ecto.AST.{BindingList, QueryCall}
 
   @behaviour Mutare.Ecto.SubMutator
@@ -53,43 +52,18 @@ defmodule Mutare.Ecto.BindingReorder do
     end
   end
 
-  # One mutant per pair of *positional* bindings both referenced in the body (the arguments after
-  # the binding list — where `from`-less macros reference their bindings). The binding list itself
-  # carries only declarations, so it is excluded from the reference test.
+  # One mutant per pair of reorderable positional bindings. Usage is deliberately irrelevant: an
+  # unused declaration still earns a swap, as it does under core's pattern-swap mutator.
   defp reorders(%QueryCall{args: args} = call) do
-    with {index, binding_list} <- find_binding_list(args),
-         positions = BindingList.positionals(binding_list),
-         # mutare:ignore[literal, conditional] equivalent — a fast-path guard; the `i < j` loop below already yields [] for fewer than two positions, so weakening or dropping this bound changes nothing
-         true <- length(positions) >= 2 do
-      body = Enum.drop(args, index + 1)
+    case BindingList.find(args) do
+      {index, binding_list} ->
+        for swapped <- BindingList.transpositions(binding_list) do
+          new_args = List.replace_at(args, index, swapped)
+          {:binding_reorder, QueryCall.rebuild(call, new_args)}
+        end
 
-      for {i, a} <- positions,
-          {j, b} <- positions,
-          # mutare:ignore[relational] equivalent — `i < j` and `i > j` both pick each unordered pair once, and `swap(blist, list, i, j) == swap(blist, list, j, i)` with a symmetric reference test, so the produced mutant set is identical (consumed as a set)
-          i < j,
-          AST.references_var?(body, a),
-          AST.references_var?(body, b) do
-        new_args = List.replace_at(args, index, BindingList.swap(binding_list, i, j))
-        {:binding_reorder, QueryCall.rebuild(call, new_args)}
-      end
-    else
-      _ -> []
+      nil ->
+        []
     end
-  end
-
-  # The first argument that is a binding list — a non-empty list whose every element is a positional
-  # binding variable or a named binding (`key: var`) — as `{arg_index, node}`, or `nil` when the
-  # macro carries none (`union(q, other)`, `limit(q, 10)`). The binding list always precedes the
-  # body, so the first match is the right one (the select/ordering body is field accesses, not
-  # variables, and so is never mistaken for a binding list).
-  defp find_binding_list(args) do
-    args
-    |> Enum.with_index()
-    |> Enum.find_value(fn {arg, index} ->
-      case BindingList.parse(arg) do
-        %BindingList{} = list -> {index, list}
-        nil -> nil
-      end
-    end)
   end
 end

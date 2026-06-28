@@ -80,7 +80,7 @@ the query still compiles once and the active mutant is chosen at build time:
 | `string_literal` † | `u.name == "ok"` → `""` / `"mutare"` | Is the string value tested? |
 | `atom_literal` † | `u.status == :active` → `:mutare` | Is the atom value tested? |
 | `boolean_literal` † | `… and true` → `… and false` | Is the boolean operand tested? |
-| `binding_reorder` | `a.x == b.y` → `b.x == a.y` | Are the two bindings distinguished? |
+| `binding_reorder` | `[a, b]` → `[b, a]` | Does their declared order matter? |
 | `filter_drop` | drop a whole `where`/`having` clause | Is this filter tested at all? |
 
 † **Off by default** (opt-in). A string, atom, or boolean literal mutant is the most likely to be a

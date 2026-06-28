@@ -123,7 +123,7 @@ The surface divides by **how a mutation is delivered**, not by what it mutates:
 | `fragment.ex` | The **SQL-semantics catalog** for `where`/`having` conditions (Comparison, Connective, NullPredicate, Membership, the literal arms IntegerLiteral/FloatLiteral/StringLiteral/AtomLiteral/BooleanLiteral) |
 | `ast/query_call.ex` / `ast/binding_list.ex` / `ast/keyword_list.ex` | Normalized query-call, binding-list, and keyword/clause-list values; preserve written form while centralizing validation and reconstruction |
 | `binding.ex` | Primitive binding-entry vocabulary (`variable?`/`ellipsis?`/`entry?`) used by the normalized binding list |
-| `binding_reorder.ex` | Positional binding-reorder (`[a, b]`→`[b, a]`) for **every** standalone/pipe binding-list macro — `where`/`having` included — delivered **in-place** by swapping the written list (never the condition body). A `from` binding-list *source* (`[a, b] in q`) reorders at the whole-`from` level (`query.ex`) instead. Reorders only the positional list the **author wrote** — never a list synthesized from `u in User`/`join:` declarations, nor named bindings |
+| `binding_reorder.ex` | Positional binding-reorder (`[a, b]`→`[b, a]`) for **every** standalone/pipe binding-list macro — `where`/`having` included — delivered **in-place** by swapping the written list (never the condition body). A `from` binding-list *source* (`[a, b] in q`) reorders at the whole-`from` level (`query.ex`) instead. Reorders only eligible positional entries in the list the **author wrote** — never a synthesized list, a named binding, or an `_`-prefixed binding |
 | `query.ex` | Whole-`from` rewrites (clause drop, order flip, bound, join-type, `select`/`order_by` aggregate, source binding-reorder for a `[a, b] in q` source) |
 | `clause.ex` | Standalone/pipe cousins of `query.ex` (`order_by`/`limit`/`offset`/`select`) |
 | `clause_drop.ex` | Drop a standalone/pipe clause stage (`q \|> where(…)` → `q`), via `stage_drop.ex` |
@@ -179,6 +179,8 @@ rewrite.
   included), `query.ex` for a `from` `[a, b] in q` source. It never rewrites the condition body, so it
   is safe across an opaque author macro without having to understand the macro's arguments. (A scalar
   `from` source and synthesized join bindings are not author-written lists, so they never reorder.)
+  Usage is deliberately irrelevant: unused declarations still produce swaps, while `_`-prefixed and
+  named bindings never participate.
 - **Stay inside the single build.** Any in-query mutation must be delivered `^`-pinned behind the
   selector — a bare `case` in a query position poisons compilation. New query-position families go
   through the host, not the in-place selector.

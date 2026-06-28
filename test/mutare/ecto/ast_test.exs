@@ -77,24 +77,6 @@ defmodule Mutare.Ecto.ASTTest do
     end
   end
 
-  describe "references_var?/2" do
-    test "true only when the name appears as a binding *variable* node" do
-      ast = Sourceror.parse_string!("a.x == b.y")
-      assert AST.references_var?(ast, :a)
-      assert AST.references_var?(ast, :b)
-      refute AST.references_var?(ast, :z)
-    end
-
-    test "a field name that merely shares the spelling is not a variable" do
-      # In `a.role`, `role` is a bare atom (the field), not a `{name, _, ctx}` variable node — so
-      # it does not count, which is exactly what gates a binding reorder onto real references.
-      ast = Sourceror.parse_string!("a.role == a.name")
-      refute AST.references_var?(ast, :role)
-      refute AST.references_var?(ast, :name)
-      assert AST.references_var?(ast, :a)
-    end
-  end
-
   describe "module_key/1" do
     test "an Elixir-module alias becomes its segment path" do
       assert AST.module_key(MyApp.Repo) == [:MyApp, :Repo]
