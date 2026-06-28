@@ -68,7 +68,7 @@
         disabled: [
           #
           # Disabled for this project: the query/changeset catalogs are intentionally
-          # deep/branchy; these heuristics fight the deliberate design (see DESIGN.md).
+          # deep/branchy; these heuristics fight the deliberate design.
           {Credo.Check.Refactor.CyclomaticComplexity, []},
           {Credo.Check.Refactor.Nesting, []},
 

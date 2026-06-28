@@ -7,8 +7,8 @@ defmodule Mutare.Ecto.Fragment do
   engine will actually run; the host (`Mutare.Ecto.Host`) weaves them behind a `^`/`dynamic`
   selector so one of them bakes into the query per run.
 
-  The catalog reuses **none** of Mutare's built-in mutators (see `DESIGN.md`, "The semantic
-  boundary"): the operators look like Elixir's but the equivalence reasoning is SQL's
+  The catalog reuses **none** of Mutare's built-in mutators: the operators look like Elixir's
+  but the equivalence reasoning is SQL's
   three-valued logic, so a borrowed Elixir-semantics mutator would silently drop genuinely
   killable mutants. The families:
 
@@ -47,8 +47,7 @@ defmodule Mutare.Ecto.Fragment do
 
   Pinned interpolations (`^min_age`) and field references (`u.age`) are left untouched: a `^value`
   is ordinary Elixir bound upstream and mutated there by core's literal families — the catalog
-  targets the SQL-evaluated *operators and structure* (see `DESIGN.md`, "Pinned values are
-  core's"), plus the in-fragment literals core can't reach.
+  targets the SQL-evaluated *operators and structure*, plus the in-fragment literals core can't reach.
   """
 
   alias Mutare.Ecto.{AST, Config}
@@ -56,7 +55,7 @@ defmodule Mutare.Ecto.Fragment do
   @type family :: atom()
 
   # Each operator's single SQL-meaningful swap, by family. `:count`-style arity-changing or
-  # NULL-equivalent rewrites are deliberately absent (see DESIGN.md). The `like`/`ilike`
+  # NULL-equivalent rewrites are deliberately absent. The `like`/`ilike`
   # case-sensitivity swap is dialect-gated (Postgres) in `local/4`.
   @comparison_swaps %{:> => :>=, :>= => :>, :< => :<=, :<= => :<, :== => :!=, :!= => :==}
   @connective_swaps %{:and => :or, :or => :and}
@@ -84,8 +83,8 @@ defmodule Mutare.Ecto.Fragment do
   the condition with those two binding references swapped throughout (`a.x == b.y` → `b.x == a.y`).
 
   Reordering a query's declared binding list `[a, b]` → `[b, a]` is equivalent to swapping the
-  body's references while keeping the declared order (`DESIGN.md`, "Binding reorder is the same
-  mechanism") — and since the host re-declares each `dynamic`'s own binding list, the plugin just
+  body's references while keeping the declared order — and since the host re-declares each
+  `dynamic`'s own binding list, the plugin just
   emits the swapped *body* and rides the host. Requiring both bindings to appear keeps the mutant
   a genuine reference swap (and avoids reaching for a column on the wrong schema). The host calls
   this with the binding list it already extracted; for a single-binding query it returns `[]`.

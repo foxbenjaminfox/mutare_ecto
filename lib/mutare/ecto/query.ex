@@ -1,7 +1,7 @@
 defmodule Mutare.Ecto.Query do
   @moduledoc """
   Whole-`from` query mutations — the ones expressible **without** Mutare's foreign-semantics
-  DSL host (Bucket 1 of `DESIGN.md`). Each returns a whole mutated `from(...)` node, which
+  DSL host. Each returns a whole mutated `from(...)` node, which
   Mutare's ordinary in-place selector wraps; the localized in-fragment mutations (operator
   swaps inside a `where`, via `^`/`dynamic`) arrive with the host extensions.
 

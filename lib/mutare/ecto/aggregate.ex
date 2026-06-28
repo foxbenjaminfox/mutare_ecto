@@ -1,6 +1,6 @@
 defmodule Mutare.Ecto.Aggregate do
   @moduledoc false
-  # The shared aggregate walker of the Aggregate family (`DESIGN.md`): swap an aggregate call
+  # The shared aggregate walker of the Aggregate family: swap an aggregate call
   # along its SQL-meaningful ladder — `sum`↔`avg`, `min`↔`max` — wherever it appears inside a
   # query expression. An expression is an arbitrary shape (a bare call, a tuple, a list, a map, a
   # keyword list of them), so `swaps/1` walks the whole structure and returns one *single-point*

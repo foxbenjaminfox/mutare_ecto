@@ -12,10 +12,6 @@ reasoning would be Elixir's two-valued logic, not SQL's three-valued logic, sile
 manufacturing false negatives), while reusing **all** of Mutare's plumbing (identity resolution,
 selector/coverage/poison/Site machinery, and the delivery host).
 
-`DESIGN.md` is the full blueprint and the source of truth for the rationale. Read `DESIGN.md`
-before changing the catalog, routing, or delivery — the boundary decisions there are deliberate,
-not incidental.
-
 ## Commands
 
 ```bash
@@ -156,7 +152,7 @@ rewrite.
 ## Conventions and gotchas
 
 - **Never reuse a core mutator inside a query fragment.** This is the one rule the whole design
-  exists to enforce (`DESIGN.md`, "The semantic boundary"). The fragment catalog is owned end to
+  exists to enforce. The fragment catalog is owned end to
   end in `fragment.ex`. Interpolated `^value` references are *Elixir* data → mutated by core's
   literal families; the SQL **structure/operators** are the plugin's.
 - **Stay inside the single build.** Any in-query mutation must be delivered `^`-pinned behind the

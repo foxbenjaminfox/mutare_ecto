@@ -148,8 +148,7 @@ knows the difference:
   *exactly* on the threshold — which no fixture provides.
 
 These come straight from the library reasoning in SQL's three-valued logic, not
-Elixir's — the whole point of a dedicated Ecto mutator (see the top-level
-[`DESIGN.md`](../../DESIGN.md)).
+Elixir's — the whole point of a dedicated Ecto mutator.
 
 ### 5. A dynamically-built query, only partly driven
 

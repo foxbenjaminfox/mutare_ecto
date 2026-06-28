@@ -1,7 +1,7 @@
 defmodule Mutare.Ecto.SemanticHarness do
   @moduledoc false
-  # The semantic-layer test harness (`DESIGN.md`, "Testing strategy" → *Semantic (does the mutant
-  # run)*). Where the unit tests assert *what* the transform records (Sites, rendered scaffolding),
+  # The semantic-layer test harness — *does the mutant run?* Where the unit tests assert *what*
+  # the transform records (Sites, rendered scaffolding),
   # this proves the recorded mutant is **live**: it takes a real metamutant, compiles it, flips the
   # `:persistent_term` active-id switch the metamutant reads, and runs the resulting query against
   # the real `MyApp.Repo` — confirming the injected `^`/`dynamic` fragment actually changed the SQL

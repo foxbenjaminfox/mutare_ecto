@@ -20,7 +20,7 @@ defmodule Mutare.Ecto.Host.Routing do
       left raw. So a shorthand value mutation is recorded under the *core* family that made it
       (`:literal`/`:string`/…), not `:ecto`.
     * the composable pipe/standalone form — `q |> where([p], p.x == v)` / `where(q, [p], …)`: the
-      binding-list argument is detected by shape (`Mutare.Ecto.Host.Bindings.condition_index/1`) and the
+      binding-list argument is detected by shape, and the
       condition that follows it routes `:hosted`; a keyword-shorthand `where(q, x: v)` routes its
       trailing pairs `{:keyword, …}`. The plain clause macros (`limit`/`order_by`/…) only thread the
       query (first arg → `:expression`) and leave every data position raw for the plugin's own
@@ -39,7 +39,7 @@ defmodule Mutare.Ecto.Host.Routing do
 
   @doc """
   Per-visible-argument routing for a `:routing`-registered query macro (`from`, the `where`/`having`
-  family, and the plain clause macros), consulted by `Mutare.Transform.Resolve` with the concrete
+  family, and the plain clause macros), consulted by Mutare core with the concrete
   node. Returns `[]` for anything else.
   """
   @spec macro_routing(Macro.t()) ::

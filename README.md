@@ -1,7 +1,7 @@
 # mutare_ecto
 
 A mutation-testing plugin for [Ecto](https://hexdocs.pm/ecto), built as a custom
-[Mutare](../mutare) mutator.
+[Mutare](https://github.com/foxbenjaminfox/mutare) mutator.
 
 Mutation testing checks how good your tests actually are: it makes small, deliberate changes to
 your code — a `>` becomes a `>=`, a `where` clause is dropped, a `validate_required` is removed —
@@ -22,8 +22,7 @@ exactly the untested edge you'd want flagged.
 
 So `mutare_ecto` ships its **own** SQL-semantics mutation catalog and never borrows Mutare's
 Elixir-semantics mutators inside a query. Every mutation it emits is one a real SQL engine will
-run, and its equivalence reasoning is SQL's, not Elixir's. (The full rationale is in
-[`DESIGN.md`](DESIGN.md).)
+run, and its equivalence reasoning is SQL's, not Elixir's.
 
 ## Installation
 
@@ -162,9 +161,3 @@ under their own report name to separate "needs a boundary fixture" from "needs a
 
 Because the catalog is SQL-native, it also never emits the always-equivalent mutations (like
 `x * 1`) that would otherwise inflate your denominator and dilute the score.
-
-## Learn more
-
-[`DESIGN.md`](DESIGN.md) is the full blueprint: the SQL-semantics boundary, how the `^`/`dynamic`
-delivery host weaves a mutation into a query while keeping the single compile, and the routing that
-tells query fragments apart from plain interpolated data.

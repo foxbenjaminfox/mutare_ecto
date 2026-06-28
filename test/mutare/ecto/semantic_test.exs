@@ -1,5 +1,5 @@
 defmodule Mutare.Ecto.SemanticTest do
-  # The **semantic layer** of `DESIGN.md`'s testing strategy: *does the mutant run?* The unit tests
+  # The **semantic layer** of the testing strategy: *does the mutant run?* The unit tests
   # (host_test, fragment_test, query_test, …) prove the transform *records* the right Sites and that
   # the metamutant *compiles*. They cannot prove the woven mutation is **live** — that flipping the
   # active id actually changes the SQL the engine runs. A rewrite that recorded a perfect Site but
