@@ -6,7 +6,7 @@ defmodule Mutare.Ecto.FragmentTest do
   # Unit tests for the SQL-semantics catalog itself — `Fragment.mutants/1` over a parsed
   # condition, rendered back to source. The host's *delivery* of these (the `^`/`dynamic`
   # weaving, routing) is `Mutare.Ecto.HostTest`'s job; here we pin exactly which single-point
-  # variants the catalog offers for each family, reasoned in SQL's three-valued logic.
+  # variants the catalog offers for each family, reasoned in SQL's semantics (not Elixir's).
 
   # Every mutant of `code` as rendered source, as a set (order-independent). `opts` carries
   # `dialects:` (so a dialect-gated swap like `like`↔`ilike` can be exercised).

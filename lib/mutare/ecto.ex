@@ -64,12 +64,13 @@ defmodule Mutare.Ecto do
 
   **Equivalence-sensitive families.** Some mutants carry a **report note** — a survivor reads
   `… SURVIVED  — kill may require …` — so it is recognised as honest signal, not a plain test gap.
-  Two equivalence reasons, two notes: `:comparison`, `:connective`, `:null_predicate`, and
-  `:ordering_nulls` reason in SQL's three-valued logic (`… kill may require NULL/boundary data`),
-  while `:join_type` reasons in join cardinality (`… kill may require an orphan row` — an
-  INNER↔LEFT↔RIGHT↔FULL swap only changes the result when a preserved-side row has no match, so a
-  mandatory/complete FK makes it legitimately equivalent). The note rides onto the `Mutare.Site` via
-  a `%Mutare.Mutator.Mutation{}`, which core accepts on both delivery
+  Each note names the **specific** data a kill needs, because the equivalence reasons differ:
+  `:comparison` is a boundary value (`< vs <=`) or, for `==`/`!=`, a non-NULL row; `:connective`
+  (`and`/`or`) is the one genuine three-valued-logic case; `:null_predicate` (`is_nil`/`not is_nil`)
+  and `:ordering_nulls` (NULLs placement) both need NULL rows in the column; and `:join_type` needs
+  an orphan row (an INNER↔LEFT↔RIGHT↔FULL swap only changes the result when a preserved-side row has
+  no match, so a mandatory/complete FK makes it legitimately equivalent). The note rides onto the
+  `Mutare.Site` via a `%Mutare.Mutator.Mutation{}`, which core accepts on both delivery
   paths — so the in-fragment families surface it through the **host** and the
   whole-`from`/clause-macro families (`:ordering_nulls`, `:join_type`) through `mutate/2`.
   `equivalence_sensitive_families/0` returns that set; with the `:as` convention you can
@@ -143,9 +144,10 @@ defmodule Mutare.Ecto do
 
   @doc """
   The families whose survivors may be legitimately unkillable for a data reason, not a test gap —
-  `:comparison`, `:connective`, `:null_predicate`, `:ordering_nulls` (SQL's three-valued logic) and
-  `:join_type` (join cardinality — an orphan row). Each carries a report note; run them under their
-  own `:as` name to group "kill requires …" survivors in the report (see "Configuration").
+  `:comparison` (a boundary value, or a non-NULL row for `==`/`!=`), `:connective` (SQL three-valued
+  logic), `:null_predicate` and `:ordering_nulls` (NULL rows in the column), and `:join_type` (join
+  cardinality — an orphan row). Each carries a report note phrased for its own reason; run them under
+  their own `:as` name to group "kill requires …" survivors in the report (see "Configuration").
   """
   @spec equivalence_sensitive_families() :: [atom()]
   defdelegate equivalence_sensitive_families, to: Config

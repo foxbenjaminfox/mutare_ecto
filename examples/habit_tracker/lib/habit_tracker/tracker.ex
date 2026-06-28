@@ -42,9 +42,9 @@ defmodule HabitTracker.Tracker do
 
   The filter is a *single* SQL condition combining **membership** (`in`) and
   **connectives** (`and` / `or` / `not`): a habit qualifies when its cadence is in
-  the list and it isn't archived (unless `archived: true` is passed). Both the
-  membership and the connectives are reasoned by the mutator in SQL's three-valued
-  logic — not Elixir's — which is the whole reason a query needs its own mutator.
+  the list and it isn't archived (unless `archived: true` is passed). The mutator
+  reasons about both under SQL's semantics — not Elixir's, with the `and`/`or`
+  swap genuinely three-valued — which is the whole reason a query needs its own mutator.
   """
   def by_cadence(cadences, opts \\ []) do
     include_archived = Keyword.get(opts, :archived, false)

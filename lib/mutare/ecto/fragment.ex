@@ -8,15 +8,15 @@ defmodule Mutare.Ecto.Fragment do
   selector so one of them bakes into the query per run.
 
   The catalog reuses **none** of Mutare's built-in mutators: the operators look like Elixir's
-  but the equivalence reasoning is SQL's
-  three-valued logic, so a borrowed Elixir-semantics mutator would silently drop genuinely
-  killable mutants. The families:
+  but they evaluate under SQL's semantics — three-valued boolean logic for the connectives,
+  NULL handling for the predicates, boundary behaviour for the comparisons — so a borrowed
+  Elixir-semantics mutator would silently drop genuinely killable mutants. The families:
 
     * **Comparison** — `>`↔`>=`, `<`↔`<=`, `==`↔`!=`. Boundary and equality coverage. The
-      `==`/`!=` swap interacts with `NULL` (it changes which `NULL` rows are excluded) — a
-      real, killable change under three-valued logic, never suppressed as "equivalent".
-    * **Connective** — `and`↔`or`. Three-valued; its equivalences differ from Elixir's, so it
-      is owned here, never reused from core.
+      `==`/`!=` swap is a real, killable change — in SQL both forms exclude `NULL` rows (the
+      comparison is unknown) and differ on every concrete value, so it is never "equivalent".
+    * **Connective** — `and`↔`or`. Genuinely three-valued (a `NULL` operand is neither true nor
+      false); its equivalences differ from Elixir's, so it is owned here, never reused from core.
     * **NullPredicate** — `is_nil(x)`↔`not is_nil(x)`. The uniquely-SQL family with no Elixir
       analog worth borrowing; treated as one unit so `not is_nil(x)` flips back to `is_nil(x)`
       rather than producing a double-negation.

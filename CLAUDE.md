@@ -7,9 +7,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 `mutare_ecto` is a mutation-testing plugin for [Ecto](https://hexdocs.pm/ecto), implemented as a
 custom [Mutare](../mutare) mutator. It mutates the Ecto surface an app writes — `Repo` calls,
 changeset pipelines, and the `from`/query DSL — and its load-bearing design rule is that it
-**reuses none of Mutare's built-in mutation logic inside a query fragment** (the equivalence
-reasoning would be Elixir's two-valued logic, not SQL's three-valued logic, silently
-manufacturing false negatives), while reusing **all** of Mutare's plumbing (identity resolution,
+**reuses none of Mutare's built-in mutation logic inside a query fragment** (core would reason in
+Elixir's semantics, not SQL's — three-valued boolean logic, NULL handling, boundary behaviour —
+silently manufacturing false negatives), while reusing **all** of Mutare's plumbing (identity resolution,
 selector/coverage/poison/Site machinery, and the delivery host).
 
 ## Commands
@@ -149,10 +149,14 @@ mutations (`like`↔`ilike` under `:postgres`; `LEFT`↔`RIGHT` join under `:pos
 SQLite lacks `RIGHT JOIN`). Multi-repo and per-family report naming fall out of Mutare's `:as`
 convention (list the plugin twice). The **equivalence-sensitive** families (`:comparison`,
 `:connective`, `:null_predicate`, `:ordering_nulls`) carry a report `note` — a survivor reads
-`… kill may require NULL/boundary data` — because their unkillability can be honest signal under
-three-valued logic, not a test gap. The note rides onto the `Site` via `Config.noted/2` (wrapping
-the node in a `%Mutare.Mutator.Mutation{}`), which core accepts on **both** delivery paths — so the
-three in-fragment families surface it through the host and `:ordering_nulls` through its `mutate/2`
+`… kill may require …` — because their unkillability can be honest signal (a data gap, not a test
+gap). Each family's note names the **specific** data a kill needs, because the reasons differ: a
+boundary row (`:comparison` ordering swaps), a non-NULL row (`:comparison` `==`/`!=`), a disagreeing
+row under three-valued logic (`:connective`), or NULL rows in the column (`:null_predicate`,
+`:ordering_nulls`). `Config.equivalence_note/2` resolves the note (refining `:comparison` by the
+swapped operator). The note rides onto the `Site` via `Config.enrich/3` (wrapping the node in a
+`%Mutare.Mutator.Mutation{}`), which core accepts on **both** delivery paths — so the three
+in-fragment families surface it through the host and `:ordering_nulls` through its `mutate/2`
 rewrite.
 
 ## Conventions and gotchas

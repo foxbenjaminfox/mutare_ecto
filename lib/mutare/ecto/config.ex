@@ -83,35 +83,51 @@ defmodule Mutare.Ecto.Config do
           | :hook_drop
 
   # The families whose survivors may be **legitimately unkillable for a data reason**, not a test
-  # gap — each carrying its own report *note* (below) so the report reads as honest signal. Two
-  # distinct equivalence reasons, hence two notes:
+  # gap — each carrying a report *note* phrased for its **own** equivalence reason, so the report
+  # reads as honest signal. The reasons are genuinely distinct (and only the connective one is
+  # actually SQL three-valued logic — the rest turn on boundary values, NULL exclusion, NULL
+  # ordering, or join cardinality), so each gets a note that names the specific data a kill needs
+  # rather than one catch-all "three-valued logic" string:
   #
-  #   * three-valued logic (`@three_valued_note`) — `:comparison`/`:connective`/`:null_predicate`
-  #     (a surviving `==`/`!=` or `and`/`or` on a nullable column, or an `is_nil` flip) and
-  #     `:ordering_nulls` (a `*_nulls_first`↔`*_nulls_last` flip, only killable when the result
-  #     actually holds NULL rows in the ordered column). Their equivalence reasoning is SQL's
-  #     three-valued logic, so the kill needs boundary/NULL data.
-  #   * join cardinality (`@join_note`) — `:join_type`. An INNER↔LEFT↔RIGHT↔FULL swap only changes
-  #     the result when an *orphan* row exists (a preserved-side row with no match on the other);
-  #     a mandatory/complete FK makes every row match, so the swap is legitimately equivalent. The
-  #     kill needs an orphan row in the data, distinct from a missing-fixture gap.
+  #   * `:comparison` — two sub-cases, by the operator swapped. A strict↔non-strict swap
+  #     (`<`↔`<=`, `>`↔`>=`) differs only on a row sitting exactly on the bound
+  #     (`@comparison_boundary_note`); an `==`↔`!=` swap differs on every concrete value but treats
+  #     NULLs alike (both exclude them), so it survives only when no non-NULL row exists
+  #     (`@comparison_equality_note`). `equivalence_note/2` picks between them from the finer operator
+  #     label.
+  #   * `:connective` (`@connective_note`) — `and`↔`or`. The one genuine three-valued-logic case:
+  #     they coincide unless some row has the two operands disagreeing, a NULL operand counting as
+  #     neither true nor false.
+  #   * `:null_predicate` (`@null_predicate_note`) — `is_nil`↔`not is_nil`. Complementary row sets,
+  #     told apart only by which rows are NULL.
+  #   * `:ordering_nulls` (`@ordering_nulls_note`) — `*_nulls_first`↔`*_nulls_last`. Not three-valued
+  #     logic at all but NULL *ordering*: the placement only shows when the ordered column holds NULL
+  #     rows.
+  #   * `:join_type` (`@join_note`) — INNER↔LEFT↔RIGHT↔FULL. Differs only when an *orphan* row exists
+  #     (a preserved-side row with no match on the other); a mandatory/complete FK makes every row
+  #     match, so the swap is legitimately equivalent.
   #
-  # The per-mutant note rides onto a Site via a `%Mutare.Mutator.Mutation{}` (`enrich/2`), which core
+  # The per-mutant note rides onto a Site via a `%Mutare.Mutator.Mutation{}` (`enrich/3`), which core
   # accepts on **both** delivery paths — the selector host's `:mutants` and a plain `mutate/2`
   # return. So the in-fragment families surface the advisory through the host, and the
   # whole-`from`/clause-macro families (`:ordering_nulls`, `:join_type`) through `mutate/2`. Surfaced
   # under their own report name via the `:as` convention (`equivalence_sensitive_families/0`).
-  @three_valued_note "kill may require NULL/boundary data (SQL three-valued logic)"
+  @comparison_boundary_note "kill may require a row whose value sits exactly on the bound — strict and non-strict comparisons (< vs <=, > vs >=) select the same rows except one equal to the bound"
+  @comparison_equality_note "kill may require a non-NULL row — == and != differ on every concrete value but both exclude NULLs (compared as unknown), so they coincide only when every row is NULL"
+  @connective_note "kill may require a row where the operands disagree — and/or coincide while both operands are true or both false on every row (SQL three-valued logic: a NULL operand is unknown, neither)"
+  @null_predicate_note "kill may require NULL data in the column — is_nil and not is_nil keep complementary row sets, told apart only by which rows are NULL"
+  @ordering_nulls_note "kill may require NULL rows in the ordered column — nulls_first and nulls_last only change where NULLs sort, ordering all other rows identically"
   @join_note "kill may require an orphan row — a preserved-side row with no match (join kinds coincide when every row matches)"
 
   # The note for each equivalence-sensitive family; the single source of truth for the set (a family
-  # is equivalence-sensitive iff it has a note here). `equivalence_sensitive_families/0` derives the
-  # ordered set from this map by filtering `@families`.
+  # is equivalence-sensitive iff it appears here). `equivalence_sensitive_families/0` derives the
+  # ordered set by filtering `@families`. `:comparison` maps to its boundary note as the default;
+  # `equivalence_note/2` overrides it with `@comparison_equality_note` for an `==`/`!=` swap.
   @equivalence_notes %{
-    comparison: @three_valued_note,
-    connective: @three_valued_note,
-    null_predicate: @three_valued_note,
-    ordering_nulls: @three_valued_note,
+    comparison: @comparison_boundary_note,
+    connective: @connective_note,
+    null_predicate: @null_predicate_note,
+    ordering_nulls: @ordering_nulls_note,
     join_type: @join_note
   }
 
@@ -177,10 +193,17 @@ defmodule Mutare.Ecto.Config do
 
   @doc """
   The report note for a `family`'s mutants — a string for an equivalence-sensitive family
-  (surfaced on each such mutant's Site), or `nil` for an ordinary family (a bare mutant).
+  (surfaced on each such mutant's Site), or `nil` for an ordinary family (a bare mutant). The
+  optional `finer` operator label refines `:comparison`: an `==`/`!=` swap reads the NULL-exclusion
+  note, every other comparison the boundary note.
   """
-  @spec equivalence_note(family()) :: String.t() | nil
-  def equivalence_note(family), do: Map.get(@equivalence_notes, family)
+  @spec equivalence_note(family(), Mutation.variant()) :: String.t() | nil
+  def equivalence_note(family, finer \\ nil)
+
+  def equivalence_note(:comparison, finer) when finer in ["==", "!="],
+    do: @comparison_equality_note
+
+  def equivalence_note(family, _finer), do: Map.get(@equivalence_notes, family)
 
   @doc """
   Enrich a mutant `node` with the metadata its `family` (and optional `finer` label) carry, ready to
@@ -194,15 +217,19 @@ defmodule Mutare.Ecto.Config do
       structural family. A qualifier matching **any** label suppresses the mutant. The full
       vocabulary is `Mutare.Ecto.variants/0`; labels are recorded only because `Mutare.Ecto` declares
       it (an un-opted-in mutator records `[]`).
-    * **`note:`** — the equivalence advisory for a family that has one (`equivalence_note/1`), else
-      `nil`. A survivor of an equivalence-sensitive family reads "… kill may require …".
+    * **`note:`** — the equivalence advisory for a family that has one (`equivalence_note/2`, refined
+      for `:comparison` by `finer`), else `nil`. A survivor of an equivalence-sensitive family reads
+      "… kill may require …".
 
   Core accepts the struct on **both** delivery paths (a plain `mutate/2` return and the selector
   host's `:mutants`), so this one wrapper serves every family on either path.
   """
   @spec enrich(family(), Macro.t(), Mutation.variant()) :: Mutation.t()
   def enrich(family, node, finer \\ nil) do
-    Mutation.new(node, note: equivalence_note(family), variant: [family | List.wrap(finer)])
+    Mutation.new(node,
+      note: equivalence_note(family, finer),
+      variant: [family | List.wrap(finer)]
+    )
   end
 
   @doc """

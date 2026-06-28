@@ -171,7 +171,7 @@ defmodule Mutare.Ecto.SemanticTest do
   end
 
   describe "NullPredicate — `is_nil` ↔ `not is_nil` (dynamic-injected)" do
-    # The uniquely-SQL family: three-valued `IS NULL` flips to `IS NOT NULL`. The result sets are
+    # The uniquely-SQL family: `IS NULL` flips to `IS NOT NULL`. The result sets are
     # complements, so an inert injection (returning the baseline) is impossible to miss.
     test "flipping is_nil selects exactly the non-null rows instead" do
       {mod, sites} =

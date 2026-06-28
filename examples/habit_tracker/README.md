@@ -70,15 +70,15 @@ lib/habit_tracker/habit.ex:35  [ecto, in-place]  SURVIVED
 -    |> validate_length(:name, min: 2, max: 40)
 +    |> Elixir.Function.identity()
 
-lib/habit_tracker/stats.ex:22  [ecto, in-place]  SURVIVED  — kill may require an orphan row
+lib/habit_tracker/stats.ex:22  [ecto, in-place]  SURVIVED  — kill may require an orphan row — a preserved-side row with no match (join kinds coincide when every row matches)
 -      join: c in assoc(h, :check_ins),
 +      left_join: c in assoc(h, :check_ins),
 
-lib/habit_tracker/stats.ex:26  [ecto, in-place]  SURVIVED  — kill may require NULL/boundary data
+lib/habit_tracker/stats.ex:26  [ecto, in-place]  SURVIVED  — kill may require a row whose value sits exactly on the bound — strict and non-strict comparisons (< vs <=, > vs >=) select the same rows except one equal to the bound
 -      having: sum(c.count) >= ^min_total,
 +      having: sum(c.count) > ^min_total,
 
-lib/habit_tracker/stats.ex:84  [ecto, in-place]  SURVIVED  — kill may require NULL/boundary data
+lib/habit_tracker/stats.ex:84  [ecto, in-place]  SURVIVED  — kill may require NULL rows in the ordered column — nulls_first and nulls_last only change where NULLs sort, ordering all other rows identically
 -      order_by: [desc_nulls_last: max(c.date)],
 +      order_by: [desc_nulls_first: max(c.date)],
 
@@ -143,12 +143,14 @@ knows the difference:
   differ only when a habit has *no* check-in; every habit in the leaderboard
   fixture has one, so the result is identical. Add a check-in-less habit and the
   left join would include it (with a `NULL` sum) — killing the mutant.
-- `having: sum(...) >= ^min_total` → `>` reads **`kill may require
-  NULL/boundary data`**. `>=` and `>` agree on every row except one sitting
-  *exactly* on the threshold — which no fixture provides.
+- `having: sum(...) >= ^min_total` → `>` reads **`kill may require a row whose
+  value sits exactly on the bound`**. `>=` and `>` agree on every row except one
+  sitting *exactly* on the threshold — which no fixture provides.
 
-These come straight from the library reasoning in SQL's three-valued logic, not
-Elixir's — the whole point of a dedicated Ecto mutator.
+Each note names the *specific* data a kill needs — an orphan row here, a boundary
+row there — because the reasons differ (join cardinality versus a missing
+boundary value). That precision comes from the library reasoning in SQL's
+semantics, not Elixir's — the whole point of a dedicated Ecto mutator.
 
 ### 5. A dynamically-built query, only partly driven
 
@@ -190,11 +192,11 @@ direction flip and both `max → min` aggregate swaps (in the `order_by` and the
 note:
 
 ```
-lib/habit_tracker/stats.ex:84  SURVIVED  — kill may require NULL/boundary data
+lib/habit_tracker/stats.ex:84  SURVIVED  — kill may require NULL rows in the ordered column — …
 -      order_by: [desc_nulls_last: max(c.date)],
 +      order_by: [desc_nulls_first: max(c.date)],
 
-lib/habit_tracker/stats.ex:84  SURVIVED  — kill may require an orphan row
+lib/habit_tracker/stats.ex:84  SURVIVED  — kill may require an orphan row — …
 -      left_join: c in assoc(h, :check_ins),
 +      inner_join: c in assoc(h, :check_ins),
 ```
@@ -208,7 +210,7 @@ gets a placement flip (`:desc_nulls_last` → `:desc_nulls_first`) under its own
 in the ordered column can tell the two placements apart.
 
 And here that placement survivor sits next to a `join_type` survivor with a
-*different* note — **two distinct SQL phenomena, three-valued ordering and join
+*different* note — **two distinct SQL phenomena, NULL ordering and join
 cardinality, that happen to coincide on one missing fixture**: a single
 never-checked-in habit. Add one (and assert it sorts last), and the `left_join`
 keeps it with a `NULL` date that `desc_nulls_last` pins to the bottom — killing
@@ -237,10 +239,11 @@ rows, in order:
   included, so `>=` → `>` is caught.
 - `Tracker.by_cadence/2` — the membership-plus-connective filter
   (`h.cadence in ^cadences and (… or not h.archived)`) is pinned to exact results,
-  so `in` → `not in` and `and` → `or` are both killed. These are the SQL
-  three-valued-logic families; here, on the non-null `cadence` / `archived`
-  columns, they're cleanly killable — the contrast with the `NULL`-noted survivors
-  above (the same kind of operator, but on a nullable column) is the lesson.
+  so `in` → `not in` and `and` → `or` are both killed. Both reason under SQL's
+  NULL semantics (the `and`/`or` swap is the genuine three-valued-logic case);
+  here, on the non-null `cadence` / `archived` columns, they're cleanly killable —
+  the contrast with the `NULL`-noted survivors above (the same kind of operator,
+  but on a nullable column) is the lesson.
 
 The throughline is the same one [`../hello`](../hello) shows in miniature:
 asserting *counts* or *that it didn't crash* leaves the filter, the order, the

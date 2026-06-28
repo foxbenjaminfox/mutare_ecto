@@ -154,13 +154,18 @@ the remaining options reach this plugin.
 ## Equivalence reporting
 
 Some survivors are honest signal rather than a flat "your test is missing." A surviving
-`==`↔`!=`, `and`↔`or`, or `is_nil` mutant on a nullable column may be **legitimately unkillable
-without a `NULL` or boundary-value fixture** — that's three-valued logic, not an oversight. The
-plugin marks these families so the report reads:
+`>=`↔`>`, `and`↔`or`, or `is_nil` mutant may be **legitimately unkillable without the right
+fixture** — a boundary row, a `NULL`, an orphan — not an oversight. The plugin marks these families
+and gives each a note naming the **specific** data a kill needs, so the report reads:
 
 ```
-… SURVIVED  — kill may require NULL/boundary data
+… SURVIVED  — kill may require a row whose value sits exactly on the bound — …
+… SURVIVED  — kill may require NULL rows in the ordered column — …
+… SURVIVED  — kill may require an orphan row — …
 ```
+
+The reasons are distinct — a boundary value, NULL exclusion (`==`/`!=`), three-valued `and`/`or`,
+NULL ordering, join cardinality — so the notes are too, rather than one catch-all string.
 
 `Mutare.Ecto.equivalence_sensitive_families/0` returns that set, and with `as:` you can group them
 under their own report name to separate "needs a boundary fixture" from "needs any test at all":

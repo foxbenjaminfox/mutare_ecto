@@ -234,7 +234,7 @@ defmodule Mutare.Ecto.ConfigTest do
   end
 
   describe "equivalence-sensitive families + validation" do
-    test "the helper lists the data-equivalence families (three-valued logic + join cardinality)" do
+    test "the helper lists the data-equivalence families" do
       assert Mutare.Ecto.equivalence_sensitive_families() == [
                :comparison,
                :connective,
@@ -389,15 +389,47 @@ defmodule Mutare.Ecto.ConfigTest do
         )
 
       # The comparison swap (== → !=) is equivalence-sensitive → the note rides onto the Site
-      # and into the survivor header.
+      # and into the survivor header. `==`/`!=` reads the NULL-exclusion sub-case note, not the
+      # strict↔non-strict boundary one.
       comparison = Enum.find(sites, &(&1.mutated_code =~ "!=" and &1.mutator == :ecto))
-      assert comparison.note == "kill may require NULL/boundary data (SQL three-valued logic)"
-      assert Mutare.Report.header(comparison) =~ "SURVIVED  — kill may require NULL/boundary data"
+
+      assert comparison.note ==
+               "kill may require a non-NULL row — == and != differ on every concrete value but both exclude NULLs (compared as unknown), so they coincide only when every row is NULL"
+
+      assert Mutare.Report.header(comparison) =~ "SURVIVED  — kill may require a non-NULL row"
 
       # The membership polarity flip (in → not in) is not equivalence-sensitive → no note.
       membership = Enum.find(sites, &(&1.mutated_code =~ "not in" and &1.mutator == :ecto))
       assert membership.note == nil
       assert Mutare.Report.header(membership) =~ ~r/SURVIVED$/
+    end
+
+    test "the two comparison sub-cases carry different notes (boundary vs NULL exclusion)" do
+      # A strict↔non-strict swap and an `==`/`!=` swap survive for *opposite* data reasons — a
+      # missing boundary row versus a missing non-NULL row — so each reads its own note rather than
+      # one shared "three-valued logic" string.
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q, do: from(u in User, where: u.age > 18 and u.role == u.name, select: u.id)
+      end
+      """
+
+      {_meta, sites, _next} =
+        Mutare.transform_string(src,
+          mutators: [{Mutare.Ecto, repo: MyApp.Repo}],
+          expand_uses: true
+        )
+
+      # `>` → `>=` is the strict↔non-strict boundary swap.
+      boundary = Enum.find(sites, &(&1.mutated_code =~ ">=" and &1.mutator == :ecto))
+      assert boundary.note =~ "a row whose value sits exactly on the bound"
+
+      # `==` → `!=` is the NULL-exclusion sub-case — a distinct note.
+      equality = Enum.find(sites, &(&1.mutated_code =~ "!=" and &1.mutator == :ecto))
+      assert equality.note =~ "a non-NULL row"
+
+      refute boundary.note == equality.note
     end
 
     test "a non-hosted ordering_nulls mutant carries the note too (mutate/2 delivery)" do
@@ -421,8 +453,12 @@ defmodule Mutare.Ecto.ConfigTest do
       # The NULLs-placement flip (asc_nulls_first → asc_nulls_last) is the ordering_nulls mutant; the
       # direction flip (→ desc_nulls_first) is plain :ordering and carries no note.
       nulls = Enum.find(sites, &(&1.mutated_code =~ "asc_nulls_last" and &1.mutator == :ecto))
-      assert nulls.note == "kill may require NULL/boundary data (SQL three-valued logic)"
-      assert Mutare.Report.header(nulls) =~ "SURVIVED  — kill may require NULL/boundary data"
+
+      assert nulls.note ==
+               "kill may require NULL rows in the ordered column — nulls_first and nulls_last only change where NULLs sort, ordering all other rows identically"
+
+      assert Mutare.Report.header(nulls) =~
+               "SURVIVED  — kill may require NULL rows in the ordered column"
 
       direction =
         Enum.find(sites, &(&1.mutated_code =~ "desc_nulls_first" and &1.mutator == :ecto))
@@ -433,7 +469,7 @@ defmodule Mutare.Ecto.ConfigTest do
     test "a join_type mutant carries the join-cardinality note (mutate/2 delivery)" do
       # `:join_type` is equivalence-sensitive for a *data* reason, not three-valued logic: the
       # INNER↔LEFT swap is equivalent whenever no orphan row exists (e.g. a mandatory FK). Its note
-      # differs from the NULL/boundary one, and like `:ordering_nulls` it rides the `mutate/2`
+      # differs from the in-fragment families', and like `:ordering_nulls` it rides the `mutate/2`
       # whole-`from` rewrite, not the host.
       src = """
       defmodule M do

@@ -88,7 +88,9 @@ defmodule Mutare.Ecto.VariantTest do
       comparison = site(sites_for(@src), "u.age >= 18")
 
       assert comparison.variant == ["comparison", ">"]
-      assert comparison.note == "kill may require NULL/boundary data (SQL three-valued logic)"
+
+      assert comparison.note ==
+               "kill may require a row whose value sits exactly on the bound — strict and non-strict comparisons (< vs <=, > vs >=) select the same rows except one equal to the bound"
     end
   end
 
