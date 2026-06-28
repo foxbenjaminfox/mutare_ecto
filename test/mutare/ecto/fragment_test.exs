@@ -14,7 +14,7 @@ defmodule Mutare.Ecto.FragmentTest do
     code
     |> Sourceror.parse_string!()
     |> Fragment.mutants(opts)
-    |> Enum.map(fn {_family, node} -> Sourceror.to_string(node) end)
+    |> Enum.map(fn {_family, node, _label} -> Sourceror.to_string(node) end)
     |> MapSet.new()
   end
 
@@ -23,7 +23,17 @@ defmodule Mutare.Ecto.FragmentTest do
     code
     |> Sourceror.parse_string!()
     |> Fragment.mutants(opts)
-    |> Enum.map(fn {family, _node} -> family end)
+    |> Enum.map(fn {family, _node, _label} -> family end)
+    |> MapSet.new()
+  end
+
+  # The finer `# mutare:ignore` label(s) tagged on each of `code`'s mutants, as a set (a label may
+  # itself be a list when a deduped value collapses two kinds).
+  defp labels(code, opts \\ []) do
+    code
+    |> Sourceror.parse_string!()
+    |> Fragment.mutants(opts)
+    |> Enum.map(fn {_family, _node, label} -> label end)
     |> MapSet.new()
   end
 
@@ -142,11 +152,24 @@ defmodule Mutare.Ecto.FragmentTest do
         "u.age > 1"
         |> Sourceror.parse_string!()
         |> Fragment.mutants()
-        |> Enum.filter(fn {family, _node} -> family == :integer_literal end)
-        |> Enum.map(fn {_family, node} -> Sourceror.to_string(node) end)
+        |> Enum.filter(fn {family, _node, _label} -> family == :integer_literal end)
+        |> Enum.map(fn {_family, node, _label} -> Sourceror.to_string(node) end)
         |> Enum.sort()
 
       assert literals == ["u.age > 0", "u.age > 2"]
+    end
+
+    test "the deduped 0 carries both its kind labels (pred and zero)" do
+      # `1`'s `n - 1` (pred) and its `0` sentinel (zero) collapse to one `0` mutant — tagged with
+      # *both* kinds, so `# mutare:ignore[ecto:pred]` and `# mutare:ignore[ecto:zero]` each select it.
+      labels =
+        "u.age > 1"
+        |> Sourceror.parse_string!()
+        |> Fragment.mutants()
+        |> Enum.find(fn {_family, node, _label} -> Sourceror.to_string(node) == "u.age > 0" end)
+        |> elem(2)
+
+      assert Enum.sort(labels) == ["pred", "zero"]
     end
 
     test "a pinned interpolation is left to core (no literal mutant)" do
@@ -263,6 +286,48 @@ defmodule Mutare.Ecto.FragmentTest do
     test "each reorder is self-tagged with the :binding_reorder family" do
       tagged = "a.x == b.y" |> Sourceror.parse_string!() |> Fragment.binding_reorders([:a, :b])
       assert [{:binding_reorder, _node}] = tagged
+    end
+  end
+
+  describe "finer `# mutare:ignore` labels" do
+    test "a swap is tagged with the operator it mutates (the source operator)" do
+      # `u.age < v` → `u.age <= v` is the mutation *of* `<`, so it's labelled `<` — that's what a
+      # user writes to leave `<` alone (`# mutare:ignore[ecto:<]`), independent of `>`.
+      assert labels("u.age < v") == MapSet.new(["<"])
+      assert labels("u.age > v") == MapSet.new([">"])
+      assert labels("u.x == u.y") == MapSet.new(["=="])
+      assert labels("u.a and u.b") == MapSet.new(["and"])
+    end
+
+    test "the unit predicates label by their core operator (the wire-safe half)" do
+      # `not is_nil`/`not in` carry a space, so both directions are labelled by the bare operator.
+      assert labels("is_nil(u.x)") == MapSet.new(["is_nil"])
+      assert labels("not is_nil(u.x)") == MapSet.new(["is_nil"])
+      assert labels("u.role in ^roles") == MapSet.new(["in"])
+      assert labels("u.role not in ^roles") == MapSet.new(["in"])
+    end
+
+    test "value families label by kind, not operator" do
+      assert labels("u.age > 18") == MapSet.new([">", ["succ"], ["pred"], ["zero"]])
+      assert labels(~s|u.name == "ok"|) == MapSet.new(["==", ["empty"], ["sentinel"]])
+    end
+
+    test "every emitted label is in the plugin's variant vocabulary (no drift)" do
+      emitted =
+        [
+          "u.a and u.x == u.y",
+          "is_nil(u.n)",
+          "u.r in ^v",
+          "u.age > 18",
+          ~s|u.s == "x"|,
+          "u.f > 2.5"
+        ]
+        |> Enum.flat_map(&MapSet.to_list(labels(&1)))
+        |> List.flatten()
+        |> MapSet.new()
+
+      vocab = MapSet.new(Mutare.Ecto.variants(), &to_string/1)
+      assert MapSet.subset?(emitted, vocab)
     end
   end
 end

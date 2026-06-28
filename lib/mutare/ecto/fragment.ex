@@ -54,6 +54,13 @@ defmodule Mutare.Ecto.Fragment do
 
   @type family :: atom()
 
+  # The finer `# mutare:ignore` label(s) a mutant carries beyond its family — the operator a swap
+  # mutates (`<`), or a literal's kind (`zero`) — or a *list* when one mutant collapses several kinds
+  # (a deduped `0` is both `pred` and `zero`). It lets `# mutare:ignore[ecto:<]` suppress just the
+  # `<` swap while the `>` swap on the same line keeps running. Folded into the plugin's variant
+  # vocabulary by `Mutare.Ecto.variants/0` (the labels here are the source of `variant_labels/0`).
+  @type label :: String.t() | [String.t()]
+
   # Each operator's single SQL-meaningful swap, by family. `:count`-style arity-changing or
   # NULL-equivalent rewrites are deliberately absent. The `like`/`ilike`
   # case-sensitivity swap is dialect-gated (Postgres) in `local/4`.
@@ -68,15 +75,30 @@ defmodule Mutare.Ecto.Fragment do
   @string_sentinel Mutare.AST.sentinel_string()
 
   @doc """
-  Every single-point mutant of a `where`/`having` condition as `{family, node}` pairs, or `[]`
-  when the condition has nothing the catalog mutates (a bare boolean column, a keyword-shorthand
-  value, an interpolation). One pair per mutatable position, each the full condition with that one
-  position swapped, tagged with the SQL family that produced it (so the caller can filter by
-  `families:`). `opts` carries `dialects:` — the `like`↔`ilike` swap is emitted only under
-  `:postgres`.
+  Every single-point mutant of a `where`/`having` condition as `{family, node, label}` triples, or
+  `[]` when the condition has nothing the catalog mutates (a bare boolean column, a keyword-shorthand
+  value, an interpolation). One triple per mutatable position, each the full condition with that one
+  position swapped, tagged with the SQL `family` that produced it (so the caller can filter by
+  `families:`) **and** the finer `label` naming the operator/kind it swapped (so a qualified
+  `# mutare:ignore[ecto:<]` can suppress just that one). `opts` carries `dialects:` — the
+  `like`↔`ilike` swap is emitted only under `:postgres`.
   """
-  @spec mutants(Macro.t(), keyword() | Config.t()) :: [{family(), Macro.t()}]
+  @spec mutants(Macro.t(), keyword() | Config.t()) :: [{family(), Macro.t(), label()}]
   def mutants(condition, opts \\ []), do: do_mutants(condition, opts)
+
+  @doc false
+  # The finer variant labels every fragment family can emit — the operators the swap families mutate
+  # (derived from the swap tables, so the vocabulary can't drift from what's produced) plus the unit
+  # and value kinds. `Mutare.Ecto.variants/0` folds these in alongside the family names.
+  @spec variant_labels() :: [String.t()]
+  def variant_labels do
+    swap_ops =
+      [@comparison_swaps, @connective_swaps, @membership_op_swaps]
+      |> Enum.flat_map(&Map.keys/1)
+      |> Enum.map(&to_string/1)
+
+    swap_ops ++ ~w(in is_nil succ pred zero empty sentinel negate)
+  end
 
   @doc """
   Binding-reorder mutants: for each pair of `binding_names` that **both** appear in `condition`,
@@ -89,8 +111,9 @@ defmodule Mutare.Ecto.Fragment do
   a genuine reference swap (and avoids reaching for a column on the wrong schema). The host calls
   this with the binding list it already extracted; for a single-binding query it returns `[]`.
 
-  Returned as `{:binding_reorder, node}` pairs — the self-tagging `{family, node}` contract shared
-  by `mutants/2` above and the other catalogs (`Mutare.Ecto.Ordering`, `Mutare.Ecto.Aggregate`).
+  Returned as plain `{:binding_reorder, node}` pairs — a binding reorder has no finer sub-kind, so
+  (unlike `mutants/2`'s `{family, node, label}` triples) it carries only its family. Both shapes are
+  normalized by `Mutare.Ecto.Config.split_tag/1` before delivery.
   """
   @spec binding_reorders(Macro.t(), [atom()]) :: [{:binding_reorder, Macro.t()}]
   # mutare:ignore[guard_drop] equivalent — defensive contract guard; the host always passes the binding list it extracted, and the body's Enum.filter/2 would raise on a non-list anyway, so no reachable input distinguishes the guarded and unguarded clause
@@ -119,63 +142,75 @@ defmodule Mutare.Ecto.Fragment do
   # NullPredicate, as a unit. `not is_nil(x)` → `is_nil(x)`: flip the whole predicate, never
   # descend into the inner `is_nil` (that would also offer `is_nil` → `not is_nil`, yielding a
   # redundant `not not is_nil(x)`).
+  # Both directions are tagged `"is_nil"` (`not is_nil` has a space — not a wire-safe label), so
+  # `# mutare:ignore[ecto:is_nil]` suppresses the null-predicate flip whichever way it points.
   defp do_mutants({:not, _meta, [{:is_nil, _, [_arg]} = inner]}, _opts),
-    do: [{:null_predicate, inner}]
+    do: [{:null_predicate, inner, "is_nil"}]
 
   # `is_nil(x)` → `not is_nil(x)`. A unit too: its argument is a column reference with no
   # catalog operators, so there is nothing to descend into. Clean meta on the fresh `not`.
   defp do_mutants({:is_nil, _meta, [_arg]} = node, _opts),
-    do: [{:null_predicate, {:not, [], [node]}}]
+    do: [{:null_predicate, {:not, [], [node]}, "is_nil"}]
 
   # Membership polarity, as a unit (mirrors NullPredicate). `x not in ^list` → `x in ^list`:
   # flip the whole predicate, no descent (its operands — a field and a pinned list — carry no
-  # catalog target; the list's *value* is core's). Portable, always emitted.
-  defp do_mutants({:not, _meta, [{:in, _, [_l, _r]} = inner]}, _opts), do: [{:membership, inner}]
+  # catalog target; the list's *value* is core's). Portable, always emitted. Both directions are
+  # tagged `"in"` (`not in` has a space), so `# mutare:ignore[ecto:in]` names the polarity flip.
+  defp do_mutants({:not, _meta, [{:in, _, [_l, _r]} = inner]}, _opts),
+    do: [{:membership, inner, "in"}]
 
   # `x in ^list` → `x not in ^list`. A unit too. Clean meta on the fresh `not`.
-  defp do_mutants({:in, _meta, [_l, _r]} = node, _opts), do: [{:membership, {:not, [], [node]}}]
+  defp do_mutants({:in, _meta, [_l, _r]} = node, _opts),
+    do: [{:membership, {:not, [], [node]}, "in"}]
 
   # IntegerLiteral: an integer literal written into the fragment (Sourceror-wrapped). Boundary
   # (`n±1`) plus the zero sentinel, deduped and never equal to `n` — owned here so it stays
   # SQL-safe (core can't reach it: the clause is raw). A *pinned* `^value` never reaches here.
   defp do_mutants({:__block__, _meta, [int]}, _opts) when is_integer(int) do
-    [int + 1, int - 1, 0]
-    |> Enum.uniq()
-    |> Enum.reject(&(&1 == int))
-    |> Enum.map(&{:integer_literal, AST.int_literal(&1)})
+    literal_mutants(
+      [{int + 1, "succ"}, {int - 1, "pred"}, {0, "zero"}],
+      int,
+      :integer_literal,
+      &AST.int_literal/1
+    )
   end
 
   # FloatLiteral: mirrors the integer arm with a `1.0` step and a `0.0` sentinel (core's
   # `FloatLiteral` convention), deduped and never equal to `f`.
   defp do_mutants({:__block__, _meta, [f]}, _opts) when is_float(f) do
-    [f + 1.0, f - 1.0, 0.0]
-    |> Enum.uniq()
-    |> Enum.reject(&(&1 == f))
-    |> Enum.map(&{:float_literal, AST.float_literal(&1)})
+    literal_mutants(
+      [{f + 1.0, "succ"}, {f - 1.0, "pred"}, {0.0, "zero"}],
+      f,
+      :float_literal,
+      &AST.float_literal/1
+    )
   end
 
-  # StringLiteral: a plain string literal → the empty string and the `"mutare"` sentinel (core's
-  # `StringLiteral` convention), dropping whichever already equals the original — so a typical
-  # string yields two mutants. An interpolated string is a `<<>>` node, not this `:__block__`
+  # StringLiteral: a plain string literal → the empty string (`empty`) and the `"mutare"` sentinel
+  # (core's `StringLiteral` convention), dropping whichever already equals the original — so a
+  # typical string yields two mutants. An interpolated string is a `<<>>` node, not this `:__block__`
   # shape, so it is left to core upstream.
   defp do_mutants({:__block__, _meta, [s]}, _opts) when is_binary(s) do
-    ["", @string_sentinel]
-    |> Enum.reject(&(&1 == s))
-    |> Enum.map(&{:string_literal, AST.string_literal(&1)})
+    literal_mutants(
+      [{"", "empty"}, {@string_sentinel, "sentinel"}],
+      s,
+      :string_literal,
+      &AST.string_literal/1
+    )
   end
 
   # BooleanLiteral: `true` ↔ `false` (core's `Literal` boolean arm). Not aimed at direct boolean
   # comparisons (rarely idiomatic), but at a boolean used elsewhere in a fragment — worth mutating
   # exactly when it is worth using. `nil` is *not* a boolean and is left alone (NULL/absence).
   defp do_mutants({:__block__, _meta, [bool]}, _opts) when is_boolean(bool),
-    do: [{:boolean_literal, AST.atom_literal(not bool)}]
+    do: [{:boolean_literal, AST.atom_literal(not bool), "negate"}]
 
   # AtomLiteral: any other literal atom → the `:mutare` sentinel (core's `AtomLiteral` convention),
   # dropped when the atom already is the sentinel. `true`/`false` are BooleanLiteral's (above) and
   # `nil` is excluded — it is NULL/absence, with no clean swap.
   defp do_mutants({:__block__, _meta, [atom]}, _opts)
        when is_atom(atom) and atom not in [true, false, nil] and atom != @atom_sentinel,
-       do: [{:atom_literal, AST.atom_literal(@atom_sentinel)}]
+       do: [{:atom_literal, AST.atom_literal(@atom_sentinel), "sentinel"}]
 
   # An operator/connective (atom form): offer its own swap (if any), then descend into its
   # operands so a nested comparison/connective is mutated too (`is_nil(u.x) and u.y > 1`).
@@ -194,18 +229,19 @@ defmodule Mutare.Ecto.Fragment do
   # are core's; the `in`/`like` membership forms are handled by their own clauses above).
   defp do_mutants(_node, _opts), do: []
 
-  # The atom-form node's own single swap, tagged by family. `like`↔`ilike` is dialect-gated
-  # (Postgres); comparison/connective are portable.
+  # The atom-form node's own single swap, tagged by family **and** by the operator it swaps (the
+  # source `form`, e.g. `<`) — so `# mutare:ignore[ecto:<]` names just this swap. `like`↔`ilike` is
+  # dialect-gated (Postgres); comparison/connective are portable.
   defp local(form, meta, args, opts) do
     cond do
       Map.has_key?(@comparison_swaps, form) ->
-        [{:comparison, {@comparison_swaps[form], meta, args}}]
+        [{:comparison, {@comparison_swaps[form], meta, args}, to_string(form)}]
 
       Map.has_key?(@connective_swaps, form) ->
-        [{:connective, {@connective_swaps[form], meta, args}}]
+        [{:connective, {@connective_swaps[form], meta, args}, to_string(form)}]
 
       Map.has_key?(@membership_op_swaps, form) and Config.dialect_enabled?(opts, [:postgres]) ->
-        [{:membership, {@membership_op_swaps[form], meta, args}}]
+        [{:membership, {@membership_op_swaps[form], meta, args}, to_string(form)}]
 
       true ->
         []
@@ -214,13 +250,29 @@ defmodule Mutare.Ecto.Fragment do
 
   # Rebuild `{form, meta, args}` once per single mutation of one of its arguments — so each
   # produced node differs from the original in exactly one descendant position, carrying the
-  # family the descendant mutation was tagged with.
+  # family **and** the finer label the descendant mutation was tagged with.
   defp lift(form, meta, args, opts) do
     args
     |> Enum.with_index()
     |> Enum.flat_map(fn {arg, index} ->
-      for {family, mutated} <- do_mutants(arg, opts),
-          do: {family, {form, meta, List.replace_at(args, index, mutated)}}
+      for {family, mutated, label} <- do_mutants(arg, opts),
+          do: {family, {form, meta, List.replace_at(args, index, mutated)}, label}
     end)
+  end
+
+  # Build `{family, literal_node, labels}` for each distinct mutated value: drop any candidate equal
+  # to the original, then dedup by value while **merging** the kind labels of colliding candidates —
+  # so `1`'s `pred` (`n-1` = 0) and its `zero` sentinel collapse to one `0` tagged `["pred", "zero"]`
+  # (mirroring core's `Literal`), and a qualifier naming *either* suppresses it. Order-stable.
+  defp literal_mutants(candidates, original, family, build) do
+    candidates
+    |> Enum.reject(fn {value, _kind} -> value == original end)
+    |> Enum.reduce([], fn {value, kind}, acc ->
+      case List.keyfind(acc, value, 0) do
+        nil -> acc ++ [{value, [kind]}]
+        {^value, kinds} -> List.keyreplace(acc, value, 0, {value, kinds ++ [kind]})
+      end
+    end)
+    |> Enum.map(fn {value, kinds} -> {family, build.(value), kinds} end)
   end
 end

@@ -17,8 +17,9 @@ defmodule Mutare.Ecto.Host.Catalog do
     reorders = Fragment.binding_reorders(condition, reorder_names)
     aggregates = Aggregate.swaps(condition)
 
-    for {family, node} <- Fragment.mutants(condition, config) ++ reorders ++ aggregates,
+    for tag <- Fragment.mutants(condition, config) ++ reorders ++ aggregates,
+        {family, node, finer} = Config.split_tag(tag),
         Config.family_enabled?(config, family),
-        do: Config.noted(family, node)
+        do: Config.enrich(family, node, finer)
   end
 end

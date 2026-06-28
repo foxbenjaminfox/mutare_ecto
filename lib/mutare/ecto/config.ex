@@ -50,7 +50,7 @@ defmodule Mutare.Ecto.Config do
   #     a mandatory/complete FK makes every row match, so the swap is legitimately equivalent. The
   #     kill needs an orphan row in the data, distinct from a missing-fixture gap.
   #
-  # The per-mutant note rides onto a Site via a `%Mutare.Mutator.Mutation{}` (`noted/2`), which core
+  # The per-mutant note rides onto a Site via a `%Mutare.Mutator.Mutation{}` (`enrich/2`), which core
   # accepts on **both** delivery paths — the selector host's `:mutants` and a plain `mutate/2`
   # return. So the in-fragment families surface the advisory through the host, and the
   # whole-`from`/clause-macro families (`:ordering_nulls`, `:join_type`) through `mutate/2`. Surfaced
@@ -129,20 +129,39 @@ defmodule Mutare.Ecto.Config do
   def equivalence_note(family), do: Map.get(@equivalence_notes, family)
 
   @doc """
-  Tag a mutant `node` with its family's report note, ready to return from `mutate/2` or a host
-  target's `:mutants`.
+  Enrich a mutant `node` with the metadata its `family` (and optional `finer` label) carry, ready to
+  return from `mutate/2` or a host target's `:mutants`. Every mutant is wrapped in a
+  `%Mutare.Mutator.Mutation{}`:
 
-  An equivalence-sensitive family's node is wrapped in a `%Mutare.Mutator.Mutation{}` carrying the
-  advisory (so it rides onto the `Mutare.Site`); every other family yields the bare node (the
-  common, note-free case). Core accepts both forms on either delivery path.
+    * **`variant:`** — `[family | finer]`, the `# mutare:ignore` labels that suppress this mutant.
+      `family` is the per-site analogue of the run-wide `families:` filter
+      (`# mutare:ignore[ecto:comparison]`); `finer` is the operator/kind a swap or value family also
+      tags (`# mutare:ignore[ecto:<]` — the `<` swap alone), a single label, a list, or absent for a
+      structural family. A qualifier matching **any** label suppresses the mutant. The full
+      vocabulary is `Mutare.Ecto.variants/0`; labels are recorded only because `Mutare.Ecto` declares
+      it (an un-opted-in mutator records `[]`).
+    * **`note:`** — the equivalence advisory for a family that has one (`equivalence_note/1`), else
+      `nil`. A survivor of an equivalence-sensitive family reads "… kill may require …".
+
+  Core accepts the struct on **both** delivery paths (a plain `mutate/2` return and the selector
+  host's `:mutants`), so this one wrapper serves every family on either path.
   """
-  @spec noted(atom(), Macro.t()) :: Macro.t() | Mutation.t()
-  def noted(family, node) do
-    case equivalence_note(family) do
-      nil -> node
-      note -> Mutation.new(node, note)
-    end
+  @spec enrich(atom(), Macro.t(), Mutation.variant()) :: Mutation.t()
+  def enrich(family, node, finer \\ nil) do
+    Mutation.new(node, note: equivalence_note(family), variant: [family | List.wrap(finer)])
   end
+
+  @doc """
+  Split a producer's mutation tag into `{family, node, finer}`. A producer emits either
+  `{family, node}` (a structural family — no finer label) or `{family, node, finer}` (a swap/value
+  family appending the operator/kind it mutated, for a qualified `# mutare:ignore[ecto:<op>]`). The
+  one normalizer both delivery consumers — `Mutare.Ecto.mutate/2` and `Mutare.Ecto.Host.Catalog` —
+  feed into `enrich/3`, so adding a finer label to a producer never touches the delivery code.
+  """
+  @spec split_tag({atom(), Macro.t()} | {atom(), Macro.t(), Mutation.variant()}) ::
+          {atom(), Macro.t(), Mutation.variant()}
+  def split_tag({family, node}), do: {family, node, nil}
+  def split_tag({family, node, finer}), do: {family, node, finer}
 
   @doc """
   The families enabled by `opts` — the configured `families:` list, or all of them when it is

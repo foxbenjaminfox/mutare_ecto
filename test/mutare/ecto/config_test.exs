@@ -154,8 +154,6 @@ defmodule Mutare.Ecto.ConfigTest do
       assert :ordering_nulls in Mutare.Ecto.families()
       assert :clause_drop in Mutare.Ecto.families()
 
-      # The in-fragment literal arms (one per literal type), replacing the former single
-      # `:fragment_literal`.
       assert :integer_literal in Mutare.Ecto.families()
       assert :float_literal in Mutare.Ecto.families()
       assert :atom_literal in Mutare.Ecto.families()

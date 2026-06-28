@@ -95,7 +95,7 @@ defmodule Mutare.Ecto do
   @behaviour Mutare.Mutator
   @behaviour Mutare.Mutator.MacroAware
 
-  alias Mutare.Ecto.{Config, Dispatcher, Host, Surface}
+  alias Mutare.Ecto.{Config, Dispatcher, Fragment, Host, Surface}
 
   # Query macros routed through the plugin's **selector host** (`c:Mutare.Mutator.MacroAware.host/2`) — the
   # `from` opener and the standalone/pipe condition macros — via the `:routing` classifier, which
@@ -128,6 +128,27 @@ defmodule Mutare.Ecto do
   """
   @spec equivalence_sensitive_families() :: [atom()]
   defdelegate equivalence_sensitive_families, to: Config
+
+  @doc """
+  The `# mutare:ignore` variant vocabulary: every SQL **family** the plugin can emit (`families/0`),
+  plus the finer **operator/kind** labels the swap and value families tag (a comparison's operator, a
+  literal's kind — `Mutare.Ecto.Fragment.variant_labels/0`).
+
+  Every recorded mutant carries its family label and, for a swap/value family, the finer label too —
+  so a qualified directive suppresses **either** the whole family or one operator at a site, the rest
+  still running. The per-site analogue of the run-wide `families:` filter, only finer. With the
+  default config every mutant is recorded under `:ecto`, so a directive reads
+  `# mutare:ignore[ecto:comparison]` or `# mutare:ignore[ecto:<]`; an `:as`-renamed run reads
+  `# mutare:ignore[<as>:<label>]` (the vocabulary is unchanged). A **bare** `# mutare:ignore[ecto]`
+  still suppresses every mutant at the site.
+
+      from(u in User, where: u.age > 18 and u.height < 90) # mutare:ignore[ecto:<]
+      #                                            ^ only the `<` swap is suppressed; the `>` swap,
+      #                                              and the 18/90 literal swaps, all keep running
+  """
+  @impl Mutare.Mutator
+  @spec variants() :: [atom() | String.t()]
+  def variants, do: Config.all_families() ++ Fragment.variant_labels()
 
   @impl Mutare.Mutator.MacroAware
   def macros do
@@ -168,9 +189,10 @@ defmodule Mutare.Ecto do
     context = Map.put(context, :ecto_config, config)
     tagged = Dispatcher.mutations(node, context)
 
-    case for {family, mutated} <- tagged,
+    case for tag <- tagged,
+             {family, mutated, finer} = Config.split_tag(tag),
              Config.family_enabled?(config, family),
-             do: Config.noted(family, mutated) do
+             do: Config.enrich(family, mutated, finer) do
       [] -> :skip
       mutations -> mutations
     end
