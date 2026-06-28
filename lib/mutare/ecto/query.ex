@@ -41,8 +41,6 @@ defmodule Mutare.Ecto.Query do
 
   @behaviour Mutare.Ecto.SubMutator
 
-  @type family :: atom()
-
   # JoinType: each join-clause key's kind swaps. `join` is the keyword-form default inner join.
   # The portable pair (`INNER`↔`LEFT`) is always offered; the non-portable pairs are added only
   # under a dialect that supports them:

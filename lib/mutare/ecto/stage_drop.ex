@@ -14,7 +14,7 @@ defmodule Mutare.Ecto.StageDrop do
   # The owner module supplies the resolved module key it matches and a `fun -> family | nil`
   # classifier (nil = not droppable), keeping the family taxonomy with the family that owns it.
 
-  alias Mutare.Ecto.AST
+  alias Mutare.Ecto.{AST, Config}
   alias Mutare.Transform.Calls
 
   @doc """
@@ -22,8 +22,13 @@ defmodule Mutare.Ecto.StageDrop do
   `module_key` whose function `family_fun` maps to a family. Returns `{family, node}` pairs, or
   `[]` when the call is on another module or `family_fun` returns `nil`. Pipe-aware via `pipe_mode`.
   """
-  @spec mutations(Macro.t(), [atom()] | atom(), (atom() -> atom() | nil), :piped | :unpiped) ::
-          [{atom(), Macro.t()}]
+  @spec mutations(
+          Macro.t(),
+          [atom()] | atom(),
+          (atom() -> Config.family() | nil),
+          :piped | :unpiped
+        ) ::
+          [{Config.family(), Macro.t()}]
   def mutations(node, module_key, family_fun, pipe_mode) do
     with {^module_key, fun, args, _rebuild} <- Calls.resolved_call(node),
          family when not is_nil(family) <- family_fun.(fun) do

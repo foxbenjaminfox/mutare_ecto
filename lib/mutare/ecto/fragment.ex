@@ -60,8 +60,6 @@ defmodule Mutare.Ecto.Fragment do
 
   alias Mutare.Ecto.{AST, Config}
 
-  @type family :: atom()
-
   # The finer `# mutare:ignore` label(s) a mutant carries beyond its family — the operator a swap
   # mutates (`<`), or a literal's kind (`zero`) — or a *list* when one mutant collapses several kinds
   # (a deduped `0` is both `pred` and `zero`). It lets `# mutare:ignore[ecto:<]` suppress just the
@@ -91,7 +89,7 @@ defmodule Mutare.Ecto.Fragment do
   `# mutare:ignore[ecto:<]` can suppress just that one). `opts` carries `dialects:` — the
   `like`↔`ilike` swap is emitted only under `:postgres`.
   """
-  @spec mutants(Macro.t(), keyword() | Config.t()) :: [{family(), Macro.t(), label()}]
+  @spec mutants(Macro.t(), keyword() | Config.t()) :: [{Config.family(), Macro.t(), label()}]
   def mutants(condition, opts \\ []), do: do_mutants(condition, opts, nil)
 
   @doc false

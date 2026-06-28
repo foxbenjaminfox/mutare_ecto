@@ -90,7 +90,8 @@ defmodule Mutare.Ecto.RepoWrite do
   @on_conflict_swaps %{nothing: :raise, raise: :nothing, replace_all: :nothing}
 
   @doc "RepoWrite mutations for `node` as `{family, node}` pairs, or `[]`."
-  @spec mutations(Macro.t(), Mutare.Mutator.context()) :: [{atom(), Macro.t()}]
+  @spec mutations(Macro.t(), Mutare.Mutator.context()) ::
+          [{:persistence | :on_conflict, Macro.t()}]
   @impl Mutare.Ecto.SubMutator
   def mutations(node, %{pipe_mode: pipe_mode} = context) do
     case RepoCall.resolve(node, context) do

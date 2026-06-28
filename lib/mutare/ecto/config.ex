@@ -53,6 +53,35 @@ defmodule Mutare.Ecto.Config do
   @default_families @families -- @opt_in_families
   @default_family_set MapSet.new(@default_families)
 
+  @typedoc """
+  A SQL mutation family — the tag every mutant carries. `all_families/0` is the full set and
+  `families:` narrows it. This union mirrors `@families` above: the two are the single source of
+  truth for the vocabulary and must be kept in lockstep when a family is added or removed.
+  """
+  @type family ::
+          :comparison
+          | :connective
+          | :null_predicate
+          | :membership
+          | :binding_reorder
+          | :integer_literal
+          | :float_literal
+          | :atom_literal
+          | :string_literal
+          | :boolean_literal
+          | :filter_drop
+          | :ordering
+          | :ordering_nulls
+          | :bound
+          | :join_type
+          | :aggregate
+          | :query_terminal
+          | :clause_drop
+          | :persistence
+          | :on_conflict
+          | :validation_drop
+          | :hook_drop
+
   # The families whose survivors may be **legitimately unkillable for a data reason**, not a test
   # gap — each carrying its own report *note* (below) so the report reads as honest signal. Two
   # distinct equivalence reasons, hence two notes:
@@ -130,7 +159,7 @@ defmodule Mutare.Ecto.Config do
   end
 
   @doc "Every family the plugin can emit (the `:all` set)."
-  @spec all_families() :: [atom()]
+  @spec all_families() :: [family()]
   def all_families, do: @families
 
   @doc """
@@ -142,7 +171,7 @@ defmodule Mutare.Ecto.Config do
   def default_families, do: @default_families
 
   @doc "The families whose survivors may be unkillable for a data reason (see the report note)."
-  @spec equivalence_sensitive_families() :: [atom()]
+  @spec equivalence_sensitive_families() :: [family()]
   def equivalence_sensitive_families,
     do: Enum.filter(@families, &Map.has_key?(@equivalence_notes, &1))
 
@@ -150,7 +179,7 @@ defmodule Mutare.Ecto.Config do
   The report note for a `family`'s mutants — a string for an equivalence-sensitive family
   (surfaced on each such mutant's Site), or `nil` for an ordinary family (a bare mutant).
   """
-  @spec equivalence_note(atom()) :: String.t() | nil
+  @spec equivalence_note(family()) :: String.t() | nil
   def equivalence_note(family), do: Map.get(@equivalence_notes, family)
 
   @doc """
@@ -171,7 +200,7 @@ defmodule Mutare.Ecto.Config do
   Core accepts the struct on **both** delivery paths (a plain `mutate/2` return and the selector
   host's `:mutants`), so this one wrapper serves every family on either path.
   """
-  @spec enrich(atom(), Macro.t(), Mutation.variant()) :: Mutation.t()
+  @spec enrich(family(), Macro.t(), Mutation.variant()) :: Mutation.t()
   def enrich(family, node, finer \\ nil) do
     Mutation.new(node, note: equivalence_note(family), variant: [family | List.wrap(finer)])
   end
@@ -183,8 +212,8 @@ defmodule Mutare.Ecto.Config do
   one normalizer both delivery consumers — `Mutare.Ecto.mutate/2` and `Mutare.Ecto.Host.Catalog` —
   feed into `enrich/3`, so adding a finer label to a producer never touches the delivery code.
   """
-  @spec split_tag({atom(), Macro.t()} | {atom(), Macro.t(), Mutation.variant()}) ::
-          {atom(), Macro.t(), Mutation.variant()}
+  @spec split_tag({family(), Macro.t()} | {family(), Macro.t(), Mutation.variant()}) ::
+          {family(), Macro.t(), Mutation.variant()}
   def split_tag({family, node}), do: {family, node, nil}
   def split_tag({family, node, finer}), do: {family, node, finer}
 
@@ -194,14 +223,14 @@ defmodule Mutare.Ecto.Config do
   is `:default` or unset; `:all` is every family. Raises on an unknown family name, so a typo'd
   `families:` entry fails loudly rather than silently mutating nothing.
   """
-  @spec families(keyword() | t()) :: [atom()]
+  @spec families(keyword() | t()) :: [family()]
   def families(%__MODULE__{families: enabled}),
     do: Enum.filter(@families, &MapSet.member?(enabled, &1))
 
   def families(opts), do: opts |> parse!() |> families()
 
   @doc "Whether `family` is enabled by `opts`."
-  @spec family_enabled?(keyword() | t(), atom()) :: boolean()
+  @spec family_enabled?(keyword() | t(), family()) :: boolean()
   def family_enabled?(%__MODULE__{families: families}, family),
     do: MapSet.member?(families, family)
 

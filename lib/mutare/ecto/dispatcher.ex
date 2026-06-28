@@ -24,6 +24,9 @@ defmodule Mutare.Ecto.Dispatcher do
   @query_key AST.query_module_key()
   @changeset_key AST.module_key(Ecto.Changeset)
   @doc "The tagged mutations applicable to one AST node."
+  # `context` is the `:ecto_config`-augmented callback context (`Mutare.Ecto.mutate/2` injects the
+  # parsed config), a superset of `Mutare.Mutator.context()` — hence `map()`, as in
+  # `Config.from_context/1`. Only the `:ecto_config`-free reads thread on to the sub-mutators.
   @spec mutations(Macro.t(), map()) :: [Mutare.Ecto.SubMutator.tagged()]
   def mutations(node, context) do
     case QueryCall.parse(node) do

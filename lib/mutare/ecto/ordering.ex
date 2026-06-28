@@ -50,7 +50,7 @@ defmodule Mutare.Ecto.Ordering do
   Sourceror wraps a list literal in a value position in a single-element `__block__`, so that
   is unwrapped first.
   """
-  @spec flips(Macro.t()) :: [{atom(), Macro.t(), String.t()}]
+  @spec flips(Macro.t()) :: [{:ordering | :ordering_nulls, Macro.t(), String.t()}]
   def flips({:__block__, _meta, [inner]}), do: flips(inner)
 
   def flips(value) when is_list(value) do
