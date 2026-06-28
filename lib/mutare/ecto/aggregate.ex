@@ -15,6 +15,8 @@ defmodule Mutare.Ecto.Aggregate do
   # value aggregate changes the result's meaning in a way its `:distinct`/arity contract makes
   # awkward, and `count`↔a-value-aggregate is rarely a focused, killable mutation.
 
+  alias Mutare.Transform.Calls
+
   @agg_swaps %{sum: :avg, avg: :sum, min: :max, max: :min}
   @agg_funcs Map.keys(@agg_swaps)
 
@@ -74,11 +76,26 @@ defmodule Mutare.Ecto.Aggregate do
   # Atoms, literals, variables, field references: no aggregate here.
   defp walk(_node), do: []
 
+  # Descend into a call/operator's arguments, but leave any argument a nested **author** macro
+  # registered `:skip` raw — the same nested-macro routing `Mutare.Ecto.Fragment` honours, read
+  # from the stamp `Calls.macro_treatment/1` exposes. So a `having: clamp(sum(p.x), 10)` whose
+  # `clamp/2` is registered `:skip` never has its `sum` swapped to `avg` inside the opaque body.
   defp lift_args(form, meta, args) do
+    routing = Calls.macro_treatment({form, meta, args})
+
     args
     |> Enum.with_index()
     |> Enum.flat_map(fn {arg, i} ->
-      for {m, label} <- walk(arg), do: {{form, meta, List.replace_at(args, i, m)}, label}
+      if skipped_arg?(routing, i) do
+        []
+      else
+        for {m, label} <- walk(arg), do: {{form, meta, List.replace_at(args, i, m)}, label}
+      end
     end)
   end
+
+  # Whether the argument at `index` of a nested macro call was registered `:skip`. `nil` routing
+  # (not a known macro) skips nothing; every other treatment descends normally.
+  defp skipped_arg?(nil, _index), do: false
+  defp skipped_arg?(routing, index), do: Enum.at(routing, index) == :skip
 end

@@ -56,9 +56,18 @@ defmodule Mutare.Ecto.Fragment do
   (arg 1). The traversal threads each child's `{parent_form, arity, index}` down so the literal
   arms can consult this small registry (`structural_position?/1`); data literals at every *other*
   position of those forms are still mutated.
+
+  A nested **author macro** the catalog walks past (a query helper the app defines and uses inside
+  the fragment) may own its arguments — an opaque body it expands. Core leaves the whole hosted
+  fragment raw, so it falls to the catalog to honour how that macro is registered: a position the
+  author routed `:skip` (via `c:Mutare.Mutator.MacroAware.macros/0` or the `:macros` option) is read
+  from the resolve-pass stamp with `Mutare.Transform.Calls.macro_treatment/1` and left raw — the
+  catalog descends into every other argument but never manufactures a mutant inside a body the
+  author excluded.
   """
 
   alias Mutare.Ecto.{AST, Config}
+  alias Mutare.Transform.Calls
 
   # The finer `# mutare:ignore` label(s) a mutant carries beyond its family — the operator a swap
   # mutates (`<`), or a literal's kind (`zero`) — or a *list* when one mutant collapses several kinds
@@ -295,16 +304,36 @@ defmodule Mutare.Ecto.Fragment do
   # family **and** the finer label the descendant mutation was tagged with. Each child is descended
   # with its `{parent_form, arity, index}` position so `do_mutants/3` can skip a literal at a
   # structural position of a known Ecto DSL form.
+  #
+  # A nested macro the **author** wrote in the fragment (a query helper of their own) may also route
+  # an argument `:skip` — an opaque body it owns that the catalog must not mutate into. Core leaves
+  # the whole hosted fragment raw and does not route the macros nested inside it (that is the
+  # plugin's to own), but it *did* stamp each recognised nested call's per-argument routing on the
+  # node, so read it with `Calls.macro_treatment/1` and leave a `:skip` argument untouched. A node
+  # that is not a known macro (`nil` routing) and an argument under any other treatment descend
+  # exactly as before.
   defp lift(form, meta, args, opts) do
     arity = length(args)
+    routing = Calls.macro_treatment({form, meta, args})
 
     args
     |> Enum.with_index()
     |> Enum.flat_map(fn {arg, index} ->
-      for {family, mutated, label} <- do_mutants(arg, opts, {form, arity, index}),
-          do: {family, {form, meta, List.replace_at(args, index, mutated)}, label}
+      if skipped_arg?(routing, index) do
+        []
+      else
+        for {family, mutated, label} <- do_mutants(arg, opts, {form, arity, index}),
+            do: {family, {form, meta, List.replace_at(args, index, mutated)}, label}
+      end
     end)
   end
+
+  # Whether the argument at `index` of a nested macro call was registered `:skip` (left raw). A node
+  # that is not a known macro carries `nil` routing — nothing to skip. Any non-`:skip` treatment is
+  # mutated normally: inside a SQL fragment the only treatment that means "leave this opaque" is
+  # `:skip` (a `:pattern`/`:hosted`/`:binding_pattern` argument cannot occur in a query condition).
+  defp skipped_arg?(nil, _index), do: false
+  defp skipped_arg?(routing, index), do: Enum.at(routing, index) == :skip
 
   # Build `{family, literal_node, labels}` for each distinct mutated value: drop any candidate equal
   # to the original, then dedup by value while **merging** the kind labels of colliding candidates —

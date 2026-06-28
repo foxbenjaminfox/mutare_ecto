@@ -165,6 +165,13 @@ rewrite.
   exists to enforce. The fragment catalog is owned end to
   end in `fragment.ex`. Interpolated `^value` references are *Elixir* data → mutated by core's
   literal families; the SQL **structure/operators** are the plugin's.
+- **Honour a nested author macro's `:skip` inside a hosted fragment.** A user can define a macro and
+  use it in a `where`/`having` condition; core leaves the whole fragment raw, so it is the plugin's
+  job to respect how that macro is registered. As they walk the condition, `fragment.ex` and
+  `aggregate.ex` read each nested call's per-argument routing via
+  `Mutare.Transform.Calls.macro_treatment/1` (stamped by the resolve pre-pass) and leave a `:skip`
+  argument opaque — never mutating into a body the author owns. (Binding-reorder is exempt: it
+  models a query-wide binding-declaration swap, not a fragment-body mutation.)
 - **Stay inside the single build.** Any in-query mutation must be delivered `^`-pinned behind the
   selector — a bare `case` in a query position poisons compilation. New query-position families go
   through the host, not the in-place selector.
