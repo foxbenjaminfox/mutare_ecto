@@ -23,12 +23,17 @@ defmodule Mutare.Ecto.RepoWrite do
       identically, so there is no spurious kill there. Excludes `insert_all`/`update_all` (bulk,
       no changeset).
 
-    * **`:on_conflict`** — flip an explicit `on_conflict: :nothing` to `on_conflict: :raise` on an
-      `insert`/`insert!` (the only writes that take it). `:nothing` silently skips a conflicting
-      row; `:raise` (Ecto's default) makes the conflict raise — so a survivor means no test
-      exercises the upsert's conflict path. `:nothing`↔`:raise` is the portable pair: both are
-      valid without a `conflict_target` (unlike `:replace_all`, which needs one on Postgres, so it
-      is left out — a target-less swap would be a runtime crash, a trivially-killed non-mutant).
+    * **`:on_conflict`** — swap an explicit `on_conflict:` atom on an `insert`/`insert!`/`insert_all`
+      (the writes that take the option) for the *distinct* alternative it conflicts-handles to:
+      `:nothing`→`:raise` (silent-skip → crash — a survivor means no test exercises the upsert's
+      conflict path), `:raise`→`:nothing` (crash → silent-skip — kill with a test asserting a
+      duplicate fails), and `:replace_all`→`:nothing` (overwrite-row → keep-old-row — kill with a
+      test that asserts the conflicting row was actually overwritten). Every *target* (`:raise`,
+      `:nothing`) is valid with no `conflict_target` on all dialects, so each swap is crash-free.
+      `:replace_all` is a swap **source** only, never a target — the reverse needs a
+      `conflict_target` on Postgres, so a target-less swap would be a runtime crash (a
+      trivially-killed non-mutant). Non-atom `on_conflict:` values (a `{:replace, …}` tuple, a
+      keyword-list update, a query) are left untouched.
 
   **Pipe-aware.** Piped (`cs |> Repo.insert()`) the changeset is the `|>` left-hand side, so the
   `:persistence` mutant is delivered as a right-nested pipe stage
@@ -65,9 +70,24 @@ defmodule Mutare.Ecto.RepoWrite do
     insert_or_update!: {:apply_action!, :insert}
   }
 
-  # Writes that accept an `on_conflict:` option (insert family only).
-  @on_conflict_writes ~w(insert insert!)a
-  @on_conflict_swaps %{nothing: :raise}
+  # Writes that accept an `on_conflict:` option: the single-row insert family and bulk `insert_all`.
+  # (`insert_all` has no `!` twin; `update`/`delete` take no `on_conflict`.)
+  @on_conflict_writes ~w(insert insert! insert_all)a
+
+  # Each explicit `on_conflict:` atom → the *distinct* alternative it swaps to. Every target
+  # (`:raise`/`:nothing`) is valid with **no** `conflict_target` on all three dialects, so each swap
+  # is crash-free regardless of the surrounding opts:
+  #
+  #   * `:nothing` → `:raise`     — silent-skip → crash. Kill: any test that exercises the conflict path.
+  #   * `:raise`   → `:nothing`   — crash → silent-skip. Kill: a test asserting a duplicate insert fails.
+  #   * `:replace_all` → `:nothing` — overwrite-row → keep-old-row. Kill: a test inserting a conflicting
+  #     row and asserting the columns hold the *new* values.
+  #
+  # The asymmetry is deliberate: `:replace_all` is a swap **source** only, never a target — the reverse
+  # (`:nothing` → `:replace_all`) needs a `conflict_target` on Postgres, so a target-less swap would be
+  # a runtime crash (a trivially-killed non-mutant). Non-atom values (`{:replace, …}`, a keyword-list
+  # update, a query) read as `nil` via `AST.atom_value` and are skipped.
+  @on_conflict_swaps %{nothing: :raise, raise: :nothing, replace_all: :nothing}
 
   @doc "RepoWrite mutations for `node` as `{family, node}` pairs, or `[]`."
   @spec mutations(Macro.t(), Mutare.Mutator.context()) :: [{atom(), Macro.t()}]

@@ -99,7 +99,7 @@ the query still compiles once and the active mutant is chosen at build time:
 | Family | Example | Question a survivor raises |
 |---|---|---|
 | `persistence` | `Repo.insert(cs)` → non-persisting `apply_action` | Does a test assert the write actually happened? |
-| `on_conflict` | `on_conflict: :nothing` → `:raise` | Is the conflict behaviour tested? |
+| `on_conflict` | swap `on_conflict:` on `insert`/`insert!`/`insert_all` — `:nothing`→`:raise`, `:raise`→`:nothing`, `:replace_all`→`:nothing` | Is the conflict behaviour tested? |
 | `validation_drop` | drop `validate_required`, `unique_constraint`, … | Is the rule it enforces tested? |
 | `hook_drop` | drop `prepare_changes` / `optimistic_lock` | Is the side effect / lock asserted? |
 

@@ -149,11 +149,68 @@ defmodule Mutare.Ecto.RepoWriteTest do
       assert mutated =~ "on_conflict: :raise"
     end
 
-    test "leaves a non-:nothing on_conflict alone (e.g. :replace_all needs a target)" do
+    test "flips an explicit on_conflict: :raise to :nothing (the reverse swap)" do
       src = """
       defmodule Accounts do
         alias MyApp.Repo
-        def upsert(cs), do: Repo.insert(cs, on_conflict: :replace_all)
+        def upsert(cs), do: Repo.insert(cs, on_conflict: :raise)
+      end
+      """
+
+      assert [{original, mutated}] = ecto_diffs(src, on_conflict())
+      assert original =~ "on_conflict: :raise"
+      assert mutated =~ "on_conflict: :nothing"
+    end
+
+    test "flips on_conflict: :replace_all to :nothing (a crash-free, target-less target)" do
+      src = """
+      defmodule Accounts do
+        alias MyApp.Repo
+        def upsert(cs), do: Repo.insert(cs, on_conflict: :replace_all, conflict_target: :email)
+      end
+      """
+
+      assert [{original, mutated}] = ecto_diffs(src, on_conflict())
+      assert original =~ "on_conflict: :replace_all"
+      assert mutated =~ "on_conflict: :nothing"
+      assert mutated =~ "conflict_target: :email"
+    end
+
+    test "fires on bulk insert_all (the other write that takes on_conflict)" do
+      src = """
+      defmodule Accounts do
+        alias MyApp.Repo
+        def bulk(rows), do: Repo.insert_all("users", rows, on_conflict: :nothing)
+      end
+      """
+
+      assert [{original, mutated}] = ecto_diffs(src, on_conflict())
+      assert original =~ "on_conflict: :nothing"
+      assert mutated =~ "on_conflict: :raise"
+      # The schema/entries args stay first — only the trailing opts pair flips.
+      assert mutated =~ ~s(insert_all("users", rows,)
+    end
+
+    test "swaps each source to exactly one distinct target (no reverse/extra mutants)" do
+      # `:nothing` yields only `:raise` — not also a `:replace_all` mutant — and `:replace_all` is a
+      # swap source only, so it never appears as a *target* anywhere (the target-less-crash guard).
+      src = """
+      defmodule Accounts do
+        alias MyApp.Repo
+        def upsert(cs), do: Repo.insert(cs, on_conflict: :nothing)
+      end
+      """
+
+      assert [{_o, mutated}] = ecto_diffs(src, on_conflict())
+      assert mutated =~ "on_conflict: :raise"
+      refute mutated =~ "on_conflict: :replace_all"
+    end
+
+    test "leaves a non-atom on_conflict alone (e.g. a {:replace, fields} tuple)" do
+      src = """
+      defmodule Accounts do
+        alias MyApp.Repo
+        def upsert(cs), do: Repo.insert(cs, on_conflict: {:replace, [:name]})
       end
       """
 

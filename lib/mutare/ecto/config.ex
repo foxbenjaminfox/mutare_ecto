@@ -26,7 +26,9 @@ defmodule Mutare.Ecto.Config do
   #     aggregate (`sum`↔`avg`/`min`↔`max` in `select`/`order_by`/`Repo.aggregate` delivered in
   #     place, and in a hosted `having` condition via `Mutare.Ecto.Host`), query_terminal (`first`↔`last`),
   #     clause_drop (drop a standalone/pipe order_by/select/join/… stage — `Mutare.Ecto.ClauseDrop`);
-  #   * repo write: persistence (insert/update/delete → apply_action), on_conflict (`:nothing`↔`:raise`);
+  #   * repo write: persistence (insert/update/delete → apply_action), on_conflict (swap an explicit
+  #     `on_conflict:` atom on insert/insert!/insert_all — `:nothing`→`:raise`, `:raise`→`:nothing`,
+  #     `:replace_all`→`:nothing`);
   #   * changeset: validation_drop (validators/constraints), hook_drop (prepare_changes/optimistic_lock).
   @families ~w(
     comparison connective null_predicate membership binding_reorder
