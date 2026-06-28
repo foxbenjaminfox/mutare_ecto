@@ -107,15 +107,46 @@ jobs:
       - run: mix compile --warnings-as-errors
       - run: mix test
 
-  ecto-minimum:
-    name: test (Ecto 3.12 minimum)
+  ecto:
+    # Compatibility sweep: every supported Ecto minor line from the declared minimum
+    # (3.12) up to the latest published release, plus the development tip of Ecto. The
+    # dev-tip entry is advisory (allow-failure: true) so upstream breakage warns without
+    # failing the run. ecto_sql/ecto_sqlite3 are pinned to the matching line because their
+    # versions track Ecto's. Each entry resolves into its own generated lockfile.
+    name: ${{ matrix.name }}
     runs-on: ubuntu-24.04
+    continue-on-error: ${{ matrix.allow-failure || false }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: test (Ecto 3.12, minimum)
+            lockfile: mix-ecto-3.12.lock
+            ecto: "== 3.12.0"
+            ecto_sql: "== 3.12.0"
+            ecto_sqlite3: "== 0.17.0"
+          - name: test (Ecto 3.13)
+            lockfile: mix-ecto-3.13.lock
+            ecto: "~> 3.13.0"
+            ecto_sql: "~> 3.13.0"
+            ecto_sqlite3: "~> 0.23.0"
+          - name: test (Ecto 3.14, latest)
+            lockfile: mix-ecto-3.14.lock
+            ecto: "~> 3.14.0"
+            ecto_sql: "~> 3.14.0"
+            ecto_sqlite3: "~> 0.24.0"
+          - name: test (Ecto main, dev tip)
+            lockfile: mix-ecto-main.lock
+            ecto_git_branch: master
+            ecto_sqlite3: "~> 0.24.0"
+            allow-failure: true
     env:
       MIX_ENV: test
-      MIX_LOCKFILE: mix-ecto-3.12.lock
-      ECTO_REQUIREMENT: "== 3.12.0"
-      ECTO_SQL_REQUIREMENT: "== 3.12.0"
-      ECTO_SQLITE3_REQUIREMENT: "== 0.17.0"
+      MIX_LOCKFILE: ${{ matrix.lockfile }}
+      ECTO_REQUIREMENT: ${{ matrix.ecto }}
+      ECTO_SQL_REQUIREMENT: ${{ matrix.ecto_sql }}
+      ECTO_SQLITE3_REQUIREMENT: ${{ matrix.ecto_sqlite3 }}
+      ECTO_GIT_BRANCH: ${{ matrix.ecto_git_branch }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
@@ -138,7 +169,7 @@ jobs:
           path: |
             deps
             _build
-          key: ${{ runner.os }}-mix-ecto-3.12-minimum-${{ steps.beam.outputs.elixir-version }}-${{ steps.beam.outputs.otp-version }}-${{ hashFiles('mix.exs', 'mutare-core/mix.lock', 'mutare-core/lib/**/*.ex') }}
+          key: ${{ runner.os }}-mix-${{ matrix.lockfile }}-${{ steps.beam.outputs.elixir-version }}-${{ steps.beam.outputs.otp-version }}-${{ hashFiles('mix.exs', 'mutare-core/mix.lock', 'mutare-core/lib/**/*.ex') }}
 
       - run: mix deps.get
       - run: mix compile --warnings-as-errors

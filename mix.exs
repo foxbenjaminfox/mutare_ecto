@@ -1,6 +1,9 @@
 defmodule Mutare.Ecto.MixProject do
   use Mix.Project
 
+  @version "0.1.0"
+  @source_url "https://github.com/foxbenjaminfox/mutare_ecto"
+
   # A few *typespecs* in visible modules reference a hidden internal type
   # (`Mutare.Ecto.Clause`/`Query`/`BindingReorder` return `Mutare.Ecto.AST.QueryCall.t`;
   # `Mutare.Ecto.Host` returns `Mutare.Ecto.Host.Target.t`; `Mutare.Ecto.Fragment`
@@ -17,15 +20,17 @@ defmodule Mutare.Ecto.MixProject do
   def project do
     [
       app: :mutare_ecto,
-      version: "0.1.0",
+      version: @version,
       elixir: "~> 1.18",
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
       description: "Mutation-testing plugin for Ecto — a Mutare custom mutator.",
+      package: package(),
       lockfile: System.get_env("MIX_LOCKFILE", "mix.lock"),
       deps: deps(),
       aliases: aliases(),
-      dialyzer: dialyzer()
+      dialyzer: dialyzer(),
+      docs: docs()
     ]
   end
 
