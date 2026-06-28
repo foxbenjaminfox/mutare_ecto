@@ -17,6 +17,7 @@ defmodule Mutare.Ecto.AST.KeywordList do
 
   @type t :: %__MODULE__{node: Macro.t(), entries: [Entry.t()]}
 
+  @doc "The normalized list for `node`, or `nil` unless it is a keyword list keyed entirely by atoms."
   @spec parse(Macro.t()) :: t() | nil
   def parse(node) do
     with list when is_list(list) <- unwrap(node),
@@ -27,6 +28,7 @@ defmodule Mutare.Ecto.AST.KeywordList do
     end
   end
 
+  @doc "Like `parse/1`, but rejects (returns `nil` for) an empty list."
   @spec nonempty(Macro.t()) :: t() | nil
   def nonempty(node) do
     case parse(node) do
@@ -35,18 +37,21 @@ defmodule Mutare.Ecto.AST.KeywordList do
     end
   end
 
+  @doc "Render the list back to AST, preserving its Sourceror wrapper."
   @spec to_ast(t()) :: Macro.t()
   def to_ast(%__MODULE__{node: {:__block__, meta, [_old]}, entries: entries}),
     do: {:__block__, meta, [Enum.map(entries, &entry_ast/1)]}
 
   def to_ast(%__MODULE__{entries: entries}), do: Enum.map(entries, &entry_ast/1)
 
+  @doc "Render the list with a new `value` for the entry at `index`."
   @spec replace_value(t(), non_neg_integer(), Macro.t()) :: Macro.t()
   def replace_value(%__MODULE__{entries: entries} = list, index, value) do
     entries = List.update_at(entries, index, fn %Entry{} = entry -> %{entry | value: value} end)
     to_ast(%__MODULE__{list | entries: entries})
   end
 
+  @doc "Render the list with a new `key` (and matching key node) for the entry at `index`."
   @spec replace_key(t(), non_neg_integer(), atom()) :: Macro.t()
   def replace_key(%__MODULE__{entries: entries} = list, index, key) do
     entries =
@@ -57,6 +62,7 @@ defmodule Mutare.Ecto.AST.KeywordList do
     to_ast(%__MODULE__{list | entries: entries})
   end
 
+  @doc "Render the list with the entry at `index` removed."
   @spec delete(t(), non_neg_integer()) :: Macro.t()
   def delete(%__MODULE__{entries: entries} = list, index),
     do: to_ast(%__MODULE__{list | entries: List.delete_at(entries, index)})

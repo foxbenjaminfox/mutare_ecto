@@ -18,6 +18,7 @@ defmodule Mutare.Ecto.AST.QueryCall do
           rebuild: rebuild()
         }
 
+  @doc "The normalized call for `node` if it resolves to an `Ecto.Query` macro, else `nil`."
   @spec parse(Macro.t()) :: t() | nil
   def parse(node) do
     case Calls.resolved_macro_call(node) do
@@ -29,13 +30,16 @@ defmodule Mutare.Ecto.AST.QueryCall do
     end
   end
 
+  @doc "Rebuild the original call shape (preserving how it was written) with a fresh `args` list."
   @spec rebuild(t(), [Macro.t()]) :: Macro.t()
   def rebuild(%__MODULE__{name: name, rebuild: rebuild}, args), do: rebuild.(name, args)
 
+  @doc "Rebuild the call with `value` substituted for the argument at `index`."
   @spec replace_arg(t(), non_neg_integer(), Macro.t()) :: Macro.t()
   def replace_arg(%__MODULE__{args: args} = call, index, value),
     do: rebuild(call, List.replace_at(args, index, value))
 
+  @doc "Rebuild the call with `fun` applied to the argument at `index`."
   @spec update_arg(t(), non_neg_integer(), (Macro.t() -> Macro.t())) :: Macro.t()
   def update_arg(%__MODULE__{args: args} = call, index, fun),
     do: rebuild(call, List.update_at(args, index, fun))

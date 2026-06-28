@@ -9,6 +9,7 @@ defmodule Mutare.Ecto.AST.BindingList do
 
   @type t :: %__MODULE__{node: Macro.t(), entries: [Macro.t()]}
 
+  @doc "The validated binding list for `node` (a non-empty list of binding entries), or `nil`."
   @spec parse(Macro.t()) :: t() | nil
   def parse(node) do
     case unwrap(node) do
@@ -22,6 +23,7 @@ defmodule Mutare.Ecto.AST.BindingList do
     end
   end
 
+  @doc "The `{index, name}` pairs of the plain positional variables, skipping `...` and pins."
   @spec positionals(t()) :: [{non_neg_integer(), atom()}]
   def positionals(%__MODULE__{entries: entries}) do
     for {entry, index} <- Enum.with_index(entries),
@@ -29,12 +31,14 @@ defmodule Mutare.Ecto.AST.BindingList do
         do: {index, Binding.variable_name(entry)}
   end
 
+  @doc "Render the binding list with `entries` in place, preserving its Sourceror wrapper."
   @spec replace_entries(t(), [Macro.t()]) :: Macro.t()
   def replace_entries(%__MODULE__{node: {:__block__, meta, [_old]}}, entries),
     do: {:__block__, meta, [entries]}
 
   def replace_entries(%__MODULE__{}, entries), do: entries
 
+  @doc "Render the binding list with the entries at `left` and `right` exchanged."
   @spec swap(t(), non_neg_integer(), non_neg_integer()) :: Macro.t()
   def swap(%__MODULE__{entries: entries} = list, left, right) do
     a = Enum.at(entries, left)

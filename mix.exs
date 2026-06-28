@@ -110,7 +110,7 @@ defmodule Mutare.Ecto.MixProject do
       main: "readme",
       source_url: @source_url,
       source_ref: "v#{@version}",
-      extras: ["README.md"],
+      extras: ["README.md", "LICENSE"],
       skip_undefined_reference_warnings_on: &(&1 in @typespec_refs_to_hidden),
       groups_for_modules: [
         "Mutator front": [
