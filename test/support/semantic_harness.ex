@@ -85,23 +85,35 @@ defmodule Mutare.Ecto.SemanticHarness do
   `Code.compile_string`), and purges every compiled module on test exit. `sites` are the
   `Mutare.Site`s, used to look up a mutant's id by its logical diff (`site_id/2`).
   """
-  @spec compile(String.t()) :: {module(), [Site.t()]}
-  def compile(source) do
-    {[module], sites} = Test.compile_metamutant(source, TestSupport.mutators([]))
+  @spec compile(String.t(), keyword()) :: {module(), [Site.t()]}
+  def compile(source, opts \\ []) do
+    {[module], sites} = Test.compile_metamutant(source, TestSupport.mutators(opts))
     {module, sites}
+  end
+
+  @doc """
+  Run `fun` under active mutant `id` and return its result verbatim.
+
+  Sets the selection switch via `Mutare.Test.with_active_mutant/2` — which routes through
+  `Mutare.Selector` (so it never hardcodes the key) and restores the prior active id afterwards, so
+  one test can't leak an active id into the next — for the duration of `fun`. This is the
+  write-path runner: an `:on_conflict` mutant changes what `Repo.insert/2` *does* (overwrite vs skip
+  vs raise) rather than which rows a query returns, so the fixture performs the effect and the test
+  observes the table directly. `under/2` builds the query-path observation on top of it.
+  """
+  @spec activate(non_neg_integer(), (-> result)) :: result when result: term()
+  def activate(id, fun) when is_integer(id) and id >= 0 do
+    Test.with_active_mutant(id, fun)
   end
 
   @doc """
   Run `fun` under active mutant `id` and return `MyApp.Repo.all/1` of the query it builds.
 
-  Sets the selection switch via `Mutare.Test.with_active_mutant/2` — which routes through
-  `Mutare.Selector` (so it never hardcodes the key) and restores the prior active id afterwards, so
-  one test can't leak an active id into the next — for the duration of the build, then runs the
-  resulting query against the seeded Repo. `fun` builds and returns an `Ecto.Queryable` (typically
-  `fn -> module.some_query() end`).
+  The query-path observation: `fun` builds and returns an `Ecto.Queryable` (typically
+  `fn -> module.some_query() end`), which is run against the seeded Repo under the chosen mutant id.
   """
   @spec under(non_neg_integer(), (-> Ecto.Queryable.t())) :: [term()]
   def under(id, fun) when is_integer(id) and id >= 0 do
-    Test.with_active_mutant(id, fn -> @repo.all(fun.()) end)
+    activate(id, fn -> @repo.all(fun.()) end)
   end
 end

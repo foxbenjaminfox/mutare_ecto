@@ -16,6 +16,12 @@ defmodule Mutare.Ecto.SemanticTest do
   # JoinType, Aggregate), delivered by core's ordinary in-place selector over full `from(...)`
   # expressions, are covered too: they are mutated queries that must run against the DB just the same.
   #
+  # The one **write-path** family is also closed here: an `:on_conflict` swap changes what
+  # `Repo.insert/2` *does* on a unique conflict (overwrite vs skip vs raise) rather than which rows a
+  # query returns, so its tests use `H.activate/2` (not `H.under/2`) to run the upsert under a mutant
+  # id and observe a dedicated `accounts` table — reset to a baseline row before each activation so
+  # the conflicting writes never pollute the read-only query fixtures.
+  #
   # `async: false`: the tests share the process-global `Mutare.Selector` active-id switch and a
   # single-connection Repo, so they must not interleave. (No other test executes a metamutant, so
   # there is nothing to race with — but the flag makes the ownership explicit.)
@@ -46,6 +52,27 @@ defmodule Mutare.Ecto.SemanticTest do
   defp ids(module, id), do: module |> q_under(id) |> Enum.sort()
 
   defp q_under(module, id), do: H.under(id, fn -> apply(module, :q, []) end)
+
+  # Write-path observation for the `:on_conflict` tests. Unlike the query families, an on_conflict
+  # mutant changes what `Repo.insert/2` *does* on a unique conflict — so the test resets the
+  # dedicated `accounts` table to its baseline row, runs the upsert under a chosen mutant id, and
+  # reads the row's `name` back (or asserts the call raises).
+  defp reset_accounts!, do: MyApp.Seed.reset_accounts!(MyApp.Repo)
+
+  defp account_name do
+    import Ecto.Query
+    MyApp.Repo.one(from(a in MyApp.Account, where: a.email == "a@x", select: a.name))
+  end
+
+  # Did `fun` raise? Used instead of `assert_raise SpecificError` so the raise-observed on_conflict
+  # test stays stable across the CI matrix's ecto_sqlite3 versions (the exception *type* for a unique
+  # violation is adapter-version detail; *that it raises at all* is the live signal).
+  defp raises?(fun) do
+    fun.()
+    false
+  rescue
+    _ -> true
+  end
 
   describe "Comparison — `>` ↔ `>=` (dynamic-injected)" do
     # `u.age > 18` vs `u.age >= 18` differ only on the boundary rows (age == 18). If the injected
@@ -535,6 +562,84 @@ defmodule Mutare.Ecto.SemanticTest do
       assert baseline == ["admin", "user"]
       # avg(age) per role over 25: only admin (29); user (≈20.7) and mod (17) fall below.
       assert mutant == ["admin"]
+    end
+  end
+
+  describe "on_conflict — `:replace_all` → `:nothing` (Repo write, content-observed)" do
+    # The write-path twin of the query-family liveness tests. An `:on_conflict` mutant changes what
+    # `Repo.insert/2` *does* on a unique conflict rather than which rows a query returns: `:replace_all`
+    # resolves the conflict to an UPDATE (overwriting the row), the `:nothing` mutant skips it. Observed
+    # through the row's `name` after the upsert — no raise involved — so it's robust across the CI
+    # Ecto/adapter matrix. Restricting to `families: [:on_conflict]` records exactly the one swap site
+    # (no `:persistence` sibling on the same insert to disambiguate).
+    @replace_all_upsert """
+    defmodule W do
+      alias MyApp.{Account, Repo}
+
+      def upsert do
+        Repo.insert(%Account{email: "a@x", name: "New"},
+          on_conflict: :replace_all,
+          conflict_target: :email
+        )
+      end
+    end
+    """
+
+    test "replace_all overwrites the conflicting row; the :nothing mutant leaves it untouched" do
+      {mod, sites} =
+        H.compile(@replace_all_upsert,
+          mutators: [{Mutare.Ecto, repo: MyApp.Repo, families: [:on_conflict]}]
+        )
+
+      swap = site_id(sites, {~r/on_conflict: :replace_all/, ~r/on_conflict: :nothing/})
+
+      # Baseline (:replace_all): the conflict resolves to an UPDATE → the row's name becomes "New".
+      reset_accounts!()
+      H.activate(0, fn -> mod.upsert() end)
+      assert account_name() == "New"
+
+      # Mutant (:nothing): the conflict is silently skipped → the row keeps its baseline "Original".
+      reset_accounts!()
+      H.activate(swap, fn -> mod.upsert() end)
+      assert account_name() == "Original"
+    end
+  end
+
+  describe "on_conflict — `:nothing` → `:raise` (Repo write, raise-observed)" do
+    # The other behavioural axis: `:nothing` swallows a unique conflict (returns `{:ok, _}`, leaving
+    # the row); the `:raise` mutant lets the conflict raise. Asserting *that the call raises* — not a
+    # specific exception type — keeps the test stable across the matrix's ecto_sqlite3 versions while
+    # still proving the swapped atom reached the engine.
+    @skip_upsert """
+    defmodule W do
+      alias MyApp.{Account, Repo}
+
+      def upsert do
+        Repo.insert(%Account{email: "a@x", name: "New"},
+          on_conflict: :nothing,
+          conflict_target: :email
+        )
+      end
+    end
+    """
+
+    test ":nothing returns {:ok, _} on a conflict; the :raise mutant raises and persists nothing" do
+      {mod, sites} =
+        H.compile(@skip_upsert,
+          mutators: [{Mutare.Ecto, repo: MyApp.Repo, families: [:on_conflict]}]
+        )
+
+      flip = site_id(sites, {~r/on_conflict: :nothing/, ~r/on_conflict: :raise/})
+
+      # Baseline (:nothing): the conflict is skipped — an `{:ok, _}` result and the row unchanged.
+      reset_accounts!()
+      assert {:ok, _} = H.activate(0, fn -> mod.upsert() end)
+      assert account_name() == "Original"
+
+      # Mutant (:raise): the same insert now raises on the unique conflict; the row is untouched.
+      reset_accounts!()
+      assert raises?(fn -> H.activate(flip, fn -> mod.upsert() end) end)
+      assert account_name() == "Original"
     end
   end
 

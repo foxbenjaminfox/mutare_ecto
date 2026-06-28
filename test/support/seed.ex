@@ -19,6 +19,11 @@ defmodule MyApp.Seed do
   #                                      `select`, and grouped by `role` in a `having: _ > 25`, where
   #                                      sum keeps admin+user but avg keeps only admin).
   #   * binding_reorder                — a posts self-join on `views` is asymmetric under the swap.
+  #
+  # The read-only dataset above serves the query families. The one **write-path** family —
+  # `:on_conflict` — needs a separate, mutable `accounts` table (UNIQUE `email`), reset to a single
+  # baseline row by `reset_accounts!/1` before each upsert so its conflicting writes never touch the
+  # query fixtures.
 
   @users [
     %{id: 1, name: "Alice", age: 18, active: true, role: "admin", score: 100},
@@ -36,6 +41,11 @@ defmodule MyApp.Seed do
     %{id: 3, title: "P3", views: 5, published: true, user_id: 99}
   ]
 
+  # The baseline row the on_conflict write tests reset `accounts` to before each activation: a single
+  # row on email "a@x" whose `name` the swap is observed through (`:replace_all` rewrites it to the
+  # upserted value, `:nothing` leaves it "Original"). Kept off the read-only query dataset entirely.
+  @account_baseline %{email: "a@x", name: "Original"}
+
   @doc "(Re)create the fixture tables — dropping any existing ones first — and insert the seed rows."
   def populate!(repo) do
     create_tables!(repo)
@@ -44,9 +54,23 @@ defmodule MyApp.Seed do
     :ok
   end
 
+  @doc """
+  Reset the write-path `accounts` table to its single baseline row (email "a@x" → name "Original").
+
+  The on_conflict semantic tests call this before each activation, so a conflicting upsert under one
+  mutant id can't leak into the next run — the `accounts` table is theirs alone, never read by the
+  query fixtures.
+  """
+  def reset_accounts!(repo) do
+    repo.delete_all(MyApp.Account)
+    repo.insert_all(MyApp.Account, [@account_baseline])
+    :ok
+  end
+
   defp create_tables!(repo) do
     Ecto.Adapters.SQL.query!(repo, "DROP TABLE IF EXISTS users", [])
     Ecto.Adapters.SQL.query!(repo, "DROP TABLE IF EXISTS posts", [])
+    Ecto.Adapters.SQL.query!(repo, "DROP TABLE IF EXISTS accounts", [])
 
     Ecto.Adapters.SQL.query!(
       repo,
@@ -74,6 +98,27 @@ defmodule MyApp.Seed do
         user_id INTEGER
       )
       """,
+      []
+    )
+
+    # The write-path `accounts` table. The UNIQUE index on `email` is what makes a second insert of
+    # the same email a *conflict* the `on_conflict:` option resolves — without it, `conflict_target:
+    # :email` has nothing to key off and the upsert just inserts a duplicate.
+    Ecto.Adapters.SQL.query!(
+      repo,
+      """
+      CREATE TABLE accounts (
+        id INTEGER PRIMARY KEY,
+        email TEXT,
+        name TEXT
+      )
+      """,
+      []
+    )
+
+    Ecto.Adapters.SQL.query!(
+      repo,
+      "CREATE UNIQUE INDEX accounts_email_index ON accounts (email)",
       []
     )
   end
