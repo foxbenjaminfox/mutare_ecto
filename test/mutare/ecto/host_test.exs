@@ -561,6 +561,19 @@ defmodule Mutare.Ecto.HostTest do
       assert_compiles(src)
     end
 
+    test "a top-level interpolation in a from clause is left outside the SQL host" do
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q(x), do: from(User, where: ^(x > 1))
+      end
+      """
+
+      assert hosted(src) == []
+      refute metamutant(src) =~ "dynamic("
+      assert_compiles(src)
+    end
+
     test "a bare-queryable `from` hosts a named-binding where (empty-binding dynamic)" do
       # The `from`-keyword twin: a bare source (`from("posts", …)`, no `p in S`) declares no
       # positional binding, but an `as:` lets its `where:` reference a named one — still a real SQL
@@ -923,6 +936,11 @@ defmodule Mutare.Ecto.HostTest do
 
       assert routing(~s|from("posts", as: :post, where: [active: true], select: [:id])|) ==
                [:skip, {:keyword, [:skip, {:keyword, [:pinned]}, :skip]}]
+    end
+
+    test "from keyword form leaves a top-level interpolation raw" do
+      assert routing(~s|from(User, where: ^(x > 1))|) ==
+               [:skip, {:keyword, [:skip]}]
     end
 
     test "shorthand pair values: scalars pin, nil/interpolation/compound stay raw" do

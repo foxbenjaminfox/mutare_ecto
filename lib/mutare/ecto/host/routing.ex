@@ -207,13 +207,25 @@ defmodule Mutare.Ecto.Host.Routing do
   # (`where: [active: true]`) routes its pairs individually; a non-shorthand value (an expression
   # `where: u.x == v` or `where: as(:post).x == v`) is `:hosted` — the woven `dynamic/2` re-declares
   # the source/join bindings, or an empty list when the source is a bare queryable whose condition
-  # references only a named binding (`Mutare.Ecto.Host.Bindings.from/2` builds that list).
+  # references only a named binding (`Mutare.Ecto.Host.Bindings.from/2` builds that list). A
+  # top-level interpolation (`where: ^condition`) is already evaluated in Elixir and stays raw,
+  # matching the standalone binding-less condition path in `Bindings`.
   defp condition_treatment(value) do
-    case KeywordList.nonempty(value) do
-      nil -> :hosted
-      pairs -> {:keyword, pair_treatments(pairs)}
+    if top_level_pin?(value) do
+      :skip
+    else
+      case KeywordList.nonempty(value) do
+        nil -> :hosted
+        pairs -> {:keyword, pair_treatments(pairs)}
+      end
     end
   end
+
+  # Sourceror may wrap a pin in a single-expression block, so recognize both shapes before the
+  # condition is handed to the SQL catalog.
+  defp top_level_pin?({:^, _meta, _args}), do: true
+  defp top_level_pin?({:__block__, _meta, [inner]}), do: top_level_pin?(inner)
+  defp top_level_pin?(_value), do: false
 
   defp pair_treatments(%KeywordList{entries: entries}) do
     Enum.map(entries, &pair_treatment(&1.value))
