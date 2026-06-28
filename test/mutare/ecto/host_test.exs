@@ -700,24 +700,10 @@ defmodule Mutare.Ecto.HostTest do
       assert_compiles(src)
     end
 
-    test "an author-written pipe binding list reorders, delivered as the body-ref swap" do
-      # The author wrote the positional list `[u, p]`, so transposing it is a real, author-facing
-      # mistake worth a mutant. Delivered through the host as the swapped condition body.
-      src = """
-      defmodule M do
-        import Ecto.Query
-        def q(query) do
-          query
-          |> where([u, p], u.id == p.user_id)
-          |> select([u], u.id)
-        end
-      end
-      """
-
-      assert {"u.id == p.user_id", "p.id == u.user_id"} in hosted(src)
-      assert metamutant(src) =~ "dynamic([u, p]"
-      assert_compiles(src)
-    end
+    # A binding-reorder is no longer a host-delivered catalog family — it swaps a written binding list
+    # in place (`Mutare.Ecto.BindingReorder` for the standalone/pipe macros, `Mutare.Ecto.Query` for a
+    # `from` source list), tested in `binding_reorder_test.exs`. The host's only remaining duty for a
+    # binding-list shape is to re-declare the bindings in the woven `dynamic` for the *operator* swaps.
 
     test "a synthesized join binding list is not reordered (only author-written lists are)" do
       # Here `[u, p]` is synthesized from `u in User` + `join: p in Post` — the author never wrote a
@@ -777,7 +763,10 @@ defmodule Mutare.Ecto.HostTest do
       assert_compiles(src)
     end
 
-    test "a positional rebinding list swaps its two bindings" do
+    test "a positional rebinding list re-declares its bindings for the operator swap" do
+      # The reorder of *this* source list is a whole-`from` mutation (`Mutare.Ecto.Query`, covered in
+      # binding_reorder_test); here we pin the host's remaining duty — the operator swap on the
+      # condition delivers, with the woven dynamic re-declaring [u, p].
       src = """
       defmodule M do
         import Ecto.Query
@@ -785,17 +774,15 @@ defmodule Mutare.Ecto.HostTest do
       end
       """
 
-      assert Enum.any?(hosted(src), fn {original, mutated} ->
-               original == "u.id == p.user_id" and mutated == "p.id == u.user_id"
-             end)
-
+      assert {"u.id == p.user_id", "u.id != p.user_id"} in hosted(src)
       assert metamutant(src) =~ "dynamic([u, p]"
       assert_compiles(src)
     end
 
-    test "a mixed list reorders only the positional bindings, leaving the named one alone" do
-      # `c` is named — present in the condition but excluded from reorder. Only `u`/`p` (positional)
-      # transpose; `c.flag` is never reached, so no mutant ever puts a `u`/`p` field onto `c`.
+    test "a mixed positional+named list is re-declared faithfully for the operator swap" do
+      # The source list's reorder (positional `u`/`p` only, `c` left alone) is a whole-`from` mutation
+      # tested in binding_reorder_test; here we pin that the host re-declares the full mixed list in the
+      # woven dynamic so the operator swap on the condition compiles.
       src = """
       defmodule M do
         import Ecto.Query
@@ -807,18 +794,11 @@ defmodule Mutare.Ecto.HostTest do
       end
       """
 
-      # The positional swap fires…
       assert Enum.any?(hosted(src), fn {original, mutated} ->
                original == "u.age > p.views and c.flag > u.score" and
-                 mutated == "p.age > u.views and c.flag > p.score"
+                 mutated == "u.age >= p.views and c.flag > u.score"
              end)
 
-      # …but `c` is never reordered: no mutant moves a `u`/`p` field onto the named binding.
-      refute Enum.any?(hosted(src), fn {_original, mutated} ->
-               mutated =~ "c.age" or mutated =~ "c.views" or mutated =~ "c.score"
-             end)
-
-      # The named binding is still re-declared faithfully so the fragment compiles.
       assert metamutant(src) =~ "[u, p, comments: c]"
       assert_compiles(src)
     end

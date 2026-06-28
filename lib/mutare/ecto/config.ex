@@ -17,10 +17,11 @@ defmodule Mutare.Ecto.Config do
   # validating a configured subset. Grouped by the surface they mutate:
   #
   #   * in-fragment (`where`/`having`, via the host): comparison, connective, null_predicate,
-  #     membership, integer_literal, float_literal, atom_literal, string_literal, boolean_literal,
-  #     binding_reorder;
-  #   * binding_reorder also fires **in place** on every other binding-list macro (`select`,
-  #     `order_by`, `join`, … — `Mutare.Ecto.BindingReorder`): a positional binding transposition;
+  #     membership, integer_literal, float_literal, atom_literal, string_literal, boolean_literal;
+  #   * binding_reorder — a positional binding transposition (`[a, b]` → `[b, a]`), delivered **in
+  #     place** by swapping the written list: `Mutare.Ecto.BindingReorder` for every standalone/pipe
+  #     binding-list macro (`where`/`having`/`select`/`order_by`/`join`/…) and `Mutare.Ecto.Query` for
+  #     a `from` `[a, b] in q` source. Never a host/body rewrite;
   #   * whole-query / clause-macro: filter_drop (drop a where/having), bound (limit/offset),
   #     ordering (sort direction), ordering_nulls (NULLs placement), join_type,
   #     aggregate (`sum`↔`avg`/`min`↔`max` in `select`/`order_by`/`Repo.aggregate` delivered in

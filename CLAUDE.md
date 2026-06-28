@@ -116,15 +116,15 @@ The surface divides by **how a mutation is delivered**, not by what it mutates:
 | `sub_mutator.ex` | The uniform `mutations(node, context)` behaviour implemented by each mutation producer |
 | `host.ex` | Selector-host **coordinator** (#3): turns a hosted node into `Target`s, delegating to the `host/*` parts below |
 | `host/routing.ex` | `macro_routing/1` — the per-argument routing classifier (`:hosted`/`:expression`/`:skip`/`:pinned`/`{:keyword,…}`) |
-| `host/bindings.ex` | Interprets Ecto binding declarations; renders the binding list re-declared by a woven `dynamic/2`; reports the **author-written** positional names eligible for a binding-reorder (a written `[…]` arg or `[…] in q` source — never names synthesized from `in`-declarations/joins) |
-| `host/catalog.ex` | The enabled, noted logical mutants for one hosted condition (Fragment + Aggregate + binding-reorder) |
+| `host/bindings.ex` | Interprets Ecto binding declarations and renders the binding list re-declared by a woven `dynamic/2` |
+| `host/catalog.ex` | The enabled, noted logical mutants for one hosted condition (Fragment + Aggregate) |
 | `host/join_on.ex` | Which join `on:` conditions are safe to host: only a join's **sole, top-level** on-expression (not a multi-`on:` or `assoc` join, whose conditions Ecto folds into one `and` where a `^dynamic` operand is illegal) |
 | `host/target.ex` | The `dynamic`-wrap + `^`-pin + splice transforms consumed by core |
-| `fragment.ex` | The **SQL-semantics catalog** for `where`/`having` conditions (Comparison, Connective, NullPredicate, Membership, the literal arms IntegerLiteral/FloatLiteral/StringLiteral/AtomLiteral/BooleanLiteral, binding-reorder) |
+| `fragment.ex` | The **SQL-semantics catalog** for `where`/`having` conditions (Comparison, Connective, NullPredicate, Membership, the literal arms IntegerLiteral/FloatLiteral/StringLiteral/AtomLiteral/BooleanLiteral) |
 | `ast/query_call.ex` / `ast/binding_list.ex` / `ast/keyword_list.ex` | Normalized query-call, binding-list, and keyword/clause-list values; preserve written form while centralizing validation and reconstruction |
 | `binding.ex` | Primitive binding-entry vocabulary (`variable?`/`ellipsis?`/`entry?`) used by the normalized binding list |
-| `binding_reorder.ex` | Positional binding-reorder (`[a, b]`→`[b, a]`) for the **other** binding-list macros (`select`/`order_by`/`join`/…), delivered in-place; `where`/`having`/`on` get theirs via the host. Reorders only the positional list the **author wrote** (an explicit `[a, b]` arg, or a `[a, b] in q` source) — never a list synthesized from `u in User`/`join:` declarations, nor named bindings |
-| `query.ex` | Whole-`from` rewrites (clause drop, order flip, bound, join-type, `select`/`order_by` aggregate) |
+| `binding_reorder.ex` | Positional binding-reorder (`[a, b]`→`[b, a]`) for **every** standalone/pipe binding-list macro — `where`/`having` included — delivered **in-place** by swapping the written list (never the condition body). A `from` binding-list *source* (`[a, b] in q`) reorders at the whole-`from` level (`query.ex`) instead. Reorders only the positional list the **author wrote** — never a list synthesized from `u in User`/`join:` declarations, nor named bindings |
+| `query.ex` | Whole-`from` rewrites (clause drop, order flip, bound, join-type, `select`/`order_by` aggregate, source binding-reorder for a `[a, b] in q` source) |
 | `clause.ex` | Standalone/pipe cousins of `query.ex` (`order_by`/`limit`/`offset`/`select`) |
 | `clause_drop.ex` | Drop a standalone/pipe clause stage (`q \|> where(…)` → `q`), via `stage_drop.ex` |
 | `ordering.ex` / `aggregate.ex` | Shared `{family, node}` catalogs used by `query.ex`, `clause.ex`, and (aggregate) the `having` host |
@@ -165,13 +165,20 @@ rewrite.
   exists to enforce. The fragment catalog is owned end to
   end in `fragment.ex`. Interpolated `^value` references are *Elixir* data → mutated by core's
   literal families; the SQL **structure/operators** are the plugin's.
-- **Honour a nested author macro's `:skip` inside a hosted fragment.** A user can define a macro and
-  use it in a `where`/`having` condition; core leaves the whole fragment raw, so it is the plugin's
-  job to respect how that macro is registered. As they walk the condition, `fragment.ex` and
+- **A nested author macro may invent its own argument syntax — only descend into `:expression`.** A
+  user can define a macro and use it inside a `where`/`having` condition; its arguments are valid
+  Elixir *tokens* but their meaning is the macro's own (it can make up a DSL, exactly as Ecto does).
+  Mutare mutates **source**, not expansions, so there's nothing "downstream" to protect — the thing
+  `:skip` protects is the **argument source**. As they walk the condition, `fragment.ex` and
   `aggregate.ex` read each nested call's per-argument routing via
-  `Mutare.Transform.Calls.macro_treatment/1` (stamped by the resolve pre-pass) and leave a `:skip`
-  argument opaque — never mutating into a body the author owns. (Binding-reorder is exempt: it
-  models a query-wide binding-declaration swap, not a fragment-body mutation.)
+  `Mutare.Transform.Calls.macro_treatment/1` (stamped by the resolve pre-pass) and descend into an
+  argument **only** when it's plainly standard syntax — a non-macro node, or an argument the macro
+  routed `:expression`. Every other routing (`:skip`, `:pattern`, `:hosted`, …) is left raw.
+- **Binding-reorder is always in-place, never a body rewrite.** Transposing `[a, b]` → `[b, a]` swaps
+  the *written binding list* — `binding_reorder.ex` for the standalone/pipe macros (`where`/`having`
+  included), `query.ex` for a `from` `[a, b] in q` source. It never rewrites the condition body, so it
+  is safe across an opaque author macro without having to understand the macro's arguments. (A scalar
+  `from` source and synthesized join bindings are not author-written lists, so they never reorder.)
 - **Stay inside the single build.** Any in-query mutation must be delivered `^`-pinned behind the
   selector — a bare `case` in a query position poisons compilation. New query-position families go
   through the host, not the in-place selector.

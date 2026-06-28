@@ -37,15 +37,6 @@ defmodule Mutare.Ecto.FragmentTest do
     |> MapSet.new()
   end
 
-  # Every binding-reorder mutant of `code` (given binding `names`) as a rendered set.
-  defp reorders(code, names) do
-    code
-    |> Sourceror.parse_string!()
-    |> Fragment.binding_reorders(names)
-    |> Enum.map(fn {:binding_reorder, node} -> Sourceror.to_string(node) end)
-    |> MapSet.new()
-  end
-
   describe "Comparison" do
     test "each comparison offers its single boundary/equality swap" do
       assert mutants("u.age > v") == MapSet.new(["u.age >= v"])
@@ -335,34 +326,10 @@ defmodule Mutare.Ecto.FragmentTest do
     end
   end
 
-  describe "binding_reorders/2" do
-    test "swaps two binding references that both appear" do
-      assert reorders("a.x == b.y", [:a, :b]) == MapSet.new(["b.x == a.y"])
-    end
-
-    test "needs both bindings present — a single-reference condition yields nothing" do
-      assert reorders("a.x == a.y", [:a, :b]) == MapSet.new([])
-      assert reorders("a.x > ^v", [:a, :b]) == MapSet.new([])
-    end
-
-    test "one mutant per pair for three bindings" do
-      assert reorders("a.x == b.y and b.z < c.w", [:a, :b, :c]) ==
-               MapSet.new([
-                 "b.x == a.y and a.z < c.w",
-                 "c.x == b.y and b.z < a.w",
-                 "a.x == c.y and c.z < b.w"
-               ])
-    end
-
-    test "a single-binding query has nothing to reorder" do
-      assert reorders("a.x == a.y", [:a]) == MapSet.new([])
-    end
-
-    test "each reorder is self-tagged with the :binding_reorder family" do
-      tagged = "a.x == b.y" |> Sourceror.parse_string!() |> Fragment.binding_reorders([:a, :b])
-      assert [{:binding_reorder, _node}] = tagged
-    end
-  end
+  # The binding-reorder is no longer an in-fragment (catalog) mutation: it swaps a written binding
+  # list in place — `Mutare.Ecto.BindingReorder` for the standalone/pipe macros (including
+  # `where`/`having`), `Mutare.Ecto.Query` for a `from` source list — never the condition body. Its
+  # tests live in `binding_reorder_test.exs`, not here.
 
   describe "finer `# mutare:ignore` labels" do
     test "a swap is tagged with the operator it mutates (the source operator)" do

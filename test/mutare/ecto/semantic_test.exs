@@ -245,12 +245,12 @@ defmodule Mutare.Ecto.SemanticTest do
     end
   end
 
-  describe "binding-reorder — swap two author-written binding refs (dynamic-injected)" do
-    # The reorder rides the same host, over an **author-written** positional list — a `where([a, b],
-    # …)` whose `[a, b]` the author could have transposed. `dynamic([a, b], a.views > b.views)`
-    # becomes `dynamic([a, b], b.views > a.views)`; over an asymmetric posts self-join this selects
-    # different pairs, proving the woven dynamic is wired to the right rows. (A *synthesized* list —
-    # `from a in Post, join: b in Post` with no written `[a, b]` — is deliberately not reordered.)
+  describe "binding-reorder — swap two author-written binding refs (in place)" do
+    # The reorder swaps the **author-written** positional list in place — a `where([a, b], …)` whose
+    # `[a, b]` the author could have transposed becomes `where([b, a], …)`, leaving the condition body
+    # exactly as written. Over an asymmetric posts self-join this selects different pairs, proving the
+    # swapped list is wired to the right rows. (A *synthesized* list — `from a in Post, join: b in
+    # Post` with no written `[a, b]` — is deliberately not reordered.)
     test "swapping the two bindings reverses which self-join pairs match" do
       {mod, sites} =
         build("""
@@ -267,11 +267,11 @@ defmodule Mutare.Ecto.SemanticTest do
       baseline = q_under(mod, 0) |> Enum.sort()
 
       mutant =
-        q_under(mod, site_id(sites, {"a.views > b.views", "b.views > a.views"})) |> Enum.sort()
+        q_under(mod, site_id(sites, {~r/where\(\[a, b\]/, ~r/where\(\[b, a\]/})) |> Enum.sort()
 
-      # a.id<b.id with a.views>b.views: (1,3) 10>5, (2,3) 20>5.
+      # [a, b] with a.views>b.views over a.id<b.id pairs: (1,3) 10>5, (2,3) 20>5.
       assert baseline == [{1, 3}, {2, 3}]
-      # Swapped to b.views>a.views: only (1,2) 20>10.
+      # Swapped to [b, a] (a now binds the join side, b the source): only (1,2) 20>10.
       assert mutant == [{1, 2}]
     end
   end

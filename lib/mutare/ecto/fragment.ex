@@ -58,12 +58,13 @@ defmodule Mutare.Ecto.Fragment do
   position of those forms are still mutated.
 
   A nested **author macro** the catalog walks past (a query helper the app defines and uses inside
-  the fragment) may own its arguments — an opaque body it expands. Core leaves the whole hosted
-  fragment raw, so it falls to the catalog to honour how that macro is registered: a position the
-  author routed `:skip` (via `c:Mutare.Mutator.MacroAware.macros/0` or the `:macros` option) is read
-  from the resolve-pass stamp with `Mutare.Transform.Calls.macro_treatment/1` and left raw — the
-  catalog descends into every other argument but never manufactures a mutant inside a body the
-  author excluded.
+  the fragment) may define its own argument grammar — Mutare sees source, not the expansion, and a
+  macro is free to accept arguments that are valid Elixir *tokens* but not standard Elixir/Ecto
+  syntax. So the catalog descends into a nested call's argument **only** when it is plainly a standard
+  expression: either the node is not a known macro at all, or the macro routed that argument
+  `:expression` (read from the resolve-pass stamp via `Mutare.Transform.Calls.macro_treatment/1`).
+  Any other routing — `:skip`, `:pattern`, `:hosted`, … — marks an argument whose meaning is the
+  macro's own, so it is left raw. We mutate only what the author wrote in a form we understand.
   """
 
   alias Mutare.Ecto.{AST, Config}
@@ -113,45 +114,6 @@ defmodule Mutare.Ecto.Fragment do
       |> Enum.map(&to_string/1)
 
     swap_ops ++ ~w(in is_nil succ pred zero empty sentinel negate)
-  end
-
-  @doc """
-  Binding-reorder mutants: for each pair of `binding_names` that **both** appear in `condition`,
-  the condition with those two binding references swapped throughout (`a.x == b.y` → `b.x == a.y`).
-
-  Reordering a query's declared binding list `[a, b]` → `[b, a]` is equivalent to swapping the
-  body's references while keeping the declared order — and since the host re-declares each
-  `dynamic`'s own binding list, the plugin just
-  emits the swapped *body* and rides the host. Requiring both bindings to appear keeps the mutant
-  a genuine reference swap (and avoids reaching for a column on the wrong schema). The host calls
-  this with the binding list it already extracted; for a single-binding query it returns `[]`.
-
-  Returned as plain `{:binding_reorder, node}` pairs — a binding reorder has no finer sub-kind, so
-  (unlike `mutants/2`'s `{family, node, label}` triples) it carries only its family. Both shapes are
-  normalized by `Mutare.Ecto.Config.split_tag/1` before delivery.
-  """
-  @spec binding_reorders(Macro.t(), [atom()]) :: [{:binding_reorder, Macro.t()}]
-  # mutare:ignore[guard_drop] equivalent — defensive contract guard; the host always passes the binding list it extracted, and the body's Enum.filter/2 would raise on a non-list anyway, so no reachable input distinguishes the guarded and unguarded clause
-  def binding_reorders(condition, binding_names) when is_list(binding_names) do
-    present = Enum.filter(binding_names, &AST.references_var?(condition, &1))
-
-    for {a, i} <- Enum.with_index(present),
-        {b, j} <- Enum.with_index(present),
-        i < j,
-        do: {:binding_reorder, swap_vars(condition, a, b)}
-  end
-
-  # Swap every variable node named `a` with `b` and vice versa (a transposition of the two
-  # bindings). Only variable nodes (`{name, meta, ctx}` with an atom `ctx`) are touched, so a
-  # pinned value or field name that happens to share a name is unaffected.
-  defp swap_vars(ast, a, b) do
-    Macro.prewalk(ast, fn
-      # mutare:ignore[guard_drop] equivalent — the guard limits the swap to *variable* nodes; the only same-named non-variable 3-tuple is a local call `a(...)`, which no where/having condition produces, so dropping it changes nothing reachable
-      {^a, meta, ctx} when is_atom(ctx) -> {b, meta, ctx}
-      # mutare:ignore[guard_drop] equivalent — symmetric to the clause above; a same-named call `b(...)` can't occur in a query condition, so this guard's distinguishing input never arrives
-      {^b, meta, ctx} when is_atom(ctx) -> {a, meta, ctx}
-      other -> other
-    end)
   end
 
   # NullPredicate, as a unit. `not is_nil(x)` → `is_nil(x)`: flip the whole predicate, never
@@ -305,13 +267,12 @@ defmodule Mutare.Ecto.Fragment do
   # with its `{parent_form, arity, index}` position so `do_mutants/3` can skip a literal at a
   # structural position of a known Ecto DSL form.
   #
-  # A nested macro the **author** wrote in the fragment (a query helper of their own) may also route
-  # an argument `:skip` — an opaque body it owns that the catalog must not mutate into. Core leaves
-  # the whole hosted fragment raw and does not route the macros nested inside it (that is the
-  # plugin's to own), but it *did* stamp each recognised nested call's per-argument routing on the
-  # node, so read it with `Calls.macro_treatment/1` and leave a `:skip` argument untouched. A node
-  # that is not a known macro (`nil` routing) and an argument under any other treatment descend
-  # exactly as before.
+  # A nested macro the **author** wrote in the fragment (a query helper of their own) may not accept
+  # standard Ecto syntax in its arguments — it can define its own DSL out of valid tokens, so we
+  # cannot assume an argument parses to anything we know how to mutate. Core left the whole hosted
+  # fragment raw and stamped each recognised nested call's per-argument routing on the node, so read
+  # it with `Calls.macro_treatment/1` and descend into an argument **only** when it is plainly a
+  # standard expression — `descend_arg?/2` below.
   defp lift(form, meta, args, opts) do
     arity = length(args)
     routing = Calls.macro_treatment({form, meta, args})
@@ -319,21 +280,23 @@ defmodule Mutare.Ecto.Fragment do
     args
     |> Enum.with_index()
     |> Enum.flat_map(fn {arg, index} ->
-      if skipped_arg?(routing, index) do
-        []
-      else
+      if descend_arg?(routing, index) do
         for {family, mutated, label} <- do_mutants(arg, opts, {form, arity, index}),
             do: {family, {form, meta, List.replace_at(args, index, mutated)}, label}
+      else
+        []
       end
     end)
   end
 
-  # Whether the argument at `index` of a nested macro call was registered `:skip` (left raw). A node
-  # that is not a known macro carries `nil` routing — nothing to skip. Any non-`:skip` treatment is
-  # mutated normally: inside a SQL fragment the only treatment that means "leave this opaque" is
-  # `:skip` (a `:pattern`/`:hosted`/`:binding_pattern` argument cannot occur in a query condition).
-  defp skipped_arg?(nil, _index), do: false
-  defp skipped_arg?(routing, index), do: Enum.at(routing, index) == :skip
+  # Descend into an argument only when its syntax is the standard DSL we know how to mutate: either
+  # the node is not a known macro (`nil` routing — an ordinary operator/call/field we own) or the
+  # macro routed this argument `:expression` (the one treatment that asserts "a standard expression
+  # here, mutate it"). Every other treatment — `:skip`, `:pattern`, `:binding_pattern`, `:hosted`,
+  # `:pinned`, `{:keyword, …}` — marks an argument whose grammar is the macro's own, so it is left
+  # raw. We mutate only what the author wrote in a form we understand.
+  defp descend_arg?(nil, _index), do: true
+  defp descend_arg?(routing, index), do: Enum.at(routing, index) == :expression
 
   # Build `{family, literal_node, labels}` for each distinct mutated value: drop any candidate equal
   # to the original, then dedup by value while **merging** the kind labels of colliding candidates —

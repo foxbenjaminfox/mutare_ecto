@@ -1,25 +1,33 @@
 defmodule Mutare.Ecto.BindingReorder do
   @moduledoc """
-  Positional **binding-reorder** mutants for the standalone/pipe query macros that take a binding
-  pattern list — `select`, `select_merge`, `order_by`, `group_by`, `distinct`, `join`, `preload`,
-  `windows`, … (the clause/join descriptors in `Mutare.Ecto.Surface`).
+  Positional **binding-reorder** mutants for every standalone/pipe query macro that takes a binding
+  pattern list — the `where`/`having` condition macros, `select`, `select_merge`, `order_by`,
+  `group_by`, `distinct`, `join`, `preload`, `windows`, … (the condition/clause/join descriptors in
+  `Mutare.Ecto.Surface`).
 
   A binding list maps names to the query's bindings **by position**: `[a, b]` binds `a`→1st,
   `b`→2nd. Transposing two positional entries (`[a, b]` → `[b, a]`) therefore reaches each
-  referenced binding at a different source — a genuine behavioral mutant, the same swap
-  `Mutare.Ecto.Fragment` makes for a `where`/`having` condition (which the host owns). **Named**
-  bindings (`comments: c`) are addressed by name, not position, so they are left in place and never
-  swapped.
+  referenced binding at a different source — a genuine behavioral mutant. **Named** bindings
+  (`comments: c`) are addressed by name, not position, so they are left in place and never swapped.
 
-  Unlike the in-fragment families, this mutation is delivered **in place**: the binding list sits in
-  an argument position — not inside a macro-expanded query fragment — so the whole macro call (itself
-  an expression returning a query) rides Mutare's ordinary selector `case`. No host / `dynamic`
-  weaving is needed; wrong-schema field access from a swap surfaces at query-plan time (runtime), not
-  compile time, so a mutant never poisons the single build.
+  The reorder is always delivered **in place** — by swapping the written list, never by rewriting the
+  condition body. The list sits in an ordinary argument position (not inside a macro-expanded query
+  fragment), so the whole macro call (itself an expression returning a query) rides Mutare's ordinary
+  selector `case`; no host / `dynamic` weaving is needed. This is also what keeps the mutation honest
+  about `:skip`: a `where`/`having` body may contain an author macro whose argument grammar is its
+  own, and swapping the *declaration* leaves that body byte-for-byte untouched — we mutate only the
+  list the author wrote. Wrong-schema field access from a swap surfaces at query-plan time (runtime),
+  not compile time, so a mutant never poisons the single build.
 
-  A swap is emitted only when **both** swapped bindings are referenced in the call body, mirroring
-  the host's rule (`Mutare.Ecto.Fragment.binding_reorders/2`): it keeps the mutant a real reference
-  exchange and avoids manufacturing an equivalent mutant when a declared binding is unused.
+  This covers the macros whose binding list is an **argument**. A `from`'s binding-list *source*
+  (`from [a, b] in q, …`) is written at the whole-`from` level, so its reorder is delivered there
+  (`Mutare.Ecto.Query`) — one whole-`from` mutant swapping the source declaration, never a per-clause
+  rewrite. A scalar `from` source (`u in User`) and the join-introduced bindings are synthesized, not
+  written as a list, so they never reorder.
+
+  A swap is emitted only when **both** swapped bindings are referenced in the call body: it keeps the
+  mutant a real reference exchange and avoids manufacturing an equivalent mutant when a declared
+  binding is unused.
   """
 
   alias Mutare.Ecto.{AST, Surface}

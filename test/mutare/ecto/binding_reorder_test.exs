@@ -3,11 +3,13 @@ defmodule Mutare.Ecto.BindingReorderTest do
 
   import Mutare.Ecto.TestSupport
 
-  # Positional binding-reorder for every standalone/pipe query macro that takes a binding list
-  # (`Mutare.Ecto.BindingReorder`). A binding list maps names to bindings by position, so
-  # transposing two positional entries (`[a, b]` → `[b, a]`) is a real behavioral mutant, delivered
-  # in place (the macro call is itself an expression). Named bindings (`comments: c`) are addressed
-  # by name and are never moved; `where`/`having` keep getting their reorder via the host.
+  # Positional binding-reorder for every standalone/pipe query macro that takes a binding list —
+  # `where`/`having` included (`Mutare.Ecto.BindingReorder`). A binding list maps names to bindings by
+  # position, so transposing two positional entries (`[a, b]` → `[b, a]`) is a real behavioral mutant,
+  # delivered **in place** by swapping the written list (the macro call is itself an expression), never
+  # by rewriting the condition body. Named bindings (`comments: c`) are addressed by name and are never
+  # moved. A `from` binding-list *source* (`[a, b] in q`) reorders at the whole-`from` level
+  # (`Mutare.Ecto.Query`) — see the dedicated describe below.
 
   # The mutated whole-node renderings recorded under the `:ecto` family.
   defp mutated(src), do: src |> ecto_diffs() |> Enum.map(fn {_o, m} -> m end)
@@ -211,8 +213,8 @@ defmodule Mutare.Ecto.BindingReorderTest do
     end
   end
 
-  describe "where/having are not double-handled" do
-    test "where still reorders via the host (reference swap), not an in-place binding-list swap" do
+  describe "where/having reorder in place too" do
+    test "where swaps its binding list in place (not a host reference swap of the body)" do
       src = """
       defmodule M do
         import Ecto.Query
@@ -221,10 +223,79 @@ defmodule Mutare.Ecto.BindingReorderTest do
       """
 
       muts = mutated(src)
-      # The host's reference swap is present…
-      assert Enum.any?(muts, &(&1 == "p.id == u.id"))
-      # …and there is no in-place binding-list swap for the condition macro.
-      refute Enum.any?(muts, &(&1 =~ "where(query, [p, u]"))
+      # The binding list is swapped in place, like every other binding-list macro…
+      assert Enum.any?(muts, &(&1 =~ "where(query, [p, u]"))
+      # …and the condition body is left exactly as written (no `p.id == u.id` reference swap).
+      refute Enum.any?(muts, &(&1 == "p.id == u.id"))
+      assert_compiles(src)
+    end
+
+    test "having swaps its binding list in place" do
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q(query), do: having(query, [u, p], u.id > p.id)
+      end
+      """
+
+      assert Enum.any?(mutated(src), &(&1 =~ "having(query, [p, u]"))
+      assert_compiles(src)
+    end
+  end
+
+  describe "a from binding-list source reorders at the whole-from level" do
+    # The author wrote `[a, b]` at the whole-`from` level (the source), so the swap belongs there —
+    # one whole-`from` mutant rewriting the source declaration, never a per-clause body rewrite. The
+    # swap reaches across clauses: a pair referenced in *different* clauses still reorders.
+    test "swaps the source binding list, leaving the clause bodies untouched" do
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q(query) do
+          from([a, b] in query, where: a.x == b.y, having: a.z > b.w, select: a.id)
+        end
+      end
+      """
+
+      muts = mutated(src)
+      # The source declaration swaps as a whole-`from` rewrite…
+      assert Enum.any?(muts, &(&1 =~ "from([b, a] in query"))
+      # …and no clause body is reference-swapped (the bodies ride along verbatim).
+      refute Enum.any?(muts, &(&1 =~ "b.x == a.y"))
+      assert_compiles(src)
+    end
+
+    test "reorders only the positional bindings of a mixed source list, leaving named ones alone" do
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q(query) do
+          from([u, p, comments: c] in query,
+            where: u.age > p.views and c.flag > u.score,
+            select: u.id)
+        end
+      end
+      """
+
+      muts = mutated(src)
+
+      # The positional `u`/`p` transpose at the whole-`from` level; the named `comments: c` stays put.
+      assert Enum.any?(muts, &(&1 =~ "from([p, u, comments: c] in query"))
+      # Nothing ever moves `c` into a positional slot or reorders it.
+      refute Enum.any?(muts, &(&1 =~ "[c," or &1 =~ "comments: c, "))
+      assert_compiles(src)
+    end
+
+    test "a scalar source and synthesized join bindings never reorder" do
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q, do: from(a in MyApp.Post, join: b in MyApp.Post, on: a.id < b.id, select: a.id)
+      end
+      """
+
+      # No author-written positional list at any level, so nothing transposes.
+      refute Enum.any?(mutated(src), &(&1 =~ "[b, a]"))
       assert_compiles(src)
     end
   end

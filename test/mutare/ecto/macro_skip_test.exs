@@ -243,14 +243,13 @@ defmodule Mutare.Ecto.MacroSkipTest do
     end
   end
 
-  # The binding-reorder is deliberately *exempt* from a nested macro's `:skip`. It is not a
-  # fragment-body mutation but a query-wide binding-declaration swap — transposing `[a, b]` → `[b, a]`
-  # is realized as swapping every `a`/`b` reference throughout the condition (the host re-declares the
-  # `dynamic`'s own binding list), which after expansion still binds against the same query. So even
-  # when a `:skip` macro spans both bindings, the a<->b transposition is still emitted *through* the
-  # opaque body — while the fragment catalog's literal/operator swaps inside it stay suppressed.
-  describe "the binding-reorder exemption" do
-    test "a binding reorder still fires across a :skip macro spanning two bindings" do
+  # A binding reorder is delivered **in place** — it swaps the written binding list, never the
+  # condition body. So when a `:skip` macro spans both bindings, the reorder still fires (it's a real,
+  # safe mutation) by transposing the list, and the macro's argument source is left exactly as the
+  # author wrote it. This is what makes reordering safe across an opaque macro: we never need to
+  # rewrite — or even understand — the macro's arguments.
+  describe "a binding reorder across a :skip macro" do
+    test "swaps the binding list in place and never the :skip macro's argument source" do
       src = """
       defmodule M do
         import Ecto.Query
@@ -261,17 +260,13 @@ defmodule Mutare.Ecto.MacroSkipTest do
 
       muts = hosted_mutateds(src, @helper_mutators)
 
-      # The a<->b transposition is emitted even though `between` is registered `:skip` — reorder is a
-      # binding-declaration swap, not a body mutation, so the macro's `:skip` does not govern it.
-      assert "between(b.age, 18, a.score)" in muts
+      # The reorder swaps the declared list; the body (the `:skip` macro call) rides along verbatim.
+      assert Enum.any?(muts, &(&1 =~ "where(query, [b, a], between(a.age, 18, b.score))"))
 
-      # The fragment catalog *is* governed by `:skip`: the literal bound inside `between` stays raw.
-      refute "between(a.age, 19, b.score)" in muts
-
-      # Without the registration the bound mutates too, and the reorder is present either way.
-      bare = hosted_mutateds(src, @base_mutators)
-      assert "between(b.age, 18, a.score)" in bare
-      assert "between(a.age, 19, b.score)" in bare
+      # The macro's arguments are never rewritten — no `a`/`b` reference swap reaches into the body…
+      refute Enum.any?(muts, &(&1 =~ "between(b.age, 18, a.score)"))
+      # …and `:skip` still suppresses the literal bound inside the opaque macro.
+      refute Enum.any?(muts, &(&1 =~ "between(a.age, 19"))
 
       assert_compiles(src, mutators: @helper_mutators)
     end

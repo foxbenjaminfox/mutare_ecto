@@ -40,8 +40,11 @@ defmodule Mutare.Ecto.Dispatcher do
 
   defp query_macro_mutations(:from, call, context), do: Query.mutations(call, context)
 
-  defp query_macro_mutations(:condition, %QueryCall{node: node}, context),
-    do: ClauseDrop.mutations(node, context)
+  # A standalone/pipe condition macro (`where`/`having`/…) reorders its written binding list in place
+  # (`BindingReorder`), exactly like the other binding-list macros — its operator/literal swaps are
+  # the host's job, but the binding list is an ordinary argument, so it never needs the host.
+  defp query_macro_mutations(:condition, %QueryCall{node: node} = call, context),
+    do: BindingReorder.mutations(call, context) ++ ClauseDrop.mutations(node, context)
 
   defp query_macro_mutations(kind, %QueryCall{node: node} = call, context)
        when kind in [:clause, :join] do
@@ -56,7 +59,7 @@ defmodule Mutare.Ecto.Dispatcher do
   defp call_mutations({@query_key, name, _args, _rebuild}, node, context) do
     case Surface.macro_kind(name) do
       :condition ->
-        ClauseDrop.mutations(node, context)
+        invoke([BindingReorder, ClauseDrop], node, context)
 
       kind when kind in [:clause, :join] ->
         invoke([Clause, BindingReorder, ClauseDrop], node, context)

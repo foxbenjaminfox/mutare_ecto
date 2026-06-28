@@ -26,6 +26,13 @@ defmodule Mutare.Ecto.Query do
       or `order_by` clause value (`sum`↔`avg`, `min`↔`max`), via the shared `Mutare.Ecto.Aggregate`
       walker. "Does any test pin which aggregate the column is reduced/sorted by?" (An aggregate
       inside a `having` is delivered through the host instead — see `Mutare.Ecto.Host`.)
+    * **Binding reorder (source list)** — when the source declares a positional binding list
+      (`from [a, b] in q, …`), transpose a pair of those bindings (`[a, b]` → `[b, a]`) for every
+      pair both referenced across the clauses. "Did the author bind the sources in the right order?"
+      The author wrote the list at the whole-`from` level, so the swap rewrites only that declaration
+      and leaves every clause body untouched — one mutant per pair. The standalone/pipe macros'
+      *argument* binding lists reorder in place (`Mutare.Ecto.BindingReorder`); a scalar source and
+      synthesized join bindings never reorder.
 
   Each mutation is returned as `{family, node}` (or `{family, node, label}` for a swap family that
   also names the operator/kind it mutated — order/join/aggregate) so the caller can filter by
@@ -36,7 +43,7 @@ defmodule Mutare.Ecto.Query do
   """
 
   alias Mutare.Ecto.{Aggregate, AST, Config, Ordering, Surface}
-  alias Mutare.Ecto.AST.{KeywordList, QueryCall}
+  alias Mutare.Ecto.AST.{BindingList, KeywordList, QueryCall}
   alias Mutare.Ecto.AST.KeywordList.Entry
 
   @behaviour Mutare.Ecto.SubMutator
@@ -102,8 +109,37 @@ defmodule Mutare.Ecto.Query do
       order_flips(call, source, clauses),
       bound_bumps(call, source, clauses),
       join_swaps(call, source, clauses, config),
-      aggregate_swaps(call, source, clauses)
+      aggregate_swaps(call, source, clauses),
+      binding_reorders(call, source, clauses)
     ])
+  end
+
+  # Whole-`from` binding-reorder: a `from` whose **source** declares a positional binding list
+  # (`from [a, b] in q, …`) wrote that list at the whole-`from` level, so its reorder belongs there —
+  # swap each pair of positional bindings both referenced across the clause values, rewriting only the
+  # source declaration (`[b, a] in q`) and never a clause body. One mutant per pair; the clauses ride
+  # along untouched (`replace_arg` on the source argument), so an author macro in a `where`/`having`
+  # body keeps the exact source the author wrote. A scalar source (`u in User`) declares no list and a
+  # join-introduced binding is synthesized, so neither reorders; the standalone/pipe macros' own
+  # written lists reorder in `Mutare.Ecto.BindingReorder` instead.
+  defp binding_reorders(call, source, %KeywordList{entries: entries}) do
+    with {:in, meta, [lhs, rhs]} <- source,
+         %BindingList{} = list <- BindingList.parse(lhs),
+         positions = BindingList.positionals(list),
+         true <- length(positions) >= 2 do
+      values = Enum.map(entries, & &1.value)
+
+      for {i, a} <- positions,
+          {j, b} <- positions,
+          i < j,
+          AST.references_var?(values, a),
+          AST.references_var?(values, b) do
+        swapped_source = {:in, meta, [BindingList.swap(list, i, j), rhs]}
+        {:binding_reorder, QueryCall.replace_arg(call, 0, swapped_source)}
+      end
+    else
+      _ -> []
+    end
   end
 
   # Remove each clause whose key is in `keys`, keeping the others — so the query still

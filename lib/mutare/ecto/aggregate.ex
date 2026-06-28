@@ -76,26 +76,29 @@ defmodule Mutare.Ecto.Aggregate do
   # Atoms, literals, variables, field references: no aggregate here.
   defp walk(_node), do: []
 
-  # Descend into a call/operator's arguments, but leave any argument a nested **author** macro
-  # registered `:skip` raw — the same nested-macro routing `Mutare.Ecto.Fragment` honours, read
-  # from the stamp `Calls.macro_treatment/1` exposes. So a `having: clamp(sum(p.x), 10)` whose
-  # `clamp/2` is registered `:skip` never has its `sum` swapped to `avg` inside the opaque body.
+  # Descend into a call/operator's arguments, but only where the argument is plainly standard syntax
+  # we can mutate — the same rule `Mutare.Ecto.Fragment` applies, read from the per-argument routing
+  # `Calls.macro_treatment/1` exposes. A nested author macro may invent its own argument grammar, so
+  # an argument it routes anything other than `:expression` (`:skip`, `:pattern`, …) is left raw: a
+  # `having: clamp(sum(p.x), 10)` whose `clamp/2` is registered `:skip` never has its `sum` swapped to
+  # `avg`, because we don't know that `sum(p.x)` even means an aggregate to `clamp`.
   defp lift_args(form, meta, args) do
     routing = Calls.macro_treatment({form, meta, args})
 
     args
     |> Enum.with_index()
     |> Enum.flat_map(fn {arg, i} ->
-      if skipped_arg?(routing, i) do
-        []
-      else
+      if descend_arg?(routing, i) do
         for {m, label} <- walk(arg), do: {{form, meta, List.replace_at(args, i, m)}, label}
+      else
+        []
       end
     end)
   end
 
-  # Whether the argument at `index` of a nested macro call was registered `:skip`. `nil` routing
-  # (not a known macro) skips nothing; every other treatment descends normally.
-  defp skipped_arg?(nil, _index), do: false
-  defp skipped_arg?(routing, index), do: Enum.at(routing, index) == :skip
+  # Descend into an argument only when it is plainly standard syntax: a non-macro node (`nil` routing)
+  # or a macro argument routed `:expression`. Every other treatment marks syntax whose meaning is the
+  # macro's own, left raw — mirrors `Mutare.Ecto.Fragment.descend_arg?/2`.
+  defp descend_arg?(nil, _index), do: true
+  defp descend_arg?(routing, index), do: Enum.at(routing, index) == :expression
 end
