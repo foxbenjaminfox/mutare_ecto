@@ -4,7 +4,7 @@ defmodule Mutare.Ecto.Config do
   # a callback as `context.opts`): which SQL **families** are enabled and which SQL **dialects** to
   # gate dialect-specific mutations on. Listing the plugin twice with different `families:`/`as:`
   # (and/or `repo:`) is how a user narrows the catalog, names a sub-family in the report, or covers
-  # multiple repos — see `DESIGN.md`, "Configuration".
+  # multiple repos.
 
   alias Mutare.Ecto.AST
   alias Mutare.Mutator.Mutation

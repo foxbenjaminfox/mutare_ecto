@@ -36,6 +36,10 @@ defmodule Mutare.Ecto do
 
           {Mutare.Ecto, repo: R, families: [:comparison], as: :ecto_comparison}
 
+      For a **per-site** subset rather than a run-wide one, each family is also a `# mutare:ignore`
+      variant: `# mutare:ignore[ecto:comparison]` suppresses just the comparison mutants on that
+      line, the rest still running (see `variants/0`).
+
     * `dialects:` — gate dialect-specific mutations (default `[]`, the portable core). `:postgres`
       enables `like`↔`ilike`; `:postgres`/`:mysql` enable the `LEFT`↔`RIGHT` join swap (SQLite
       lacks `RIGHT JOIN`).
@@ -52,7 +56,7 @@ defmodule Mutare.Ecto do
   while `:join_type` reasons in join cardinality (`… kill may require an orphan row` — an
   INNER↔LEFT↔RIGHT↔FULL swap only changes the result when a preserved-side row has no match, so a
   mandatory/complete FK makes it legitimately equivalent). The note rides onto the `Mutare.Site` via
-  a `%Mutare.Mutator.Mutation{}` (`Mutare.Ecto.Config.noted/2`), which core accepts on both delivery
+  a `%Mutare.Mutator.Mutation{}`, which core accepts on both delivery
   paths — so the in-fragment families surface it through the **host** and the
   whole-`from`/clause-macro families (`:ordering_nulls`, `:join_type`) through `mutate/2`.
   `equivalence_sensitive_families/0` returns that set; with the `:as` convention you can
@@ -60,8 +64,7 @@ defmodule Mutare.Ecto do
 
       {Mutare.Ecto, repo: R, families: Mutare.Ecto.equivalence_sensitive_families(), as: :ecto_boundary_null}
 
-  Without a `families:`/`as:` split every mutation is recorded under `:ecto`. See `DESIGN.md` for
-  the surface map and the SQL-semantics boundary.
+  Without a `families:`/`as:` split every mutation is recorded under `:ecto`.
 
   ## Macro routing
 
