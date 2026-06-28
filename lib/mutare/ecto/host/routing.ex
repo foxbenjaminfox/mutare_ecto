@@ -9,16 +9,18 @@ defmodule Mutare.Ecto.Host.Routing do
 
   Both query syntaxes are covered, routed by call shape:
 
-    * the `from` keyword form — `from(p in S, where: p.x == v, …)`: each binding-referencing
-      condition routes `:hosted` while shorthand conditions route their values individually. A
-      bindingless `from(S, where: [x: v])` carries
-      no hosted *fragment* — its values are plain interpolated data, core's literal families to
-      mutate, not the SQL catalog — so its `where`/`having` shorthand *values* route `{:keyword, …}`:
-      each scalar value `:pinned` (core mutates it, `^`-pinned — Ecto rejects a bare selector `case`
-      there), while the column-name keys, the `nil`-valued pairs (an `IS NULL`, never `= nil`),
-      compound values, and the non-condition clauses (`select`/`order_by`/… — whole-`from`'s job) are
+    * the `from` keyword form — `from(p in S, where: p.x == v, …)`: each `where`/`having` condition
+      routes by shape, the same under a binding source (`p in S`) or a bare queryable (`from("t",
+      …)`). A non-shorthand *expression* condition routes `:hosted` — under a bare source it can only
+      reference a named binding (`from("t", as: :t, where: as(:t).x == v)`), which the host weaves
+      behind an empty-binding `dynamic([], …)`. A keyword-**shorthand** condition (`where: [x: v]`)
+      instead routes its values individually `{:keyword, …}`: each scalar value `:pinned` (core
+      mutates it, `^`-pinned — Ecto rejects a bare selector `case` there, and a shorthand value is
+      plain interpolated data, core's literal families to mutate, not the SQL catalog), while the
+      column-name keys, the `nil`-valued pairs (an `IS NULL`, never `= nil`), and compound values are
       left raw. So a shorthand value mutation is recorded under the *core* family that made it
-      (`:literal`/`:string`/…), not `:ecto`.
+      (`:literal`/`:string`/…), not `:ecto`. The non-condition clauses (`select`/`order_by`/… —
+      whole-`from`'s job) are always left raw.
     * the composable pipe/standalone form — `q |> where([p], p.x == v)` / `where(q, [p], …)`: the
       binding-list argument is detected by shape, and the
       condition that follows it routes `:hosted`. A **binding-less** condition
@@ -62,27 +64,21 @@ defmodule Mutare.Ecto.Host.Routing do
   end
 
   # mutare:ignore[guard_drop] equivalent — `rest` is the tail of the `[source | rest]` cons match, so it is always a list; the guard is redundant
-  def macro_routing({:from, _meta, [source | rest]}) when is_list(rest) do
-    # Source is never mutated (a table/schema swap is a broken query, not a mutant). A binding
-    # `from` routes each clause independently: binding-referencing conditions are hosted, while
-    # shorthand conditions are routed per pair. A bindingless `from`'s clauses are
-    # keyword-shorthand data, routed per-pair so core mutates the
-    # `where`/`having` shorthand *values* (`^`-pinned) while leaving keys, nil pairs, and the
-    # other clauses (select/order_by/… — whole-`from`'s job) alone.
+  def macro_routing({:from, _meta, [_source | rest]}) when is_list(rest) do
+    # The source is never mutated (a table/schema swap is a broken query, not a mutant). Each clause
+    # routes independently: a binding-referencing `where`/`having` expression is hosted, while a
+    # keyword-shorthand condition routes its values per pair so core mutates them (`^`-pinned). This
+    # is the same whether the source is a binding source (`p in S`) or a bare queryable (`from("t",
+    # …)`): a non-shorthand condition under a bare source can only reference a *named* binding
+    # (`as(:_)`), which the host weaves behind an empty-binding `dynamic([], …)`. Non-condition
+    # clauses (select/order_by/… — whole-`from`'s job), keys, and nil pairs are left raw.
     clause_treatment =
       case rest do
-        [clauses] ->
-          cond do
-            binding_source?(source) -> {:keyword, clause_treatments(clauses, :binding)}
-            # mutare:ignore[if_condition] equivalent — a bindingless from's clause argument is always a keyword list in parsed Ecto; a non-list reaches this branch only via malformed AST
-            is_list(clauses) -> {:keyword, clause_treatments(clauses, :bindingless)}
-            true -> :skip
-          end
-
+        # mutare:ignore[if_condition] equivalent — a from's clause argument is always a keyword list in parsed Ecto; a non-list reaches here only via malformed AST
+        [clauses] when is_list(clauses) -> {:keyword, clause_treatments(clauses)}
         # `rest` is `[clauses]` for the usual `from(source, kw)`. It is `[]` for a clause-less
         # `from(Post)` (nothing to host) and anything else is malformed AST — both route `:skip`.
-        _ ->
-          :skip
+        _ -> :skip
       end
 
     [:skip | List.duplicate(clause_treatment, length(rest))]
@@ -165,11 +161,6 @@ defmodule Mutare.Ecto.Host.Routing do
 
   defp qualified_query_builder?(_call), do: false
 
-  # A `from` source is a *binding* source (`p in S`, `[a, b] in q`) — routed `:hosted` — rather than
-  # a bare queryable (`from("users", …)`), whose clauses are keyword-shorthand data.
-  defp binding_source?({:in, _, [_var, _src]}), do: true
-  defp binding_source?(_node), do: false
-
   defp host_join_options(routing, args) do
     with %KeywordList{entries: entries} <- KeywordList.nonempty(List.last(args)),
          true <- Enum.any?(entries, &(&1.key == :on)) do
@@ -198,12 +189,12 @@ defmodule Mutare.Ecto.Host.Routing do
   # A `from`'s clause list, one treatment per clause: a `where`/`having` clause routes by its
   # condition value (below); every other clause (select/order_by/limit — whole-`from`'s job, or a
   # field-name carrier) is left raw.
-  defp clause_treatments(clauses, source_kind) do
+  defp clause_treatments(clauses) do
     case KeywordList.parse(clauses) do
       %KeywordList{entries: entries} ->
         Enum.map(entries, fn entry ->
           if Surface.from_clause?(entry.key, :hosted),
-            do: condition_treatment(entry.value, source_kind),
+            do: condition_treatment(entry.value),
             else: :skip
         end)
 
@@ -213,18 +204,16 @@ defmodule Mutare.Ecto.Host.Routing do
   end
 
   # The treatment for one `where`/`having` condition value. A keyword-shorthand value
-  # (`where: [active: true]`) routes its pairs individually, whatever the source. A non-shorthand
-  # value (an expression `where: u.x == v`) is `:hosted` under a binding source but carries no
-  # fragment under a bindingless one — so it is left raw.
-  defp condition_treatment(value, source_kind) do
+  # (`where: [active: true]`) routes its pairs individually; a non-shorthand value (an expression
+  # `where: u.x == v` or `where: as(:post).x == v`) is `:hosted` — the woven `dynamic/2` re-declares
+  # the source/join bindings, or an empty list when the source is a bare queryable whose condition
+  # references only a named binding (`Mutare.Ecto.Host.Bindings.from/2` builds that list).
+  defp condition_treatment(value) do
     case KeywordList.nonempty(value) do
-      nil -> nonshorthand_treatment(source_kind)
+      nil -> :hosted
       pairs -> {:keyword, pair_treatments(pairs)}
     end
   end
-
-  defp nonshorthand_treatment(:binding), do: :hosted
-  defp nonshorthand_treatment(:bindingless), do: :skip
 
   defp pair_treatments(%KeywordList{entries: entries}) do
     Enum.map(entries, &pair_treatment(&1.value))

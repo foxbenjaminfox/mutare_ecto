@@ -49,8 +49,11 @@ defmodule Mutare.Ecto.Host do
   end
 
   defp from_target({%Entry{key: key, value: condition}, index}, bindings, opts, hostable_on) do
+    # No `bindings` non-emptiness guard: a bare-queryable source (`from("t", as: :t, where:
+    # as(:t).x > 1)`) declares no positional binding, so `Bindings.from/2` returns `[]` and the woven
+    # `dynamic([], …)` re-declares none — valid, since such a condition can only reference a *named*
+    # binding. Hostability is decided by the clause key and a non-empty catalog, not the binding count.
     with true <- hostable_clause?(key, index, hostable_on),
-         [_ | _] <- bindings,
          true <- Surface.from_clause?(key, :hosted),
          [_ | _] = mutants <- Catalog.mutants(condition, opts) do
       [Target.from_clause(condition, mutants, bindings, index)]

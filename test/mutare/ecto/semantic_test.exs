@@ -124,6 +124,27 @@ defmodule Mutare.Ecto.SemanticTest do
       assert mutant == [1, 2, 4, 5, 6]
       assert mutant -- baseline == [1, 4]
     end
+
+    test "the same fires in a bare-queryable `from` keyword clause (empty-binding dynamic)" do
+      # The `from`-keyword twin: a bare schema source (`from(User, …)`, no `u in User`) with an `as:`
+      # and a named-binding `where:`. The host weaves `dynamic([], as(:user).age >= 18)` into the
+      # keyword clause — proving that path is live too, not just the standalone/pipe form.
+      {mod, sites} =
+        build("""
+        defmodule Q do
+          import Ecto.Query
+          alias MyApp.User
+          def q, do: from(User, as: :user, where: as(:user).age > 18, select: as(:user).id)
+        end
+        """)
+
+      baseline = ids(mod, 0)
+      mutant = ids(mod, site_id(sites, {"as(:user).age > 18", "as(:user).age >= 18"}))
+
+      assert baseline == [2, 5, 6]
+      assert mutant == [1, 2, 4, 5, 6]
+      assert mutant -- baseline == [1, 4]
+    end
   end
 
   describe "Comparison — `==` ↔ `!=` (dynamic-injected)" do

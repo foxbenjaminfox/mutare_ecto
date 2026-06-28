@@ -560,6 +560,23 @@ defmodule Mutare.Ecto.HostTest do
       refute metamutant(src) =~ "dynamic("
       assert_compiles(src)
     end
+
+    test "a bare-queryable `from` hosts a named-binding where (empty-binding dynamic)" do
+      # The `from`-keyword twin: a bare source (`from("posts", …)`, no `p in S`) declares no
+      # positional binding, but an `as:` lets its `where:` reference a named one — still a real SQL
+      # predicate. The host weaves `dynamic([], …)`; before this it was left raw (the false negative).
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q, do: from("posts", as: :post, where: as(:post).views > 100, select: as(:post).id)
+      end
+      """
+
+      assert {"as(:post).views > 100", "as(:post).views >= 100"} in hosted(src)
+      assert {"as(:post).views > 100", "as(:post).views > 101"} in hosted(src)
+      assert metamutant(src) =~ "dynamic([], as(:post).views"
+      assert_compiles(src)
+    end
   end
 
   describe "nothing hostable" do
@@ -894,6 +911,18 @@ defmodule Mutare.Ecto.HostTest do
                [:skip, {:keyword, [{:keyword, [:pinned]}, :skip]}]
 
       assert routing(~s|from("users", select: [:id])|) == [:skip, {:keyword, [:skip]}]
+    end
+
+    test "from bare source: a named-binding condition hosts; shorthand still routes per-pair" do
+      # A bare queryable (`from("posts", …)`) with an `as:` lets a `where:` reference a *named*
+      # binding — a real SQL predicate, so the non-shorthand expression routes `:hosted` (the host
+      # weaves an empty-binding `dynamic([], …)`), exactly as it would under a binding source. A
+      # shorthand value is still plain data, routed per pair. The `as:`/`select:` keys stay raw.
+      assert routing(~s|from("posts", as: :post, where: as(:post).views > 1, select: [:id])|) ==
+               [:skip, {:keyword, [:skip, :hosted, :skip]}]
+
+      assert routing(~s|from("posts", as: :post, where: [active: true], select: [:id])|) ==
+               [:skip, {:keyword, [:skip, {:keyword, [:pinned]}, :skip]}]
     end
 
     test "shorthand pair values: scalars pin, nil/interpolation/compound stay raw" do
