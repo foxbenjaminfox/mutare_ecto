@@ -39,7 +39,8 @@ defmodule Mutare.Ecto.Query do
   `families:` and a `# mutare:ignore` qualifier; `opts`
   carries `dialects:` for the join gate. A `from` node is `{:from, meta, [source, clauses]}`
   where `clauses` is a keyword list (in Sourceror form, each key wrapped as
-  `{:__block__, [format: :keyword], [atom]}`). `from/1` (`from(Post)`, no clauses) yields nothing.
+  `{:__block__, [format: :keyword], [atom]}`). A scalar `from/1` (`from(Post)`, no clauses) yields
+  nothing, while a source binding list (`from([a, b] in query)`) can still reorder.
   """
 
   alias Mutare.Ecto.{Aggregate, AST, Config, Ordering, Surface}
@@ -84,6 +85,9 @@ defmodule Mutare.Ecto.Query do
     config = Config.from_context(context)
 
     case call do
+      %QueryCall{name: :from, args: [source]} ->
+        binding_reorders(call, source)
+
       %QueryCall{name: :from, args: [source, clauses]} ->
         case KeywordList.parse(clauses) do
           %KeywordList{} = clauses -> from_mutations(source, clauses, call, config)

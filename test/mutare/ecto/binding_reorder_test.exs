@@ -267,6 +267,18 @@ defmodule Mutare.Ecto.BindingReorderTest do
     # The author wrote `[a, b]` at the whole-`from` level (the source), so the swap belongs there —
     # one whole-`from` mutant rewriting the source declaration, never a per-clause body rewrite. The
     # swap reaches across clauses: a pair referenced in *different* clauses still reorders.
+    test "swaps a binding list in the source-only from form" do
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q(query), do: from([a, b] in query)
+      end
+      """
+
+      assert Enum.any?(mutated(src), &(&1 =~ "from([b, a] in query)"))
+      assert_compiles(src)
+    end
+
     test "swaps the source binding list, leaving the clause bodies untouched" do
       src = """
       defmodule M do
