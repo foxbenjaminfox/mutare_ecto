@@ -96,10 +96,40 @@ defmodule Mutare.Ecto.Host.Bindings do
     end
   end
 
-  @doc "The positional names eligible for a binding-reorder mutation."
-  @spec positional_names([Macro.t()]) :: [atom()]
-  def positional_names(bindings),
-    do: for(binding <- bindings, Binding.variable?(binding), do: Binding.variable_name(binding))
+  @doc """
+  The positional names a `from` **source** declares with an explicit binding list (`[u, v] in q`).
+
+  Only those are eligible for a binding-reorder: the author wrote them as a transposable positional
+  list. A scalar source (`u in User`) declares a single binding, not a list, and contributes none;
+  the join-introduced bindings are synthesized and contribute none either.
+  """
+  @spec source_positional_names(Macro.t()) :: [atom()]
+  def source_positional_names({:in, _meta, [lhs, _rhs]}), do: list_positionals(lhs)
+  def source_positional_names(_source), do: []
+
+  @doc """
+  The positional names of the explicit binding-list **argument** of a standalone/pipe macro
+  (`where([u, v], …)`, `join(q, :inner, [u, v], …)`) — the bindings the author wrote as a
+  transposable list, and so the only ones eligible for a binding-reorder. A `join`'s introduced
+  binding (`c in assoc(…)`) is not part of that list and never reorders.
+  """
+  @spec written_positional_names([Macro.t()]) :: [atom()]
+  def written_positional_names(args) do
+    case find(args) do
+      {_index, %BindingList{} = list} -> positionals(list)
+      nil -> []
+    end
+  end
+
+  defp list_positionals(node) do
+    case BindingList.parse(node) do
+      %BindingList{} = list -> positionals(list)
+      nil -> []
+    end
+  end
+
+  defp positionals(%BindingList{} = list),
+    do: for({_index, name} <- BindingList.positionals(list), do: name)
 
   @spec find([Macro.t()]) :: {non_neg_integer(), BindingList.t()} | nil
   defp find(args) do

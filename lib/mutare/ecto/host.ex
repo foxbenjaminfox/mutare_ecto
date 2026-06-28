@@ -39,20 +39,29 @@ defmodule Mutare.Ecto.Host do
 
   defp from_targets(source, %KeywordList{entries: entries} = clauses, opts) do
     hostable_on = JoinOn.hostable_from_indices(entries)
+    # Only a binding-list *source* (`[u, v] in q`) writes a transposable positional list; a scalar
+    # source (`u in User`) and the join-introduced bindings are synthesized, so they never reorder.
+    reorder_names = Bindings.source_positional_names(source)
 
     entries
     |> Enum.with_index()
     |> Enum.flat_map(fn {entry, index} ->
       bindings = Bindings.from(source, %{clauses | entries: Enum.take(entries, index + 1)})
-      from_target({entry, index}, bindings, opts, hostable_on)
+      from_target({entry, index}, bindings, reorder_names, opts, hostable_on)
     end)
   end
 
-  defp from_target({%Entry{key: key, value: condition}, index}, bindings, opts, hostable_on) do
+  defp from_target(
+         {%Entry{key: key, value: condition}, index},
+         bindings,
+         reorder_names,
+         opts,
+         hostable_on
+       ) do
     with true <- hostable_clause?(key, index, hostable_on),
          [_ | _] <- bindings,
          true <- Surface.from_clause?(key, :hosted),
-         [_ | _] = mutants <- Catalog.mutants(condition, bindings, opts) do
+         [_ | _] = mutants <- Catalog.mutants(condition, reorder_names, opts) do
       [Target.from_clause(condition, mutants, bindings, index)]
     else
       _ -> []
@@ -66,8 +75,11 @@ defmodule Mutare.Ecto.Host do
   defp hostable_clause?(_key, _index, _hostable_on), do: true
 
   defp condition_target(args, opts) do
+    # The binding-list argument of a standalone/pipe `where([u, v], …)` is wholly author-written, so
+    # every positional name in it is reorder-eligible.
     with {bindings, condition, index} <- Bindings.hosted_condition(args),
-         [_ | _] = mutants <- Catalog.mutants(condition, bindings, opts) do
+         reorder_names = Bindings.written_positional_names(args),
+         [_ | _] = mutants <- Catalog.mutants(condition, reorder_names, opts) do
       [Target.condition(condition, mutants, bindings, index)]
     else
       _ -> []
@@ -81,7 +93,9 @@ defmodule Mutare.Ecto.Host do
          true <- JoinOn.hostable_standalone?(args, options.entries),
          %Entry{value: condition} = Enum.at(options.entries, pair_index),
          [_ | _] = bindings <- Bindings.join(args),
-         [_ | _] = mutants <- Catalog.mutants(condition, bindings, config) do
+         # Only the written binding-list arg (`[u, v]`) reorders — never the join-introduced binding.
+         reorder_names = Bindings.written_positional_names(args),
+         [_ | _] = mutants <- Catalog.mutants(condition, reorder_names, config) do
       [Target.keyword_condition(condition, mutants, bindings, arg_index, pair_index)]
     else
       _ -> []

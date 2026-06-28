@@ -4,12 +4,17 @@ defmodule Mutare.Ecto.Host.Catalog do
   # (`dynamic`, pinning, and splicing) deliberately live in `Mutare.Ecto.Host.Target`.
 
   alias Mutare.Ecto.{Aggregate, Config, Fragment}
-  alias Mutare.Ecto.Host.Bindings
 
-  @doc "The configured logical mutants for a condition and its dynamic binding declarations."
-  @spec mutants(Macro.t(), [Macro.t()], Config.t()) :: [Mutare.Mutator.mutation()]
-  def mutants(condition, bindings, config) do
-    reorders = Fragment.binding_reorders(condition, Bindings.positional_names(bindings))
+  @doc """
+  The configured logical mutants for a condition.
+
+  `reorder_names` are the positional binding names eligible for a binding-reorder — only those the
+  author wrote as an explicit `[…]` list (never synthesized from `in`-declarations/joins), supplied
+  by the host per call shape.
+  """
+  @spec mutants(Macro.t(), [atom()], Config.t()) :: [Mutare.Mutator.mutation()]
+  def mutants(condition, reorder_names, config) do
+    reorders = Fragment.binding_reorders(condition, reorder_names)
     aggregates = Aggregate.swaps(condition)
 
     for {family, node} <- Fragment.mutants(condition, config) ++ reorders ++ aggregates,

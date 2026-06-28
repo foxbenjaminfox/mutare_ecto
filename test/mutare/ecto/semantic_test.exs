@@ -218,10 +218,12 @@ defmodule Mutare.Ecto.SemanticTest do
     end
   end
 
-  describe "binding-reorder — swap two binding refs (dynamic-injected)" do
-    # The reorder rides the same host: `dynamic([a, b], a.views > b.views)` becomes
-    # `dynamic([a, b], b.views > a.views)`. Over an asymmetric posts self-join this selects different
-    # pairs — proving the *re-declared* binding list in the woven dynamic is wired to the right rows.
+  describe "binding-reorder — swap two author-written binding refs (dynamic-injected)" do
+    # The reorder rides the same host, over an **author-written** positional list — a `where([a, b],
+    # …)` whose `[a, b]` the author could have transposed. `dynamic([a, b], a.views > b.views)`
+    # becomes `dynamic([a, b], b.views > a.views)`; over an asymmetric posts self-join this selects
+    # different pairs, proving the woven dynamic is wired to the right rows. (A *synthesized* list —
+    # `from a in Post, join: b in Post` with no written `[a, b]` — is deliberately not reordered.)
     test "swapping the two bindings reverses which self-join pairs match" do
       {mod, sites} =
         build("""
@@ -229,11 +231,8 @@ defmodule Mutare.Ecto.SemanticTest do
           import Ecto.Query
           alias MyApp.Post
           def q do
-            from a in Post,
-              join: b in Post,
-              on: a.id < b.id,
-              where: a.views > b.views,
-              select: {a.id, b.id}
+            from(a in Post, join: b in Post, on: a.id < b.id, select: {a.id, b.id})
+            |> where([a, b], a.views > b.views)
           end
         end
         """)

@@ -700,7 +700,29 @@ defmodule Mutare.Ecto.HostTest do
       assert_compiles(src)
     end
 
-    test "binding-reorder swaps the two join bindings and compiles" do
+    test "an author-written pipe binding list reorders, delivered as the body-ref swap" do
+      # The author wrote the positional list `[u, p]`, so transposing it is a real, author-facing
+      # mistake worth a mutant. Delivered through the host as the swapped condition body.
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q(query) do
+          query
+          |> where([u, p], u.id == p.user_id)
+          |> select([u], u.id)
+        end
+      end
+      """
+
+      assert {"u.id == p.user_id", "p.id == u.user_id"} in hosted(src)
+      assert metamutant(src) =~ "dynamic([u, p]"
+      assert_compiles(src)
+    end
+
+    test "a synthesized join binding list is not reordered (only author-written lists are)" do
+      # Here `[u, p]` is synthesized from `u in User` + `join: p in Post` — the author never wrote a
+      # positional list, so there is nothing they could have transposed. The reorder must not fire
+      # (it would mutate a list we invented); the operator swap on the same condition still delivers.
       src = """
       defmodule M do
         import Ecto.Query
@@ -714,10 +736,12 @@ defmodule Mutare.Ecto.HostTest do
       end
       """
 
-      assert Enum.any?(hosted(src), fn {original, mutated} ->
+      refute Enum.any?(hosted(src), fn {original, mutated} ->
                original == "u.id == p.user_id" and mutated == "p.id == u.user_id"
              end)
 
+      # …but the comparison swap on that same `where` condition is delivered as usual.
+      assert {"u.id == p.user_id", "u.id != p.user_id"} in hosted(src)
       assert metamutant(src) =~ "dynamic([u, p]"
       assert_compiles(src)
     end

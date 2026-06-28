@@ -53,9 +53,8 @@ analyzes `lib/`, not the test-only fixtures.
 
 ## The `../mutare` path dependency
 
-`mix.exs` uses `{:mutare, path: System.get_env("MUTARE_PATH", "../mutare")}`. Local development
-therefore uses the sibling checkout; CI checks Mutare out inside the workspace and sets
-`MUTARE_PATH` to that directory. Several features here required **new Mutare-core
+`mix.exs` uses `{:mutare, path: "../mutare"}`, so both local development and CI use the sibling
+checkout (until Mutare is published to Hex). Several features here required **new Mutare-core
 extensions** (the selector host, `:routing`/`:hosted` macro routing, `{:keyword, …}` per-pair
 routing, `:pinned` in-place delivery, the `Site` `note` channel). When a task needs core
 machinery that doesn't exist yet, it is added to `../mutare`. Core's public test 
@@ -67,10 +66,15 @@ app's schemas are on the BEAM code path. This is what lets `use`-expansion expan
 `dynamic` calls. External-source operation is unsupported and has no startup guard; unresolved
 target-app modules can make routing incomplete or invalid.
 
-CI also overrides `ECTO_REQUIREMENT`, `ECTO_SQL_REQUIREMENT`, and
-`ECTO_SQLITE3_REQUIREMENT` to run the complete suite against both the oldest supported Ecto line
-and the current locked stack. `MIX_LOCKFILE` gives those compatibility jobs isolated generated
-lockfiles; normal local commands continue to use `mix.lock`.
+CI's `ecto` job is a compatibility matrix that runs the complete suite against **every supported
+Ecto minor line** — from the declared minimum (`3.12`, floor-pinned) through each line up to the
+latest published release — by overriding `ECTO_REQUIREMENT`, `ECTO_SQL_REQUIREMENT`, and
+`ECTO_SQLITE3_REQUIREMENT` per matrix entry (the SQL/SQLite drivers are pinned to the matching line
+because their versions track Ecto's). A final entry builds against the **development tip** of Ecto
+via `ECTO_GIT_BRANCH` (which makes `mix.exs` swap to git checkouts of `ecto`/`ecto_sql`); it is
+`continue-on-error: true`, so upstream breakage warns without failing the run. `MIX_LOCKFILE` gives
+each entry its own isolated generated lockfile; normal local commands continue to use `mix.lock`.
+When a new Ecto minor is published, add a matrix entry in `.github/workflows/ci.yml`.
 
 ## Architecture
 
@@ -116,14 +120,14 @@ The surface divides by **how a mutation is delivered**, not by what it mutates:
 | `sub_mutator.ex` | The uniform `mutations(node, context)` behaviour implemented by each mutation producer |
 | `host.ex` | Selector-host **coordinator** (#3): turns a hosted node into `Target`s, delegating to the `host/*` parts below |
 | `host/routing.ex` | `macro_routing/1` — the per-argument routing classifier (`:hosted`/`:expression`/`:skip`/`:pinned`/`{:keyword,…}`) |
-| `host/bindings.ex` | Interprets Ecto binding declarations; renders the binding list re-declared by a woven `dynamic/2` |
+| `host/bindings.ex` | Interprets Ecto binding declarations; renders the binding list re-declared by a woven `dynamic/2`; reports the **author-written** positional names eligible for a binding-reorder (a written `[…]` arg or `[…] in q` source — never names synthesized from `in`-declarations/joins) |
 | `host/catalog.ex` | The enabled, noted logical mutants for one hosted condition (Fragment + Aggregate + binding-reorder) |
 | `host/join_on.ex` | Which join `on:` conditions are safe to host: only a join's **sole, top-level** on-expression (not a multi-`on:` or `assoc` join, whose conditions Ecto folds into one `and` where a `^dynamic` operand is illegal) |
 | `host/target.ex` | The `dynamic`-wrap + `^`-pin + splice transforms consumed by core |
 | `fragment.ex` | The **SQL-semantics catalog** for `where`/`having` conditions (Comparison, Connective, NullPredicate, Membership, the literal arms IntegerLiteral/FloatLiteral/StringLiteral/AtomLiteral/BooleanLiteral, binding-reorder) |
 | `ast/query_call.ex` / `ast/binding_list.ex` / `ast/keyword_list.ex` | Normalized query-call, binding-list, and keyword/clause-list values; preserve written form while centralizing validation and reconstruction |
 | `binding.ex` | Primitive binding-entry vocabulary (`variable?`/`ellipsis?`/`entry?`) used by the normalized binding list |
-| `binding_reorder.ex` | Positional binding-reorder (`[a, b]`→`[b, a]`) for the **other** binding-list macros (`select`/`order_by`/`join`/…), delivered in-place; `where`/`having` get theirs via the host. Named bindings are never moved |
+| `binding_reorder.ex` | Positional binding-reorder (`[a, b]`→`[b, a]`) for the **other** binding-list macros (`select`/`order_by`/`join`/…), delivered in-place; `where`/`having`/`on` get theirs via the host. Reorders only the positional list the **author wrote** (an explicit `[a, b]` arg, or a `[a, b] in q` source) — never a list synthesized from `u in User`/`join:` declarations, nor named bindings |
 | `query.ex` | Whole-`from` rewrites (clause drop, order flip, bound, join-type, `select`/`order_by` aggregate) |
 | `clause.ex` | Standalone/pipe cousins of `query.ex` (`order_by`/`limit`/`offset`/`select`) |
 | `clause_drop.ex` | Drop a standalone/pipe clause stage (`q \|> where(…)` → `q`), via `stage_drop.ex` |
