@@ -77,11 +77,20 @@ the query still compiles once and the active mutant is chosen at build time:
 | `membership` | `x in ^list` → `x not in ^list`; `like` → `ilike` | Polarity / case-sensitivity |
 | `integer_literal` | `u.age > 18` → `19` / `17` / `0` | Off-by-one in an integer literal |
 | `float_literal` | `u.score > 2.5` → `3.5` / `1.5` / `0.0` | Off-by-one in a float literal |
-| `string_literal` | `u.name == "ok"` → `""` / `"mutare"` | Is the string value tested? |
-| `atom_literal` | `u.status == :active` → `:mutare` | Is the atom value tested? |
-| `boolean_literal` | `… and true` → `… and false` | Is the boolean operand tested? |
+| `string_literal` † | `u.name == "ok"` → `""` / `"mutare"` | Is the string value tested? |
+| `atom_literal` † | `u.status == :active` → `:mutare` | Is the atom value tested? |
+| `boolean_literal` † | `… and true` → `… and false` | Is the boolean operand tested? |
 | `binding_reorder` | `a.x == b.y` → `b.x == a.y` | Are the two bindings distinguished? |
 | `filter_drop` | drop a whole `where`/`having` clause | Is this filter tested at all? |
+
+† **Off by default** (opt-in). A string, atom, or boolean literal mutant is the most likely to be a
+noisy survivor — a string/atom because its value space is large (an in-fragment string the
+broadest), a boolean because a direct boolean literal in a condition is rarely idiomatic. Enable
+them with `families: :all` or by naming them in an explicit list (see Configuration). The numeric
+arms (`integer_literal`/`float_literal`) are on by default. Whatever the selection, a literal at a
+**structural position** of a known Ecto DSL form — the `fragment` template, the interval unit of
+`datetime_add`/`date_add`/`from_now`/`ago`, the cast type of `type/2` — is never mutated (it shapes
+the SQL, so a mutant would just be a broken query, not a test signal).
 
 **Query shape** — ordering, pagination, joins, aggregates, and the query terminals:
 
@@ -115,14 +124,23 @@ Each `{Mutare.Ecto, …}` entry takes:
 ```elixir
 {Mutare.Ecto,
  repo: MyApp.Repo,                 # optional — identifies Repo.* calls
- families: :all,                   # or a subset, e.g. [:comparison, :null_predicate]
+ families: :default,               # the default; or :all, a list, or {:default | :all, except: […]}
  dialects: [:postgres]}            # gate dialect-specific mutations (default: portable core)
 ```
 
 - **`repo:`** — identify the Repo module for aggregate and write-call mutations. Omit it when only
   query/changeset families are needed; Repo-call families then produce no mutations.
-- **`families:`** — narrow the catalog to a subset. Every family above is independently
-  toggleable; an unknown name fails loudly. `Mutare.Ecto.families/0` returns the full set.
+- **`families:`** — select the catalog. Every family above is independently toggleable; an unknown
+  name fails loudly. Accepts:
+  - `:default` (the unset default) — every family **except** the opt-in `string_literal` /
+    `atom_literal` / `boolean_literal` arms (see the † note above);
+  - `:all` — every family, including those opt-in arms;
+  - an explicit list, e.g. `[:comparison, :null_predicate]` (name the opt-in arms here to add them);
+  - `{:default | :all, except: [families]}` — a base set minus exclusions; the easy way to disable a
+    default-on arm, e.g. `{:default, except: [:integer_literal]}`.
+
+  `Mutare.Ecto.families/0` returns the full set and `Mutare.Ecto.default_families/0` the default
+  subset.
 - **`dialects:`** — enable mutations that aren't portable across all adapters. The default `[]` is
   the portable core (safe on SQLite, Postgres, MySQL alike). `:postgres` adds `like`↔`ilike`;
   `:postgres`/`:mysql` add the `LEFT`↔`RIGHT` join swap (SQLite has no `RIGHT JOIN`).

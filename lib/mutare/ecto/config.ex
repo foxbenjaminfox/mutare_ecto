@@ -38,17 +38,18 @@ defmodule Mutare.Ecto.Config do
   )a
   @all_family_set MapSet.new(@families)
 
-  # The in-fragment literal arms that are **off by default**, opt-in for safety. A string or atom
-  # literal has a large value space and its mutant is the most likely to be a noisy/odd survivor
-  # (and an in-fragment string the broadest), so unlike the numeric/boolean arms they are not in
-  # the default set: a user enables them with `families: :all`, by naming them in an explicit list,
-  # or via `{:default, except: …}`/`{:all, except: …}`. Even when enabled the structural-position
-  # guard in `Mutare.Ecto.Fragment` still suppresses them at a DSL form's structural argument.
-  @opt_in_families ~w(string_literal atom_literal)a
+  # The in-fragment literal arms that are **off by default**, opt-in for safety. A string, atom, or
+  # boolean literal mutant is the most likely to be a noisy/odd survivor — a string or atom because
+  # its value space is large (an in-fragment string the broadest), a boolean because a direct
+  # boolean literal in a condition is rarely idiomatic — so they are not in the default set: a user
+  # enables them with `families: :all`, by naming them in an explicit list, or via
+  # `{:default, except: …}`/`{:all, except: …}`. Even when enabled, the structural-position guard in
+  # `Mutare.Ecto.Fragment` still suppresses them at a DSL form's structural argument.
+  @opt_in_families ~w(string_literal atom_literal boolean_literal)a
 
   # The default family set — every family the plugin emits *except* the opt-in ones — used when
-  # `families:` is unset or given as `:default`. The default-on literal arms (integer/float/boolean)
-  # are kept; `:all` re-adds the opt-in arms.
+  # `families:` is unset or given as `:default`. The default-on literal arms (integer/float) are
+  # kept; `:all` re-adds the opt-in arms.
   @default_families @families -- @opt_in_families
   @default_family_set MapSet.new(@default_families)
 
@@ -134,8 +135,8 @@ defmodule Mutare.Ecto.Config do
 
   @doc """
   The families enabled by default (when `families:` is unset or `:default`) — every family except
-  the opt-in literal arms (`:string_literal`, `:atom_literal`), which are off for safety until a
-  user enables them with `families: :all`/an explicit list/`{:default, except: …}`.
+  the opt-in literal arms (`:string_literal`, `:atom_literal`, `:boolean_literal`), which are off
+  for safety until a user enables them with `families: :all`/an explicit list/`{:default, except: …}`.
   """
   @spec default_families() :: [atom()]
   def default_families, do: @default_families
@@ -189,9 +190,9 @@ defmodule Mutare.Ecto.Config do
 
   @doc """
   The families enabled by `opts` — the configured `families:` selection, or the **default set**
-  (every family except the opt-in `:string_literal`/`:atom_literal` arms) when it is `:default` or
-  unset; `:all` is every family. Raises on an unknown family name, so a typo'd `families:` entry
-  fails loudly rather than silently mutating nothing.
+  (every family except the opt-in `:string_literal`/`:atom_literal`/`:boolean_literal` arms) when it
+  is `:default` or unset; `:all` is every family. Raises on an unknown family name, so a typo'd
+  `families:` entry fails loudly rather than silently mutating nothing.
   """
   @spec families(keyword() | t()) :: [atom()]
   def families(%__MODULE__{families: enabled}),
@@ -251,7 +252,7 @@ defmodule Mutare.Ecto.Config do
   # `{:all | :default, except: [families]}` — the named base set minus an `:except` list. Mirrors
   # core's `{:builtins, except: […]}`: `:all` re-adds the opt-in arms then drops the named ones,
   # `:default` is the easy way to disable a default-on family (e.g.
-  # `{:default, except: [:integer_literal, :float_literal, :boolean_literal]}`).
+  # `{:default, except: [:integer_literal, :float_literal]}`).
   defp parse_families!({:all, opts}), do: @families |> except!(opts) |> MapSet.new()
   defp parse_families!({:default, opts}), do: @default_families |> except!(opts) |> MapSet.new()
 

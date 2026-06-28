@@ -42,37 +42,39 @@ defmodule Mutare.Ecto.ConfigTest do
     end
   end
 
-  describe "string/atom literal arms are opt-in (off by default)" do
+  describe "string/atom/boolean literal arms are opt-in (off by default)" do
     @src """
     defmodule M do
       import Ecto.Query
 
       def q do
         from u in User,
-          where: u.name == "ok" and u.role == :active and u.age > 18,
+          where: u.name == "ok" and u.role == :active and u.age > 18 and u.active == true,
           select: u.id
       end
     end
     """
 
-    test "the default selection omits string_literal and atom_literal mutants" do
+    test "the default selection omits the string, atom, and boolean literal mutants" do
       all = mutated(ecto_diffs(@src))
 
       # The default-on arms still fire (the comparison swap and the integer boundary bumps)…
       assert Enum.any?(all, &(&1 =~ "u.age >= 18"))
       assert Enum.any?(all, &(&1 =~ "u.age > 19"))
 
-      # …but neither the string sentinels nor the atom sentinel are offered.
+      # …but the string sentinels, the atom sentinel, and the boolean flip are all withheld.
       refute Enum.any?(all, &(&1 =~ ~s|== ""| or &1 =~ ~s|== "mutare"|))
       refute Enum.any?(all, &(&1 =~ "== :mutare"))
+      refute Enum.any?(all, &(&1 =~ "u.active == false"))
     end
 
-    test "families: :all re-enables both string and atom literal arms" do
+    test "families: :all re-enables the string, atom, and boolean literal arms" do
       all = mutated(ecto_diffs(@src, ecto(families: :all)))
 
       assert Enum.any?(all, &(&1 =~ ~s|u.name == ""|))
       assert Enum.any?(all, &(&1 =~ ~s|u.name == "mutare"|))
       assert Enum.any?(all, &(&1 =~ "u.role == :mutare"))
+      assert Enum.any?(all, &(&1 =~ "u.active == false"))
     end
 
     test "they can also be enabled by naming them in an explicit list" do
@@ -83,6 +85,10 @@ defmodule Mutare.Ecto.ConfigTest do
       atoms = mutated(ecto_diffs(@src, ecto(families: [:atom_literal])))
       assert Enum.any?(atoms, &(&1 =~ "u.role == :mutare"))
       refute Enum.any?(atoms, &(&1 =~ ~s|u.name == ""|))
+
+      booleans = mutated(ecto_diffs(@src, ecto(families: [:boolean_literal])))
+      assert Enum.any?(booleans, &(&1 =~ "u.active == false"))
+      refute Enum.any?(booleans, &(&1 =~ "u.role == :mutare"))
     end
 
     test "even when enabled, the structural-position guard still suppresses them" do
@@ -262,11 +268,13 @@ defmodule Mutare.Ecto.ConfigTest do
 
     test "the default set is the full set minus the opt-in literal arms" do
       assert Mutare.Ecto.default_families() ==
-               Mutare.Ecto.families() -- [:string_literal, :atom_literal]
+               Mutare.Ecto.families() -- [:string_literal, :atom_literal, :boolean_literal]
 
       refute :string_literal in Mutare.Ecto.default_families()
       refute :atom_literal in Mutare.Ecto.default_families()
+      refute :boolean_literal in Mutare.Ecto.default_families()
       assert :integer_literal in Mutare.Ecto.default_families()
+      assert :float_literal in Mutare.Ecto.default_families()
 
       # `:default` (and an unset `families:`) resolve to that set; `:all` to the full one.
       assert Mutare.Ecto.Config.families(families: :default) == Mutare.Ecto.default_families()

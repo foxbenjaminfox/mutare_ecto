@@ -30,12 +30,12 @@ defmodule Mutare.Ecto do
       when only query/changeset mutations are wanted; without it, Repo-call families are inert.
 
     * `families:` — narrow the SQL catalog. Accepts `:default` (the unset default — every family
-      **except** the opt-in `:string_literal`/`:atom_literal` arms, which are off for safety),
-      `:all` (every family, including those arms), an explicit list, or a base-minus-exclusions
-      `{:default | :all, except: [families]}`. Every family is independently toggleable; see
-      `families/0` for the full set and `default_families/0` for the default subset.
+      **except** the opt-in `:string_literal`/`:atom_literal`/`:boolean_literal` arms, which are off
+      for safety), `:all` (every family, including those arms), an explicit list, or a
+      base-minus-exclusions `{:default | :all, except: [families]}`. Every family is independently
+      toggleable; see `families/0` for the full set and `default_families/0` for the default subset.
 
-          # turn the string/atom literal arms back on
+          # turn the string/atom/boolean literal arms back on
           {Mutare.Ecto, repo: R, families: :all}
 
           # the easy way to drop a default-on arm
@@ -135,7 +135,8 @@ defmodule Mutare.Ecto do
 
   @doc """
   The families enabled by default (the `families: :default` / unset set) — every family except the
-  opt-in `:string_literal`/`:atom_literal` arms, which are off for safety until explicitly enabled.
+  opt-in `:string_literal`/`:atom_literal`/`:boolean_literal` arms, which are off for safety until
+  explicitly enabled.
   """
   @spec default_families() :: [atom()]
   defdelegate default_families, to: Config
