@@ -38,6 +38,20 @@ defmodule Mutare.Ecto.Config do
   )a
   @all_family_set MapSet.new(@families)
 
+  # The in-fragment literal arms that are **off by default**, opt-in for safety. A string or atom
+  # literal has a large value space and its mutant is the most likely to be a noisy/odd survivor
+  # (and an in-fragment string the broadest), so unlike the numeric/boolean arms they are not in
+  # the default set: a user enables them with `families: :all`, by naming them in an explicit list,
+  # or via `{:default, except: …}`/`{:all, except: …}`. Even when enabled the structural-position
+  # guard in `Mutare.Ecto.Fragment` still suppresses them at a DSL form's structural argument.
+  @opt_in_families ~w(string_literal atom_literal)a
+
+  # The default family set — every family the plugin emits *except* the opt-in ones — used when
+  # `families:` is unset or given as `:default`. The default-on literal arms (integer/float/boolean)
+  # are kept; `:all` re-adds the opt-in arms.
+  @default_families @families -- @opt_in_families
+  @default_family_set MapSet.new(@default_families)
+
   # The families whose survivors may be **legitimately unkillable for a data reason**, not a test
   # gap — each carrying its own report *note* (below) so the report reads as honest signal. Two
   # distinct equivalence reasons, hence two notes:
@@ -91,7 +105,7 @@ defmodule Mutare.Ecto.Config do
     validate_option_keys!(opts)
 
     %__MODULE__{
-      families: opts |> Keyword.get(:families, :all) |> parse_families!(),
+      families: opts |> Keyword.get(:families, :default) |> parse_families!(),
       dialects: opts |> Keyword.get(:dialects, []) |> parse_dialects!(),
       repo_key: opts |> Keyword.get(:repo) |> parse_repo!()
     }
@@ -117,6 +131,14 @@ defmodule Mutare.Ecto.Config do
   @doc "Every family the plugin can emit (the `:all` set)."
   @spec all_families() :: [atom()]
   def all_families, do: @families
+
+  @doc """
+  The families enabled by default (when `families:` is unset or `:default`) — every family except
+  the opt-in literal arms (`:string_literal`, `:atom_literal`), which are off for safety until a
+  user enables them with `families: :all`/an explicit list/`{:default, except: …}`.
+  """
+  @spec default_families() :: [atom()]
+  def default_families, do: @default_families
 
   @doc "The families whose survivors may be unkillable for a data reason (see the report note)."
   @spec equivalence_sensitive_families() :: [atom()]
@@ -166,8 +188,9 @@ defmodule Mutare.Ecto.Config do
   def split_tag({family, node, finer}), do: {family, node, finer}
 
   @doc """
-  The families enabled by `opts` — the configured `families:` list, or all of them when it is
-  `:all` (the default) or unset. Raises on an unknown family name, so a typo'd `families:` entry
+  The families enabled by `opts` — the configured `families:` selection, or the **default set**
+  (every family except the opt-in `:string_literal`/`:atom_literal` arms) when it is `:default` or
+  unset; `:all` is every family. Raises on an unknown family name, so a typo'd `families:` entry
   fails loudly rather than silently mutating nothing.
   """
   @spec families(keyword() | t()) :: [atom()]
@@ -223,6 +246,14 @@ defmodule Mutare.Ecto.Config do
   end
 
   defp parse_families!(:all), do: @all_family_set
+  defp parse_families!(:default), do: @default_family_set
+
+  # `{:all | :default, except: [families]}` — the named base set minus an `:except` list. Mirrors
+  # core's `{:builtins, except: […]}`: `:all` re-adds the opt-in arms then drops the named ones,
+  # `:default` is the easy way to disable a default-on family (e.g.
+  # `{:default, except: [:integer_literal, :float_literal, :boolean_literal]}`).
+  defp parse_families!({:all, opts}), do: @families |> except!(opts) |> MapSet.new()
+  defp parse_families!({:default, opts}), do: @default_families |> except!(opts) |> MapSet.new()
 
   defp parse_families!(families) when is_list(families) do
     case families -- @families do
@@ -238,7 +269,39 @@ defmodule Mutare.Ecto.Config do
 
   defp parse_families!(other) do
     raise ArgumentError,
-          "Mutare.Ecto :families must be :all or a list, got: #{inspect(other)}"
+          "Mutare.Ecto :families must be :all, :default, a list, or {:all | :default, except: [...]}, " <>
+            "got: #{inspect(other)}"
+  end
+
+  # The base family list minus a validated `:except` list. The only accepted key is `:except`, and
+  # each named family must be real, so a typo (`{:default, exept: …}` / `except: [:integr_literal]`)
+  # fails loudly rather than silently keeping a family it meant to drop.
+  defp except!(base, opts) do
+    unless Keyword.keyword?(opts) do
+      raise ArgumentError,
+            "Mutare.Ecto families {:all | :default, ...} options must be a keyword list with an " <>
+              ":except family list, got: #{inspect(opts)}"
+    end
+
+    case Keyword.keys(opts) -- [:except] do
+      [] ->
+        :ok
+
+      bad ->
+        raise ArgumentError,
+              "unknown Mutare.Ecto families option: #{inspect(bad)} — the only option is :except"
+    end
+
+    except = opts |> Keyword.get(:except, []) |> List.wrap()
+
+    case except -- @families do
+      [] ->
+        base -- except
+
+      unknown ->
+        raise ArgumentError,
+              "unknown Mutare.Ecto families in :except: #{inspect(unknown)} — valid families are #{inspect(@families)}"
+    end
   end
 
   defp parse_dialects!([]), do: @empty_dialect_set

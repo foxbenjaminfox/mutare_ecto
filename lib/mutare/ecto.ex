@@ -29,10 +29,23 @@ defmodule Mutare.Ecto do
     * `repo:` — the Repo module recognized by `Repo.aggregate` and write-call families. Optional
       when only query/changeset mutations are wanted; without it, Repo-call families are inert.
 
-    * `families:` — narrow the SQL catalog to a subset (default `:all`). Every family is
-      independently toggleable; see `families/0` for the full set. Combined with `:as` (which
-      renames the family in the report), this both narrows a run and lets a sub-family be
-      **reported under its own name**:
+    * `families:` — narrow the SQL catalog. Accepts `:default` (the unset default — every family
+      **except** the opt-in `:string_literal`/`:atom_literal` arms, which are off for safety),
+      `:all` (every family, including those arms), an explicit list, or a base-minus-exclusions
+      `{:default | :all, except: [families]}`. Every family is independently toggleable; see
+      `families/0` for the full set and `default_families/0` for the default subset.
+
+          # turn the string/atom literal arms back on
+          {Mutare.Ecto, repo: R, families: :all}
+
+          # the easy way to drop a default-on arm
+          {Mutare.Ecto, repo: R, families: {:default, except: [:integer_literal]}}
+
+      Even when the string/atom arms are enabled, the structural-position guard in
+      `Mutare.Ecto.Fragment` still suppresses a literal at a known DSL form's structural argument
+      (the `fragment` template, an interval unit, a cast type). Combined with `:as` (which renames
+      the family in the report), `families:` both narrows a run and lets a sub-family be **reported
+      under its own name**:
 
           {Mutare.Ecto, repo: R, families: [:comparison], as: :ecto_comparison}
 
@@ -119,6 +132,13 @@ defmodule Mutare.Ecto do
   @doc "Every SQL family the plugin can emit — the `families: :all` set, for a `families:` subset."
   @spec families() :: [atom()]
   defdelegate families, to: Config, as: :all_families
+
+  @doc """
+  The families enabled by default (the `families: :default` / unset set) — every family except the
+  opt-in `:string_literal`/`:atom_literal` arms, which are off for safety until explicitly enabled.
+  """
+  @spec default_families() :: [atom()]
+  defdelegate default_families, to: Config
 
   @doc """
   The families whose survivors may be legitimately unkillable for a data reason, not a test gap —

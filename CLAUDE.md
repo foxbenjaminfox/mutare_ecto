@@ -138,7 +138,12 @@ The surface divides by **how a mutation is delivered**, not by what it mutates:
 ### Families and configuration
 
 Every mutation is tagged with an SQL **family** (`config.ex` holds the canonical `:all` list).
-`families:` narrows the catalog (unknown name fails loudly); `dialects:` gates non-portable
+`families:` selects the catalog (unknown name fails loudly) and accepts `:default` (the unset
+default — every family **except** the opt-in `:string_literal`/`:atom_literal` arms, which are off
+for safety: a large value space makes their mutants the noisiest), `:all` (every family), an
+explicit list, or `{:default | :all, except: […]}` (base-minus-exclusions, the easy way to drop a
+default-on arm). Even when the string/atom arms are enabled, `fragment.ex`'s structural-position
+guard still suppresses a literal at a known DSL form's structural argument. `dialects:` gates non-portable
 mutations (`like`↔`ilike` under `:postgres`; `LEFT`↔`RIGHT` join under `:postgres`/`:mysql` —
 SQLite lacks `RIGHT JOIN`). Multi-repo and per-family report naming fall out of Mutare's `:as`
 convention (list the plugin twice). The **equivalence-sensitive** families (`:comparison`,

@@ -34,11 +34,108 @@ defmodule Mutare.Ecto.ConfigTest do
       assert mutated =~ "from(" and not (mutated =~ "u.age")
     end
 
-    test ":all (the default) yields every family" do
+    test "the default selection yields every default-on family" do
       all = mutated(ecto_diffs(@src))
       assert "u.age >= 18" in all
       assert "u.age > 19" in all
       assert Enum.any?(all, &(&1 =~ "from(" and not (&1 =~ "u.age")))
+    end
+  end
+
+  describe "string/atom literal arms are opt-in (off by default)" do
+    @src """
+    defmodule M do
+      import Ecto.Query
+
+      def q do
+        from u in User,
+          where: u.name == "ok" and u.role == :active and u.age > 18,
+          select: u.id
+      end
+    end
+    """
+
+    test "the default selection omits string_literal and atom_literal mutants" do
+      all = mutated(ecto_diffs(@src))
+
+      # The default-on arms still fire (the comparison swap and the integer boundary bumps)…
+      assert Enum.any?(all, &(&1 =~ "u.age >= 18"))
+      assert Enum.any?(all, &(&1 =~ "u.age > 19"))
+
+      # …but neither the string sentinels nor the atom sentinel are offered.
+      refute Enum.any?(all, &(&1 =~ ~s|== ""| or &1 =~ ~s|== "mutare"|))
+      refute Enum.any?(all, &(&1 =~ "== :mutare"))
+    end
+
+    test "families: :all re-enables both string and atom literal arms" do
+      all = mutated(ecto_diffs(@src, ecto(families: :all)))
+
+      assert Enum.any?(all, &(&1 =~ ~s|u.name == ""|))
+      assert Enum.any?(all, &(&1 =~ ~s|u.name == "mutare"|))
+      assert Enum.any?(all, &(&1 =~ "u.role == :mutare"))
+    end
+
+    test "they can also be enabled by naming them in an explicit list" do
+      strings = mutated(ecto_diffs(@src, ecto(families: [:string_literal])))
+      assert Enum.any?(strings, &(&1 =~ ~s|u.name == ""|))
+      refute Enum.any?(strings, &(&1 =~ "u.role == :mutare"))
+
+      atoms = mutated(ecto_diffs(@src, ecto(families: [:atom_literal])))
+      assert Enum.any?(atoms, &(&1 =~ "u.role == :mutare"))
+      refute Enum.any?(atoms, &(&1 =~ ~s|u.name == ""|))
+    end
+
+    test "even when enabled, the structural-position guard still suppresses them" do
+      # `type(u.age, :integer)` puts an atom at a structural position; with :atom_literal explicitly
+      # enabled it is *still* not collapsed to :mutare (the Fragment guard wins), while an ordinary
+      # in-fragment atom in the same query is.
+      src = """
+      defmodule M do
+        import Ecto.Query
+
+        def q do
+          from u in User,
+            where: u.role == :active and u.score == type(u.age, :integer),
+            select: u.id
+        end
+      end
+      """
+
+      all = mutated(ecto_diffs(src, ecto(families: [:atom_literal])))
+      assert Enum.any?(all, &(&1 =~ "u.role == :mutare"))
+      refute Enum.any?(all, &(&1 =~ "type(u.age, :mutare)"))
+    end
+  end
+
+  describe "default-on arms are easy to disable" do
+    @src """
+    defmodule M do
+      import Ecto.Query
+      def q, do: from(u in User, where: u.age > 18, select: u.id)
+    end
+    """
+
+    test "{:default, except: [...]} drops a default-on family while keeping the rest" do
+      kept = mutated(ecto_diffs(@src, ecto(families: {:default, except: [:integer_literal]})))
+
+      # The comparison swap survives; the integer boundary bumps are gone.
+      assert "u.age >= 18" in kept
+      refute Enum.any?(kept, &(&1 =~ "u.age > 19"))
+    end
+
+    test "{:all, except: [...]} subtracts from the full set (opt-in arms included)" do
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q, do: from(u in User, where: u.name == "ok" and u.age > 18, select: u.id)
+      end
+      """
+
+      kept = mutated(ecto_diffs(src, ecto(families: {:all, except: [:integer_literal]})))
+
+      # `:all` re-adds the string arm; `except:` removes only the integer one.
+      assert Enum.any?(kept, &(&1 =~ ~s|u.name == ""|))
+      refute Enum.any?(kept, &(&1 =~ "u.age > 19"))
     end
   end
 
@@ -163,6 +260,36 @@ defmodule Mutare.Ecto.ConfigTest do
       assert length(Mutare.Ecto.families()) == 22
     end
 
+    test "the default set is the full set minus the opt-in literal arms" do
+      assert Mutare.Ecto.default_families() ==
+               Mutare.Ecto.families() -- [:string_literal, :atom_literal]
+
+      refute :string_literal in Mutare.Ecto.default_families()
+      refute :atom_literal in Mutare.Ecto.default_families()
+      assert :integer_literal in Mutare.Ecto.default_families()
+
+      # `:default` (and an unset `families:`) resolve to that set; `:all` to the full one.
+      assert Mutare.Ecto.Config.families(families: :default) == Mutare.Ecto.default_families()
+      assert Mutare.Ecto.Config.families([]) == Mutare.Ecto.default_families()
+      assert Mutare.Ecto.Config.families(families: :all) == Mutare.Ecto.families()
+    end
+
+    test "an unknown family in an :except list fails loudly" do
+      assert_raise ArgumentError, ~r/unknown Mutare.Ecto families in :except: \[:bogus\]/, fn ->
+        Mutare.Ecto.Config.families(families: {:default, except: [:bogus]})
+      end
+    end
+
+    test "an unknown option in a {:default | :all, ...} selection fails loudly" do
+      assert_raise ArgumentError, ~r/the only option is :except/, fn ->
+        Mutare.Ecto.Config.families(families: {:all, exclude: [:integer_literal]})
+      end
+
+      assert_raise ArgumentError, ~r/must be a keyword list with an :except family list/, fn ->
+        Mutare.Ecto.Config.families(families: {:default, [:integer_literal]})
+      end
+    end
+
     test "an unknown family name fails loudly" do
       src = """
       defmodule M do
@@ -178,10 +305,12 @@ defmodule Mutare.Ecto.ConfigTest do
       end
     end
 
-    test "a families: that is neither :all nor a list is rejected" do
-      assert_raise ArgumentError, ~r/:families must be :all or a list/, fn ->
-        Mutare.Ecto.Config.families(families: :comparison)
-      end
+    test "a families: that is none of the accepted forms is rejected" do
+      assert_raise ArgumentError,
+                   ~r/:families must be :all, :default, a list, or \{:all \| :default, except:/,
+                   fn ->
+                     Mutare.Ecto.Config.families(families: :comparison)
+                   end
     end
 
     test "unknown and malformed dialects fail deliberately" do
