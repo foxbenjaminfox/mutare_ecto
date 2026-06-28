@@ -98,6 +98,34 @@ defmodule Mutare.Ecto.SemanticTest do
     end
   end
 
+  describe "Comparison — binding-less `as(:_)` condition (empty-binding dynamic)" do
+    # The same `>` ↔ `>=` family, but the `where` is written with **no binding list** — it references
+    # a *named* binding (`as(:user)`), so the host weaves an empty-binding `dynamic([], …)`. Proves
+    # that path is live, not just compile-clean: an inert injection would hand back the baseline set.
+    test "the >= mutant of a binding-less named-binding where admits the boundary rows" do
+      {mod, sites} =
+        build("""
+        defmodule Q do
+          import Ecto.Query
+          alias MyApp.User
+          def q do
+            from(u in User, as: :user, select: u.id)
+            |> where(as(:user).age > 18)
+          end
+        end
+        """)
+
+      baseline = ids(mod, 0)
+      mutant = ids(mod, site_id(sites, {"as(:user).age > 18", "as(:user).age >= 18"}))
+
+      # Identical to the binding-form Comparison test above — the empty-binding dynamic runs the same
+      # SQL: baseline keeps ages strictly over 18, the `>=` mutant additionally admits the age-18 rows.
+      assert baseline == [2, 5, 6]
+      assert mutant == [1, 2, 4, 5, 6]
+      assert mutant -- baseline == [1, 4]
+    end
+  end
+
   describe "Comparison — `==` ↔ `!=` (dynamic-injected)" do
     # The equality arm of the same family: `u.role == "admin"` ↔ `u.role != "admin"`. Every row has a
     # non-null `role`, so the two predicates are exact complements — an inert injection would hand back

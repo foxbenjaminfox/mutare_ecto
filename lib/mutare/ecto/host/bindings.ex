@@ -2,7 +2,8 @@ defmodule Mutare.Ecto.Host.Bindings do
   @moduledoc false
   # Interprets Ecto binding declarations and renders the binding list re-declared by a hosted
   # `dynamic/2`. This is the only module that reasons about positional, named, ellipsis, and join
-  # placement.
+  # placement. It also locates the condition argument a host owns — including the binding-less form
+  # (`q |> where(as(:post).x > 1)`), which has no written list and so re-declares an empty one.
 
   alias Mutare.Ecto.{AST, Binding, Surface}
   alias Mutare.Ecto.AST.{BindingList, KeywordList}
@@ -45,19 +46,30 @@ defmodule Mutare.Ecto.Host.Bindings do
     end
   end
 
-  @doc "The index of the condition argument immediately following a binding list, or `nil`."
+  @doc "The index of the host-owned condition argument, or `nil`."
   @spec condition_index([Macro.t()]) :: non_neg_integer() | nil
   def condition_index(args) do
-    case locate(args) do
-      {_binding_index, _list, condition_index} -> condition_index
+    case hosted_condition(args) do
+      {_bindings, _condition, index} -> index
       nil -> nil
     end
   end
 
   @doc """
-  The pieces a host needs for a binding-form condition (`where(q, [u], u.x == ^v)`): the binding
-  declarations re-emitted by the woven `dynamic/2`, the condition node, and its argument index — or
-  `nil` when the args carry no hosted condition (the keyword-shorthand form).
+  The pieces a host needs for a hosted condition: the binding declarations re-emitted by the woven
+  `dynamic/2`, the condition node, and its argument index — or `nil` when the args carry no hosted
+  condition (the keyword-shorthand form).
+
+  Two shapes resolve here:
+
+    * a **binding-form** condition (`where(q, [u], u.x == ^v)`) — the condition sits one slot past
+      the written binding list, which the woven `dynamic/2` re-declares.
+    * a **binding-less** condition (`q |> where(as(:post).views > 100)`, `where(q, is_nil(c.x))`) —
+      no positional list is written, so the condition is the trailing argument and the woven
+      `dynamic/2` re-declares an **empty** binding list (`dynamic([], …)`). A named-binding
+      (`as(:_)`), `parent_as`, or `fragment` reference resolves against the query the dynamic is
+      spliced into, exactly as Ecto's own `where(q, ^dynamic)` form does. This is what lets a
+      binding-less `where`/`having` still have its SQL operators/literals mutated.
   """
   @spec hosted_condition([Macro.t()]) :: {[Macro.t()], Macro.t(), non_neg_integer()} | nil
   def hosted_condition(args) do
@@ -66,14 +78,44 @@ defmodule Mutare.Ecto.Host.Bindings do
         {declarations(binding_list), Enum.at(args, condition_index), condition_index}
 
       nil ->
-        nil
+        bindingless_condition(args)
     end
   end
 
+  # The trailing argument as a host-owned condition with no binding declarations, or `nil` when it is
+  # not a condition to host. The shapes that are *not* a binding-less condition: a list (a binding
+  # list like `[u]`, a keyword shorthand like `[active: true]`, or an empty `[]` — none a predicate
+  # body), a `^dynamic` operand (Ecto's own composition primitive, mutated where it is built), and a
+  # bare variable (a degenerate non-condition call). Everything else — a comparison/connective/null/
+  # membership expression, possibly referencing only named bindings — is hosted; the catalog then
+  # decides whether there is anything to mutate.
+  @spec bindingless_condition([Macro.t()]) :: {[], Macro.t(), non_neg_integer()} | nil
+  defp bindingless_condition([]), do: nil
+
+  defp bindingless_condition(args) do
+    index = length(args) - 1
+    condition = Enum.at(args, index)
+    if hostable_bare_condition?(condition), do: {[], condition, index}, else: nil
+  end
+
+  defp hostable_bare_condition?(node) do
+    case unwrap_block(node) do
+      list when is_list(list) -> false
+      {:^, _meta, _args} -> false
+      other -> not Binding.variable?(other)
+    end
+  end
+
+  # Sourceror wraps a bare list/literal in a single-element `__block__`; unwrap it so the list and
+  # pin checks above see the real shape. A genuine multi-statement block (more than one child) is not
+  # a condition argument and is left as-is.
+  defp unwrap_block({:__block__, _meta, [inner]}), do: inner
+  defp unwrap_block(node), do: node
+
   # The binding-list index and the condition index one slot past it, or `nil` when the args carry no
-  # binding list (or nothing follows it). The single place that knows the condition sits immediately
-  # after the binding list — both `condition_index/1` (routing) and `hosted_condition/1` (the host)
-  # derive from it, so the offset lives here, not in callers.
+  # binding list (or nothing follows it). `hosted_condition/1` (and, through it, `condition_index/1`)
+  # derives the binding-form condition from this, so the offset lives here, not in callers; the
+  # binding-less fallback lives in `bindingless_condition/1`.
   @spec locate([Macro.t()]) :: {non_neg_integer(), BindingList.t(), pos_integer()} | nil
   defp locate(args) do
     with {binding_index, binding_list} <- BindingList.find(args),

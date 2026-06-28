@@ -496,6 +496,72 @@ defmodule Mutare.Ecto.HostTest do
     end
   end
 
+  describe "binding-less conditions (no written binding list)" do
+    # `q |> where(cond)` ≡ `where(q, [], cond)`: with no positional binding list, a condition that
+    # references a *named* binding (`as(:_)`) — or a `fragment`/`parent_as` — is still a real SQL
+    # predicate. The host weaves it behind an empty-binding `dynamic([], …)`, the very form Ecto
+    # accepts for `where(q, ^dynamic)`. Before this, such a condition was silently left raw — a false
+    # negative, since the operator/literal swaps never fired.
+
+    test "a piped binding-less where hosts the operator and literal swaps" do
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q do
+          from(p in "posts", as: :post)
+          |> where(as(:post).views > 100)
+        end
+      end
+      """
+
+      assert {"as(:post).views > 100", "as(:post).views >= 100"} in hosted(src)
+      assert {"as(:post).views > 100", "as(:post).views > 101"} in hosted(src)
+      assert metamutant(src) =~ "dynamic([], as(:post).views"
+      assert_compiles(src)
+    end
+
+    test "the direct binding-less form hosts its comparison swap too" do
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q(query), do: where(query, as(:post).name == "ok")
+      end
+      """
+
+      assert {"as(:post).name == \"ok\"", "as(:post).name != \"ok\""} in hosted(src)
+      assert metamutant(src) =~ "dynamic([]"
+      assert_compiles(src)
+    end
+
+    test "a binding-less having hosts its null predicate" do
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q(query), do: query |> having(is_nil(as(:post).deleted_at))
+      end
+      """
+
+      assert {"is_nil(as(:post).deleted_at)", "not is_nil(as(:post).deleted_at)"} in hosted(src)
+      assert metamutant(src) =~ "dynamic([]"
+      assert_compiles(src)
+    end
+
+    test "a `^dynamic` operand is left raw — the host weaves nothing" do
+      # The condition is a pre-built dynamic interpolated with `^`: Ecto's own composition primitive,
+      # mutated where it is defined, not in the fragment. No `dynamic(` scaffolding is woven (the one
+      # mutation is the orthogonal stage drop).
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q(query, filter), do: query |> where(^filter)
+      end
+      """
+
+      refute metamutant(src) =~ "dynamic("
+      assert_compiles(src)
+    end
+  end
+
   describe "nothing hostable" do
     test "a bindingless from carries no hosted dynamic (clauses are shorthand data)" do
       src = """
@@ -892,11 +958,17 @@ defmodule Mutare.Ecto.HostTest do
     end
 
     test "an empty list is neither a binding list nor a shorthand keyword list" do
-      # `[]` must not be mistaken for a binding list (so it never marks a `:hosted` position) nor
-      # for shorthand pairs (so it never becomes a `{:keyword, …}` overlay) — both reduce to a raw
-      # data argument.
+      # `[]` must not be mistaken for a binding list (so the `[]` slot itself is never `:hosted`) nor
+      # for shorthand pairs (so it never becomes a `{:keyword, …}` overlay) — it is a raw data arg.
       assert routing("where(q, [])") == [:expression, :skip]
-      assert routing("where(q, [], u.x == u.y)") == [:expression, :skip, :skip]
+    end
+
+    test "an empty binding list still hosts the condition that follows it (binding-less)" do
+      # `where(q, [], cond)` ≡ `where(q, cond)`: the explicit `[]` declares no positional binding, so
+      # the trailing condition is the binding-less hosted form (woven `dynamic([], …)`). The `[]`
+      # slot stays raw; only the condition routes `:hosted`. (A condition written here can only
+      # reference *named* bindings — `as(:_)` — which the empty-binding dynamic resolves.)
+      assert routing("where(q, [], as(:post).x == as(:post).y)") == [:expression, :skip, :hosted]
     end
   end
 
