@@ -404,6 +404,64 @@ defmodule Mutare.Ecto.FragmentTest do
     end
   end
 
+  describe "interpolation islands (`^expr`)" do
+    # A pin's interior is ordinary Elixir evaluated at runtime — core's business, never this
+    # catalog's. The catalog stops at the pin (no SQL-rationale `^(min * 2)` → `^(min / 2)`);
+    # `islands/1` hands the interior to the host's core sub-contract instead.
+
+    defp islands(code) do
+      code
+      |> Sourceror.parse_string!()
+      |> Fragment.islands()
+      |> Enum.map(fn {interior, rebuild} ->
+        {Sourceror.to_string(interior), rebuild}
+      end)
+    end
+
+    test "the catalog never offers or descends a pin's interior" do
+      assert mutants("u.age > ^(min * 2)") == MapSet.new(["u.age >= ^(min * 2)"])
+      assert mutants("u.age > ^100") == MapSet.new(["u.age >= ^100"])
+    end
+
+    test "islands/1 finds each pin and rebuilds the full condition around a replacement" do
+      assert [{"min * 2", rebuild}] = islands("u.age > ^(min * 2)")
+
+      assert rebuild.(Sourceror.parse_string!("min - 1")) |> Sourceror.to_string() ==
+               "u.age > ^(min - 1)"
+    end
+
+    test "every pin in a compound condition is its own island, rebuilt single-point" do
+      assert [{"a", rebuild_a}, {"b", rebuild_b}] = islands("u.x > ^a and u.y < ^b")
+
+      assert rebuild_a.(Sourceror.parse_string!("z")) |> Sourceror.to_string() ==
+               "u.x > ^z and u.y < ^b"
+
+      assert rebuild_b.(Sourceror.parse_string!("z")) |> Sourceror.to_string() ==
+               "u.x > ^a and u.y < ^z"
+    end
+
+    test "an island inside a written in-list is reached" do
+      assert [{"base + 1", rebuild}] = islands("u.age in [18, ^(base + 1)]")
+
+      assert rebuild.(Sourceror.parse_string!("base - 1")) |> Sourceror.to_string() ==
+               "u.age in [18, ^(base - 1)]"
+    end
+
+    test "islands honor the catalog's no-descent predicates (is_nil/exists)" do
+      # Value mutants of a parameter preserve its NULL-ness — provably equivalent inside the one
+      # predicate that observes only NULL-ness; a subquery's internals are their own routed query.
+      assert islands("is_nil(coalesce(u.age, ^default))") == []
+      assert islands("not is_nil(coalesce(u.age, ^default))") == []
+      assert islands("exists(^sub)") == []
+    end
+
+    test "islands honor the author-macro rule — only :expression arguments are entered" do
+      # An unregistered call (`nil` routing) is descended; the macro-routing overlay for a
+      # `:skip`-routed author macro is exercised end to end in `macro_skip_test.exs`.
+      assert [{"n", _rebuild}] = islands("clamp(u.age, ^n) > 10")
+    end
+  end
+
   describe "structural positions in known Ecto DSL forms" do
     # A literal at a *structural* position of a known Ecto DSL form shapes the SQL the builder
     # emits rather than carrying data — mutating it would produce a broken query, not a live

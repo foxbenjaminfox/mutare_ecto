@@ -74,9 +74,14 @@ defmodule Mutare.Ecto.Fragment do
   Each is named after the *type* it mutates (`integer_literal`, …), never after `fragment(...)`,
   with which it has nothing to do.
 
-  Pinned interpolations (`^min_age`) and field references (`u.age`) are left untouched: a `^value`
-  is ordinary Elixir bound upstream and mutated there by core's literal families — the catalog
-  targets the SQL-evaluated *operators and structure*, plus the in-fragment literals core can't reach.
+  Pinned interpolations (`^value`) and field references (`u.age`) are left untouched by the
+  catalog: a pin's interior is ordinary Elixir evaluated at runtime and bound as a query
+  parameter, so it is exactly **core's** business, never this catalog's — an SQL-rationale swap
+  there (`^(min * 2)` → `^(min / 2)`) would reason about Elixir code in SQL's semantics, the
+  mirror image of the mistake this catalog exists to avoid. The catalog targets the SQL-evaluated
+  *operators and structure*, plus the in-fragment literals core can't reach; `islands/1` hands
+  each pin interior to the host, which sub-contracts it to core's own generation
+  (`Mutare.Analyze.expression_mutations/3` — see `Mutare.Ecto.Host.Catalog`).
 
   A literal arm is also suppressed at a **structural position** of a known Ecto DSL form, where the
   literal shapes the SQL the builder emits rather than carrying data (mutating it yields a broken
@@ -135,6 +140,64 @@ defmodule Mutare.Ecto.Fragment do
   """
   @spec mutants(Macro.t(), keyword() | Config.t()) :: [{Config.family(), Macro.t(), label()}]
   def mutants(condition, opts \\ []), do: do_mutants(condition, opts, nil)
+
+  @doc """
+  Every interpolation **island** (`^expr`) in the condition, as `{interior, rebuild}` pairs —
+  `interior` is the pin's Elixir expression and `rebuild.(mutated_interior)` is the full condition
+  with exactly that pin's interior replaced (the pin itself kept). The host feeds each interior to
+  core's generation (`Mutare.Analyze.expression_mutations/3`) and relays the rebuilds through its
+  own weave with `producer:` attribution (`Mutare.Ecto.Host.Catalog`), so a pin interior is
+  mutated by the reasoner that owns Elixir — under the user's configured core families — while
+  delivery stays the host's.
+
+  The walk honors exactly the catalog's own descent rules, so a host cannot reach an island the
+  catalog would not have walked past: an `is_nil`/`exists` argument is never entered (value
+  mutants of a parameter preserve its NULL-ness, so they are provably equivalent inside the one
+  predicate that observes only NULL-ness — and a subquery's internals are their own routed
+  query), a nested author macro's argument is entered only when routed `:expression` (or not a
+  macro at all), and the pin itself is a boundary — core owns everything beneath it, including
+  any nested pin (`^` does not nest in Ecto).
+  """
+  @spec islands(Macro.t()) :: [{Macro.t(), (Macro.t() -> Macro.t())}]
+  def islands(condition), do: island_walk(condition)
+
+  defp island_walk({:^, meta, [interior]}), do: [{interior, &{:^, meta, [&1]}}]
+
+  # The catalog's no-descent predicates (`do_mutants/3` flips them as units): no islands inside.
+  defp island_walk({predicate, _meta, [_arg]}) when predicate in [:is_nil, :exists], do: []
+
+  # Any other call/operator node: descend per argument under the same author-macro rule as
+  # `lift/4` — only plainly standard syntax (`descend_arg?/2`). Each found island's rebuild is
+  # composed outward so it reconstructs the whole condition.
+  defp island_walk({form, meta, args}) when is_list(args) do
+    routing = Calls.macro_treatment({form, meta, args})
+
+    args
+    |> Enum.with_index()
+    |> Enum.flat_map(fn {arg, index} ->
+      if descend_arg?(routing, index) do
+        for {interior, rebuild} <- island_walk(arg) do
+          {interior, fn m -> {form, meta, List.replace_at(args, index, rebuild.(m))} end}
+        end
+      else
+        []
+      end
+    end)
+  end
+
+  # A plain list (a written in-list): an island may sit among the elements (`x in [1, ^two]`).
+  defp island_walk(list) when is_list(list) do
+    list
+    |> Enum.with_index()
+    |> Enum.flat_map(fn {el, index} ->
+      for {interior, rebuild} <- island_walk(el) do
+        {interior, fn m -> List.replace_at(list, index, rebuild.(m)) end}
+      end
+    end)
+  end
+
+  # Variables, field references, literals, 2-tuples: no pin can hide here.
+  defp island_walk(_node), do: []
 
   @doc false
   # The finer variant labels every fragment-owned family can emit — the operators the swap families
@@ -201,6 +264,12 @@ defmodule Mutare.Ecto.Fragment do
   # `exists(subquery)` → `not exists(subquery)`. Clean meta on the fresh `not`.
   defp do_mutants({:exists, _meta, [_arg]} = node, _opts, _position),
     do: [{:membership, {:not, [], [node]}, "exists"}]
+
+  # An interpolation island (`^expr`): ordinary Elixir evaluated at runtime and bound as a query
+  # parameter — never SQL for this catalog to reason about (a swap here changes the *parameter's*
+  # Elixir value/type under an SQL rationale). The catalog contributes nothing and never descends;
+  # `islands/1` collects the interior for the host's core sub-contract instead.
+  defp do_mutants({:^, _meta, _args}, _opts, _position), do: []
 
   # A literal (int/float/string/bool/atom) written directly into the fragment (Sourceror-wrapped).
   # At a *structural* position of a known Ecto DSL form — the `fragment` template, an interval unit

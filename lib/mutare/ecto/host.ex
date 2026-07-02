@@ -4,8 +4,10 @@ defmodule Mutare.Ecto.Host do
 
   The companion `Mutare.Ecto.Host.Routing` identifies hosted argument positions. This module then
   coordinates three focused components: `Host.Bindings` interprets Ecto binding declarations,
-  `Host.Catalog` produces logical SQL mutants, and `Host.Target` constructs the `dynamic/2` wrap and
-  selector splice consumed by Mutare core.
+  `Host.Catalog` produces the logical mutants — the plugin's own SQL catalogs plus the core
+  mutants it sub-contracts for each `^` pin island via `Mutare.Analyze.expression_mutations/3`
+  (which is why `context` threads down to the catalog) — and `Host.Target` constructs the
+  `dynamic/2` wrap and selector splice consumed by Mutare core.
   """
 
   alias Mutare.Ecto.{AST, Config, Surface}
@@ -26,14 +28,14 @@ defmodule Mutare.Ecto.Host do
     case QueryCall.parse(node) do
       %QueryCall{name: :from, args: [source, clauses]} ->
         case KeywordList.parse(clauses) do
-          %KeywordList{} = clauses -> from_targets(source, clauses, config)
+          %KeywordList{} = clauses -> from_targets(source, clauses, config, context)
           nil -> []
         end
 
       %QueryCall{name: macro, args: args} ->
         case Surface.macro_kind(macro) do
-          :condition -> condition_target(args, config)
-          :join -> join_target(args, config)
+          :condition -> condition_target(args, config, context)
+          :join -> join_target(args, config, context)
           _other -> []
         end
 
@@ -42,18 +44,23 @@ defmodule Mutare.Ecto.Host do
     end
   end
 
-  defp from_targets(source, %KeywordList{entries: entries} = clauses, opts) do
+  defp from_targets(source, %KeywordList{entries: entries} = clauses, opts, context) do
     hostable_on = JoinOn.hostable_from_indices(entries)
 
     entries
     |> Enum.with_index()
     |> Enum.flat_map(fn {entry, index} ->
       bindings = Bindings.from(source, %{clauses | entries: Enum.take(entries, index + 1)})
-      from_target({entry, index}, bindings, opts, hostable_on)
+      from_target({entry, index}, bindings, {opts, context}, hostable_on)
     end)
   end
 
-  defp from_target({%Entry{key: key, value: condition}, index}, bindings, opts, hostable_on) do
+  defp from_target(
+         {%Entry{key: key, value: condition}, index},
+         bindings,
+         {opts, context},
+         hostable_on
+       ) do
     # No `bindings` non-emptiness guard: a bare-queryable source (`from("t", as: :t, where:
     # as(:t).x > 1)`) declares no positional binding, so `Bindings.from/2` returns `[]` and the woven
     # `dynamic([], …)` re-declares none — valid, since such a condition can only reference a *named*
@@ -61,7 +68,7 @@ defmodule Mutare.Ecto.Host do
     with true <- hostable_clause?(key, index, hostable_on),
          true <- Surface.from_clause?(key, :hosted),
          false <- AST.top_level_pin?(condition),
-         [_ | _] = mutants <- Catalog.mutants(condition, opts) do
+         [_ | _] = mutants <- Catalog.mutants(condition, opts, context) do
       [Target.from_clause(condition, mutants, bindings, index)]
     else
       _ -> []
@@ -74,23 +81,23 @@ defmodule Mutare.Ecto.Host do
   defp hostable_clause?(:on, index, hostable_on), do: MapSet.member?(hostable_on, index)
   defp hostable_clause?(_key, _index, _hostable_on), do: true
 
-  defp condition_target(args, opts) do
+  defp condition_target(args, opts, context) do
     with {bindings, condition, index} <- Bindings.hosted_condition(args),
-         [_ | _] = mutants <- Catalog.mutants(condition, opts) do
+         [_ | _] = mutants <- Catalog.mutants(condition, opts, context) do
       [Target.condition(condition, mutants, bindings, index)]
     else
       _ -> []
     end
   end
 
-  defp join_target(args, config) do
+  defp join_target(args, config, context) do
     with {arg_index, options} <- trailing_options(args),
          pair_index when not is_nil(pair_index) <-
            Enum.find_index(options.entries, &(&1.key == :on)),
          true <- JoinOn.hostable_standalone?(args, options.entries),
          %Entry{value: condition} = Enum.at(options.entries, pair_index),
          [_ | _] = bindings <- Bindings.join(args),
-         [_ | _] = mutants <- Catalog.mutants(condition, config) do
+         [_ | _] = mutants <- Catalog.mutants(condition, config, context) do
       [Target.keyword_condition(condition, mutants, bindings, arg_index, pair_index)]
     else
       _ -> []

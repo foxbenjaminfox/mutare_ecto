@@ -44,6 +44,14 @@ defmodule Mutare.Ecto.ScalarTest do
     assert swap_labels("u.a * u.b") == %{"u.a / u.b" => "*"}
   end
 
+  test "an interpolation island (`^expr`) is never offered or descended" do
+    # The pin's interior is ordinary Elixir evaluated at runtime — outside the SQL catalog's
+    # competence (an SQL-rationale `^(f + 1)` → `^(f - 1)` would mutate the *parameter*). Only
+    # the genuinely-SQL outer operator swaps.
+    assert swaps("u.votes * ^(f + 1)") == MapSet.new(["u.votes / ^(f + 1)"])
+    assert swaps("^(f + 1)") == MapSet.new([])
+  end
+
   test "a unary minus is sign syntax, never swapped" do
     # A written negative number is the arity-1 `-` over the wrapped literal — no `+5` mutant.
     assert swaps("-5") == MapSet.new([])

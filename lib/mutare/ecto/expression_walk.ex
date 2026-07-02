@@ -23,6 +23,12 @@ defmodule Mutare.Ecto.ExpressionWalk do
 
   @doc "Every single-point mutant of `expr` under the `local` per-node catalog."
   @spec walk(Macro.t(), local()) :: [tagged()]
+  # An interpolation island (`^expr`) is ordinary Elixir evaluated at runtime — outside every SQL
+  # catalog's competence, so never offered and never descended. (In a hosted condition the host
+  # sub-contracts the interior to core's generation; in these in-place `select`/`order_by` walks
+  # the interior is left alone rather than wrongly mutated under an SQL rationale.)
+  def walk({:^, _meta, _args}, _local), do: []
+
   # A call/operator node (atom form or a remote `{:., …}` form): offer the node's own alternatives,
   # then descend into its arguments so a nested position is reached too.
   def walk({form, meta, args} = node, local) when is_list(args) do

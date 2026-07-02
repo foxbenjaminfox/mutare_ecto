@@ -25,7 +25,11 @@ defmodule Mutare.Ecto.Dynamic do
   The written binding list is re-emitted byte-for-byte (its positional *reorder* is
   `Mutare.Ecto.BindingReorder`'s, exactly as for `where`/`having`). A top-level-pin body
   (`dynamic([p], ^other)`) is left raw: the pin's value is ordinary Elixir bound upstream, core's
-  families' to mutate where it is bound.
+  families' to mutate where it is bound. A *nested* pin's interior (`dynamic([p], p.x > ^(min +
+  1))`) is likewise never this catalog's — but unlike a hosted `where`/`having` (whose host
+  sub-contracts each island to core via `Mutare.Analyze.expression_mutations/3` over
+  `context.mutators`), a free-standing `dynamic` is delivered through plain `mutate/2`, which
+  core does not hand the run's specs — so an inline island here simply stays unmutated.
   """
 
   alias Mutare.Ecto.{Aggregate, AST, Config, Fragment}

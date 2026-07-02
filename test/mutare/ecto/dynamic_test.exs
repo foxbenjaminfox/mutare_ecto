@@ -31,6 +31,24 @@ defmodule Mutare.Ecto.DynamicTest do
       assert_compiles(src)
     end
 
+    test "a nested pin's interior is an island the catalog never enters" do
+      # `^(min * 2)` is ordinary Elixir — never the SQL catalog's to reason about. Unlike a
+      # hosted `where`/`having` (whose host sub-contracts the island to core), a free-standing
+      # `dynamic` is delivered through plain `mutate/2`, which carries no `context.mutators` —
+      # so the interior simply stays unmutated (no SQL-rationale `^(min / 2)` crash-mutant).
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def d(min), do: dynamic([p], p.views > ^(min * 2))
+      end
+      """
+
+      assert ecto_diffs(src) ==
+               [{"dynamic([p], p.views > ^(min * 2))", "dynamic([p], p.views >= ^(min * 2))"}]
+
+      assert_compiles(src)
+    end
+
     test "every condition position mutates independently (connective + both operands)" do
       src = """
       defmodule M do

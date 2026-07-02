@@ -120,7 +120,12 @@ The surface divides by **how a mutation is delivered**, not by what it mutates:
    host a runtime `case`, so the host weaves each mutant behind Ecto's `^` + `dynamic` injection
    (`Mutare.Ecto.Host` + the SQL catalog in `Mutare.Ecto.Fragment`, plus `Mutare.Ecto.Aggregate`
    for the aggregate). Exactly one branch bakes into the compiled query per run, selected by
-   `:persistent_term.get(:mutare_active, 0)`.
+   `:persistent_term.get(:mutare_active, 0)`. A hosted condition's **interpolation islands**
+   (`^expr` interiors — ordinary Elixir evaluated at runtime) are **sub-contracted to core's
+   generation**: `Fragment.islands/1` finds each pin under the catalog's own descent rules,
+   `Host.Catalog` runs `Mutare.Analyze.expression_mutations/3` over `context.mutators` (the
+   run's enabled non-host specs) and relays each rebuild as a `Mutation` with `producer:` set —
+   so the Site belongs to the producing core family while delivery rides the host's weave.
 
 ### Module map (`lib/mutare/ecto/`)
 
@@ -133,10 +138,10 @@ The surface divides by **how a mutation is delivered**, not by what it mutates:
 | `host.ex` | Selector-host **coordinator** (#3): turns a hosted call into `Target`s, delegating to the `host/*` parts below |
 | `host/routing.ex` | `route_arguments/2` — the per-argument routing classifier (`:hosted`/`:expression`/`:skip`/`:interpolated`/`{:keyword,…}`), over `treatments/1` |
 | `host/bindings.ex` | Interprets Ecto binding declarations and renders the binding list re-declared by a woven `dynamic/2` |
-| `host/catalog.ex` | The enabled, noted logical mutants for one hosted condition (Fragment + Aggregate) |
+| `host/catalog.ex` | The enabled, noted logical mutants for one hosted condition (Fragment + Aggregate), plus the core-produced island mutants it sub-contracts per `^` pin (`Mutare.Analyze.expression_mutations/3`, relayed with `producer:`) |
 | `host/join_on.ex` | Which join `on:` conditions are safe to host: only a join's **sole, top-level** on-expression (not a multi-`on:` or `assoc` join, whose conditions Ecto folds into one `and` where a `^dynamic` operand is illegal) |
 | `host/target.ex` | The `dynamic`-wrap + `^`-pin + splice transforms consumed by core |
-| `fragment.ex` | The **SQL-semantics catalog** for `where`/`having` conditions (Comparison, Connective, NullPredicate, Membership, Arithmetic, Coalesce, Temporal, the literal arms IntegerLiteral/FloatLiteral/StringLiteral/AtomLiteral/BooleanLiteral) |
+| `fragment.ex` | The **SQL-semantics catalog** for `where`/`having` conditions (Comparison, Connective, NullPredicate, Membership, Arithmetic, Coalesce, Temporal, the literal arms IntegerLiteral/FloatLiteral/StringLiteral/AtomLiteral/BooleanLiteral) — stops at every `^` pin, whose interiors `islands/1` collects for the host's core sub-contract |
 | `ast/query_call.ex` / `ast/binding_list.ex` / `ast/keyword_list.ex` | Normalized query-call, binding-list, and keyword/clause-list values; preserve written form while centralizing validation and reconstruction |
 | `binding.ex` | Primitive binding-entry vocabulary (`variable?`/`ellipsis?`/`entry?`) used by the normalized binding list |
 | `binding_reorder.ex` | Positional binding-reorder (`[a, b]`→`[b, a]`) for **every** standalone/pipe binding-list macro — `where`/`having` included — delivered **in-place** by swapping the written list (never the condition body). A `from` binding-list *source* (`[a, b] in q`) reorders at the whole-`from` level (`query.ex`) instead. Reorders only eligible positional entries in the list the **author wrote** — never a synthesized list, a named binding, or an `_`-prefixed binding |
@@ -184,10 +189,18 @@ through their `mutate/2` rewrites.
 
 ## Conventions and gotchas
 
-- **Never reuse a core mutator inside a query fragment.** This is the one rule the whole design
-  exists to enforce. The fragment catalog is owned end to
-  end in `fragment.ex`. Interpolated `^value` references are *Elixir* data → mutated by core's
-  literal families; the SQL **structure/operators** are the plugin's.
+- **Never reuse a core mutator inside a query fragment — and never point the SQL catalog at
+  Elixir.** This is the one rule the whole design exists to enforce, and it cuts both ways along
+  the `^` pin boundary. The SQL **structure/operators** are the plugin's, owned end to end in
+  `fragment.ex` (core would reason in Elixir's semantics). A pin's **interior** is ordinary
+  Elixir evaluated at runtime — exactly core's, never the SQL catalog's (an SQL-rationale
+  `^(min * 2)` → `^(min / 2)` mutates the parameter's Elixir value/type): the catalogs stop at
+  every pin, and the host **sub-contracts** each hosted island to core's generation
+  (`Mutare.Analyze.expression_mutations/3` over `context.mutators`, relayed with `producer:` so
+  the Site and ignore vocabulary belong to the producing core family — delivery stays the
+  host's weave). A free-standing `dynamic`'s inline islands stay unmutated (plain `mutate/2`
+  carries no `context.mutators`); a `^value` referencing an upstream binding is mutated by core
+  where it is bound, as always.
 - **A nested author macro may invent its own argument syntax — only descend into `:expression`.** A
   user can define a macro and use it inside a `where`/`having` condition; its arguments are valid
   Elixir *tokens* but their meaning is the macro's own (it can make up a DSL, exactly as Ecto does).

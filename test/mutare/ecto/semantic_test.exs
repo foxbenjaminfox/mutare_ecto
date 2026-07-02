@@ -98,6 +98,38 @@ defmodule Mutare.Ecto.SemanticTest do
     end
   end
 
+  describe "Island sub-contract — a core mutant of a pin interior (dynamic-injected)" do
+    # A `^(8 + 10)` interior is ordinary Elixir the host sub-contracts to core's generation
+    # (`Mutare.Analyze.expression_mutations/3`), relaying each rebuild through its own weave with
+    # `producer:` attribution. Compile-level attribution is SubcontractTest's; here we prove the
+    # relayed mutant is **live**: flipping the active id changes the *parameter* the query binds,
+    # and the engine's result set moves exactly as core's literal bump predicts.
+    test "the literal-succ island mutant tightens the bound the baseline parameter set" do
+      {mod, sites} =
+        H.compile(
+          """
+          defmodule Q do
+            import Ecto.Query
+            alias MyApp.User
+            def q, do: from(u in User, where: u.age > ^(8 + 10), select: u.id)
+          end
+          """,
+          mutators: [:literal, {Mutare.Ecto, repo: MyApp.Repo}]
+        )
+
+      site = site_id(sites, {"u.age > ^(8 + 10)", "u.age > ^(8 + 11)"})
+
+      baseline = ids(mod, 0)
+      mutant = ids(mod, site)
+
+      # Baseline binds 18 — ages strictly over 18: Bob(25), Eve(40), Frank(19).
+      assert baseline == [2, 5, 6]
+      # The island mutant binds 19, so the boundary row Frank(19) falls out — the parameter the
+      # woven dynamic interpolates really did change at runtime.
+      assert mutant == [2, 5]
+    end
+  end
+
   describe "Comparison — binding-less `as(:_)` condition (empty-binding dynamic)" do
     # The same `>` ↔ `>=` family, but the `where` is written with **no binding list** — it references
     # a *named* binding (`as(:user)`), so the host weaves an empty-binding `dynamic([], …)`. Proves
