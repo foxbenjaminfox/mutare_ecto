@@ -104,9 +104,11 @@ defmodule Mutare.Ecto do
       **stage removal** (`q |> where(…)` → `q`, `Mutare.Ecto.ClauseDrop`). `dynamic` and the
       `is_named_binding` guard helper also register `:skip` (neither is a query-threading stage,
       so core must not descend into their DSL/guard arguments) — but a free-standing `dynamic/1,2`
-      is still mutated: core offers the whole call to `mutate/2`, where `Mutare.Ecto.Dynamic`
-      rewrites its condition through the same SQL catalog a hosted `where`/`having` uses,
-      delivered in place (the call sits in ordinary expression position, so no host is needed).
+      is still mutated: core offers the whole call to `mutate/2` (with `context.mutators`, the
+      run's enabled non-host specs), where `Mutare.Ecto.Dynamic` rewrites its condition through
+      the same SQL catalog a hosted `where`/`having` uses **and** sub-contracts each `^` pin's
+      interior to core's generation, all delivered in place (the call sits in ordinary expression
+      position, so no host is needed).
 
   Resolution of these macros relies on Mutare's `use`-expansion (so the
   `use Ecto.Schema`-injected `import Ecto.Schema`, and a `use MyAppWeb, :live_view`-bundled
@@ -289,14 +291,27 @@ defmodule Mutare.Ecto do
   @impl Mutare.Mutator
   def mutate(_node), do: :skip
 
+  # A dispatched result is either the plugin's own `{family, node, label}` tag — filtered by the
+  # configured `families:` and enriched with the equivalence note — or an already-final
+  # `%Mutare.Mutator.Mutation{}` relayed with `producer:` set (a sub-contracted island mutant of a
+  # free-standing `dynamic`, `Mutare.Ecto.Dynamic`), which passes through untouched: it is a
+  # *core* family's mutant, so the plugin's SQL-family filter and notes don't apply to it.
   @impl Mutare.Mutator
   def mutate(node, %{config: %Config{} = config} = context) do
-    tagged = Dispatcher.mutations(node, context)
+    node
+    |> Dispatcher.mutations(context)
+    |> Enum.flat_map(fn
+      %Mutare.Mutator.Mutation{producer: producer} = relayed when not is_nil(producer) ->
+        [relayed]
 
-    case for tag <- tagged,
-             {family, mutated, finer} = Config.split_tag(tag),
-             Config.family_enabled?(config, family),
-             do: Config.enrich(family, mutated, finer) do
+      tag ->
+        {family, mutated, finer} = Config.split_tag(tag)
+
+        if Config.family_enabled?(config, family),
+          do: [Config.enrich(family, mutated, finer)],
+          else: []
+    end)
+    |> case do
       [] -> :skip
       mutations -> mutations
     end

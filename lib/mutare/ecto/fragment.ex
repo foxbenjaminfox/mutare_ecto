@@ -80,8 +80,9 @@ defmodule Mutare.Ecto.Fragment do
   there (`^(min * 2)` → `^(min / 2)`) would reason about Elixir code in SQL's semantics, the
   mirror image of the mistake this catalog exists to avoid. The catalog targets the SQL-evaluated
   *operators and structure*, plus the in-fragment literals core can't reach; `islands/1` hands
-  each pin interior to the host, which sub-contracts it to core's own generation
-  (`Mutare.Analyze.expression_mutations/3` — see `Mutare.Ecto.Host.Catalog`).
+  each pin interior to the condition's owner — the selector host for a hosted `where`/`having`,
+  `Mutare.Ecto.Dynamic` for a free-standing `dynamic` — which sub-contracts it to core's own
+  generation (`Mutare.Analyze.expression_mutations/3` — see `Mutare.Ecto.Host.Catalog`).
 
   A literal arm is also suppressed at a **structural position** of a known Ecto DSL form, where the
   literal shapes the SQL the builder emits rather than carrying data (mutating it yields a broken
@@ -144,13 +145,15 @@ defmodule Mutare.Ecto.Fragment do
   @doc """
   Every interpolation **island** (`^expr`) in the condition, as `{interior, rebuild}` pairs —
   `interior` is the pin's Elixir expression and `rebuild.(mutated_interior)` is the full condition
-  with exactly that pin's interior replaced (the pin itself kept). The host feeds each interior to
-  core's generation (`Mutare.Analyze.expression_mutations/3`) and relays the rebuilds through its
-  own weave with `producer:` attribution (`Mutare.Ecto.Host.Catalog`), so a pin interior is
-  mutated by the reasoner that owns Elixir — under the user's configured core families — while
-  delivery stays the host's.
+  with exactly that pin's interior replaced (the pin itself kept). The condition's owner — the
+  selector host for a hosted `where`/`having`, `Mutare.Ecto.Dynamic` for a free-standing
+  `dynamic` — feeds each interior to core's generation (`Mutare.Analyze.expression_mutations/3`)
+  and relays the rebuilds through its own delivery with `producer:` attribution
+  (`Mutare.Ecto.Host.Catalog.subcontracted/3`), so a pin interior is mutated by the reasoner that
+  owns Elixir — under the user's configured core families — while delivery stays the caller's
+  (the host's weave, or the whole-call in-place rewrite).
 
-  The walk honors exactly the catalog's own descent rules, so a host cannot reach an island the
+  The walk honors exactly the catalog's own descent rules, so a caller cannot reach an island the
   catalog would not have walked past: an `is_nil`/`exists` argument is never entered (value
   mutants of a parameter preserve its NULL-ness, so they are provably equivalent inside the one
   predicate that observes only NULL-ness — and a subquery's internals are their own routed

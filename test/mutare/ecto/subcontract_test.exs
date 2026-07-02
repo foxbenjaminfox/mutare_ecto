@@ -532,10 +532,12 @@ defmodule Mutare.Ecto.SubcontractTest do
       assert_compiles(src, @with_core)
     end
 
-    test "a free-standing dynamic's inline island stays unmutated even with core in the run" do
-      # `dynamic/1,2` is delivered through plain `mutate/2`, which carries no `context.mutators`
-      # — there is no sub-contract seam. And the `dynamic` registers `:skip`, so core keeps the
-      # DSL argument raw too: the interior is nobody's, from either side.
+    test "a free-standing dynamic's inline island sub-contracts as a whole-call rewrite" do
+      # `dynamic` registers `:skip`, so core keeps the DSL argument raw — but core threads the
+      # run's specs into the whole-call offer of a registered macro (`context.mutators`), so
+      # `Mutare.Ecto.Dynamic` sub-contracts the island through the same seam as the host. Only
+      # delivery differs: each relayed mutant is the whole `dynamic` call rebuilt, through the
+      # ordinary in-place selector (no weave — the call sits in expression position).
       src = """
       defmodule M do
         import Ecto.Query
@@ -543,12 +545,67 @@ defmodule Mutare.Ecto.SubcontractTest do
       end
       """
 
+      islands = island_diffs(src, @with_core)
+      original = "dynamic([p], p.views > ^(min * 2))"
+
+      assert {:arithmetic, original, "dynamic([p], p.views > ^(min / 2))"} in islands
+      assert {:literal, original, "dynamic([p], p.views > ^(min * 3))"} in islands
+
+      # The island mutant is never `:ecto`'s: the plugin's own sites on the call are exactly its
+      # SQL catalog (the comparison swap), nothing inside the pin.
+      assert [{original, "dynamic([p], p.views >= ^(min * 2))"}] ==
+               ecto_diffs(src, @with_core)
+
+      assert_compiles(src, @with_core)
+    end
+
+    test "parity — the same interior yields the same core mutants in a where and a dynamic" do
+      # The commit-level promise of the whole-call seam: an identical pin interior no longer
+      # gets core's island mutants in a `where` and nothing in a `dynamic`. Only the delivery
+      # shape differs (bare condition for the weave vs. the whole rebuilt call), so compare the
+      # mutated *conditions*.
+      where_src = """
+      defmodule M do
+        import Ecto.Query
+        def q(q, min), do: q |> where([p], p.views > ^(min * 2))
+      end
+      """
+
+      dynamic_src = """
+      defmodule M do
+        import Ecto.Query
+        def d(min), do: dynamic([p], p.views > ^(min * 2))
+      end
+      """
+
+      condition = fn
+        "dynamic([p], " <> rest -> String.replace_suffix(rest, ")", "")
+        bare -> bare
+      end
+
+      logical = fn src ->
+        MapSet.new(island_diffs(src, @with_core), fn {mutator, _original, mutated} ->
+          {mutator, condition.(mutated)}
+        end)
+      end
+
+      assert MapSet.size(logical.(where_src)) > 0
+      assert logical.(where_src) == logical.(dynamic_src)
+    end
+
+    test "a top-level-pin dynamic body stays raw — no catalog, no sub-contract" do
+      # `dynamic([p], ^other)`'s body is already-evaluated Elixir bound upstream ("mutated where
+      # it is built") — exactly as a hosted `where: ^cond` stays raw, the whole-call seam leaves
+      # a top-level pin alone.
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def d(c), do: dynamic([p], ^(c and true))
+      end
+      """
+
       assert island_diffs(src, @with_core) == []
-
-      refute Enum.any?(diffs(src, @with_core), fn {_m, _o, mutated} ->
-               mutated =~ "min / 2" or mutated =~ "min * 3"
-             end)
-
+      assert ecto_diffs(src, @with_core) == []
       assert_compiles(src, @with_core)
     end
   end

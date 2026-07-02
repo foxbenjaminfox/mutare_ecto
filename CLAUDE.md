@@ -53,7 +53,8 @@ analyzes `lib/`, not the test-only fixtures.
 checkout (until Mutare is published to Hex). Several features here required **new Mutare-core
 extensions** (the selector host, `:routing`/`:hosted` macro routing, `{:keyword, …}` per-pair
 routing, `:interpolated` in-place delivery, the `Site` `note` channel, the plugin-config toolkit —
-`c:Mutare.Mutator.init/1` + `use Mutare.Mutator.Families`). When a task needs core
+`c:Mutare.Mutator.init/1` + `use Mutare.Mutator.Families` — and `:mutators` threaded into the
+whole-call `mutate/2` offer of a registered macro, the free-standing-`dynamic` sub-contract seam). When a task needs core
 machinery that doesn't exist yet, it is added to `../mutare`. Core's public test 
 surface for plugins is `Mutare.Test` (wrapped here by `Mutare.Ecto.TestSupport`).
 
@@ -112,7 +113,10 @@ The surface divides by **how a mutation is delivered**, not by what it mutates:
    whole-`from` rewrites in `Query`, the standalone/pipe rewrites in `Clause`, and the
    free-standing `dynamic/1,2` rewrites in `Dynamic` — a `dynamic` call sits in ordinary
    expression position (its value is a runtime `DynamicExpr`), so its in-fragment mutants (the
-   same `Fragment`/`Aggregate` catalogs the host uses) are whole-call rewrites, not woven.
+   same `Fragment`/`Aggregate` catalogs the host uses) are whole-call rewrites, not woven —
+   including its **island sub-contract**: core threads `context.mutators` into the whole-call
+   offer of a registered macro, so `Dynamic` relays each pin interior's core mutants through
+   the same seam as the host (`Host.Catalog.subcontracted/3`), delivered as rebuilt calls.
 2. **Skipped** (`Bucket 2`) — `schema`/`embedded_schema` bodies. A mutated field name/type is a
    broken schema, not a mutant.
 3. **Hosted DSL** (`Bucket 3`, the heart) — in-fragment `where`/`having` operator swaps (and the
@@ -138,7 +142,7 @@ The surface divides by **how a mutation is delivered**, not by what it mutates:
 | `host.ex` | Selector-host **coordinator** (#3): turns a hosted call into `Target`s, delegating to the `host/*` parts below |
 | `host/routing.ex` | `route_arguments/2` — the per-argument routing classifier (`:hosted`/`:expression`/`:skip`/`:interpolated`/`{:keyword,…}`), over `treatments/1` |
 | `host/bindings.ex` | Interprets Ecto binding declarations and renders the binding list re-declared by a woven `dynamic/2` |
-| `host/catalog.ex` | The enabled, noted logical mutants for one hosted condition (Fragment + Aggregate), plus the core-produced island mutants it sub-contracts per `^` pin (`Mutare.Analyze.expression_mutations/3`, relayed with `producer:`) |
+| `host/catalog.ex` | The enabled, noted logical mutants for one hosted condition (Fragment + Aggregate), plus the core-produced island mutants sub-contracted per `^` pin (`Mutare.Analyze.expression_mutations/3`, relayed with `producer:`) — `subcontracted/3` is the shared seam, parameterized by delivery (`deliver`), so `dynamic.ex` relays through it too |
 | `host/join_on.ex` | Which join `on:` conditions are safe to host: only a join's **sole, top-level** on-expression (not a multi-`on:` or `assoc` join, whose conditions Ecto folds into one `and` where a `^dynamic` operand is illegal) |
 | `host/target.ex` | The `dynamic`-wrap + `^`-pin + splice transforms consumed by core |
 | `fragment.ex` | The **SQL-semantics catalog** for `where`/`having` conditions (Comparison, Connective, NullPredicate, Membership, Arithmetic, Coalesce, Temporal, the literal arms IntegerLiteral/FloatLiteral/StringLiteral/AtomLiteral/BooleanLiteral) — stops at every `^` pin, whose interiors `islands/1` collects for the host's core sub-contract |
@@ -151,7 +155,7 @@ The surface divides by **how a mutation is delivered**, not by what it mutates:
 | `ordering.ex` / `aggregate.ex` / `scalar.ex` | Shared `{family, node}` catalogs used by `query.ex`, `clause.ex`, and the condition host — `scalar.ex` owns the Arithmetic swaps and the Coalesce fallback drop, applied per node by `fragment.ex` in hosted conditions and walked over `select`/`order_by` values |
 | `expression_walk.ex` | The generic single-point structural walker under the expression catalogs (`aggregate.ex`, `scalar.ex`) |
 | `combination.ex` | Shared set-operation swap catalog (`intersect`↔`except`, `intersect_all`↔`except_all`; `union` deliberately unswapped) used by `query.ex` (clause-key swap) and `clause.ex` (macro-name swap) |
-| `dynamic.ex` | In-fragment mutations of a **free-standing** `dynamic/1,2` (`d = dynamic([p], p.x > ^v)`): the shared `Fragment`/`Aggregate` catalogs over its condition, each mutant the whole call rebuilt and delivered in place (the `dynamic` registers `:skip` so core keeps its DSL args raw, but core still offers the whole call to `mutate/2`) |
+| `dynamic.ex` | In-fragment mutations of a **free-standing** `dynamic/1,2` (`d = dynamic([p], p.x > ^v)`): the shared `Fragment`/`Aggregate` catalogs over its condition **plus** the island sub-contract per `^` pin (via `Host.Catalog.subcontracted/3` over `context.mutators`), each mutant the whole call rebuilt and delivered in place (the `dynamic` registers `:skip` so core keeps its DSL args raw, but core still offers the whole call to `mutate/2` — with the run's specs threaded in) |
 | `repo_aggregate.ex` / `repo_write.ex` / `query_terminal.ex` | Bucket-1 Repo/query-function families |
 | `repo_call.ex` | Shared "resolve a call on the configured `repo:`" preamble for `repo_aggregate.ex`/`repo_write.ex` |
 | `stage_drop.ex` | Shared pipe-aware stage-drop delivery for `clause_drop.ex` and `changeset.ex` |
@@ -195,12 +199,12 @@ through their `mutate/2` rewrites.
   `fragment.ex` (core would reason in Elixir's semantics). A pin's **interior** is ordinary
   Elixir evaluated at runtime — exactly core's, never the SQL catalog's (an SQL-rationale
   `^(min * 2)` → `^(min / 2)` mutates the parameter's Elixir value/type): the catalogs stop at
-  every pin, and the host **sub-contracts** each hosted island to core's generation
+  every pin, and each island is **sub-contracted** to core's generation
   (`Mutare.Analyze.expression_mutations/3` over `context.mutators`, relayed with `producer:` so
   the Site and ignore vocabulary belong to the producing core family — delivery stays the
-  host's weave). A free-standing `dynamic`'s inline islands stay unmutated (plain `mutate/2`
-  carries no `context.mutators`); a `^value` referencing an upstream binding is mutated by core
-  where it is bound, as always.
+  relayer's: the host's weave for a hosted `where`/`having`, the whole-call in-place rewrite
+  for a free-standing `dynamic`, whose registered-macro offer core threads the specs into). A
+  `^value` referencing an upstream binding is mutated by core where it is bound, as always.
 - **A nested author macro may invent its own argument syntax — only descend into `:expression`.** A
   user can define a macro and use it inside a `where`/`having` condition; its arguments are valid
   Elixir *tokens* but their meaning is the macro's own (it can make up a DSL, exactly as Ecto does).

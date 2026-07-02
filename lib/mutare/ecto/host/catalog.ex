@@ -35,18 +35,29 @@ defmodule Mutare.Ecto.Host.Catalog do
         do: Config.enrich(family, node, finer)
   end
 
-  # The island sub-contract: `Fragment.islands/1` finds each pin interior under the catalog's own
-  # descent rules; core generates the interior's mutants under the user's actual configuration
-  # (`:as` renames and per-instance opts included — a disabled core family simply produces
-  # nothing). No `families:`/`enrich` here: the mutant is a *core* family's, with core's note and
-  # variant, so the plugin's SQL-family filter and equivalence notes don't apply.
-  defp subcontracted(condition, context) do
+  @doc """
+  The island sub-contract: `Fragment.islands/1` finds each pin interior under the catalog's own
+  descent rules; core generates the interior's mutants under the user's actual configuration
+  (`:as` renames and per-instance opts included — a disabled core family simply produces
+  nothing), read from `context.mutators` — the run's enabled non-host specs, which core threads
+  into both seams this is called from (`host/2` and the whole-call `mutate/2` offer of a
+  registered macro). No `families:`/`enrich` here: the mutant is a *core* family's, with core's
+  note and variant, so the plugin's SQL-family filter and equivalence notes don't apply.
+
+  `deliver` maps each rebuilt condition to the node the caller's delivery path emits: the host
+  relays the condition itself (its weave carries it — the default identity), while
+  `Mutare.Ecto.Dynamic` rebuilds the whole free-standing `dynamic` call around it (its mutants
+  are whole-call rewrites through the ordinary in-place selector).
+  """
+  @spec subcontracted(Macro.t(), Mutare.Mutator.context(), (Macro.t() -> Macro.t())) ::
+          [Mutation.t()]
+  def subcontracted(condition, context, deliver \\ & &1) do
     specs = Map.get(context, :mutators, [])
 
     for {interior, rebuild} <- Fragment.islands(condition),
         {spec, mutated, note, variant} <-
           Mutare.Analyze.expression_mutations(interior, specs, context) do
-      Mutation.new(rebuild.(mutated), producer: spec, note: note, variant: variant)
+      Mutation.new(deliver.(rebuild.(mutated)), producer: spec, note: note, variant: variant)
     end
   end
 end

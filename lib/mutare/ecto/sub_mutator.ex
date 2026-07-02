@@ -8,7 +8,9 @@ defmodule Mutare.Ecto.SubMutator do
   # `init/1`-parsed `families:`/`dialects:`/`repo:` `%Config{}` — and `:pipe_mode`), and returns the
   # `{family, node}` mutation pairs it produces, or `[]`. A sub-mutator that needs neither config
   # nor pipe-mode simply ignores the context; `Mutare.Ecto.mutate/2` then filters the merged pairs
-  # by the configured `families:`.
+  # by the configured `families:`. A sub-mutator that *sub-contracts* islands to core's generation
+  # (`Mutare.Ecto.Dynamic`) additionally returns producer-attributed `Mutare.Mutator.Mutation`s,
+  # which bypass that filter — the mutant is a core family's, not one of the plugin's.
   #
   # A sub-mutator whose first `mutations/2` clause pattern-matches the context *shape* (e.g.
   # `%{pipe_mode: …}`) needs a defensive catch-all so a context lacking that key returns `[]` rather
@@ -30,7 +32,9 @@ defmodule Mutare.Ecto.SubMutator do
           | {family :: Config.family(), mutated :: Macro.t(),
              label :: String.t() | [String.t()] | nil}
 
-  @callback mutations(node :: Macro.t(), context :: Mutare.Mutator.context()) :: [tagged()]
+  @callback mutations(node :: Macro.t(), context :: Mutare.Mutator.context()) :: [
+              tagged() | Mutare.Mutator.Mutation.t()
+            ]
 
   @doc false
   defmacro __using__(_opts) do

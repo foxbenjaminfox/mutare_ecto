@@ -30,7 +30,9 @@ defmodule Mutare.Ecto.Dispatcher do
   # `context` is the callback context core hands `Mutare.Ecto.mutate/2`, carrying the
   # `init/1`-parsed `%Config{}` as `:config` — a superset of `Mutare.Mutator.context()`, hence
   # `map()`, as in `Config.from_context/1`. It threads unchanged to the sub-mutators.
-  @spec mutations(Macro.t(), map()) :: [Mutare.Ecto.SubMutator.tagged()]
+  @spec mutations(Macro.t(), map()) :: [
+          Mutare.Ecto.SubMutator.tagged() | Mutare.Mutator.Mutation.t()
+        ]
   def mutations(node, context) do
     case QueryCall.parse(node) do
       %QueryCall{name: name} = call ->

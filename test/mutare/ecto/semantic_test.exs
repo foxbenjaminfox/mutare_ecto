@@ -128,6 +128,40 @@ defmodule Mutare.Ecto.SemanticTest do
       # woven dynamic interpolates really did change at runtime.
       assert mutant == [2, 5]
     end
+
+    # The whole-call twin: the same island inside a **free-standing** `dynamic/1,2` is
+    # sub-contracted through the same seam but delivered as an in-place whole-call rewrite
+    # (`Mutare.Ecto.Dynamic` — no weave; the call sits in expression position and the mutated
+    # `DynamicExpr` is spliced downstream by the raw `where(^d)`). Proves *that* delivery is
+    # live too: the rebuilt call binds a different parameter and the result set moves.
+    test "the literal-succ island mutant of a spliced free-standing dynamic is live" do
+      {mod, sites} =
+        H.compile(
+          """
+          defmodule Q do
+            import Ecto.Query
+            alias MyApp.User
+            def q do
+              d = dynamic([u], u.age > ^(8 + 10))
+              from(u in User, select: u.id) |> where(^d)
+            end
+          end
+          """,
+          mutators: [:literal, {Mutare.Ecto, repo: MyApp.Repo}]
+        )
+
+      site =
+        site_id(sites, {"dynamic([u], u.age > ^(8 + 10))", "dynamic([u], u.age > ^(8 + 11))"})
+
+      baseline = ids(mod, 0)
+      mutant = ids(mod, site)
+
+      # Baseline binds 18 — ages strictly over 18: Bob(25), Eve(40), Frank(19).
+      assert baseline == [2, 5, 6]
+      # The relayed mutant binds 19 — the boundary row Frank(19) falls out, exactly as in the
+      # hosted twin above.
+      assert mutant == [2, 5]
+    end
   end
 
   describe "Comparison — binding-less `as(:_)` condition (empty-binding dynamic)" do

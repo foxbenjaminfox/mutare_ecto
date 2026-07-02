@@ -32,10 +32,11 @@ defmodule Mutare.Ecto.DynamicTest do
     end
 
     test "a nested pin's interior is an island the catalog never enters" do
-      # `^(min * 2)` is ordinary Elixir — never the SQL catalog's to reason about. Unlike a
-      # hosted `where`/`having` (whose host sub-contracts the island to core), a free-standing
-      # `dynamic` is delivered through plain `mutate/2`, which carries no `context.mutators` —
-      # so the interior simply stays unmutated (no SQL-rationale `^(min / 2)` crash-mutant).
+      # `^(min * 2)` is ordinary Elixir — never the SQL catalog's to reason about. The interior
+      # is **sub-contracted** to core's generation exactly as in a hosted `where`/`having`
+      # (`subcontract_test.exs` covers the relay); in this plugin-only run there is nobody to
+      # sub-contract to, so the interior yields nothing — and never the SQL-rationale
+      # `^(min / 2)` crash-mutant.
       src = """
       defmodule M do
         import Ecto.Query
