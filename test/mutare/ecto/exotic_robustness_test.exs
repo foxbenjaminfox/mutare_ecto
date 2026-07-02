@@ -376,5 +376,68 @@ defmodule Mutare.Ecto.ExoticRobustnessTest do
     test "#{name}: metamutant compiles alongside all of core's mutators" do
       assert_compiles(unquote(source), @with_core)
     end
+
+    test "#{name}: sites are unique, non-identity, and range-faithful" do
+      assert_site_invariants(unquote(source))
+    end
   end
+
+  # Structural invariants over every site the production shape (plugin + core) records — generic
+  # nets for failure modes no behaviour-precise test can enumerate:
+  #
+  #   * **no duplicate mutants** — two sites sharing a range and mutated rendering are one logical
+  #     mutant delivered twice (the double-delivery failure mode: a mutation produced by two
+  #     paths, e.g. an old `mutate/2` producer surviving a migration to the host, or core reaching
+  #     a position the plugin also owns);
+  #   * **no identity mutants** — a mutant that renders identically to its original compiles,
+  #     runs, and "survives" while testing nothing, silently corrupting the score;
+  #   * **range fidelity** — a single-line site's recorded range must slice exactly the source
+  #     text the site claims to mutate, or reports and `# mutare:ignore` (matched by the site's
+  #     line) anchor to the wrong code. Multi-line sites are skipped: their `original_code` is a
+  #     re-render, not a source slice.
+  defp assert_site_invariants(source) do
+    %Mutare.Transform.Result{mutants: sites} =
+      Mutare.transform_string(source,
+        file: "robustness_invariants.ex",
+        mutators: mutators(@with_core),
+        expand_uses: true
+      )
+
+    assert sites != [], "expected the fixture to produce mutants"
+
+    duplicates =
+      sites
+      |> Enum.group_by(&{&1.range, &1.mutated_code})
+      |> Enum.filter(fn {_key, group} -> length(group) > 1 end)
+
+    assert duplicates == [],
+           "duplicate mutants (same range, same rendering):\n" <>
+             inspect(duplicates, pretty: true)
+
+    for site <- sites do
+      refute site.original_code == site.mutated_code,
+             "identity mutant at #{site.file}:#{site.line} (#{site.mutator}): " <>
+               inspect(site.original_code)
+    end
+
+    lines = String.split(source, "\n")
+
+    # The repeated `line` variable makes the generator itself select single-line sites (a
+    # multi-line or absent range fails the match and is skipped, not raised on). The comparison
+    # is modulo whitespace, parens, and commas — same tokens, so a range anchored to the *wrong*
+    # code still fails — because two cosmetic classes are legitimate: a clause site's range may
+    # include the keyword list's trailing comma (core derives the end from Sourceror's
+    # `end_of_expression` meta), and a paren-less `from p in …` re-renders as `from(p in …)` in
+    # `original_code`.
+    for %{range: %{start: %{line: line, column: sc}, end: %{line: line, column: ec}}} = site <-
+          sites do
+      slice = lines |> Enum.at(line - 1) |> String.slice(sc - 1, ec - sc)
+
+      assert tokens(slice) == tokens(site.original_code),
+             "site #{site.id} (#{site.mutator}) at line #{line} records " <>
+               inspect(site.original_code) <> " but its range slices " <> inspect(slice)
+    end
+  end
+
+  defp tokens(code), do: String.replace(code, ~r/[\s(),]+/, "")
 end

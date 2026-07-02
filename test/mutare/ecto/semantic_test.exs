@@ -80,6 +80,29 @@ defmodule Mutare.Ecto.SemanticTest do
     MyApp.Repo.one(from(a in MyApp.Account, where: a.email == "a@x", select: a.name))
   end
 
+  # The account row for `email`, or `nil` — the persistence/validation tests observe a write
+  # through the row's presence/absence, not through the call's return shape alone.
+  defp account(email) do
+    import Ecto.Query
+    MyApp.Repo.one(from(a in MyApp.Account, where: a.email == ^email))
+  end
+
+  # Normalize an adapter-typed aggregate value for numeric comparison: SQLite's AVG is a float,
+  # other adapters may hand back a Decimal.
+  defp to_number(%Decimal{} = d), do: Decimal.to_float(d)
+  defp to_number(n) when is_number(n), do: n * 1.0
+
+  # The running engine's {major, minor}, for gating a FULL JOIN fixture on SQLite ≥ 3.39.
+  defp sqlite_version do
+    %{rows: [[version]]} = Ecto.Adapters.SQL.query!(MyApp.Repo, "select sqlite_version()", [])
+
+    version
+    |> String.split(".")
+    |> Enum.take(2)
+    |> Enum.map(&String.to_integer/1)
+    |> List.to_tuple()
+  end
+
   # Did `fun` raise? Used instead of `assert_raise SpecificError` so the raise-observed on_conflict
   # test stays stable across the CI matrix's ecto_sqlite3 versions (the exception *type* for a unique
   # violation is adapter-version detail; *that it raises at all* is the live signal).
@@ -174,6 +197,33 @@ defmodule Mutare.Ecto.SemanticTest do
       # The relayed mutant binds 19 — the boundary row Frank(19) falls out, exactly as in the
       # hosted twin above.
       assert mutant == [2, 5]
+    end
+  end
+
+  describe "Shorthand interpolation — a core literal mutant of a `where: [col: v]` value" do
+    # The `{:keyword, …}`/`:interpolated` routing hands a shorthand scalar to *core's* literal
+    # family, delivered `^`-pinned by core. The routing is the plugin's, the delivery core's —
+    # and neither unit suite proves the pinned parameter actually *binds*. Same closure as the
+    # island sub-contract test: flip the core mutant and watch the bound value move the rows.
+    test "the literal-succ mutant of a shorthand value changes which rows match" do
+      {mod, sites} =
+        H.compile(
+          """
+          defmodule Q do
+            import Ecto.Query
+            alias MyApp.User
+            def q, do: from(u in User, where: [age: 18], select: u.id)
+          end
+          """,
+          mutators: [:literal, {Mutare.Ecto, repo: MyApp.Repo}]
+        )
+
+      {baseline, mutant} = observe_ids(mod, sites, {"18", "19"})
+
+      # Baseline binds 18 — the equality keeps Alice and Dave (both 18).
+      assert baseline == [1, 4]
+      # The mutant binds 19 — only Frank matches; the parameter, not the source, changed.
+      assert mutant == [6]
     end
   end
 
@@ -689,6 +739,34 @@ defmodule Mutare.Ecto.SemanticTest do
     end
   end
 
+  describe "OrderingNulls — `asc_nulls_first` ↔ `asc_nulls_last` (whole-`from`)" do
+    # The equivalence-sensitive NULLs-placement axis, live against real NULL rows (SQLite has
+    # supported NULLS FIRST/LAST since 3.30). Bob and Dave carry NULL scores; the flip moves
+    # exactly them across the ordering while the non-NULL order is untouched. Their order
+    # *within* the NULL group is engine-unspecified, so the test pins the group's position and
+    # membership, never the intra-group order.
+    test "the nulls_last mutant moves the NULL-score rows from the front to the back" do
+      {mod, sites} =
+        build("""
+        defmodule Q do
+          import Ecto.Query
+          alias MyApp.User
+          def q, do: from(u in User, order_by: [asc_nulls_first: u.score], select: u.id)
+        end
+        """)
+
+      {baseline, mutant} = observe_rows(mod, sites, {~r/asc_nulls_first/, ~r/asc_nulls_last/})
+
+      # Baseline: the NULL scores (Bob 2, Dave 4) lead, then 0 (Eve), 50 (Carol), 70 (Frank), 100 (Alice).
+      assert baseline |> Enum.take(2) |> Enum.sort() == [2, 4]
+      assert Enum.drop(baseline, 2) == [5, 3, 6, 1]
+
+      # Mutant: same non-NULL ascent, the NULL rows now trail.
+      assert Enum.take(mutant, 4) == [5, 3, 6, 1]
+      assert mutant |> Enum.drop(4) |> Enum.sort() == [2, 4]
+    end
+  end
+
   describe "Bound — drop (whole-`from`) / bump (pin-only weave) of `limit`" do
     test "dropping the limit returns the whole table; +1 widens the window by one row" do
       {mod, sites} =
@@ -811,6 +889,40 @@ defmodule Mutare.Ecto.SemanticTest do
     end
   end
 
+  describe "JoinType — inner → full (dialect-gated, `dialects: [:sqlite]`)" do
+    # The dialect gate's first liveness proof. `dialects: [:sqlite]` enables the *→FULL swap
+    # (SQLite ≥ 3.39 ships FULL JOIN), and FULL keeps orphans from *both* sides: the orphan post
+    # (user_id 99) and every post-less user — strictly more than the LEFT mutant would.
+    test "the full-join mutant keeps both sides' orphans" do
+      # Runtime-guarded rather than tag-skipped: the CI matrix pins the adapter (and its bundled
+      # SQLite) per Ecto line, and an engine below 3.39 rejects FULL JOIN at query time — which
+      # would be an engine limitation, not a delivery failure.
+      if sqlite_version() >= {3, 39} do
+        {mod, sites} =
+          H.compile(
+            """
+            defmodule Q do
+              import Ecto.Query
+              alias MyApp.{Post, User}
+              def q do
+                from p in Post, join: u in User, on: u.id == p.user_id, select: {p.id, u.id}
+              end
+            end
+            """,
+            mutators: [{Mutare.Ecto, repo: MyApp.Repo, dialects: [:sqlite]}]
+          )
+
+        {baseline, mutant} =
+          observe_ids(mod, sites, {~r/join: u in User/, ~r/full_join: u in User/})
+
+        # Inner join: only the matched pairs.
+        assert baseline == [{1, 1}, {2, 2}]
+        # Full join adds the orphan post (P3 → no user) and the four post-less users.
+        assert mutant == [{1, 1}, {2, 2}, {3, nil}, {nil, 3}, {nil, 4}, {nil, 5}, {nil, 6}]
+      end
+    end
+  end
+
   describe "Combination — `intersect` ↔ `except` (whole-`from` clause key)" do
     # `A INTERSECT B` and `A EXCEPT B` partition the left query's rows (A∩B vs A∖B are disjoint), so
     # the swap flips the result to the *other* side of the partition — impossible to confuse with an
@@ -929,6 +1041,36 @@ defmodule Mutare.Ecto.SemanticTest do
         """)
 
       assert ids(mod, 0) == [1]
+    end
+  end
+
+  describe "Join `on:` — a hosted condition of a standalone join (keyword-option weave)" do
+    # The one splice shape without a liveness proof until now: a standalone/pipe join's sole
+    # `on:` option is woven through `Target.keyword_condition` (the selector spliced *inside*
+    # the trailing keyword list), a different transform than the from-clause and condition
+    # weaves proven above. The nearby assoc-join test observes only the baseline.
+    test "the >= mutant of the on-condition admits the boundary post" do
+      {mod, sites} =
+        build("""
+        defmodule Q do
+          import Ecto.Query
+          alias MyApp.{Post, User}
+
+          def q do
+            User
+            |> where([u], u.id == 1)
+            |> join(:inner, [u], p in Post, on: p.views > 10)
+            |> select([u, p], p.id)
+          end
+        end
+        """)
+
+      {baseline, mutant} = observe_ids(mod, sites, {"p.views > 10", "p.views >= 10"})
+
+      # Baseline: user 1 joined to the posts with views strictly over 10 — only P2 (20).
+      assert baseline == [2]
+      # The `>=` mutant admits the boundary post P1 (views 10) into the join.
+      assert mutant == [1, 2]
     end
   end
 
@@ -1083,6 +1225,121 @@ defmodule Mutare.Ecto.SemanticTest do
       reset_accounts!()
       assert raises?(fn -> H.activate(flip, fn -> mod.upsert() end) end)
       assert account_name() == "Original"
+    end
+  end
+
+  describe "RepoAggregate — `Repo.aggregate(q, :sum, :age)` → `:avg` (Repo call, value-observed)" do
+    # A Bucket-1 plain-call family: no query weave, the aggregate *atom* is swapped in the call.
+    # Observed through the computed value — the sum of the six ages vs their average — so an
+    # unswapped atom (a dead in-place selector) fails on the exact number.
+    test "the :avg mutant computes the average where the baseline sums" do
+      {mod, sites} =
+        build("""
+        defmodule Q do
+          alias MyApp.{Repo, User}
+          def total, do: Repo.aggregate(User, :sum, :age)
+        end
+        """)
+
+      swap = site_id(sites, {~r/:sum/, ~r/:avg/})
+
+      # Baseline: 18 + 25 + 17 + 18 + 40 + 19.
+      assert H.activate(0, fn -> mod.total() end) == 137
+
+      # Mutant: the same column's average (adapter-typed — float on SQLite, Decimal elsewhere).
+      assert_in_delta to_number(H.activate(swap, fn -> mod.total() end)), 137 / 6, 0.001
+    end
+  end
+
+  describe "QueryTerminal — `first` ↔ `last` (plain Ecto.Query function)" do
+    # `first(q, :age)` orders ascending and takes one row; the `last` mutant reverses the order.
+    # Ages 17 (Carol) and 40 (Eve) are unique at both edges, so each side pins one exact row.
+    test "the last mutant returns the opposite edge of the ordering" do
+      {mod, sites} =
+        build("""
+        defmodule Q do
+          import Ecto.Query
+          alias MyApp.{Repo, User}
+          def edge, do: Repo.one(first(User, :age))
+        end
+        """)
+
+      swap = site_id(sites, {~r/first\(User/, ~r/last\(User/})
+
+      assert H.activate(0, fn -> mod.edge() end).id == 3
+      assert H.activate(swap, fn -> mod.edge() end).id == 5
+    end
+  end
+
+  describe "Persistence — `Repo.insert` → `apply_action` (Repo write, absence-observed)" do
+    # The headline write mutation: the mutant preserves the `{:ok, struct}` shape while skipping
+    # the write entirely, so it is killed only by asserting a *persistence consequence*. Both
+    # halves observed: the baseline assigns an id and leaves a row; the mutant returns ok with a
+    # nil id and leaves no row.
+    @insert_src """
+    defmodule W do
+      alias MyApp.{Account, Repo}
+      def create, do: Repo.insert(%Account{email: "new@x", name: "Fresh"})
+    end
+    """
+
+    test "the apply_action mutant returns {:ok, _} without writing the row" do
+      {mod, sites} =
+        H.compile(@insert_src,
+          mutators: [{Mutare.Ecto, repo: MyApp.Repo, families: [:persistence]}]
+        )
+
+      swap = site_id(sites, {~r/Repo\.insert/, ~r/apply_action/})
+
+      # Baseline: a real INSERT — id assigned, row present.
+      reset_accounts!()
+      assert {:ok, %MyApp.Account{id: id}} = H.activate(0, fn -> mod.create() end)
+      assert is_integer(id)
+      assert %MyApp.Account{name: "Fresh"} = account("new@x")
+
+      # Mutant: the same ok-shaped result, but nothing reached the table.
+      reset_accounts!()
+      assert {:ok, %MyApp.Account{id: nil}} = H.activate(swap, fn -> mod.create() end)
+      refute account("new@x")
+    end
+  end
+
+  describe "ValidationDrop — a dropped `validate_required` admits the write it rejected" do
+    # The changeset stage drop, observed through the write it gates: with `:name` missing the
+    # baseline pipeline returns `{:error, changeset}` and inserts nothing; the mutant (validator
+    # stage dropped to identity) passes the changeset through valid and the insert lands.
+    @validated_src """
+    defmodule W do
+      import Ecto.Changeset
+      alias MyApp.{Account, Repo}
+
+      def create(attrs) do
+        %Account{}
+        |> cast(attrs, [:email, :name])
+        |> validate_required([:name])
+        |> Repo.insert()
+      end
+    end
+    """
+
+    test "the dropped validator lets an invalid insert through" do
+      {mod, sites} =
+        H.compile(@validated_src,
+          mutators: [{Mutare.Ecto, repo: MyApp.Repo, families: [:validation_drop]}]
+        )
+
+      drop = site_id(sites, {~r/validate_required/, ~r/identity/})
+      attrs = %{"email" => "v@x"}
+
+      # Baseline: the validator rejects the nameless changeset — no row.
+      reset_accounts!()
+      assert {:error, %Ecto.Changeset{valid?: false}} = H.activate(0, fn -> mod.create(attrs) end)
+      refute account("v@x")
+
+      # Mutant: the pipeline no longer validates — the insert succeeds and the row lands.
+      reset_accounts!()
+      assert {:ok, %MyApp.Account{}} = H.activate(drop, fn -> mod.create(attrs) end)
+      assert %MyApp.Account{name: nil} = account("v@x")
     end
   end
 
