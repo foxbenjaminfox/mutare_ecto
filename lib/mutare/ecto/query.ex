@@ -156,11 +156,25 @@ defmodule Mutare.Ecto.Query do
   # compiles (it reuses the surviving clauses). Used for both the filter drops (where/having,
   # tagged `:filter_drop`) and the bound drops (limit/offset, tagged `:bound`).
   defp drops(call, source, %KeywordList{entries: entries} = clauses, family) do
-    for {%Entry{key: key}, index} <- Enum.with_index(entries),
-        Surface.from_drop_family(key) == family do
-      {family, rebuild_from(call, source, KeywordList.delete(clauses, index))}
+    for {%Entry{} = entry, index} <- Enum.with_index(entries),
+        Surface.from_drop_family(entry.key) == family do
+      {family, rebuild_from(call, source, drop_clause(clauses, entry, index))}
     end
   end
+
+  # Dropping a `limit:` takes an immediately-following `with_ties:` with it: Ecto validates the
+  # adjacency at expansion time ("`with_ties` keyword must immediately follow a limit"), so a
+  # dangling `with_ties:` would fail the metamutant *build* — poisoning every mutant in the file —
+  # rather than yield a live one. The pair is one syntactic unit (the tie mode qualifies the
+  # limit), so removing the limit removes its tie mode as the same single mutant.
+  defp drop_clause(%KeywordList{entries: entries} = clauses, %Entry{key: :limit}, index) do
+    case Enum.at(entries, index + 1) do
+      %Entry{key: :with_ties} -> KeywordList.delete(clauses, [index, index + 1])
+      _other -> KeywordList.delete(clauses, index)
+    end
+  end
+
+  defp drop_clause(clauses, _entry, index), do: KeywordList.delete(clauses, index)
 
   # Bump each `limit`/`offset` whose value is a literal integer by `±1` (non-negative only).
   # A `^pinned`/expression bound has no literal here, so it yields nothing — its value is

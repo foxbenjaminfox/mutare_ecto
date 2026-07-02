@@ -601,6 +601,70 @@ defmodule Mutare.Ecto.FragmentTest do
       # \"second argument is structural\".
       assert mutants("foo(u.x, :active)") == MapSet.new(["foo(u.x, :mutare)"])
     end
+
+    test "field/2's column name (arg 1) is never mutated — only the surrounding condition" do
+      # `field(u, :mutare)` is a wrong (usually nonexistent) column — a broken query, not a
+      # live mutant. The comparison and its data literal keep their ordinary treatment.
+      assert mutants("field(u, :views) > 10") ==
+               MapSet.new([
+                 "field(u, :views) >= 10",
+                 "field(u, :views) > 11",
+                 "field(u, :views) > 9",
+                 "field(u, :views) > 0"
+               ])
+    end
+
+    test "as/parent_as binding names (arg 0) are never mutated" do
+      # A mutated binding name is an unknown-binding error at query build. Bare calls pin the
+      # registry entries directly (in real source the calls are usually dot-accessed, whose
+      # form the catalog never descends — the registry is the net for every other position).
+      assert mutants("as(:posts)") == MapSet.new([])
+      assert mutants("parent_as(:posts)") == MapSet.new([])
+    end
+
+    test "selected_as/1's alias name (arg 0) is never mutated — a having over an alias is safe" do
+      # `selected_as(:mutare)` references an alias no select defined — an unknown-alias error,
+      # not a mutant. The comparison around it keeps its full treatment.
+      assert mutants("selected_as(:total) > 2") ==
+               MapSet.new([
+                 "selected_as(:total) >= 2",
+                 "selected_as(:total) > 3",
+                 "selected_as(:total) > 1",
+                 "selected_as(:total) > 0"
+               ])
+    end
+
+    test "a JSON bracket path mutates as data, except an index never goes negative" do
+      # Path keys/indices select which JSON element the SQL reads — a different path differs
+      # exactly on rows carrying the original one, so they are ordinary data. But Ecto's path
+      # validator accepts only literal strings and integers, and a negative integer renders as
+      # unary minus (`-(1)`), rejected at expansion — a poisoned build, so the `pred` bump of
+      # `0` is suppressed while `succ` (and the string mutants) survive.
+      assert mutants(~s|u.meta["k"][0] == 5|) ==
+               MapSet.new([
+                 ~s|u.meta["k"][0] != 5|,
+                 ~s|u.meta[""][0] == 5|,
+                 ~s|u.meta["mutare"][0] == 5|,
+                 ~s|u.meta["k"][1] == 5|,
+                 ~s|u.meta["k"][0] == 6|,
+                 ~s|u.meta["k"][0] == 4|,
+                 ~s|u.meta["k"][0] == 0|
+               ])
+    end
+
+    test "json_extract_path's written path list follows the same rule as bracket access" do
+      # The list's elements inherit the path-argument position, so an integer element keeps
+      # only its non-negative mutants while string elements mutate as usual.
+      assert mutants(~s|json_extract_path(u.meta, ["a", 0]) == "x"|) ==
+               MapSet.new([
+                 ~s|json_extract_path(u.meta, ["a", 0]) != "x"|,
+                 ~s|json_extract_path(u.meta, ["", 0]) == "x"|,
+                 ~s|json_extract_path(u.meta, ["mutare", 0]) == "x"|,
+                 ~s|json_extract_path(u.meta, ["a", 1]) == "x"|,
+                 ~s|json_extract_path(u.meta, ["a", 0]) == ""|,
+                 ~s|json_extract_path(u.meta, ["a", 0]) == "mutare"|
+               ])
+    end
   end
 
   # The binding-reorder is no longer an in-fragment (catalog) mutation: it swaps a written binding

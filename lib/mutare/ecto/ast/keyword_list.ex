@@ -62,8 +62,18 @@ defmodule Mutare.Ecto.AST.KeywordList do
     to_ast(%__MODULE__{list | entries: entries})
   end
 
-  @doc "Render the list with the entry at `index` removed."
-  @spec delete(t(), non_neg_integer()) :: Macro.t()
+  @doc "Render the list with the entry at `index` (or entries at a list of indices) removed."
+  @spec delete(t(), non_neg_integer() | [non_neg_integer()]) :: Macro.t()
+  def delete(%__MODULE__{entries: entries} = list, indices) when is_list(indices) do
+    kept =
+      entries
+      |> Enum.with_index()
+      |> Enum.reject(fn {_entry, index} -> index in indices end)
+      |> Enum.map(fn {entry, _index} -> entry end)
+
+    to_ast(%__MODULE__{list | entries: kept})
+  end
+
   def delete(%__MODULE__{entries: entries} = list, index),
     do: to_ast(%__MODULE__{list | entries: List.delete_at(entries, index)})
 

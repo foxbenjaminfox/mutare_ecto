@@ -87,8 +87,10 @@ defmodule Mutare.Ecto.Fragment do
   A literal arm is also suppressed at a **structural position** of a known Ecto DSL form, where the
   literal shapes the SQL the builder emits rather than carrying data (mutating it yields a broken
   query, not a live mutant): the `fragment` template (arg 0), the interval unit of
-  `datetime_add`/`date_add` (arg 2) and `from_now`/`ago` (arg 1), and the cast type of `type/2`
-  (arg 1). The traversal threads each child's `{parent_form, arity, index}` down so the literal
+  `datetime_add`/`date_add` (arg 2) and `from_now`/`ago` (arg 1), the cast type of `type/2`
+  (arg 1), the column name of `field/2` (arg 1), the binding name of `as/1`/`parent_as/1`
+  (arg 0), and the alias name of `selected_as/1,2` (its last argument). The traversal threads each
+  child's `{parent_form, arity, index}` down so the literal
   arms can consult this small registry (`structural_position?/1`); data literals at every *other*
   position of those forms are still mutated.
 
@@ -284,7 +286,19 @@ defmodule Mutare.Ecto.Fragment do
   # never reaches here.
   defp do_mutants({:__block__, _meta, [lit]} = node, _opts, position)
        when is_integer(lit) or is_float(lit) or is_binary(lit) or is_atom(lit) do
-    if structural_position?(position), do: [], else: literal_mutants(node)
+    cond do
+      structural_position?(position) -> []
+      json_path_position?(position) -> json_path_mutants(node)
+      true -> literal_mutants(node)
+    end
+  end
+
+  # A Sourceror block wrapping a written list argument is transparent syntax: thread the incoming
+  # position through, so the list's elements keep the parent *call's* position (a
+  # `json_extract_path` path element must know it is one — see `json_path_position?/1`).
+  defp do_mutants({:__block__, meta, [list]}, opts, position) when is_list(list) do
+    for {family, mutated, label} <- do_mutants(list, opts, position),
+        do: {family, {:__block__, meta, [mutated]}, label}
   end
 
   # An operator/connective (atom form): offer its own swap (if any), then descend into its
@@ -301,15 +315,16 @@ defmodule Mutare.Ecto.Fragment do
   defp do_mutants({form, meta, args}, opts, _position) when is_list(args),
     do: lift(form, meta, args, opts)
 
-  # A plain list — the written right-hand side of an `in` (Sourceror wraps it as
-  # `{:__block__, …, [[…]]}`, whose block the atom-form clause descends into): descend per
-  # element, so an in-list literal is fragment SQL exactly like a bare one. Elements carry no
-  # structural position (`nil`) — the registry is keyed by call-argument positions.
-  defp do_mutants(list, opts, _position) when is_list(list) do
+  # A plain list — the written right-hand side of an `in`, or a `json_extract_path` path
+  # (Sourceror wraps it as `{:__block__, …, [[…]]}`, whose block the transparent clause above
+  # descends through): descend per element, so an in-list literal is fragment SQL exactly like a
+  # bare one. Elements inherit the *list's* position — the registry is keyed by call-argument
+  # positions, and a path element's constraints are the path argument's.
+  defp do_mutants(list, opts, position) when is_list(list) do
     list
     |> Enum.with_index()
     |> Enum.flat_map(fn {el, index} ->
-      for {family, mutated, label} <- do_mutants(el, opts, nil),
+      for {family, mutated, label} <- do_mutants(el, opts, position),
           do: {family, List.replace_at(list, index, mutated), label}
     end)
   end
@@ -374,6 +389,28 @@ defmodule Mutare.Ecto.Fragment do
   # `nil` and the already-sentinel atom carry no clean swap.
   defp literal_mutants(_node), do: []
 
+  # A literal in a **JSON path position** — a bracket-access key (`p.meta["k"]`, `p.tags[0]`) or
+  # a `json_extract_path` path element — selects which JSON element the SQL reads: ordinary data
+  # (a different path differs exactly on rows carrying the original one), *except* that Ecto's
+  # path validator accepts only literal strings and literal integers, and a negative integer
+  # renders as unary minus (`-1` is `-(1)` in the AST) — rejected at expansion, which would
+  # poison the whole metamutant build. So an integer index keeps only its non-negative mutants;
+  # every other literal kind mutates as usual.
+  defp json_path_mutants({:__block__, _meta, [int]}) when is_integer(int) do
+    [{int + 1, "succ"}, {int - 1, "pred"}, {0, "zero"}]
+    |> Enum.filter(fn {value, _kind} -> value >= 0 end)
+    |> value_mutants(int, :integer_literal)
+  end
+
+  defp json_path_mutants(node), do: literal_mutants(node)
+
+  # The JSON path positions: the key argument of a bracket access (the parser desugars `x[k]`
+  # to a dot-call on the bare `Access` atom) and the path argument of `json_extract_path/2`
+  # (whose written list's elements inherit the position — see the list clause).
+  defp json_path_position?({{:., _, [Access, :get]}, 2, 1}), do: true
+  defp json_path_position?({:json_extract_path, 2, 1}), do: true
+  defp json_path_position?(_position), do: false
+
   # A *small registry* of known Ecto DSL forms and the argument positions whose literal is
   # *structural* — part of the SQL the query builder emits, not data — keyed off the
   # `{parent_form, arity, index}` threaded down from `lift/4`. The top-level condition has no
@@ -385,12 +422,24 @@ defmodule Mutare.Ecto.Fragment do
   #   * `from_now(_, interval)`        — arg 1 is the interval unit
   #   * `ago(_, interval)`             — arg 1 is the interval unit
   #   * `type(_, type)`                — arg 1 is the cast type
+  #   * `field(_, name)`               — arg 1 is the column name (a mutated name is a wrong —
+  #                                      usually nonexistent — column, not a live mutant)
+  #   * `as(name)` / `parent_as(name)` — arg 0 names a query binding (a mutated name is an
+  #                                      unknown-binding error at query build)
+  #   * `selected_as(name)` /
+  #     `selected_as(_, name)`         — the last arg names a select alias (a mutated name is an
+  #                                      unknown-alias error at query build)
   defp structural_position?({:fragment, _arity, 0}), do: true
   defp structural_position?({:datetime_add, 3, 2}), do: true
   defp structural_position?({:date_add, 3, 2}), do: true
   defp structural_position?({:from_now, 2, 1}), do: true
   defp structural_position?({:ago, 2, 1}), do: true
   defp structural_position?({:type, 2, 1}), do: true
+  defp structural_position?({:field, 2, 1}), do: true
+  defp structural_position?({:as, 1, 0}), do: true
+  defp structural_position?({:parent_as, 1, 0}), do: true
+  defp structural_position?({:selected_as, 1, 0}), do: true
+  defp structural_position?({:selected_as, 2, 1}), do: true
   defp structural_position?(_position), do: false
 
   # The atom-form node's own single swap, tagged by family **and** by the operator it swaps (the
