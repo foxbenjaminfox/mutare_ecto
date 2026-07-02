@@ -8,7 +8,7 @@ defmodule Mutare.Ecto.Host.JoinOn do
   # `^dynamic` operand is rejected ("dynamic expressions can only be interpolated at the top level of
   # where, having, group_by, order_by, select, update or a join's on"). A `where:`/`having:` clause
   # never hits this — each is its own independent `BooleanExpr`, so its `^dynamic` *is* top-level — so
-  # only `on:` needs the guard (`BUG-multi-condition-join-on.md`).
+  # only `on:` needs the guard.
   #
   # Skipping a non-hostable `on:` drops only the in-fragment operator mutants on that one condition;
   # the whole-`from` families (JoinType, the join's clause drop) still apply to it.
