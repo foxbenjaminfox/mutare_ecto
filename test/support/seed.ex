@@ -12,6 +12,9 @@ defmodule MyApp.Seed do
   #   * NullPredicate is_nil(score)    — Bob/Dave have NULL score; others don't.
   #   * Connective and↔or              — `active and age > 18` vs `or` admit different rows.
   #   * Membership in↔not in (role)    — role ∈ {admin, mod} vs its complement.
+  #   * Arithmetic +↔- / *↔/ (age, score) — Alice's score (100) lifts `age + score` over 100 where
+  #                                      the difference falls short; `age * 2 > 40` keeps Bob/Eve
+  #                                      where the (integer-)division mutant keeps nobody.
   #   * Ordering asc↔desc (age)        — youngest vs oldest sorts to the top.
   #   * Bound limit/offset             — a `limit: 2` window shifts when dropped/bumped.
   #   * JoinType inner↔left            — post P3's `user_id` matches no user (orphan).

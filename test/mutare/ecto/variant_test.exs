@@ -35,10 +35,12 @@ defmodule Mutare.Ecto.VariantTest do
       assert Enum.all?(Mutare.Ecto.families(), &(&1 in variants))
 
       # ...and so is each operator/value kind the swap and value families add — in-fragment
-      # (comparison/connective/null-predicate/literal)...
+      # (comparison/connective/arithmetic/null-predicate/literal)...
       assert "<" in variants
       assert ">" in variants
       assert "and" in variants
+      assert "+" in variants
+      assert "/" in variants
       assert "is_nil" in variants
       assert "zero" in variants
 

@@ -17,7 +17,8 @@ defmodule Mutare.Ecto.Config do
   # validating a configured subset. Grouped by the surface they mutate:
   #
   #   * in-fragment (`where`/`having`, via the host): comparison, connective, null_predicate,
-  #     membership, integer_literal, float_literal, atom_literal, string_literal, boolean_literal;
+  #     membership, arithmetic, integer_literal, float_literal, atom_literal, string_literal,
+  #     boolean_literal;
   #   * binding_reorder — a positional binding transposition (`[a, b]` → `[b, a]`), delivered **in
   #     place** by swapping the written list: `Mutare.Ecto.BindingReorder` for every standalone/pipe
   #     binding-list macro (`where`/`having`/`select`/`order_by`/`join`/…) and `Mutare.Ecto.Query` for
@@ -33,7 +34,7 @@ defmodule Mutare.Ecto.Config do
   #     `:replace_all`→`:nothing`);
   #   * changeset: validation_drop (validators/constraints), hook_drop (prepare_changes/optimistic_lock).
   @families ~w(
-    comparison connective null_predicate membership binding_reorder
+    comparison connective null_predicate membership arithmetic binding_reorder
     integer_literal float_literal atom_literal string_literal boolean_literal
     filter_drop ordering ordering_nulls bound join_type aggregate query_terminal clause_drop
     persistence on_conflict validation_drop hook_drop
@@ -65,6 +66,7 @@ defmodule Mutare.Ecto.Config do
           | :connective
           | :null_predicate
           | :membership
+          | :arithmetic
           | :binding_reorder
           | :integer_literal
           | :float_literal
@@ -102,6 +104,12 @@ defmodule Mutare.Ecto.Config do
   #     neither true nor false.
   #   * `:null_predicate` (`@null_predicate_note`) — `is_nil`↔`not is_nil`. Complementary row sets,
   #     told apart only by which rows are NULL.
+  #   * `:arithmetic` — two sub-cases, by the operator swapped. `+`↔`-` compute the same value
+  #     exactly when the right operand is 0 — the shared identity — so an all-zero column makes the
+  #     swap equivalent (`@arithmetic_additive_note`); `*`↔`/` coincide when the right operand is ±1
+  #     or the left is 0 (`@arithmetic_multiplicative_note`) — a zero *divisor*, by contrast, makes
+  #     the swapped query raise, which is a kill, not an equivalence. `equivalence_note/2` picks
+  #     between them from the finer operator label, like `:comparison`.
   #   * `:ordering_nulls` (`@ordering_nulls_note`) — `*_nulls_first`↔`*_nulls_last`. Not three-valued
   #     logic at all but NULL *ordering*: the placement only shows when the ordered column holds NULL
   #     rows.
@@ -118,17 +126,21 @@ defmodule Mutare.Ecto.Config do
   @comparison_equality_note "kill may require a non-NULL row — == and != differ on every concrete value but both exclude NULLs (compared as unknown), so they coincide only when every row is NULL"
   @connective_note "kill may require a row where the operands disagree — and/or coincide while both operands are true or both false on every row (SQL three-valued logic: a NULL operand is unknown, neither)"
   @null_predicate_note "kill may require NULL data in the column — is_nil and not is_nil keep complementary row sets, told apart only by which rows are NULL"
+  @arithmetic_additive_note "kill may require a row whose right operand is nonzero — a + b and a - b compute the same value exactly when b is 0 (the identity of both)"
+  @arithmetic_multiplicative_note "kill may require a row whose right operand is not ±1 (with a nonzero left) — a * b and a / b coincide there, while a zero divisor raises (a kill, not an equivalence)"
   @ordering_nulls_note "kill may require NULL rows in the ordered column — nulls_first and nulls_last only change where NULLs sort, ordering all other rows identically"
   @join_note "kill may require an orphan row — a preserved-side row with no match (join kinds coincide when every row matches)"
 
   # The note for each equivalence-sensitive family; the single source of truth for the set (a family
   # is equivalence-sensitive iff it appears here). `equivalence_sensitive_families/0` derives the
-  # ordered set by filtering `@families`. `:comparison` maps to its boundary note as the default;
-  # `equivalence_note/2` overrides it with `@comparison_equality_note` for an `==`/`!=` swap.
+  # ordered set by filtering `@families`. `:comparison` and `:arithmetic` map to their default
+  # sub-case notes; `equivalence_note/2` overrides them with `@comparison_equality_note` for an
+  # `==`/`!=` swap and `@arithmetic_multiplicative_note` for a `*`/`/` swap.
   @equivalence_notes %{
     comparison: @comparison_boundary_note,
     connective: @connective_note,
     null_predicate: @null_predicate_note,
+    arithmetic: @arithmetic_additive_note,
     ordering_nulls: @ordering_nulls_note,
     join_type: @join_note
   }
@@ -196,14 +208,18 @@ defmodule Mutare.Ecto.Config do
   @doc """
   The report note for a `family`'s mutants — a string for an equivalence-sensitive family
   (surfaced on each such mutant's Site), or `nil` for an ordinary family (a bare mutant). The
-  optional `finer` operator label refines `:comparison`: an `==`/`!=` swap reads the NULL-exclusion
-  note, every other comparison the boundary note.
+  optional `finer` operator label refines the two-sub-case families: an `==`/`!=` swap reads
+  `:comparison`'s NULL-exclusion note (every other comparison the boundary note), and a `*`/`/`
+  swap reads `:arithmetic`'s multiplicative-identity note (a `+`/`-` swap the additive one).
   """
   @spec equivalence_note(family(), Mutation.variant()) :: String.t() | nil
   def equivalence_note(family, finer \\ nil)
 
   def equivalence_note(:comparison, finer) when finer in ["==", "!="],
     do: @comparison_equality_note
+
+  def equivalence_note(:arithmetic, finer) when finer in ["*", "/"],
+    do: @arithmetic_multiplicative_note
 
   def equivalence_note(family, _finer), do: Map.get(@equivalence_notes, family)
 

@@ -77,6 +77,7 @@ the query still compiles once and the active mutant is chosen at build time:
 | `null_predicate` | `is_nil(u.x)` → `not is_nil(u.x)` | Is the `NULL` case tested? |
 | `connective` | `a and b` → `a or b` | Does any row distinguish the two? |
 | `membership` | `x in ^list` → `x not in ^list`; `like` → `ilike` | Polarity / case-sensitivity |
+| `arithmetic` | `u.a + u.b` → `u.a - u.b`; `*` ↔ `/` | Does the computed value matter? |
 | `integer_literal` | `u.age > 18` → `19` / `17` / `0` | Off-by-one in an integer literal |
 | `float_literal` | `u.score > 2.5` → `3.5` / `1.5` / `0.0` | Off-by-one in a float literal |
 | `string_literal` † | `u.name == "ok"` → `""` / `"mutare"` | Is the string value tested? |
@@ -167,7 +168,8 @@ and gives each a note naming the **specific** data a kill needs, so the report r
 ```
 
 The reasons are distinct — a boundary value, NULL exclusion (`==`/`!=`), three-valued `and`/`or`,
-NULL ordering, join cardinality — so the notes are too, rather than one catch-all string.
+an arithmetic identity operand (0 for `+`/`-`, ±1 for `*`/`/`), NULL ordering, join cardinality —
+so the notes are too, rather than one catch-all string.
 
 `Mutare.Ecto.equivalence_sensitive_families/0` returns that set, and with `as:` you can group them
 under their own report name to separate "needs a boundary fixture" from "needs any test at all":

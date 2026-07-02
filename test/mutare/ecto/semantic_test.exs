@@ -294,6 +294,54 @@ defmodule Mutare.Ecto.SemanticTest do
     end
   end
 
+  describe "Arithmetic — `+` ↔ `-` (dynamic-injected)" do
+    # `u.age + u.score > 100` vs `u.age - u.score > 100` differ on any row whose score is nonzero;
+    # the NULL-score rows (Bob, Dave) drop out of both — the swap changes the computed value, never
+    # a row's NULL-ness. If the injected dynamic were inert, the mutant would return the baseline.
+    test "flipping the sum to a difference drops the row the score lifted over the bound" do
+      {mod, sites} =
+        build("""
+        defmodule Q do
+          import Ecto.Query
+          alias MyApp.User
+          def q, do: from(u in User, where: u.age + u.score > 100, select: u.id)
+        end
+        """)
+
+      baseline = ids(mod, 0)
+      mutant = ids(mod, site_id(sites, {"u.age + u.score > 100", "u.age - u.score > 100"}))
+
+      # Baseline: only Alice clears 100 (18 + 100 = 118); Carol 67, Eve 40 (score 0 — the additive
+      # identity: she is unmoved by the swap), Frank 89.
+      assert baseline == [1]
+      # `-`: Alice falls to -82 — nothing clears 100.
+      assert mutant == []
+    end
+  end
+
+  describe "Arithmetic — `*` ↔ `/` (dynamic-injected)" do
+    # `u.age * 2 > 40` vs `u.age / 2 > 40`: the division mutant runs the *database's* `/` —
+    # SQLite's integer division truncates — so the bar effectively moves from age > 20 to age > 80.
+    test "flipping the product to a quotient raises the effective bound past every row" do
+      {mod, sites} =
+        build("""
+        defmodule Q do
+          import Ecto.Query
+          alias MyApp.User
+          def q, do: from(u in User, where: u.age * 2 > 40, select: u.id)
+        end
+        """)
+
+      baseline = ids(mod, 0)
+      mutant = ids(mod, site_id(sites, {"u.age * 2 > 40", "u.age / 2 > 40"}))
+
+      # Baseline: ages over 20 — Bob (25), Eve (40).
+      assert baseline == [2, 5]
+      # `/ 2 > 40` needs age > 80 — no row qualifies.
+      assert mutant == []
+    end
+  end
+
   describe "binding-reorder — swap two author-written binding refs (in place)" do
     # The reorder swaps the **author-written** positional list in place — a `where([a, b], …)` whose
     # `[a, b]` the author could have transposed becomes `where([b, a], …)`, leaving the condition body

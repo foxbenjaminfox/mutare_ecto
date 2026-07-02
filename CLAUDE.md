@@ -130,7 +130,7 @@ The surface divides by **how a mutation is delivered**, not by what it mutates:
 | `host/catalog.ex` | The enabled, noted logical mutants for one hosted condition (Fragment + Aggregate) |
 | `host/join_on.ex` | Which join `on:` conditions are safe to host: only a join's **sole, top-level** on-expression (not a multi-`on:` or `assoc` join, whose conditions Ecto folds into one `and` where a `^dynamic` operand is illegal) |
 | `host/target.ex` | The `dynamic`-wrap + `^`-pin + splice transforms consumed by core |
-| `fragment.ex` | The **SQL-semantics catalog** for `where`/`having` conditions (Comparison, Connective, NullPredicate, Membership, the literal arms IntegerLiteral/FloatLiteral/StringLiteral/AtomLiteral/BooleanLiteral) |
+| `fragment.ex` | The **SQL-semantics catalog** for `where`/`having` conditions (Comparison, Connective, NullPredicate, Membership, Arithmetic, the literal arms IntegerLiteral/FloatLiteral/StringLiteral/AtomLiteral/BooleanLiteral) |
 | `ast/query_call.ex` / `ast/binding_list.ex` / `ast/keyword_list.ex` | Normalized query-call, binding-list, and keyword/clause-list values; preserve written form while centralizing validation and reconstruction |
 | `binding.ex` | Primitive binding-entry vocabulary (`variable?`/`ellipsis?`/`entry?`) used by the normalized binding list |
 | `binding_reorder.ex` | Positional binding-reorder (`[a, b]`→`[b, a]`) for **every** standalone/pipe binding-list macro — `where`/`having` included — delivered **in-place** by swapping the written list (never the condition body). A `from` binding-list *source* (`[a, b] in q`) reorders at the whole-`from` level (`query.ex`) instead. Reorders only eligible positional entries in the list the **author wrote** — never a synthesized list, a named binding, or an `_`-prefixed binding |
@@ -158,16 +158,18 @@ literal at a known DSL form's structural argument. `dialects:` gates non-portabl
 mutations (`like`↔`ilike` under `:postgres`; `LEFT`↔`RIGHT` join under `:postgres`/`:mysql` —
 SQLite lacks `RIGHT JOIN`). Multi-repo and per-family report naming fall out of Mutare's `:as`
 convention (list the plugin twice). The **equivalence-sensitive** families (`:comparison`,
-`:connective`, `:null_predicate`, `:ordering_nulls`) carry a report `note` — a survivor reads
+`:connective`, `:null_predicate`, `:arithmetic`, `:ordering_nulls`, `:join_type`) carry a report
+`note` — a survivor reads
 `… kill may require …` — because their unkillability can be honest signal (a data gap, not a test
 gap). Each family's note names the **specific** data a kill needs, because the reasons differ: a
 boundary row (`:comparison` ordering swaps), a non-NULL row (`:comparison` `==`/`!=`), a disagreeing
-row under three-valued logic (`:connective`), or NULL rows in the column (`:null_predicate`,
-`:ordering_nulls`). `Config.equivalence_note/2` resolves the note (refining `:comparison` by the
-swapped operator). The note rides onto the `Site` via `Config.enrich/3` (wrapping the node in a
-`%Mutare.Mutator.Mutation{}`), which core accepts on **both** delivery paths — so the three
-in-fragment families surface it through the host and `:ordering_nulls` through its `mutate/2`
-rewrite.
+row under three-valued logic (`:connective`), NULL rows in the column (`:null_predicate`,
+`:ordering_nulls`), or an operand off the operation's identity (`:arithmetic` — 0 for `+`/`-`, ±1
+for `*`/`/`). `Config.equivalence_note/2` resolves the note (refining `:comparison` and
+`:arithmetic` by the swapped operator). The note rides onto the `Site` via `Config.enrich/3`
+(wrapping the node in a `%Mutare.Mutator.Mutation{}`), which core accepts on **both** delivery
+paths — so the in-fragment families surface it through the host and `:ordering_nulls`/`:join_type`
+through their `mutate/2` rewrites.
 
 ## Conventions and gotchas
 

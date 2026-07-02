@@ -99,6 +99,40 @@ defmodule Mutare.Ecto.FragmentTest do
     end
   end
 
+  describe "Arithmetic" do
+    test "each binary arithmetic operator offers its identity-pair swap" do
+      assert mutants("u.a + u.b") == MapSet.new(["u.a - u.b"])
+      assert mutants("u.a - u.b") == MapSet.new(["u.a + u.b"])
+      assert mutants("u.a * u.b") == MapSet.new(["u.a / u.b"])
+      assert mutants("u.a / u.b") == MapSet.new(["u.a * u.b"])
+    end
+
+    test "an arithmetic operand under a comparison is reached (one mutant per point)" do
+      # The comparison's swap and its right operand's arithmetic swap are separate single-point
+      # mutants; the pinned `^v` stays core's.
+      assert mutants("u.a + u.b > ^v") ==
+               MapSet.new(["u.a - u.b > ^v", "u.a + u.b >= ^v"])
+    end
+
+    test "a literal operand of an arithmetic node still gets its own literal mutants" do
+      assert mutants("u.total * 2 == ^v") ==
+               MapSet.new([
+                 "u.total / 2 == ^v",
+                 "u.total * 2 != ^v",
+                 "u.total * 3 == ^v",
+                 "u.total * 1 == ^v",
+                 "u.total * 0 == ^v"
+               ])
+    end
+
+    test "a unary minus is sign syntax, not arithmetic — never swapped" do
+      # A written negative number parses as the arity-1 `-` over the wrapped literal (Ecto has no
+      # unary `+` to swap it to); only the comparison swaps and the *inner* literal mutates.
+      assert mutants("u.x > -5") ==
+               MapSet.new(["u.x >= -5", "u.x > -6", "u.x > -4", "u.x > -0"])
+    end
+  end
+
   describe "family tags" do
     test "each mutant is tagged with the SQL family that produced it" do
       assert families("u.age > 18") == MapSet.new([:comparison, :integer_literal])
@@ -107,6 +141,8 @@ defmodule Mutare.Ecto.FragmentTest do
       assert families("u.status == :active") == MapSet.new([:comparison, :atom_literal])
       assert families("u.active == true") == MapSet.new([:comparison, :boolean_literal])
       assert families("u.a and u.b") == MapSet.new([:connective])
+      assert families("u.a + u.b") == MapSet.new([:arithmetic])
+      assert families("u.a / u.b") == MapSet.new([:arithmetic])
       assert families("is_nil(u.x)") == MapSet.new([:null_predicate])
       assert families("u.role in ^r") == MapSet.new([:membership])
       assert families("like(u.x, ^q)", dialects: [:postgres]) == MapSet.new([:membership])
@@ -339,6 +375,8 @@ defmodule Mutare.Ecto.FragmentTest do
       assert labels("u.age > v") == MapSet.new([">"])
       assert labels("u.x == u.y") == MapSet.new(["=="])
       assert labels("u.a and u.b") == MapSet.new(["and"])
+      assert labels("u.a + u.b") == MapSet.new(["+"])
+      assert labels("u.a * u.b") == MapSet.new(["*"])
     end
 
     test "the unit predicates label by their core operator (the wire-safe half)" do
@@ -362,7 +400,8 @@ defmodule Mutare.Ecto.FragmentTest do
           "u.r in ^v",
           "u.age > 18",
           ~s|u.s == "x"|,
-          "u.f > 2.5"
+          "u.f > 2.5",
+          "u.a + u.b > u.c * u.d"
         ]
         |> Enum.flat_map(&MapSet.to_list(labels(&1)))
         |> List.flatten()

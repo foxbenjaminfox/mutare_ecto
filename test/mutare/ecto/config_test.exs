@@ -239,6 +239,7 @@ defmodule Mutare.Ecto.ConfigTest do
                :comparison,
                :connective,
                :null_predicate,
+               :arithmetic,
                :ordering_nulls,
                :join_type
              ]
@@ -249,6 +250,7 @@ defmodule Mutare.Ecto.ConfigTest do
 
     test "the full family set is exposed" do
       assert :comparison in Mutare.Ecto.families()
+      assert :arithmetic in Mutare.Ecto.families()
       assert :validation_drop in Mutare.Ecto.families()
       assert :persistence in Mutare.Ecto.families()
       assert :on_conflict in Mutare.Ecto.families()
@@ -263,7 +265,7 @@ defmodule Mutare.Ecto.ConfigTest do
       assert :string_literal in Mutare.Ecto.families()
       assert :boolean_literal in Mutare.Ecto.families()
 
-      assert length(Mutare.Ecto.families()) == 22
+      assert length(Mutare.Ecto.families()) == 23
     end
 
     test "the default set is the full set minus the opt-in literal arms" do
@@ -427,6 +429,32 @@ defmodule Mutare.Ecto.ConfigTest do
       assert equality.note =~ "a non-NULL row"
 
       refute boundary.note == equality.note
+    end
+
+    test "the two arithmetic sub-cases carry different notes (additive vs multiplicative identity)" do
+      # `+`↔`-` survive when the right operand is always 0; `*`↔`/` when it is always ±1 (or the
+      # left always 0) — different fixtures, so each sub-case reads its own note, resolved from the
+      # finer operator label exactly as `:comparison`'s split is.
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q(v), do: from(u in User, where: u.a + u.b > ^v and u.a * u.b < ^v, select: u.id)
+      end
+      """
+
+      %Mutare.Transform.Result{mutants: sites} =
+        Mutare.transform_string(src,
+          mutators: [{Mutare.Ecto, repo: MyApp.Repo}],
+          expand_uses: true
+        )
+
+      additive = Enum.find(sites, &(&1.mutated_code =~ "u.a - u.b" and &1.mutator == :ecto))
+      assert additive.note =~ "right operand is nonzero"
+
+      multiplicative = Enum.find(sites, &(&1.mutated_code =~ "u.a / u.b" and &1.mutator == :ecto))
+      assert multiplicative.note =~ "not ±1"
+
+      refute additive.note == multiplicative.note
     end
 
     test "a non-hosted ordering_nulls mutant carries the note too (mutate/2 delivery)" do
