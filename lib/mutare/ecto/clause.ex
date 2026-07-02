@@ -36,7 +36,7 @@ defmodule Mutare.Ecto.Clause do
   pipe-mode bookkeeping is required.
   """
 
-  alias Mutare.Ecto.{Aggregate, AST, Combination, Config, Ordering, Scalar, Surface}
+  alias Mutare.Ecto.{Aggregate, AST, Combination, Ordering, Scalar, Surface}
   alias Mutare.Ecto.AST.QueryCall
 
   @behaviour Mutare.Ecto.SubMutator
@@ -75,15 +75,13 @@ defmodule Mutare.Ecto.Clause do
   # The shape all three clause-macro mutators share: split the mutated **last argument** off (the
   # ordering / bound / selector — `init` keeps the binding list when one is written), map it to
   # tagged mutants via `catalog`, and rebuild the call around each, keeping the source's written
-  # form. `Config.split_tag/1` normalizes the catalog's `{family, node}` / `{family, node, label}`
-  # shapes (ordering/aggregate carry a label, `bound_flips/1` does not), so the rebuilt entry threads
-  # the finer label through. The `args != []` guard in `mutations/2` makes the `[last]` destructure
-  # total.
+  # form. Every catalog emits uniform `{family, node, label}` triples (`bound_flips/1` with a `nil`
+  # label — no finer `# mutare:ignore` vocabulary), so the rebuilt entry threads the finer label
+  # through. The `args != []` guard in `mutations/2` makes the `[last]` destructure total.
   defp mutate_last(%QueryCall{args: args} = call, catalog) do
     {init, [last]} = Enum.split(args, -1)
 
-    for tag <- catalog.(last),
-        {family, mutated, label} = Config.split_tag(tag),
+    for {family, mutated, label} <- catalog.(last),
         do: {family, QueryCall.rebuild(call, init ++ [mutated]), label}
   end
 
@@ -98,13 +96,13 @@ defmodule Mutare.Ecto.Clause do
     end
   end
 
-  # `limit`/`offset` boundary bumps as `{:bound, literal}` pairs: bump a literal integer by `±1`
-  # (non-negative only). A `^pinned`/expression bound has no literal here, so it yields nothing —
-  # its value is mutated where it is bound, in ordinary Elixir.
+  # `limit`/`offset` boundary bumps as `{:bound, literal, nil}` triples: bump a literal integer by
+  # `±1` (non-negative only). A `^pinned`/expression bound has no literal here, so it yields
+  # nothing — its value is mutated where it is bound, in ordinary Elixir.
   defp bound_flips(value) do
     case AST.int_value(value) do
       nil -> []
-      n -> for bumped <- AST.bumps(n), do: {:bound, Mutare.AST.literal(bumped)}
+      n -> for bumped <- AST.bumps(n), do: {:bound, Mutare.AST.literal(bumped), nil}
     end
   end
 end

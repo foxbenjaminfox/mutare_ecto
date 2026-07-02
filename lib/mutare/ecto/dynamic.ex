@@ -83,8 +83,9 @@ defmodule Mutare.Ecto.Dynamic do
   end
 
   # The shared in-fragment catalogs, exactly the pair the hosted path composes
-  # (`Mutare.Ecto.Host.Catalog`) — but returned as raw tags: `Mutare.Ecto.mutate/2` applies the
-  # `families:` filter and the equivalence-note enrichment to every dispatched tag itself.
+  # (`Mutare.Ecto.Host.Catalog`) — returned as raw tags: `Mutare.Ecto.mutate/2` wraps every
+  # dispatched tag (`Config.tagged/1`) and core's finalize pass (`Mutare.Ecto.finalize/2`)
+  # applies the `families:` filter and the equivalence note.
   defp catalog(condition, config),
     do: Fragment.mutants(condition, config) ++ Aggregate.swaps(condition)
 

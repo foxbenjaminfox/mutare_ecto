@@ -53,8 +53,10 @@ analyzes `lib/`, not the test-only fixtures.
 checkout (until Mutare is published to Hex). Several features here required **new Mutare-core
 extensions** (the selector host, `:routing`/`:hosted` macro routing, `{:keyword, …}` per-pair
 routing, `:interpolated` in-place delivery, the `Site` `note` channel, the plugin-config toolkit —
-`c:Mutare.Mutator.init/1` + `use Mutare.Mutator.Families` — and `:mutators` threaded into the
-whole-call `mutate/2` offer of a registered macro, the free-standing-`dynamic` sub-contract seam). When a task needs core
+`c:Mutare.Mutator.init/1` + `use Mutare.Mutator.Families` — `:mutators` threaded into the
+whole-call `mutate/2` offer of a registered macro (the free-standing-`dynamic` sub-contract seam),
+and the `c:Mutare.Mutator.finalize/2`
+enrichment seam core runs on both delivery paths). When a task needs core
 machinery that doesn't exist yet, it is added to `../mutare`. Core's public test 
 surface for plugins is `Mutare.Test` (wrapped here by `Mutare.Ecto.TestSupport`).
 
@@ -99,8 +101,16 @@ hosting):
   `Config.parse!/1`; a typo'd option raises at startup, and core delivers the parsed `%Config{}`
   to every context-aware callback as `context.config`.
 - `mutate/2` — asks `Mutare.Ecto.Dispatcher` to classify the node and invoke only relevant
-  sub-mutators, then filters the resulting `{family, node}` pairs by the configured `families:`.
-  Everything runs through `mutate/2` because all mutations read `context.config`.
+  sub-mutators, then returns the resulting `{family, node}` pairs as tagged `Mutation`s
+  (`Config.tagged/1` — pure production, no filtering; a `Dynamic`-relayed producer-set `Mutation`
+  passes through as-is). Everything runs through `mutate/2` because all mutations read
+  `context.config`.
+- `finalize/2` (`Mutare.Mutator`, delegated to `Config.finalize/2`) — the one tag → filter →
+  enrich funnel: reads the mutation's leading variant label back as its SQL family, drops a
+  disabled family (`families:`), attaches the equivalence note. Core applies it to every produced
+  mutation on **both** delivery paths (a `mutate/2` return and a host target's `:mutants`), so no
+  delivery site can forget the filter or the note; a relayed island mutant (explicit `producer:`)
+  bypasses it — the producing core family's own funnel already ran.
 
 ### The three delivery buckets (the spine of the design)
 
@@ -135,14 +145,14 @@ The surface divides by **how a mutation is delivered**, not by what it mutates:
 
 | Module | Role |
 |---|---|
-| `ecto.ex` | `Mutare.Mutator` + `Mutare.MacroRouting` + `Mutare.Mutator.MacroHost` callbacks: parses config once via `init/1`, delegates node classification, filters by `families:`, applies the note |
+| `ecto.ex` | `Mutare.Mutator` + `Mutare.MacroRouting` + `Mutare.Mutator.MacroHost` callbacks: parses config once via `init/1`, delegates node classification; `finalize/2` filters by `families:` and applies the note |
 | `dispatcher.ex` | Classifies each node once and invokes only the sub-mutators relevant to that query macro, Ecto call, or configured Repo call |
 | `surface.ex` | Single descriptor table for every owned query macro and `from` key: routing kind, standalone mutation capabilities, stage/whole-`from` drop families, and hosted/binding/join capabilities |
 | `sub_mutator.ex` | The uniform `mutations(node, context)` behaviour implemented by each mutation producer |
 | `host.ex` | Selector-host **coordinator** (#3): turns a hosted call into `Target`s, delegating to the `host/*` parts below |
 | `host/routing.ex` | `route_arguments/2` — the per-argument routing classifier (`:hosted`/`:expression`/`:skip`/`:interpolated`/`{:keyword,…}`), over `treatments/1` |
 | `host/bindings.ex` | Interprets Ecto binding declarations and renders the binding list re-declared by a woven `dynamic/2` |
-| `host/catalog.ex` | The enabled, noted logical mutants for one hosted condition (Fragment + Aggregate), plus the core-produced island mutants sub-contracted per `^` pin (`Mutare.Analyze.expression_mutations/3`, relayed with `producer:`) — `subcontracted/3` is the shared seam, parameterized by delivery (`deliver`), so `dynamic.ex` relays through it too |
+| `host/catalog.ex` | The tagged logical mutants for one hosted condition (Fragment + Aggregate, filtered/noted later by `finalize/2`), plus the core-produced island mutants sub-contracted per `^` pin (`Mutare.Analyze.expression_mutations/3`, relayed with `producer:`) — `subcontracted/3` is the shared seam, parameterized by delivery (`deliver`), so `dynamic.ex` relays through it too |
 | `host/join_on.ex` | Which join `on:` conditions are safe to host: only a join's **sole, top-level** on-expression (not a multi-`on:` or `assoc` join, whose conditions Ecto folds into one `and` where a `^dynamic` operand is illegal) |
 | `host/target.ex` | The `dynamic`-wrap + `^`-pin + splice transforms consumed by core |
 | `fragment.ex` | The **SQL-semantics catalog** for `where`/`having` conditions (Comparison, Connective, NullPredicate, Membership, Arithmetic, Coalesce, Temporal, the literal arms IntegerLiteral/FloatLiteral/StringLiteral/AtomLiteral/BooleanLiteral) — stops at every `^` pin, whose interiors `islands/1` collects for the host's core sub-contract |
@@ -160,7 +170,7 @@ The surface divides by **how a mutation is delivered**, not by what it mutates:
 | `repo_call.ex` | Shared "resolve a call on the configured `repo:`" preamble for `repo_aggregate.ex`/`repo_write.ex` |
 | `stage_drop.ex` | Shared pipe-aware stage-drop delivery for `clause_drop.ex` and `changeset.ex` |
 | `changeset.ex` | Changeset pipeline drops (`:validation_drop`, `:hook_drop`) |
-| `config.ex` | `families:`/`dialects:`/`repo:` parsing + validation (`parse!/1`, run once by `init/1`; the family catalog via core's `use Mutare.Mutator.Families`); equivalence-sensitive set + note |
+| `config.ex` | `families:`/`dialects:`/`repo:` parsing + validation (`parse!/1`, run once by `init/1`; the family catalog via core's `use Mutare.Mutator.Families`); equivalence-sensitive set + note; the `tagged/1` wrapper and the `finalize/2` funnel body |
 | `ast.ex` | Small Sourceror AST helpers the plugin genuinely owns: typed literal *readers* (`atom_value`/`int_value`), the top-level-pin check, the bound bumps — everything *emitted* comes from core's `Mutare.AST` constructors |
 
 ### Families and configuration
@@ -186,10 +196,12 @@ row under three-valued logic (`:connective`), NULL rows in the column (`:null_pr
 `:ordering_nulls`) or in the coalesced expression (`:coalesce`), or an operand off the operation's
 identity (`:arithmetic` — 0 for `+`/`-`, ±1
 for `*`/`/`). `Config.equivalence_note/2` resolves the note (refining `:comparison` and
-`:arithmetic` by the swapped operator). The note rides onto the `Site` via `Config.enrich/3`
-(wrapping the node in a `%Mutare.Mutator.Mutation{}`), which core accepts on **both** delivery
-paths — so the in-fragment families surface it through the host and `:ordering_nulls`/`:join_type`
-through their `mutate/2` rewrites.
+`:arithmetic` by the swapped operator). The note rides onto the `Site` via
+`c:Mutare.Mutator.finalize/2` (the `families:` filter + note funnel, defined once in
+`Config.finalize/2`), which core runs on **both** delivery paths just before recording — so the
+in-fragment families surface it through the host and `:ordering_nulls`/`:join_type` through their
+`mutate/2` rewrites, and no delivery site can forget it. Producers stay pure: they return tag
+tuples wrapped by `Config.tagged/1` into `Mutation.tagged(node, [family | finer])`.
 
 ## Conventions and gotchas
 

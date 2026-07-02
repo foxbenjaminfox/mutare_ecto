@@ -73,9 +73,9 @@ defmodule Mutare.Ecto do
   `:coalesce` needs a NULL row in the wrapped expression (the drop differs only there); `:temporal`
   needs a row timestamped between the two now-anchored instants; and `:join_type` needs
   an orphan row (an INNER↔LEFT↔RIGHT↔FULL swap only changes the result when a preserved-side row has
-  no match, so a mandatory/complete FK makes it legitimately equivalent). The note rides onto the
-  `Mutare.Site` via a `%Mutare.Mutator.Mutation{}`, which core accepts on both delivery
-  paths — so the in-fragment families surface it through the **host** and the
+  no match, so a mandatory/complete FK makes it legitimately equivalent). The note is attached by
+  `finalize/2` (`c:Mutare.Mutator.finalize/2`), which core runs on every produced mutation on both
+  delivery paths — so the in-fragment families surface it through the **host** and the
   whole-`from`/clause-macro families (`:ordering_nulls`, `:join_type`) through `mutate/2`.
   `equivalence_sensitive_families/0` returns that set; with the `:as` convention you can
   additionally *group* them under their own report name:
@@ -286,34 +286,32 @@ defmodule Mutare.Ecto do
   def init(opts), do: Config.parse!(opts)
 
   # Every node mutation runs through `mutate/2` (not `mutate/1`), because all of them read
-  # `context.config` — the `families:` filter (every family is independently toggleable) and the
-  # `dialects:` gate (so a non-portable mutation only fires under a supporting adapter).
+  # `context.config` — the `dialects:` gate (so a non-portable mutation only fires under a
+  # supporting adapter) and, per producer, the `repo:` key. Production is pure: each dispatched
+  # tag is wrapped as a `Mutation.tagged(node, [family | finer])` (`Config.tagged/1`) and the
+  # `families:` filter + equivalence note are applied once, by core, in `finalize/2`.
   @impl Mutare.Mutator
   def mutate(_node), do: :skip
 
-  # A dispatched result is either the plugin's own `{family, node, label}` tag — filtered by the
-  # configured `families:` and enriched with the equivalence note — or an already-final
-  # `%Mutare.Mutator.Mutation{}` relayed with `producer:` set (a sub-contracted island mutant of a
-  # free-standing `dynamic`, `Mutare.Ecto.Dynamic`), which passes through untouched: it is a
-  # *core* family's mutant, so the plugin's SQL-family filter and notes don't apply to it.
+  # A dispatched result is either the plugin's own `{family, node, label}` tag — wrapped by
+  # `Config.tagged/1` as a `Mutation` carrying its labels, for the `finalize/2` funnel below — or
+  # an already-final `%Mutare.Mutator.Mutation{}` relayed with `producer:` set (a sub-contracted
+  # island mutant of a free-standing `dynamic`, `Mutare.Ecto.Dynamic`), which `Config.tagged/1`
+  # passes through untouched and core's finalize pass bypasses: it is a *core* family's mutant, so
+  # the plugin's SQL-family filter and notes never apply to it.
   @impl Mutare.Mutator
-  def mutate(node, %{config: %Config{} = config} = context) do
-    node
-    |> Dispatcher.mutations(context)
-    |> Enum.flat_map(fn
-      %Mutare.Mutator.Mutation{producer: producer} = relayed when not is_nil(producer) ->
-        [relayed]
-
-      tag ->
-        {family, mutated, finer} = Config.split_tag(tag)
-
-        if Config.family_enabled?(config, family),
-          do: [Config.enrich(family, mutated, finer)],
-          else: []
-    end)
-    |> case do
+  def mutate(node, %{config: %Config{}} = context) do
+    case Dispatcher.mutations(node, context) do
       [] -> :skip
-      mutations -> mutations
+      tagged -> Enum.map(tagged, &Config.tagged/1)
     end
   end
+
+  # The tag → filter → enrich funnel, defined once (`Mutare.Ecto.Config.finalize/2`): core applies
+  # it to every mutation the plugin produces, on **both** delivery paths — a `mutate/2` return and
+  # a host target's `:mutants` — so no delivery site can forget the `families:` filter or the
+  # equivalence note. A relayed island mutant (explicit `producer:` — the host's core sub-contract)
+  # bypasses it in core: it belongs to the producing core family, whose own funnel already ran.
+  @impl Mutare.Mutator
+  defdelegate finalize(mutation, context), to: Config
 end

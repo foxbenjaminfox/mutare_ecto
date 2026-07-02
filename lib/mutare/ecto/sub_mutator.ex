@@ -7,10 +7,12 @@ defmodule Mutare.Ecto.SubMutator do
   # `mutations/2` takes the AST `node` and the mutation `context` (carrying `:config` — the
   # `init/1`-parsed `families:`/`dialects:`/`repo:` `%Config{}` — and `:pipe_mode`), and returns the
   # `{family, node}` mutation pairs it produces, or `[]`. A sub-mutator that needs neither config
-  # nor pipe-mode simply ignores the context; `Mutare.Ecto.mutate/2` then filters the merged pairs
-  # by the configured `families:`. A sub-mutator that *sub-contracts* islands to core's generation
-  # (`Mutare.Ecto.Dynamic`) additionally returns producer-attributed `Mutare.Mutator.Mutation`s,
-  # which bypass that filter — the mutant is a core family's, not one of the plugin's.
+  # nor pipe-mode simply ignores the context; `Mutare.Ecto.mutate/2` returns the merged pairs as
+  # tagged `Mutation`s (`Mutare.Ecto.Config.tagged/1`), and the `families:` filter + equivalence
+  # note are applied once, by core, via `Mutare.Ecto.finalize/2`. A sub-mutator that
+  # *sub-contracts* islands to core's generation (`Mutare.Ecto.Dynamic`) additionally returns
+  # producer-attributed `Mutare.Mutator.Mutation`s, which pass through `Config.tagged/1` untouched
+  # and core's finalize pass bypasses — the mutant is a core family's, not one of the plugin's.
   #
   # A sub-mutator whose first `mutations/2` clause pattern-matches the context *shape* (e.g.
   # `%{pipe_mode: …}`) needs a defensive catch-all so a context lacking that key returns `[]` rather
@@ -24,7 +26,7 @@ defmodule Mutare.Ecto.SubMutator do
 
   @typedoc """
   One produced mutation: its SQL `family` and mutated `node`, optionally with a finer
-  `# mutare:ignore` label (a swap's operator / a value's kind — see `Mutare.Ecto.Config.split_tag/1`).
+  `# mutare:ignore` label (a swap's operator / a value's kind — see `Mutare.Ecto.Config.tagged/1`).
   A structural family omits the label; a swap/value family appends it.
   """
   @type tagged ::

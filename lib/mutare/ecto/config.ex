@@ -124,8 +124,8 @@ defmodule Mutare.Ecto.Config do
   #     (a preserved-side row with no match on the other); a mandatory/complete FK makes every row
   #     match, so the swap is legitimately equivalent.
   #
-  # The per-mutant note rides onto a Site via a `%Mutare.Mutator.Mutation{}` (`enrich/3`), which core
-  # accepts on **both** delivery paths — the selector host's `:mutants` and a plain `mutate/2`
+  # The per-mutant note rides onto a Site via `finalize/2` (`c:Mutare.Mutator.finalize/2`), which
+  # core runs on **both** delivery paths — the selector host's `:mutants` and a plain `mutate/2`
   # return. So the in-fragment families surface the advisory through the host, and the
   # whole-`from`/clause-macro families (`:ordering_nulls`, `:join_type`) through `mutate/2`. Surfaced
   # under their own report name via the `:as` convention (`equivalence_sensitive_families/0`).
@@ -222,43 +222,56 @@ defmodule Mutare.Ecto.Config do
   def equivalence_note(family, _finer), do: Map.get(@equivalence_notes, family)
 
   @doc """
-  Enrich a mutant `node` with the metadata its `family` (and optional `finer` label) carry, ready to
-  return from `mutate/2` or a host target's `:mutants`. Every mutant is wrapped in a
-  `%Mutare.Mutator.Mutation{}`:
+  Wrap a producer's mutation tag as a `Mutare.Mutator.Mutation` carrying its `# mutare:ignore`
+  labels. A producer emits either `{family, node}` (a structural family — no finer label) or
+  `{family, node, finer}` (a swap/value family appending the operator/kind it mutated, for a
+  qualified `# mutare:ignore[ecto:<op>]`); both become `variant: [family | finer]`:
 
-    * **`variant:`** — `[family | finer]`, the `# mutare:ignore` labels that suppress this mutant.
-      `family` is the per-site analogue of the run-wide `families:` filter
-      (`# mutare:ignore[ecto:comparison]`); `finer` is the operator/kind a swap or value family also
-      tags (`# mutare:ignore[ecto:<]` — the `<` swap alone), a single label, a list, or absent for a
-      structural family. A qualifier matching **any** label suppresses the mutant. The full
-      vocabulary is `Mutare.Ecto.variants/0`; labels are recorded only because `Mutare.Ecto` declares
-      it (an un-opted-in mutator records `[]`).
-    * **`note:`** — the equivalence advisory for a family that has one (`equivalence_note/2`, refined
-      for `:comparison` by `finer`), else `nil`. A survivor of an equivalence-sensitive family reads
-      "… kill may require …".
+    * `family` is the per-site analogue of the run-wide `families:` filter
+      (`# mutare:ignore[ecto:comparison]`) — and the label `finalize/2` reads the family back from.
+    * `finer` is the operator/kind a swap or value family also tags (`# mutare:ignore[ecto:<]` —
+      the `<` swap alone), a single label, a list, or absent for a structural family. A qualifier
+      matching **any** label suppresses the mutant. The full vocabulary is `Mutare.Ecto.variants/0`;
+      labels are recorded only because `Mutare.Ecto` declares it (an un-opted-in mutator records
+      `[]`).
 
-  Core accepts the struct on **both** delivery paths (a plain `mutate/2` return and the selector
-  host's `:mutants`), so this one wrapper serves every family on either path.
+  The one normalizer both delivery paths return through — `Mutare.Ecto.mutate/2` and the host's
+  `Mutare.Ecto.Host.Catalog` — so adding a finer label to a producer never touches delivery code.
+  Production stays pure: the `families:` filter and the equivalence note are applied exactly once,
+  by core, via `finalize/2`.
+
+  An already-final relayed `Mutation` — explicit `producer:`, a sub-contracted island mutant of a
+  free-standing `dynamic` (`Mutare.Ecto.Dynamic`) — passes through untouched: it is a *core*
+  family's mutant, carrying core's note and variant, and core's finalize pass bypasses it too.
   """
-  @spec enrich(family(), Macro.t(), Mutation.variant()) :: Mutation.t()
-  def enrich(family, node, finer \\ nil) do
-    Mutation.new(node,
-      note: equivalence_note(family, finer),
-      variant: [family | List.wrap(finer)]
-    )
-  end
+  @spec tagged({family(), Macro.t()} | {family(), Macro.t(), Mutation.variant()} | Mutation.t()) ::
+          Mutation.t()
+  def tagged(%Mutation{producer: producer} = relayed) when not is_nil(producer), do: relayed
+  def tagged({family, node}), do: Mutation.tagged(node, [family])
+  def tagged({family, node, finer}), do: Mutation.tagged(node, [family | List.wrap(finer)])
 
   @doc """
-  Split a producer's mutation tag into `{family, node, finer}`. A producer emits either
-  `{family, node}` (a structural family — no finer label) or `{family, node, finer}` (a swap/value
-  family appending the operator/kind it mutated, for a qualified `# mutare:ignore[ecto:<op>]`). The
-  one normalizer both delivery consumers — `Mutare.Ecto.mutate/2` and `Mutare.Ecto.Host.Catalog` —
-  feed into `enrich/3`, so adding a finer label to a producer never touches the delivery code.
+  The tag → filter → enrich funnel, defined once (`c:Mutare.Mutator.finalize/2` —
+  `Mutare.Ecto.finalize/2` delegates here). Core applies it to every mutation the plugin produces,
+  on **both** delivery paths — a `mutate/2` return and a host target's `:mutants` — just before
+  recording, so no delivery site can forget the filter or the note. It reads the mutation's
+  leading variant label (attached by `tagged/1`) as its SQL family:
+
+    * a **disabled** family (the run's `families:` selection) is dropped — `:skip`;
+    * an **enabled** one gains its equivalence advisory (`equivalence_note/2`, refined for
+      `:comparison`/`:arithmetic` by the finer operator label), else a `nil` note. A survivor of an
+      equivalence-sensitive family reads "… kill may require …".
+
+  A relayed island mutant (explicit `producer:` — the host's core sub-contract) never reaches
+  this funnel: core skips finalize for it, because the producing core family's own funnel already
+  ran when the mutation was generated.
   """
-  @spec split_tag({family(), Macro.t()} | {family(), Macro.t(), Mutation.variant()}) ::
-          {family(), Macro.t(), Mutation.variant()}
-  def split_tag({family, node}), do: {family, node, nil}
-  def split_tag({family, node, finer}), do: {family, node, finer}
+  @spec finalize(Mutation.t(), map()) :: Mutation.t() | :skip
+  def finalize(%Mutation{variant: [family | finer]} = mutation, context) do
+    if family_enabled?(from_context(context), family),
+      do: %{mutation | note: equivalence_note(family, List.first(finer))},
+      else: :skip
+  end
 
   @doc """
   The families enabled by `opts` — the configured `families:` selection, or the **default set**

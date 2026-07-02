@@ -3,8 +3,10 @@ defmodule Mutare.Ecto.Host.Catalog do
   # Produces the logical, enabled alternatives for one hosted SQL condition:
   #
   #   * the plugin's **own** catalogs — the in-fragment operator/literal swaps
-  #     (`Mutare.Ecto.Fragment`) and the aggregate swap (`Mutare.Ecto.Aggregate`), filtered by
-  #     `families:` and enriched with the equivalence note;
+  #     (`Mutare.Ecto.Fragment`) and the aggregate swap (`Mutare.Ecto.Aggregate`), each tagged with
+  #     its family labels (`Mutare.Ecto.Config.tagged/1`); the `families:` filter and equivalence
+  #     note are core's job — `Mutare.Ecto.finalize/2` runs on every host-target mutant, and core
+  #     drops a target whose mutants all skip;
   #   * the **sub-contracted** mutants of each interpolation island (`^expr`) — a pin's interior
   #     is ordinary Elixir evaluated at runtime, exactly core's business, so it is handed to
   #     core's generation (`Mutare.Analyze.expression_mutations/3` over `context.mutators`, the
@@ -20,19 +22,16 @@ defmodule Mutare.Ecto.Host.Catalog do
   alias Mutare.Ecto.{Aggregate, Config, Fragment}
   alias Mutare.Mutator.Mutation
 
-  @doc "The configured logical mutants for a hosted condition (own catalogs + island sub-contract)."
+  @doc "The tagged logical mutants for a hosted condition (own catalogs + island sub-contract)."
   @spec mutants(Macro.t(), Config.t(), Mutare.Mutator.context()) :: [Mutare.Mutator.mutation()]
   def mutants(condition, config, context) do
     own(condition, config) ++ subcontracted(condition, context)
   end
 
+  # Pure production: each catalog tag becomes `Mutation.tagged(node, [family | finer])` — the
+  # `config` threads to `Fragment` only for its `dialects:` gate.
   defp own(condition, config) do
-    aggregates = Aggregate.swaps(condition)
-
-    for tag <- Fragment.mutants(condition, config) ++ aggregates,
-        {family, node, finer} = Config.split_tag(tag),
-        Config.family_enabled?(config, family),
-        do: Config.enrich(family, node, finer)
+    Enum.map(Fragment.mutants(condition, config) ++ Aggregate.swaps(condition), &Config.tagged/1)
   end
 
   @doc """
@@ -41,8 +40,9 @@ defmodule Mutare.Ecto.Host.Catalog do
   (`:as` renames and per-instance opts included — a disabled core family simply produces
   nothing), read from `context.mutators` — the run's enabled non-host specs, which core threads
   into both seams this is called from (`host/2` and the whole-call `mutate/2` offer of a
-  registered macro). No `families:`/`enrich` here: the mutant is a *core* family's, with core's
-  note and variant, so the plugin's SQL-family filter and equivalence notes don't apply.
+  registered macro). No family tagging here — and the explicit `producer:` makes core skip the
+  plugin's `finalize/2` on both paths: the mutant is a *core* family's, with core's note and
+  variant, so the plugin's SQL-family filter and equivalence notes don't apply.
 
   `deliver` maps each rebuilt condition to the node the caller's delivery path emits: the host
   relays the condition itself (its weave carries it — the default identity), while
