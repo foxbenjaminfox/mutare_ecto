@@ -12,7 +12,7 @@ defmodule Mutare.Ecto.VariantTest do
   @mutators [{Mutare.Ecto, repo: MyApp.Repo}]
 
   defp sites_for(src) do
-    {_meta, sites, _next} =
+    %Mutare.Transform.Result{mutants: sites} =
       Mutare.transform_string(src,
         file: "variant_fixture.ex",
         mutators: @mutators,

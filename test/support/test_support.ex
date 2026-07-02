@@ -30,7 +30,7 @@ defmodule Mutare.Ecto.TestSupport do
 
   @doc "The rendered metamutant source for `source` — for `=~` checks on the woven scaffolding."
   def metamutant(source, opts \\ []) do
-    {metamutant, _sites, _next_id} =
+    %Mutare.Transform.Result{metamutant: metamutant} =
       Mutare.transform_string(source, mutators: mutators(opts), expand_uses: true)
 
     metamutant

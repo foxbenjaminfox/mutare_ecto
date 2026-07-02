@@ -382,26 +382,23 @@ defmodule Mutare.Ecto.ConfigTest do
       end
       """
 
-      {_meta, sites, _next} =
+      %Mutare.Transform.Result{mutants: sites} =
         Mutare.transform_string(src,
           mutators: [{Mutare.Ecto, repo: MyApp.Repo}],
           expand_uses: true
         )
 
-      # The comparison swap (== → !=) is equivalence-sensitive → the note rides onto the Site
-      # and into the survivor header. `==`/`!=` reads the NULL-exclusion sub-case note, not the
-      # strict↔non-strict boundary one.
+      # The comparison swap (== → !=) is equivalence-sensitive → the note rides onto the recorded
+      # mutant (core renders it as the survivor header's trailing "— kill may require …").
+      # `==`/`!=` reads the NULL-exclusion sub-case note, not the strict↔non-strict boundary one.
       comparison = Enum.find(sites, &(&1.mutated_code =~ "!=" and &1.mutator == :ecto))
 
       assert comparison.note ==
                "kill may require a non-NULL row — == and != differ on every concrete value but both exclude NULLs (compared as unknown), so they coincide only when every row is NULL"
 
-      assert Mutare.Report.header(comparison) =~ "SURVIVED  — kill may require a non-NULL row"
-
       # The membership polarity flip (in → not in) is not equivalence-sensitive → no note.
       membership = Enum.find(sites, &(&1.mutated_code =~ "not in" and &1.mutator == :ecto))
       assert membership.note == nil
-      assert Mutare.Report.header(membership) =~ ~r/SURVIVED$/
     end
 
     test "the two comparison sub-cases carry different notes (boundary vs NULL exclusion)" do
@@ -415,7 +412,7 @@ defmodule Mutare.Ecto.ConfigTest do
       end
       """
 
-      {_meta, sites, _next} =
+      %Mutare.Transform.Result{mutants: sites} =
         Mutare.transform_string(src,
           mutators: [{Mutare.Ecto, repo: MyApp.Repo}],
           expand_uses: true
@@ -444,7 +441,7 @@ defmodule Mutare.Ecto.ConfigTest do
       end
       """
 
-      {_meta, sites, _next} =
+      %Mutare.Transform.Result{mutants: sites} =
         Mutare.transform_string(src,
           mutators: [{Mutare.Ecto, repo: MyApp.Repo}],
           expand_uses: true
@@ -456,9 +453,6 @@ defmodule Mutare.Ecto.ConfigTest do
 
       assert nulls.note ==
                "kill may require NULL rows in the ordered column — nulls_first and nulls_last only change where NULLs sort, ordering all other rows identically"
-
-      assert Mutare.Report.header(nulls) =~
-               "SURVIVED  — kill may require NULL rows in the ordered column"
 
       direction =
         Enum.find(sites, &(&1.mutated_code =~ "desc_nulls_first" and &1.mutator == :ecto))
@@ -478,7 +472,7 @@ defmodule Mutare.Ecto.ConfigTest do
       end
       """
 
-      {_meta, sites, _next} =
+      %Mutare.Transform.Result{mutants: sites} =
         Mutare.transform_string(src,
           mutators: [{Mutare.Ecto, repo: MyApp.Repo}],
           expand_uses: true
@@ -488,8 +482,6 @@ defmodule Mutare.Ecto.ConfigTest do
 
       assert join.note ==
                "kill may require an orphan row — a preserved-side row with no match (join kinds coincide when every row matches)"
-
-      assert Mutare.Report.header(join) =~ "SURVIVED  — kill may require an orphan row"
     end
   end
 
