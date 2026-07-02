@@ -1090,6 +1090,35 @@ defmodule Mutare.Ecto.HostTest do
       end
     end
 
+    test "a condition weave and both bound weaves ride one from as independent targets" do
+      # Three hosted targets on a single macro call — the condition (dynamic-wrapped) plus two
+      # pin-only bounds. Each weaves its own selector into its own position, and only the three
+      # structural drops (where/limit/offset) still copy the query.
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q, do: from(p in "posts", where: p.x > 1, limit: 10, offset: 2, select: p.id)
+      end
+      """
+
+      diffs = ecto_diffs(src)
+
+      assert {"p.x > 1", "p.x >= 1"} in diffs
+
+      for pair <- [{"10", "11"}, {"10", "9"}, {"2", "3"}, {"2", "1"}] do
+        assert pair in diffs
+      end
+
+      mm = metamutant(src)
+      assert mm =~ ~r/where:\s*\^case/
+      assert mm =~ ~r/limit:\s*\^case/
+      assert mm =~ ~r/offset:\s*\^case/
+      # baseline + 3 drop mutants — no per-bump (or per-swap) copies.
+      assert length(String.split(mm, "from(")) - 1 == 4
+
+      assert_compiles(src)
+    end
+
     test "a bound bump's diff is the bare integers — no pin/case scaffolding either" do
       src = """
       defmodule M do

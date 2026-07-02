@@ -206,6 +206,67 @@ defmodule Mutare.Ecto.VariantTest do
     end
   end
 
+  describe "the bound bump's site anchors at the literal — directives moved with it" do
+    # The bump used to be a whole-`from` rewrite recorded at the `from`'s start line; hosted
+    # pin-only, its Site now carries the literal's own range. Directive matching is exact-line
+    # (`Mutare.Ignore.directive_for/4` on `site.line`), so in a multi-line query the directive
+    # must sit on the *literal's* line — and one on the `from` opener no longer catches it.
+    test "[ecto:bound] on the literal's line suppresses the bumps, not the whole-from drop" do
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q do
+          from(u in User,
+            limit: 10, # mutare:ignore[ecto:bound]
+            select: u.id
+          )
+        end
+      end
+      """
+
+      sites = sites_for(src)
+
+      assert site(sites, "11").ignored, "the +1 bump is suppressed"
+      assert site(sites, "9").ignored, "the −1 bump is suppressed"
+
+      drop =
+        Enum.find(
+          sites,
+          &(&1.mutator == :ecto and &1.mutated_code =~ "from(" and
+              not (&1.mutated_code =~ "limit"))
+        )
+
+      refute drop.ignored, "the drop's site still anchors at the from opener, a different line"
+    end
+
+    test "[ecto:bound] on the from's opening line catches the drop but no longer the bump" do
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q do
+          from(u in User, # mutare:ignore[ecto:bound]
+            limit: 10,
+            select: u.id
+          )
+        end
+      end
+      """
+
+      sites = sites_for(src)
+
+      drop =
+        Enum.find(
+          sites,
+          &(&1.mutator == :ecto and &1.mutated_code =~ "from(" and
+              not (&1.mutated_code =~ "limit"))
+        )
+
+      assert drop.ignored, "the whole-from drop is still recorded at the from's start line"
+      refute site(sites, "11").ignored, "the bump's site moved to the literal's line"
+      refute site(sites, "9").ignored
+    end
+  end
+
   describe "# mutare:ignore[ecto:<operator>] on a mutate/2 swap family" do
     test "[ecto:sum] kills the sum swap, leaving avg live (aggregate)" do
       src = """

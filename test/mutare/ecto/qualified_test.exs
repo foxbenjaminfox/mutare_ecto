@@ -113,6 +113,10 @@ defmodule Mutare.Ecto.QualifiedTest do
 
       assert {~S/from(s in "t", where: s.id > 1, limit: 10)/, ~S/from(s in "t", where: s.id > 1)/} in norm
 
+      # The bound bump is asserted by membership, not only by qual ≡ bare set equality — the
+      # equality alone would still pass if the bump silently vanished from *both* forms.
+      assert {"10", "11"} in norm
+
       assert norm == normalized_ecto_diffs(bare)
       assert_compiles(qual, mutators: @all)
     end

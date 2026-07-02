@@ -760,6 +760,39 @@ defmodule Mutare.Ecto.ExoticQueryTest do
     end
   end
 
+  describe "bound literal forms" do
+    test "hex and underscored bounds bump by value and report the written original" do
+      # `AST.int_value` reads the token's *value* (10, 1000); the diff's original side keeps the
+      # *written* form, and the weave's baseline branch re-emits the token verbatim — the
+      # reads-through-`int_value`/emits-through-`Mutare.AST.literal` convention at the seam.
+      src = """
+      defmodule Q do
+        import Ecto.Query
+
+        def q do
+          from p in MyApp.Post,
+            limit: 0x0A,
+            offset: 1_000,
+            select: p.id
+        end
+      end
+      """
+
+      diffs = ecto_diffs(src, @all)
+
+      assert {"0x0A", "11"} in diffs
+      assert {"0x0A", "9"} in diffs
+      assert {"1_000", "1001"} in diffs
+      assert {"1_000", "999"} in diffs
+
+      mm = metamutant(src, @all)
+      assert mm =~ "0x0A"
+      assert mm =~ "1_000"
+
+      assert_compiles(src, @all)
+    end
+  end
+
   describe "with_ties" do
     test "dropping a limit takes its with_ties along (the pair is one syntactic unit)" do
       src = """

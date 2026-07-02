@@ -105,11 +105,44 @@ defmodule Mutare.Ecto.QueryTest do
       # (`limit: ^case mutare_active do … end`)…
       mm = metamutant(src)
       assert mm =~ ~r/limit:\s*\^case/
+      # …with no `dynamic/2` wrap — the branches are bare integers, plain Ecto interpolation
+      # (a `^dynamic` in a limit position would be broken Ecto)…
+      refute mm =~ "dynamic"
       # …so the query is not duplicated per bump: `from(` appears exactly twice — the baseline
       # and the (whole-`from`) drop mutant. The bumps used to add two more full copies.
       assert length(String.split(mm, "from(")) - 1 == 2
 
       assert_compiles(src)
+    end
+
+    test "a disabled :bound family leaves the bound position raw — no orphan scaffolding" do
+      # `finalize/2` skips every mutant of a disabled family, and core drops a host target whose
+      # mutants all skip — so the weave itself must vanish, not just the recorded sites. The
+      # sibling condition still weaves: the family gate is per-target, never per-call.
+      src = """
+      defmodule Posts do
+        import Ecto.Query
+        def q, do: from(p in "posts", where: p.x > 1, limit: 10, select: p.id)
+      end
+      """
+
+      opts = [mutators: [{Mutare.Ecto, repo: MyApp.Repo, families: {:default, except: [:bound]}}]]
+      diffs = ecto_diffs(src, opts)
+
+      # No bump pair, and no bound drop either (the drop is the same family)…
+      refute {"10", "11"} in diffs
+      refute {"10", "9"} in diffs
+
+      refute Enum.any?(diffs, fn {_o, mutated} ->
+               mutated =~ "from(" and not (mutated =~ "limit")
+             end)
+
+      # …and the limit position carries no selector, while the where still weaves.
+      mm = metamutant(src, opts)
+      refute mm =~ ~r/limit:\s*\^case/
+      assert mm =~ ~r/where:\s*\^case/
+
+      assert_compiles(src, opts)
     end
 
     test "bumps a limit of 1 to both 2 and 0 (the lower bump reaches zero, still valid SQL)" do

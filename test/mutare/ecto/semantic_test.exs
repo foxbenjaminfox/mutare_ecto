@@ -708,6 +708,9 @@ defmodule Mutare.Ecto.SemanticTest do
 
       assert ids(mod, bump) == [1, 2, 3]
 
+      # The −1 bump is a distinct live branch of the same weave, under its own id.
+      assert ids(mod, site_id(sites, {"2", "1"})) == [1]
+
       # The drop has no `limit` left in its rendered mutant — locate it by that absence. `site_by`
       # gives this the same one-and-only-one guard as `site_id`, so a stray sibling can't slip past.
       drop =
@@ -755,6 +758,31 @@ defmodule Mutare.Ecto.SemanticTest do
         )
 
       assert ids(mod, drop.id) == [1, 2, 3, 4, 5, 6]
+    end
+  end
+
+  describe "Bound — bump of a standalone/pipe stage (pin-only weave)" do
+    # The pipe form splices through a different transform than the from-keyword form
+    # (`Target.bound_argument` / `QueryCall.replace_arg`, not the clause-list replacement), so
+    # its weave needs its own liveness proof: an inert splice — one that recorded a perfect Site
+    # but bound the baseline integer on every branch — would pass every unit test.
+    test "bumping a piped limit widens the window against the engine" do
+      {mod, sites} =
+        build("""
+        defmodule Q do
+          import Ecto.Query
+          alias MyApp.User
+          def q, do: User |> order_by(asc: :id) |> limit(2) |> select([u], u.id)
+        end
+        """)
+
+      {baseline, mutant} = observe_ids(mod, sites, {"2", "3"})
+
+      assert baseline == [1, 2]
+      assert mutant == [1, 2, 3]
+
+      # Both branches of the woven selector are live, each under its own id.
+      assert ids(mod, site_id(sites, {"2", "1"})) == [1]
     end
   end
 

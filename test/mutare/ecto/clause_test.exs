@@ -95,8 +95,11 @@ defmodule Mutare.Ecto.ClauseTest do
       # The recorded diff is the logical pair alone — the hosted pin-only bump, no call rewrite.
       assert {"10", "11"} in diffs
       assert {"10", "9"} in diffs
-      # Delivery shape: the selector is pinned straight into the bound argument.
-      assert metamutant(src) =~ ~r/limit\(\s*\^case/
+      # Delivery shape: the selector is pinned straight into the bound argument, with no
+      # `dynamic/2` wrap — the branches are bare integers.
+      mm = metamutant(src)
+      assert mm =~ ~r/limit\(\s*\^case/
+      refute mm =~ "dynamic"
       assert_compiles(src)
     end
 
