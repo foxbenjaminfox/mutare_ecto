@@ -141,6 +141,56 @@ defmodule Mutare.Ecto.ChangesetTest do
     end
   end
 
+  describe "exotic pipelines (assoc/embed casts, anonymous-fn validators)" do
+    @exotic_src """
+    defmodule Acct do
+      import Ecto.Changeset
+
+      def changeset(user, attrs) do
+        user
+        |> cast(attrs, [:name, :age])
+        |> cast_assoc(:posts, with: &post_changeset/2)
+        |> cast_embed(:settings, required: true)
+        |> put_assoc(:tags, [])
+        |> update_change(:name, &String.trim/1)
+        |> validate_change(:age, fn :age, age ->
+          if age < 0, do: [age: "must be non-negative"], else: []
+        end)
+        |> validate_required([:name])
+      end
+
+      def post_changeset(post, attrs), do: cast(post, attrs, [:title])
+    end
+    """
+
+    test "assoc/embed casts and content updates are never dropped; validate_change is" do
+      diffs = ecto_diffs(@exotic_src)
+      originals = Enum.map(diffs, fn {original, _m} -> original end)
+
+      # `cast_assoc`/`cast_embed`/`put_assoc`/`update_change` all *produce* changeset content —
+      # dropping one changes the data, not a rule — so none is a drop candidate…
+      refute Enum.any?(originals, &(&1 =~ "cast_assoc"))
+      refute Enum.any?(originals, &(&1 =~ "cast_embed"))
+      refute Enum.any?(originals, &(&1 =~ "put_assoc"))
+      refute Enum.any?(originals, &(&1 =~ "update_change"))
+
+      # …while `validate_change` — even carrying an anonymous fn — is a transparent validator
+      # whose whole stage (closure included) drops to identity, alongside validate_required.
+      assert Enum.any?(diffs, fn {original, mutated} ->
+               original =~ "validate_change" and original =~ "fn :age" and
+                 mutated == "Elixir.Function.identity()"
+             end)
+
+      assert Enum.any?(originals, &(&1 =~ "validate_required"))
+      assert length(diffs) == 2
+    end
+
+    test "the exotic pipeline's metamutant compiles (closures survive the weave)" do
+      assert_compiles(@exotic_src)
+      assert_compiles(@exotic_src, mutators: [:all, {Mutare.Ecto, repo: MyApp.Repo}])
+    end
+  end
+
   describe "piped identity + totality (direct mutations/2)" do
     defp cs_mutations(code, pipe_mode) do
       Sourceror.parse_string!(code)

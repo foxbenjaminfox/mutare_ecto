@@ -1284,4 +1284,155 @@ defmodule Mutare.Ecto.SemanticTest do
       assert ids(mod, 0) == reference_appended_join()
     end
   end
+
+  describe "Exotic constructs — a CTE interior mutant is live" do
+    # The CTE's interior is an ordinary query mutated where it is *built*; this proves the woven
+    # `dynamic` still runs when that query is then attached as a `WITH` and joined through its
+    # name — the whole CTE plumbing (recursive machinery aside) between the mutant and the rows.
+    test "the >= mutant inside the CTE admits the boundary post the > baseline excludes" do
+      {mod, sites} =
+        build("""
+        defmodule Q do
+          import Ecto.Query
+          alias MyApp.Post
+
+          def q do
+            popular = from(p in Post, where: p.views > 10, select: %{id: p.id})
+
+            Post
+            |> with_cte("popular", as: ^popular)
+            |> join(:inner, [p], c in "popular", on: c.id == p.id)
+            |> select([p, c], p.id)
+          end
+        end
+        """)
+
+      {baseline, mutant} = observe_ids(mod, sites, {"p.views > 10", "p.views >= 10"})
+
+      # Baseline CTE keeps views strictly over 10 — only P2(20); the join filters posts to it.
+      assert baseline == [2]
+      # The `>=` mutant admits the boundary P1(10) into the CTE, and the join follows.
+      assert mutant == [1, 2]
+    end
+  end
+
+  describe "Exotic constructs — a window-function aggregate swap is live" do
+    # The sum↔avg swap inside an inline `over/2` is a whole-`from` rewrite; the mutant query
+    # computes a different number per partition, proving the swap survives the window syntax.
+    test "the avg mutant computes a different partition total than the sum baseline" do
+      {mod, sites} =
+        build("""
+        defmodule Q do
+          import Ecto.Query
+          alias MyApp.Post
+
+          def q do
+            from p in Post,
+              order_by: p.id,
+              select: {p.id, over(sum(p.views), partition_by: p.published)}
+          end
+        end
+        """)
+
+      {baseline, mutant} =
+        observe_rows(mod, sites, {~r/over\(sum\(p\.views\)/, ~r/over\(avg\(p\.views\)/})
+
+      # Partitions: published {P1(10), P3(5)} and unpublished {P2(20)}.
+      assert baseline == [{1, 15}, {2, 20}, {3, 15}]
+      assert mutant == [{1, 7.5}, {2, 20.0}, {3, 7.5}]
+    end
+  end
+
+  describe "Exotic constructs — a composed-dynamic connective swap is live" do
+    # `dynamic([u], ^d1 and ^d2)` is rebuilt whole (an in-place rewrite, not a weave); flipping
+    # the id must change which *composition* the interpolated where receives at runtime.
+    test "the or mutant admits rows satisfying either leaf where and required both" do
+      {mod, sites} =
+        build("""
+        defmodule Q do
+          import Ecto.Query
+          alias MyApp.User
+
+          def q do
+            d1 = dynamic([u], u.active == true)
+            d2 = dynamic([u], u.age > 18)
+            combined = dynamic([u], ^d1 and ^d2)
+            from u in User, where: ^combined, select: u.id
+          end
+        end
+        """)
+
+      {baseline, mutant} =
+        observe_ids(mod, sites, {"dynamic([u], ^d1 and ^d2)", "dynamic([u], ^d1 or ^d2)"})
+
+      # and: active AND over 18 — Bob(2), Eve(5), Frank(6). Alice is active but on the boundary.
+      assert baseline == [2, 5, 6]
+      # or: additionally Alice (active, 18). Carol/Dave are inactive and not over 18 either way.
+      assert mutant == [1, 2, 5, 6]
+    end
+  end
+
+  describe "Exotic constructs — a filtered-aggregate condition mutant is live" do
+    # `filter(count(...), cond)` in a having: the woven dynamic carries the FILTER clause; the
+    # mutant relaxes the inner condition and a group crosses the having threshold.
+    test "the >= mutant inside filter/2 lifts the published group over the having bar" do
+      {mod, sites} =
+        build("""
+        defmodule Q do
+          import Ecto.Query
+          alias MyApp.Post
+
+          def q do
+            from p in Post,
+              group_by: p.published,
+              having: filter(count(p.id), p.views > 5) > 1,
+              select: p.published
+          end
+        end
+        """)
+
+      {baseline, mutant} =
+        observe_ids(
+          mod,
+          sites,
+          {"filter(count(p.id), p.views > 5) > 1", "filter(count(p.id), p.views >= 5) > 1"}
+        )
+
+      # Per published-group counts of views > 5: {P1} and {P2} — one each, no group passes.
+      assert baseline == []
+      # views >= 5 admits P3(5) into the published group's count (2 > 1) — it now passes.
+      assert mutant == [true]
+    end
+  end
+
+  describe "Exotic constructs — a hosted mutant inside an update_all query is live" do
+    # The where of an update query is hosted exactly like a select query's; the observation is
+    # the write: the baseline updates the account row, the `!=` mutant updates everything but it.
+    test "the != mutant redirects the update away from the matched row" do
+      {mod, sites} =
+        build("""
+        defmodule Q do
+          import Ecto.Query
+          alias MyApp.Account
+
+          def q do
+            MyApp.Repo.update_all(
+              from(a in Account, where: a.email == "a@x", update: [set: [name: "Bumped"]]),
+              []
+            )
+          end
+        end
+        """)
+
+      id = site_id(sites, {~s|a.email == "a@x"|, ~s|a.email != "a@x"|})
+
+      reset_accounts!()
+      H.activate(0, fn -> apply(mod, :q, []) end)
+      assert account_name() == "Bumped"
+
+      reset_accounts!()
+      H.activate(id, fn -> apply(mod, :q, []) end)
+      assert account_name() == "Original"
+    end
+  end
 end
