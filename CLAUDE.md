@@ -140,7 +140,8 @@ The surface divides by **how a mutation is delivered**, not by what it mutates:
 | `query.ex` | Whole-`from` rewrites (clause drop, order flip, bound, join-type, `select`/`order_by` aggregate, source binding-reorder for a `[a, b] in q` source) |
 | `clause.ex` | Standalone/pipe cousins of `query.ex` (`order_by`/`limit`/`offset`/`select`) |
 | `clause_drop.ex` | Drop a standalone/pipe clause stage (`q \|> where(…)` → `q`), via `stage_drop.ex` |
-| `ordering.ex` / `aggregate.ex` | Shared `{family, node}` catalogs used by `query.ex`, `clause.ex`, and (aggregate) the `having` host |
+| `ordering.ex` / `aggregate.ex` / `scalar.ex` | Shared `{family, node}` catalogs used by `query.ex`, `clause.ex`, and the condition host — `scalar.ex` owns the Arithmetic swaps, applied per node by `fragment.ex` in hosted conditions and walked over `select`/`order_by` values |
+| `expression_walk.ex` | The generic single-point structural walker under the expression catalogs (`aggregate.ex`, `scalar.ex`) |
 | `combination.ex` | Shared set-operation swap catalog (`intersect`↔`except`, `intersect_all`↔`except_all`; `union` deliberately unswapped) used by `query.ex` (clause-key swap) and `clause.ex` (macro-name swap) |
 | `dynamic.ex` | In-fragment mutations of a **free-standing** `dynamic/1,2` (`d = dynamic([p], p.x > ^v)`): the shared `Fragment`/`Aggregate` catalogs over its condition, each mutant the whole call rebuilt and delivered in place (the `dynamic` registers `:skip` so core keeps its DSL args raw, but core still offers the whole call to `mutate/2`) |
 | `repo_aggregate.ex` / `repo_write.ex` / `query_terminal.ex` | Bucket-1 Repo/query-function families |

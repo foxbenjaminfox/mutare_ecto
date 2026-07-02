@@ -289,6 +289,50 @@ defmodule Mutare.Ecto.QueryTest do
     end
   end
 
+  describe "Arithmetic (in select / order_by)" do
+    test "swaps an arithmetic operator inside a from select clause" do
+      src = """
+      defmodule Posts do
+        import Ecto.Query
+        def q, do: from(p in "posts", select: p.views * p.weight)
+      end
+      """
+
+      assert Enum.any?(ecto_diffs(src), fn {_o, mutated} -> mutated =~ "p.views / p.weight" end)
+      assert_compiles(src)
+    end
+
+    test "reaches an operator nested in a map select and under an aggregate" do
+      src = """
+      defmodule Posts do
+        import Ecto.Query
+        def q, do: from(p in "posts", group_by: p.user_id, select: %{total: sum(p.views + p.bonus)})
+      end
+      """
+
+      assert Enum.any?(ecto_diffs(src), fn {_o, mutated} ->
+               mutated =~ "sum(p.views - p.bonus)"
+             end)
+
+      assert_compiles(src)
+    end
+
+    test "swaps an arithmetic operator inside a from order_by clause" do
+      src = """
+      defmodule Posts do
+        import Ecto.Query
+        def q, do: from(p in "posts", order_by: [desc: p.views - p.penalty])
+      end
+      """
+
+      assert Enum.any?(ecto_diffs(src), fn {_o, mutated} ->
+               mutated =~ "desc: p.views + p.penalty"
+             end)
+
+      assert_compiles(src)
+    end
+  end
+
   # Each whole-`from` family keys off a specific clause type. These pin that the gate is the clause
   # *key*, not merely the clause *value's shape* — a constant in a `select`, an aggregate in a
   # `having`, or a direction in a `distinct` must not be mutated as if it were the gated clause.
@@ -338,6 +382,28 @@ defmodule Mutare.Ecto.QueryTest do
 
       assert Enum.any?(diffs, fn {original, mutated} ->
                original == "sum(p.a) > 5" and mutated == "avg(p.a) > 5"
+             end)
+    end
+
+    test "arithmetic swaps fire on select/order_by, but leave a hosted where alone" do
+      diffs =
+        family_diffs(
+          "from(p in Post, where: p.a + p.b > 5, select: p.c * p.d)",
+          :arithmetic
+        )
+
+      arith =
+        for {original, mutated} <- diffs,
+            String.starts_with?(original, "from("),
+            do: mutated
+
+      # The `select` operator swaps in place as a whole-`from` rewrite…
+      assert arith == ["from(p in Post, where: p.a + p.b > 5, select: p.c / p.d)"]
+
+      # …while the `where` operator is delivered through the host (`^`/`dynamic`) — its diff is
+      # recorded at the condition, never as a whole-`from` rewrite here (no double-delivery).
+      assert Enum.any?(diffs, fn {original, mutated} ->
+               original == "p.a + p.b > 5" and mutated == "p.a - p.b > 5"
              end)
     end
 

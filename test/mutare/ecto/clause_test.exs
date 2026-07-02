@@ -261,6 +261,48 @@ defmodule Mutare.Ecto.ClauseTest do
     end
   end
 
+  describe "Arithmetic (standalone / pipe select)" do
+    test "swaps an arithmetic operator in the pipe select form" do
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q(query), do: query |> select([u], u.price * u.qty)
+      end
+      """
+
+      assert Enum.any?(ecto_diffs(src), fn {_o, mutated} -> mutated =~ "u.price / u.qty" end)
+      assert_compiles(src)
+    end
+
+    test "swaps an arithmetic operator inside a select_merge map" do
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q(query), do: query |> select_merge([u], %{net: u.gross - u.tax})
+      end
+      """
+
+      assert Enum.any?(ecto_diffs(src), fn {_o, mutated} -> mutated =~ "u.gross + u.tax" end)
+      assert_compiles(src)
+    end
+
+    test "swaps an arithmetic operator written into an order_by, alongside the direction flip" do
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q(query), do: query |> order_by([u], desc: u.a + u.b)
+      end
+      """
+
+      mutated = Enum.map(ecto_diffs(src), fn {_o, m} -> m end)
+      # the arithmetic swap (keep the direction)…
+      assert Enum.any?(mutated, &(&1 =~ "desc: u.a - u.b"))
+      # …and the orthogonal direction flip (keep the operator).
+      assert Enum.any?(mutated, &(&1 =~ "asc: u.a + u.b"))
+      assert_compiles(src)
+    end
+  end
+
   describe "totality — a degenerate zero-arg macro node yields no mutant, never a crash" do
     # `mutations/1` is offered every node in the source, so each clause guards `args != []`: it
     # protects the `{init, [last]} = Enum.split(args, -1)` destructuring, which would raise a

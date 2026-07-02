@@ -1,10 +1,11 @@
 defmodule Mutare.Ecto.Aggregate do
   @moduledoc false
-  # The shared aggregate walker of the Aggregate family: swap an aggregate call
+  # The shared aggregate catalog of the Aggregate family: swap an aggregate call
   # along its SQL-meaningful ladder — `sum`↔`avg`, `min`↔`max` — wherever it appears inside a
   # query expression. An expression is an arbitrary shape (a bare call, a tuple, a list, a map, a
-  # keyword list of them), so `swaps/1` walks the whole structure and returns one *single-point*
-  # mutant per aggregate position — each the expression with exactly one aggregate swapped.
+  # keyword list of them), so `swaps/1` walks the whole structure (`Mutare.Ecto.ExpressionWalk`)
+  # and returns one *single-point* mutant per aggregate position — each the expression with
+  # exactly one aggregate swapped.
   #
   # Callers feed it four positions: a `select`/`select_merge` value and an `order_by` value
   # (both whole-`from` and standalone/pipe — `Mutare.Ecto.Query`/`Mutare.Ecto.Clause`, delivered
@@ -17,7 +18,7 @@ defmodule Mutare.Ecto.Aggregate do
   # value aggregate changes the result's meaning in a way its `:distinct`/arity contract makes
   # awkward, and `count`↔a-value-aggregate is rarely a focused, killable mutation.
 
-  alias Mutare.Transform.Calls
+  alias Mutare.Ecto.ExpressionWalk
 
   @agg_swaps %{sum: :avg, avg: :sum, min: :max, max: :min}
   @agg_funcs Map.keys(@agg_swaps)
@@ -29,8 +30,8 @@ defmodule Mutare.Ecto.Aggregate do
   family and finer label uniformly when it rebuilds the surrounding clause. `label` is the **source**
   function the swap mutates (`"sum"` for `sum`↔`avg`), so `# mutare:ignore[ecto:sum]` names just it.
   """
-  @spec swaps(Macro.t()) :: [{:aggregate, Macro.t(), String.t()}]
-  def swaps(expr), do: for({node, label} <- walk(expr), do: {:aggregate, node, label})
+  @spec swaps(Macro.t()) :: [ExpressionWalk.tagged()]
+  def swaps(expr), do: ExpressionWalk.walk(expr, &local/1)
 
   @doc false
   # The finer `# mutare:ignore` labels the aggregate family can emit — each swappable function name,
@@ -42,65 +43,18 @@ defmodule Mutare.Ecto.Aggregate do
   @doc """
   The SQL-meaningful swap of a single aggregate function name (`:sum`↔`:avg`, `:min`↔`:max`), or
   `nil` for a non-aggregate. Used by `Mutare.Ecto.RepoAggregate` to swap the *atom* form
-  (`Repo.aggregate(q, :sum, …)`) against the same ladder this walker swaps the *call* form along.
+  (`Repo.aggregate(q, :sum, …)`) against the same ladder this catalog swaps the *call* form along.
   """
   @spec swap(atom()) :: atom() | nil
   def swap(name), do: Map.get(@agg_swaps, name)
 
-  # An aggregate call: offer its swap (a same-arity rename, so it always compiles), then descend
-  # into its arguments so a nested aggregate (`max(sum(...))` — degenerate but harmless) is still
-  # reached. The function name is the call form atom (not a wrapped literal), so the rename keeps
-  # the call's meta and renders cleanly. Each mutant is paired with the **source** function name
-  # (`"sum"`), the `# mutare:ignore` label naming the swap; descent carries the descendant's label.
-  defp walk({f, meta, args}) when f in @agg_funcs and is_list(args) do
-    [{{@agg_swaps[f], meta, args}, to_string(f)} | lift_args(f, meta, args)]
-  end
+  # An aggregate call's own swap — a same-arity rename, so it always compiles. The function name is
+  # the call form atom (not a wrapped literal), so the rename keeps the call's meta and renders
+  # cleanly. Each mutant is tagged with the **source** function name (`"sum"`), the
+  # `# mutare:ignore` label naming the swap; descent (a nested `max(sum(...))` — degenerate but
+  # harmless) is the shared walker's job.
+  defp local({f, meta, args}) when f in @agg_funcs and is_list(args),
+    do: [{:aggregate, {@agg_swaps[f], meta, args}, to_string(f)}]
 
-  # Any other call/operator node (atom form or a remote `{:., …}` form): descend into args.
-  defp walk({form, meta, args}) when is_list(args), do: lift_args(form, meta, args)
-
-  # A 2-tuple literal — a `{a, b}` select, or a keyword/map pair: descend into both sides.
-  defp walk({left, right}) do
-    # mutare:ignore[operand_swap] branch order is irrelevant — mutants are consumed as a set
-    for({m, label} <- walk(left), do: {{m, right}, label}) ++
-      for({m, label} <- walk(right), do: {{left, m}, label})
-  end
-
-  # A list — a list select, the args of a `%{}`/`{}` node, or a keyword list: descend per element.
-  defp walk(list) when is_list(list) do
-    list
-    |> Enum.with_index()
-    |> Enum.flat_map(fn {el, i} ->
-      for {m, label} <- walk(el), do: {List.replace_at(list, i, m), label}
-    end)
-  end
-
-  # Atoms, literals, variables, field references: no aggregate here.
-  defp walk(_node), do: []
-
-  # Descend into a call/operator's arguments, but only where the argument is plainly standard syntax
-  # we can mutate — the same rule `Mutare.Ecto.Fragment` applies, read from the per-argument routing
-  # `Calls.macro_treatment/1` exposes. A nested author macro may invent its own argument grammar, so
-  # an argument it routes anything other than `:expression` (`:skip`, `:pattern`, …) is left raw: a
-  # `having: clamp(sum(p.x), 10)` whose `clamp/2` is registered `:skip` never has its `sum` swapped to
-  # `avg`, because we don't know that `sum(p.x)` even means an aggregate to `clamp`.
-  defp lift_args(form, meta, args) do
-    routing = Calls.macro_treatment({form, meta, args})
-
-    args
-    |> Enum.with_index()
-    |> Enum.flat_map(fn {arg, i} ->
-      if descend_arg?(routing, i) do
-        for {m, label} <- walk(arg), do: {{form, meta, List.replace_at(args, i, m)}, label}
-      else
-        []
-      end
-    end)
-  end
-
-  # Descend into an argument only when it is plainly standard syntax: a non-macro node (`nil` routing)
-  # or a macro argument routed `:expression`. Every other treatment marks syntax whose meaning is the
-  # macro's own, left raw — mirrors `Mutare.Ecto.Fragment.descend_arg?/2`.
-  defp descend_arg?(nil, _index), do: true
-  defp descend_arg?(routing, index), do: Enum.at(routing, index) == :expression
+  defp local(_node), do: []
 end

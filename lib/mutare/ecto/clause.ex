@@ -13,9 +13,12 @@ defmodule Mutare.Ecto.Clause do
       an aggregate written into an `order_by` (`q |> order_by([u], desc: sum(u.amount))`): swap the
       aggregate (`sum`↔`avg`, `min`↔`max`), via the shared `Mutare.Ecto.Aggregate` walker. (A
       `having` aggregate is hosted instead — `Mutare.Ecto.Host`.)
+    * **Arithmetic** — `select(q, [u], u.price * u.qty)` / `q |> order_by([u], desc: u.a + u.b)`:
+      swap a scalar arithmetic operator (`+`↔`-`, `*`↔`/`), via the shared `Mutare.Ecto.Scalar`
+      catalog. (Arithmetic in a `where`/`having` condition is hosted instead.)
     * **Combination** — `q |> intersect(^other)` / `except_all(q, ^other)`: swap the set
       operation by renaming the macro itself (`intersect`↔`except`, `intersect_all`↔`except_all`),
-      via the shared `Mutare.Ecto.Combination` catalog. Unlike the other three this mutates the
+      via the shared `Mutare.Ecto.Combination` catalog. Unlike the others this mutates the
       call's *name*, not its last argument — the operand queries are untouched.
 
   These macros are registered through the `:routing` classifier (`Mutare.Ecto.Host`), which keeps
@@ -32,7 +35,7 @@ defmodule Mutare.Ecto.Clause do
   pipe-mode bookkeeping is required.
   """
 
-  alias Mutare.Ecto.{Aggregate, AST, Combination, Config, Ordering, Surface}
+  alias Mutare.Ecto.{Aggregate, AST, Combination, Config, Ordering, Scalar, Surface}
   alias Mutare.Ecto.AST.QueryCall
 
   @behaviour Mutare.Ecto.SubMutator
@@ -65,6 +68,7 @@ defmodule Mutare.Ecto.Clause do
   defp capability_mutations(:ordering, call), do: mutate_last(call, &Ordering.flips/1)
   defp capability_mutations(:bound, call), do: mutate_last(call, &bound_flips/1)
   defp capability_mutations(:aggregate, call), do: mutate_last(call, &Aggregate.swaps/1)
+  defp capability_mutations(:arithmetic, call), do: mutate_last(call, &Scalar.swaps/1)
   defp capability_mutations(:combination, call), do: combination_swaps(call)
 
   # The shape all three clause-macro mutators share: split the mutated **last argument** off (the

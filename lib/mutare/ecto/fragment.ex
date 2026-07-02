@@ -26,11 +26,12 @@ defmodule Mutare.Ecto.Fragment do
       `like`↔`ilike` (case-sensitivity; an atom-form swap). `ilike` is Postgres-specific, so the
       `like`↔`ilike` swap is **dialect-gated** — emitted only when `dialects:` includes `:postgres`
       (the `x in ^list` polarity is portable and always emitted).
-    * **Arithmetic** — `+`↔`-`, `*`↔`/`. Owned here for SQL's numeric semantics: NULL propagates
-      through every arm alike (the swap changes a row's computed value, never its NULL-ness), and
-      `/` is the *database's* division — integer truncation and a zero divisor raising are the
-      engine's behaviour, not Elixir's float `//2`. Binary forms only: the `-` of a written
-      negative number (`-5`) is arity-1 sign syntax, not an operator to swap.
+    * **Arithmetic** — `+`↔`-`, `*`↔`/`, owned by the shared scalar catalog (`Mutare.Ecto.Scalar`,
+      which also delivers it in `select`/`order_by` values): NULL propagates through every arm
+      alike (the swap changes a row's computed value, never its NULL-ness), and `/` is the
+      *database's* division — integer truncation and a zero divisor raising are the engine's
+      behaviour, not Elixir's float `//2`. Binary forms only: the `-` of a written negative
+      number (`-5`) is arity-1 sign syntax, not an operator to swap.
     * **IntegerLiteral** — a *non-pinned* integer literal written into the fragment
       (`u.age > 18` → `19`/`17`/`0`): boundary (`n±1`) plus the zero sentinel, deduped and never
       equal to the original.
@@ -74,7 +75,7 @@ defmodule Mutare.Ecto.Fragment do
   macro's own, so it is left raw. We mutate only what the author wrote in a form we understand.
   """
 
-  alias Mutare.Ecto.{AST, Config}
+  alias Mutare.Ecto.{AST, Config, Scalar}
   alias Mutare.Transform.Calls
 
   # The finer `# mutare:ignore` label(s) a mutant carries beyond its family — the operator a swap
@@ -90,12 +91,6 @@ defmodule Mutare.Ecto.Fragment do
   @comparison_swaps %{:> => :>=, :>= => :>, :< => :<=, :<= => :<, :== => :!=, :!= => :==}
   @connective_swaps %{:and => :or, :or => :and}
   @membership_op_swaps %{:like => :ilike, :ilike => :like}
-
-  # Arithmetic pairs by identity structure: `+`↔`-` (identity 0) and `*`↔`/` (identity 1). Portable
-  # across dialects (unlike `like`↔`ilike`), same arity both ways (always compiles), NULL-neutral
-  # (SQL arithmetic propagates NULL through every arm identically). Applied to **binary** forms
-  # only — see the arity guard in `local/4`.
-  @arithmetic_swaps %{:+ => :-, :- => :+, :* => :/, :/ => :*}
 
   # The literal-arm sentinels, mirroring core's families (`Mutare.Mutators.AtomLiteral` /
   # `StringLiteral`): a literal atom collapses to `:mutare`, a string to the empty string or
@@ -116,13 +111,14 @@ defmodule Mutare.Ecto.Fragment do
   def mutants(condition, opts \\ []), do: do_mutants(condition, opts, nil)
 
   @doc false
-  # The finer variant labels every fragment family can emit — the operators the swap families mutate
-  # (derived from the swap tables, so the vocabulary can't drift from what's produced) plus the unit
-  # and value kinds. `Mutare.Ecto.variants/0` folds these in alongside the family names.
+  # The finer variant labels every fragment-owned family can emit — the operators the swap families
+  # mutate (derived from the swap tables, so the vocabulary can't drift from what's produced) plus
+  # the unit and value kinds. `Mutare.Ecto.variants/0` folds these in alongside the family names
+  # (the arithmetic operators arrive via `Mutare.Ecto.Scalar.variant_labels/0`, which owns them).
   @spec variant_labels() :: [String.t()]
   def variant_labels do
     swap_ops =
-      [@comparison_swaps, @connective_swaps, @membership_op_swaps, @arithmetic_swaps]
+      [@comparison_swaps, @connective_swaps, @membership_op_swaps]
       |> Enum.flat_map(&Map.keys/1)
       |> Enum.map(&to_string/1)
 
@@ -269,14 +265,12 @@ defmodule Mutare.Ecto.Fragment do
       Map.has_key?(@membership_op_swaps, form) and Config.dialect_enabled?(opts, [:postgres]) ->
         [{:membership, {@membership_op_swaps[form], meta, args}, to_string(form)}]
 
-      # Binary only: a written negative number (`-5`) parses as the arity-1 `-` over the wrapped
-      # literal — sign syntax, not an operator (and Ecto has no unary `+` to swap it to). Its inner
-      # literal is still reached by `lift/4` as usual.
-      Map.has_key?(@arithmetic_swaps, form) and length(args) == 2 ->
-        [{:arithmetic, {@arithmetic_swaps[form], meta, args}, to_string(form)}]
-
+      # Anything else may still be a scalar-expression operator — the arithmetic swaps owned by
+      # the shared catalog (`Mutare.Ecto.Scalar.local/1`, which carries the binary-arity guard: a
+      # written `-5` is sign syntax, never swapped). Its inner literal is still reached by
+      # `lift/4` as usual.
       true ->
-        []
+        Scalar.local({form, meta, args})
     end
   end
 

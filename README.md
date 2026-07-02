@@ -77,7 +77,7 @@ the query still compiles once and the active mutant is chosen at build time:
 | `null_predicate` | `is_nil(u.x)` → `not is_nil(u.x)` | Is the `NULL` case tested? |
 | `connective` | `a and b` → `a or b` | Does any row distinguish the two? |
 | `membership` | `x in ^list` → `x not in ^list`; `like` → `ilike` | Polarity / case-sensitivity |
-| `arithmetic` | `u.a + u.b` → `u.a - u.b`; `*` ↔ `/` | Does the computed value matter? |
+| `arithmetic` | `u.a + u.b` → `u.a - u.b`; `*` ↔ `/` (also in `select`/`order_by` values) | Does the computed value matter? |
 | `integer_literal` | `u.age > 18` → `19` / `17` / `0` | Off-by-one in an integer literal |
 | `float_literal` | `u.score > 2.5` → `3.5` / `1.5` / `0.0` | Off-by-one in a float literal |
 | `string_literal` † | `u.name == "ok"` → `""` / `"mutare"` | Is the string value tested? |

@@ -718,6 +718,31 @@ defmodule Mutare.Ecto.SemanticTest do
     end
   end
 
+  describe "Arithmetic — `+` ↔ `-` in `select` (whole-`from`)" do
+    # The in-place twin of the hosted arithmetic swap: an operator inside a `select` value is
+    # rewritten as a whole-`from` mutant (`Mutare.Ecto.Scalar` via `Mutare.Ecto.Query`), so the
+    # risk here is a rewrite that renders but never reaches the engine.
+    test "swapping the select's sum to a difference returns a different computed value" do
+      {mod, sites} =
+        build("""
+        defmodule Q do
+          import Ecto.Query
+          alias MyApp.User
+          def q, do: from(u in User, where: u.id == 1, select: u.age + u.score)
+        end
+        """)
+
+      [total] = q_under(mod, 0)
+      swap = site_id(sites, {~r/select: u\.age \+ u\.score/, ~r/select: u\.age - u\.score/})
+      [difference] = q_under(mod, swap)
+
+      # Alice: 18 + 100.
+      assert total == 118
+      # The `-` mutant computes 18 - 100 over the same row.
+      assert difference == -82
+    end
+  end
+
   describe "Aggregate — `sum` ↔ `avg` in a `having` (dynamic-injected)" do
     # The hosted twin of the select-aggregate swap: an aggregate inside a `having` rides the same
     # `^`/`dynamic` host as the operator swaps, so an inert injection is the real risk here too.

@@ -32,13 +32,13 @@ defmodule Mutare.Ecto.SurfaceTest do
     assert Surface.descriptor(:order_by) == %{
              name: :order_by,
              macro: :clause,
-             mutations: [:ordering, :aggregate],
+             mutations: [:ordering, :aggregate, :arithmetic],
              stage_drop: :clause_drop,
-             from: [:ordering, :aggregate]
+             from: [:ordering, :aggregate, :arithmetic]
            }
 
     assert Surface.macro_kind(:order_by) == :clause
-    assert Surface.mutations(:order_by) == [:ordering, :aggregate]
+    assert Surface.mutations(:order_by) == [:ordering, :aggregate, :arithmetic]
     assert Surface.stage_drop_family(:order_by) == :clause_drop
     assert Surface.from_clause?(:order_by, :ordering)
     assert Surface.from_drop_family(:order_by) == nil

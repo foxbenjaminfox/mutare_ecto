@@ -5,12 +5,13 @@ defmodule Mutare.Ecto.Surface do
   # capabilities from these descriptors; adding a builder no longer means updating parallel lists.
 
   @macro_kinds [:from, :condition, :join, :clause, :dynamic, :skip]
-  @mutation_capabilities [:ordering, :bound, :aggregate, :combination]
+  @mutation_capabilities [:ordering, :bound, :aggregate, :arithmetic, :combination]
   @from_capabilities [
     :hosted,
     :ordering,
     :bound,
     :aggregate,
+    :arithmetic,
     :join_binding,
     :join_type,
     :combination
@@ -51,28 +52,28 @@ defmodule Mutare.Ecto.Surface do
     %{
       name: :select,
       macro: :clause,
-      mutations: [:aggregate],
+      mutations: [:aggregate, :arithmetic],
       stage_drop: :clause_drop,
-      from: [:aggregate]
+      from: [:aggregate, :arithmetic]
     },
     %{
       name: :select_merge,
       macro: :clause,
-      mutations: [:aggregate],
+      mutations: [:aggregate, :arithmetic],
       stage_drop: :clause_drop,
-      from: [:aggregate]
+      from: [:aggregate, :arithmetic]
     },
     %{
       name: :order_by,
       macro: :clause,
-      mutations: [:ordering, :aggregate],
+      mutations: [:ordering, :aggregate, :arithmetic],
       stage_drop: :clause_drop,
-      from: [:ordering, :aggregate]
+      from: [:ordering, :aggregate, :arithmetic]
     },
     %{
       name: :prepend_order_by,
       macro: :clause,
-      mutations: [:ordering, :aggregate],
+      mutations: [:ordering, :aggregate, :arithmetic],
       stage_drop: :clause_drop
     },
     %{name: :group_by, macro: :clause, stage_drop: :clause_drop},
@@ -180,9 +181,16 @@ defmodule Mutare.Ecto.Surface do
   end)
 
   @type macro_kind :: :from | :condition | :join | :clause | :dynamic | :skip
-  @type mutation_capability :: :ordering | :bound | :aggregate | :combination
+  @type mutation_capability :: :ordering | :bound | :aggregate | :arithmetic | :combination
   @type from_capability ::
-          :hosted | :ordering | :bound | :aggregate | :join_binding | :join_type | :combination
+          :hosted
+          | :ordering
+          | :bound
+          | :aggregate
+          | :arithmetic
+          | :join_binding
+          | :join_type
+          | :combination
   @type drop_family :: :filter_drop | :bound | :clause_drop
   @type descriptor :: %{
           required(:name) => atom(),

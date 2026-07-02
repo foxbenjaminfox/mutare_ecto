@@ -127,6 +127,7 @@ defmodule Mutare.Ecto do
     Host,
     Ordering,
     Query,
+    Scalar,
     Surface
   }
 
@@ -199,6 +200,7 @@ defmodule Mutare.Ecto do
   def variants do
     Config.all_families() ++
       Fragment.variant_labels() ++
+      Scalar.variant_labels() ++
       Aggregate.variant_labels() ++
       Ordering.variant_labels() ++
       Query.variant_labels() ++
