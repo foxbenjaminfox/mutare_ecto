@@ -59,8 +59,10 @@ surface for plugins is `Mutare.Test` (wrapped here by `Mutare.Ecto.TestSupport`)
 Deployment requirement: Mutare must run **as a dependency of the app under test** so Ecto and the
 app's schemas are on the BEAM code path. This is what lets `use`-expansion expand `use Ecto.Schema`
 (so `schema do … end` resolves and the `:skip` routing fires) and lets the host build valid
-`dynamic` calls. External-source operation is unsupported and has no startup guard; unresolved
-target-app modules can make routing incomplete or invalid.
+`dynamic` calls. External-source operation is unsupported and guarded: `Mutare.Ecto.ensure_ecto!/1`
+raises at macro-route registration when the Ecto surface (`Ecto.Schema`/`Ecto.Query`) is not
+loadable. Beyond that guard, unresolved target-app modules can still make routing incomplete or
+invalid.
 
 CI's `ecto` job is a compatibility matrix that runs the complete suite against **every supported
 Ecto minor line** — from the declared minimum (`3.12`, floor-pinned) through each line up to the

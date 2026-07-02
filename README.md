@@ -40,8 +40,10 @@ end
 
 It must run **as a dependency of the app under test** (not against an external source path), so
 your `Repo` and schemas are loadable in the Mutare process — that's what lets `use Ecto.Schema`
-expand and the query macros resolve. External-source operation is unsupported: there is currently
-no startup check for it, and unresolved target-app modules can make routing incomplete or invalid.
+expand and the query macros resolve. External-source operation is unsupported: the plugin raises
+at startup when the Ecto surface (`Ecto.Schema`/`Ecto.Query`) is not loadable
+(`Mutare.Ecto.ensure_ecto!/1`, run at macro-route registration). Beyond that guard, unresolved
+target-app modules can still make routing incomplete or invalid.
 
 ## Usage
 

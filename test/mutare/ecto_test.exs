@@ -10,6 +10,25 @@ defmodule Mutare.EctoTest do
            "expected Ecto >= 3.12 and < 4.0, got #{version}"
   end
 
+  describe "ensure_ecto!/1 (the startup guard for the deployment requirement)" do
+    test "passes when the Ecto surface is loadable, as it is when run inside the app under test" do
+      assert Mutare.Ecto.ensure_ecto!() == :ok
+    end
+
+    test "an external-source run — the Ecto surface not on the code path — fails loudly, naming the missing module" do
+      assert_raise RuntimeError, ~r/No\.Such\.Ecto.*dependency\s+of the app under test/s, fn ->
+        Mutare.Ecto.ensure_ecto!([Ecto.Query, No.Such.Ecto])
+      end
+    end
+
+    test "registration runs the guard: macro_routes/0 and hosted_macros/0 both pass through it" do
+      # The positive path — both callbacks call `ensure_ecto!/0` before building their entries,
+      # so an external-source run fails at registration, not mid-transform.
+      assert [_ | _] = Mutare.Ecto.macro_routes()
+      assert [_ | _] = Mutare.Ecto.hosted_macros()
+    end
+  end
+
   describe "macro_routes/0" do
     test "skips schema, routes the host macros and the clause macros, skips dynamic" do
       macros = Mutare.Ecto.macro_routes()

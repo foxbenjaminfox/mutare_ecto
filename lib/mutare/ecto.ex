@@ -103,7 +103,9 @@ defmodule Mutare.Ecto do
   Resolution of these macros relies on Mutare's `use`-expansion (so the
   `use Ecto.Schema`-injected `import Ecto.Schema`, and a `use MyAppWeb, :live_view`-bundled
   `import Ecto.Query`, are visible) — hence the deployment requirement that Ecto be
-  loadable in the Mutare process.
+  loadable in the Mutare process. `ensure_ecto!/1` guards that requirement at registration:
+  an external-source run (where the Ecto surface is not on the code path) fails loudly
+  instead of silently producing incomplete routing.
   """
 
   @behaviour Mutare.Mutator
@@ -182,8 +184,38 @@ defmodule Mutare.Ecto do
       Query.variant_labels()
   end
 
+  # The Ecto surface the routing table registers against. If these are not loadable, the plugin is
+  # running outside the app under test (an external-source run) and its routing would be silently
+  # incomplete or invalid — `ensure_ecto!/1` fails at registration instead.
+  @ecto_surface_modules [Ecto.Schema, Ecto.Query]
+
+  @doc """
+  The startup guard for the deployment requirement: raises unless the Ecto surface the plugin
+  routes (`Ecto.Schema`, `Ecto.Query`) is loadable in the Mutare process. Invoked from
+  `macro_routes/0` and `hosted_macros/0` — the registration callbacks core calls when the plugin
+  is enabled — so an external-source run (where Ecto and the target app's modules are not on the
+  code path) fails loudly at startup instead of silently producing incomplete or invalid routing.
+  """
+  @spec ensure_ecto!([module()]) :: :ok
+  def ensure_ecto!(modules \\ @ecto_surface_modules) do
+    case Enum.reject(modules, &Code.ensure_loaded?/1) do
+      [] ->
+        :ok
+
+      missing ->
+        raise "Mutare.Ecto could not load #{Enum.map_join(missing, ", ", &inspect/1)} — " <>
+                "the Ecto surface is not on the code path. Mutare.Ecto must run as a dependency " <>
+                "of the app under test: add :mutare and :mutare_ecto to that app's deps and run " <>
+                "`mix mutare` there. External-source operation is unsupported — routing the " <>
+                "query DSL and expanding `use Ecto.Schema` require Ecto (and the app's own " <>
+                "modules) to be loadable in the Mutare process."
+    end
+  end
+
   @impl Mutare.MacroRouting
   def macro_routes do
+    ensure_ecto!()
+
     schema = [
       {Ecto.Schema, :schema, :skip},
       {Ecto.Schema, :embedded_schema, :skip}
@@ -208,6 +240,7 @@ defmodule Mutare.Ecto do
   # position `:hosted` — the `from` opener, the condition macros, and `join`.
   @impl Mutare.Mutator.MacroHost
   def hosted_macros do
+    ensure_ecto!()
     for name <- Surface.hosted_macro_names(), do: {Ecto.Query, name, :any}
   end
 
