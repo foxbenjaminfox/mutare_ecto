@@ -460,6 +460,68 @@ defmodule Mutare.Ecto.FragmentTest do
       # `:skip`-routed author macro is exercised end to end in `macro_skip_test.exs`.
       assert [{"n", _rebuild}] = islands("clamp(u.age, ^n) > 10")
     end
+
+    test "an island under a `not in` unit is rebuilt inside the written not" do
+      # The polarity unit flips whole (`do_mutants/3`), but the island walk still descends its
+      # operands — a pin among the written elements is core's exactly as in the positive form,
+      # and the rebuild reconstructs the full negated predicate around the replacement.
+      assert [{"b + 1", rebuild}] = islands("u.age not in [18, ^(b + 1)]")
+
+      assert rebuild.(Sourceror.parse_string!("b - 1")) |> Sourceror.to_string() ==
+               "u.age not in [18, ^(b - 1)]"
+    end
+
+    test "a pinned in-list right-hand side is itself an island" do
+      # `x in ^list` has no written elements to drop, but the pin's interior is still ordinary
+      # Elixir — the walk finds it exactly like an operand pin.
+      assert [{"list", rebuild}] = islands("u.role in ^list")
+
+      assert rebuild.(Sourceror.parse_string!("other")) |> Sourceror.to_string() ==
+               "u.role in ^other"
+    end
+
+    test "islands are reached at the data positions of known Ecto DSL forms" do
+      # The structural-position registry guards *literals* (a literal there is SQL shape, not
+      # data) — a pin can only sit at a data position, and the island walk descends every
+      # argument the author-macro rule allows, registry or not.
+      assert [{"m * 2", rebuild}] = islands(~s|fragment("? > ?", u.age, ^(m * 2))|)
+
+      assert rebuild.(Sourceror.parse_string!("m / 2")) |> Sourceror.to_string() ==
+               ~s|fragment("? > ?", u.age, ^(m / 2))|
+
+      assert [{"v + 1", _}] = islands("type(^(v + 1), :integer)")
+      assert [{"n + 1", _}] = islands(~s|ago(^(n + 1), "month")|)
+      assert [{"n + 1", _}] = islands(~s|datetime_add(u.inserted_at, ^(n + 1), "month")|)
+    end
+
+    test "a coalesce default is descended — the NULL-fallback pin is an island (unlike is_nil's)" do
+      # The catalog descends coalesce's arguments (its own drop keeps the walk going), so the
+      # island walk does too — the contrast with `is_nil`, whose argument is a hard boundary.
+      assert [{"d * 2", rebuild}] = islands("coalesce(u.score, ^(d * 2)) > 10")
+
+      assert rebuild.(Sourceror.parse_string!("d + 2")) |> Sourceror.to_string() ==
+               "coalesce(u.score, ^(d + 2)) > 10"
+    end
+
+    test "deeply nested pins each rebuild single-point, and a no-descent branch stays empty" do
+      # Two pins under different connective branches — each island's rebuild replaces exactly
+      # its own pin; the `is_nil` branch between them contributes nothing.
+      assert [{"x", rebuild_x}, {"y", rebuild_y}] =
+               islands("(u.a > ^x or is_nil(u.b)) and u.c < ^y")
+
+      assert rebuild_x.(Sourceror.parse_string!("z")) |> Sourceror.to_string() ==
+               "(u.a > ^z or is_nil(u.b)) and u.c < ^y"
+
+      assert rebuild_y.(Sourceror.parse_string!("z")) |> Sourceror.to_string() ==
+               "(u.a > ^x or is_nil(u.b)) and u.c < ^z"
+    end
+
+    test "the pin is a boundary — everything beneath it is one interior, never walked further" do
+      # A pin's interior goes to core *whole*: nothing inside it (not even a nested `^`, which
+      # Ecto's grammar forbids anyway) becomes its own island.
+      assert [{interior, _rebuild}] = islands("u.age > ^(f.(base + 1))")
+      assert interior == "f.(base + 1)"
+    end
   end
 
   describe "structural positions in known Ecto DSL forms" do
