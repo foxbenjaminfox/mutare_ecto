@@ -326,6 +326,39 @@ defmodule Mutare.Ecto.SemanticTest do
     end
   end
 
+  describe "Membership — drop a written in-list element (dynamic-injected)" do
+    # A *written* list drops one member per mutant — shrinking the set the engine matches against.
+    # The fixture writes the list with pinned elements (`[^admin, ^mod]`): the drop is a mutation
+    # of the written list either way, and pinned elements are what actually *runs* on SQLite —
+    # a fully-literal list (`in ["admin", "mod"]`) fails to dump on this adapter even unmutated
+    # (no array type), so the literal-list form is exercised at the catalog/compile level instead.
+    test "dropping one member keeps only the other member's rows" do
+      {mod, sites} =
+        build("""
+        defmodule Q do
+          import Ecto.Query
+          alias MyApp.User
+
+          def q do
+            admin = "admin"
+            mod = "mod"
+            from(u in User, where: u.role in [^admin, ^mod], select: u.id)
+          end
+        end
+        """)
+
+      baseline = ids(mod, 0)
+
+      dropped =
+        ids(mod, site_id(sites, {~s(u.role in [^admin, ^mod]), ~s(u.role in [^admin])}))
+
+      # role ∈ {admin, mod}: Alice, Carol, Eve.
+      assert baseline == [1, 3, 5]
+      # Without ^mod, Carol drops out.
+      assert dropped == [1, 5]
+    end
+  end
+
   describe "Membership — `exists` ↔ `not exists` (dynamic-injected)" do
     # The subquery cousin of the `in` polarity flip, correlated via `parent_as`: the baseline keeps
     # users who have at least one post; the mutant keeps exactly the complement. If the injected

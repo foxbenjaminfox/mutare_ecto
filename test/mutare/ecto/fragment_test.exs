@@ -68,12 +68,75 @@ defmodule Mutare.Ecto.FragmentTest do
       assert mutants("is_nil(u.name)") == MapSet.new(["not is_nil(u.name)"])
       assert mutants("not is_nil(u.name)") == MapSet.new(["is_nil(u.name)"])
     end
+
+    test "the is_nil argument is never descended — an argument mutant is provably equivalent" do
+      # `is_nil(u.a + u.b)` is legal SQL, but an arithmetic (or literal) swap inside it can never
+      # change the predicate: NULL propagates through every arm alike, so the mutant's NULL-ness —
+      # the only thing `is_nil` observes — is exactly the original's. Only the polarity flips.
+      assert mutants("is_nil(u.a + u.b)") == MapSet.new(["not is_nil(u.a + u.b)"])
+      assert mutants("not is_nil(u.a + u.b)") == MapSet.new(["is_nil(u.a + u.b)"])
+      assert mutants("is_nil(u.a + 5)") == MapSet.new(["not is_nil(u.a + 5)"])
+    end
   end
 
   describe "Membership" do
     test "in polarity flips both ways as a unit" do
       assert mutants("u.role in ^roles") == MapSet.new(["u.role not in ^roles"])
       assert mutants("u.role not in ^roles") == MapSet.new(["u.role in ^roles"])
+    end
+
+    test "the in predicate's operands are descended (one mutant per point)" do
+      # Unlike `is_nil`, an operand mutant changes which rows match — so the left side's
+      # arithmetic swap rides alongside the polarity flip, in both polarity directions (the
+      # reverse rebuilds each descent mutant inside the written `not`, no double negation). The
+      # renderer parenthesizes the rebuilt left operand; the precedence is the written one.
+      assert mutants("u.a + u.b in ^list") ==
+               MapSet.new(["(u.a + u.b) not in ^list", "(u.a - u.b) in ^list"])
+
+      assert mutants("u.a + u.b not in ^list") ==
+               MapSet.new(["(u.a + u.b) in ^list", "(u.a - u.b) not in ^list"])
+    end
+
+    test "a written in-list drops one element per mutant and mutates its literals" do
+      # The element drops shrink the membership set one member at a time ("does any test pin this
+      # member?"); each in-list literal also gets its ordinary value mutants — it is fragment SQL
+      # exactly like a bare literal.
+      assert mutants("u.x in [1, 2]") ==
+               MapSet.new([
+                 "u.x not in [1, 2]",
+                 "u.x in [2]",
+                 "u.x in [1]",
+                 "u.x in [2, 2]",
+                 "u.x in [0, 2]",
+                 "u.x in [1, 3]",
+                 "u.x in [1, 1]",
+                 "u.x in [1, 0]"
+               ])
+    end
+
+    test "a singleton written list still drops — to the constantly-false empty list" do
+      assert mutants(~s|u.status in ["a"]|) ==
+               MapSet.new([
+                 ~s|u.status not in ["a"]|,
+                 "u.status in []",
+                 ~s|u.status in [""]|,
+                 ~s|u.status in ["mutare"]|
+               ])
+    end
+
+    test "a pinned or referenced right-hand side has no written elements to drop" do
+      # Only a literal list the author wrote qualifies — a `^list` value is core's, and a column
+      # reference (`"elixir" in p.tags`) has no member list in the source at all. A *written*
+      # left-hand literal is still fragment data, so the array-membership form keeps its string
+      # mutants while offering no drop.
+      assert mutants("u.role in ^roles") == MapSet.new(["u.role not in ^roles"])
+
+      assert mutants(~s|"elixir" in p.tags|) ==
+               MapSet.new([
+                 ~s|"elixir" not in p.tags|,
+                 ~s|"" in p.tags|,
+                 ~s|"mutare" in p.tags|
+               ])
     end
 
     test "exists polarity flips both ways as a unit" do
@@ -400,6 +463,12 @@ defmodule Mutare.Ecto.FragmentTest do
       assert labels("not exists(subquery(sq))") == MapSet.new(["exists"])
     end
 
+    test "an in-list element drop is labelled element, apart from the polarity flip" do
+      # A written list of pinned values has drops but no literal mutants, isolating the two
+      # membership labels: `[ecto:element]` names the drops, `[ecto:in]` the polarity.
+      assert labels("u.x in [^a, ^b]") == MapSet.new(["in", "element"])
+    end
+
     test "value families label by kind, not operator" do
       assert labels("u.age > 18") == MapSet.new([">", ["succ"], ["pred"], ["zero"]])
       assert labels(~s|u.name == "ok"|) == MapSet.new(["==", ["empty"], ["sentinel"]])
@@ -414,7 +483,9 @@ defmodule Mutare.Ecto.FragmentTest do
           "u.age > 18",
           ~s|u.s == "x"|,
           "u.f > 2.5",
-          "u.a + u.b > u.c * u.d"
+          "u.a + u.b > u.c * u.d",
+          "u.x in [1, 2]",
+          "exists(subquery(sq))"
         ]
         |> Enum.flat_map(&MapSet.to_list(labels(&1)))
         |> List.flatten()

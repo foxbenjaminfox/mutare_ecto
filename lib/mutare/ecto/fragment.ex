@@ -21,12 +21,21 @@ defmodule Mutare.Ecto.Fragment do
       false); its equivalences differ from Elixir's, so it is owned here, never reused from core.
     * **NullPredicate** — `is_nil(x)`↔`not is_nil(x)`. The uniquely-SQL family with no Elixir
       analog worth borrowing; treated as one unit so `not is_nil(x)` flips back to `is_nil(x)`
-      rather than producing a double-negation.
+      rather than producing a double-negation. Its argument is **never descended**: every catalog
+      family preserves an expression's NULL-ness (an arithmetic or literal swap changes the value,
+      never whether it is NULL), so any mutant of the argument is *provably equivalent* inside
+      `is_nil` — emitting one would manufacture the always-equivalent noise the catalog exists to
+      avoid.
     * **Membership** — `x in ^list`↔`x not in ^list` and `exists(subquery)`↔`not exists(subquery)`
-      (polarity, each a unit like NullPredicate) and `like`↔`ilike` (case-sensitivity; an atom-form
-      swap). `ilike` is Postgres-specific, so the `like`↔`ilike` swap is **dialect-gated** —
-      emitted only when `dialects:` includes `:postgres` (the `in`/`exists` polarities are portable
-      and always emitted).
+      (polarity flips that treat the predicate as one unit — the reverse direction flips back, no
+      double negation), plus one **element drop** per entry of a *written* in-list
+      (`x in [1, 2, 3]` → `x in [2, 3]`/…, shrinking the membership set), and `like`↔`ilike`
+      (case-sensitivity; an atom-form swap). `ilike` is Postgres-specific, so the `like`↔`ilike`
+      swap is **dialect-gated** — emitted only when `dialects:` includes `:postgres` (the
+      `in`/`exists` polarities and the element drop are portable and always emitted). Unlike
+      `is_nil`, the `in` predicate's operands **are** descended — an arithmetic swap on the left
+      or a literal inside the written list changes which rows match — while `exists`'s argument
+      is not (a subquery's internals are their own routed query, not this condition's syntax).
     * **Arithmetic** — `+`↔`-`, `*`↔`/`, owned by the shared scalar catalog (`Mutare.Ecto.Scalar`,
       which also delivers it in `select`/`order_by` values): NULL propagates through every arm
       alike (the swap changes a row's computed value, never its NULL-ness), and `/` is the
@@ -123,7 +132,7 @@ defmodule Mutare.Ecto.Fragment do
       |> Enum.flat_map(&Map.keys/1)
       |> Enum.map(&to_string/1)
 
-    swap_ops ++ ~w(in exists is_nil succ pred zero empty sentinel negate)
+    swap_ops ++ ~w(in element exists is_nil succ pred zero empty sentinel negate)
   end
 
   # NullPredicate, as a unit. `not is_nil(x)` → `is_nil(x)`: flip the whole predicate, never
@@ -134,21 +143,35 @@ defmodule Mutare.Ecto.Fragment do
   defp do_mutants({:not, _meta, [{:is_nil, _, [_arg]} = inner]}, _opts, _position),
     do: [{:null_predicate, inner, "is_nil"}]
 
-  # `is_nil(x)` → `not is_nil(x)`. A unit too: its argument is a column reference with no
-  # catalog operators, so there is nothing to descend into. Clean meta on the fresh `not`.
+  # `is_nil(x)` → `not is_nil(x)`. The argument is deliberately **not** descended — and not
+  # because there is nothing there (`is_nil(u.a + u.b)` is legal SQL): every catalog family
+  # preserves an expression's NULL-ness (an arithmetic/literal swap changes the value, never
+  # whether it is NULL), so inside a predicate that asks *only* about NULL-ness, any argument
+  # mutant is provably equivalent. Clean meta on the fresh `not`.
   defp do_mutants({:is_nil, _meta, [_arg]} = node, _opts, _position),
     do: [{:null_predicate, {:not, [], [node]}, "is_nil"}]
 
-  # Membership polarity, as a unit (mirrors NullPredicate). `x not in ^list` → `x in ^list`:
-  # flip the whole predicate, no descent (its operands — a field and a pinned list — carry no
-  # catalog target; the list's *value* is core's). Portable, always emitted. Both directions are
-  # tagged `"in"` (`not in` has a space), so `# mutare:ignore[ecto:in]` names the polarity flip.
-  defp do_mutants({:not, _meta, [{:in, _, [_l, _r]} = inner]}, _opts, _position),
-    do: [{:membership, inner, "in"}]
+  # Membership. `x not in list` → `x in list`: flip the whole predicate as a unit (no double
+  # negation) — but unlike `is_nil`, the operands *are* worth descending: an arithmetic swap on
+  # the left or a literal bump inside a written list changes which rows match. Descent mutants
+  # (and the element drops of a written list) are rebuilt inside the `not`, so each stays a
+  # single-point variant of the full predicate. Both polarity directions are tagged `"in"`
+  # (`not in` has a space), so `# mutare:ignore[ecto:in]` names the polarity flip.
+  defp do_mutants({:not, meta, [{:in, imeta, [_l, _r] = iargs} = inner]}, opts, _position) do
+    [
+      {:membership, inner, "in"}
+      | rewrap(element_drops(inner) ++ lift(:in, imeta, iargs, opts), meta)
+    ]
+  end
 
-  # `x in ^list` → `x not in ^list`. A unit too. Clean meta on the fresh `not`.
-  defp do_mutants({:in, _meta, [_l, _r]} = node, _opts, _position),
-    do: [{:membership, {:not, [], [node]}, "in"}]
+  # `x in list` → `x not in list` (clean meta on the fresh `not`), plus the element drops of a
+  # written list and the operand descent — a pinned `^list` or a field reference yields nothing.
+  defp do_mutants({:in, meta, [_l, _r] = args} = node, opts, _position) do
+    [
+      {:membership, {:not, [], [node]}, "in"}
+      | element_drops(node) ++ lift(:in, meta, args, opts)
+    ]
+  end
 
   # Existence polarity, as a unit (the subquery cousin of the `in` flip — SQL's other membership
   # predicate). `not exists(subquery)` → `exists(subquery)`: flip the whole predicate, no descent
@@ -189,9 +212,41 @@ defmodule Mutare.Ecto.Fragment do
   defp do_mutants({form, meta, args}, opts, _position) when is_list(args),
     do: lift(form, meta, args, opts)
 
-  # Variables, 2-tuples, lists, bare atoms: no catalog target (interpolations are core's; the
+  # A plain list — the written right-hand side of an `in` (Sourceror wraps it as
+  # `{:__block__, …, [[…]]}`, whose block the atom-form clause descends into): descend per
+  # element, so an in-list literal is fragment SQL exactly like a bare one. Elements carry no
+  # structural position (`nil`) — the registry is keyed by call-argument positions.
+  defp do_mutants(list, opts, _position) when is_list(list) do
+    list
+    |> Enum.with_index()
+    |> Enum.flat_map(fn {el, index} ->
+      for {family, mutated, label} <- do_mutants(el, opts, nil),
+          do: {family, List.replace_at(list, index, mutated), label}
+    end)
+  end
+
+  # Variables, 2-tuples, bare atoms: no catalog target (interpolations are core's; the
   # `in`/`like` membership forms are handled by their own clauses above).
   defp do_mutants(_node, _opts, _position), do: []
+
+  # Membership set shrink: one mutant per element of a **written** in-list, each dropping that
+  # single element (`x in [1, 2, 3]` → `x in [2, 3]` / `[1, 3]` / `[1, 2]`) — "does any test pin
+  # this member?". Only a literal list the author wrote qualifies: a pinned `^list`, a field
+  # reference, or a subquery right-hand side has no written elements to drop. A singleton drops
+  # to `x in []` (constantly false — still valid, trivially killable SQL). Tagged `"element"`
+  # so `# mutare:ignore[ecto:element]` names the drops apart from the polarity flip.
+  defp element_drops({:in, meta, [l, {:__block__, lmeta, [elems]}]}) when is_list(elems) do
+    for index <- 0..(length(elems) - 1)//1 do
+      dropped = {:__block__, lmeta, [List.delete_at(elems, index)]}
+      {:membership, {:in, meta, [l, dropped]}, "element"}
+    end
+  end
+
+  defp element_drops(_node), do: []
+
+  # Rebuild each descent/drop mutant of a reverse-polarity unit's inner predicate back inside the
+  # written `not`, keeping the tag — so the emitted node is the full condition, single-point.
+  defp rewrap(mutants, meta), do: for({f, m, l} <- mutants, do: {f, {:not, meta, [m]}, l})
 
   # IntegerLiteral: an integer literal written into the fragment (Sourceror-wrapped). Boundary
   # (`n±1`) plus the zero sentinel, deduped and never equal to `n` — owned here so it stays
