@@ -656,23 +656,24 @@ defmodule Mutare.Ecto.SubcontractTest do
     end
 
     test "a :skip author macro's pin inside a dynamic never sub-contracts" do
-      # The author-macro rule rides the shared walk: registered fully `:skip`, `between/3`'s
-      # arguments are its own grammar — opaque to the island walk. Unregistered, the same pin
-      # is reached (the contrast that isolates the routing).
-      helper = [mutators: [:all, {Mutare.Ecto, repo: MyApp.Repo}, MyApp.QueryHelperMutator]]
+      # The author-macro rule rides the shared walk: `opaque/1` (core's shipped
+      # `RoutingExtension` fixture, threaded via `extensions:`) is registered fully `:skip` —
+      # its argument is the macro's own grammar, opaque to the island walk. Without the
+      # extension the same pin is reached (the contrast that isolates the routing).
+      helper = @with_core ++ [extensions: [Mutare.Test.Fixtures.RoutingExtension]]
 
       src = """
       defmodule M do
         import Ecto.Query
-        import MyApp.QueryHelpers
-        def d(n), do: dynamic([u], between(u.age, ^(n + 1), 65))
+        import Mutare.Test.Fixtures.RoutingExtension
+        def d(n), do: dynamic([u], opaque(u.age > ^(n + 1)))
       end
       """
 
       assert island_diffs(src, helper) == []
 
-      assert {:arithmetic, "dynamic([u], between(u.age, ^(n + 1), 65))",
-              "dynamic([u], between(u.age, ^(n - 1), 65))"} in island_diffs(src, @with_core)
+      assert {:arithmetic, "dynamic([u], opaque(u.age > ^(n + 1)))",
+              "dynamic([u], opaque(u.age > ^(n - 1)))"} in island_diffs(src, @with_core)
 
       assert_compiles(src, helper)
     end
