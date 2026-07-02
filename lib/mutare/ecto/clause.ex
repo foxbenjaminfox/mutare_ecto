@@ -104,7 +104,7 @@ defmodule Mutare.Ecto.Clause do
   defp bound_flips(value) do
     case AST.int_value(value) do
       nil -> []
-      n -> for bumped <- AST.bumps(n), do: {:bound, AST.int_literal(bumped)}
+      n -> for bumped <- AST.bumps(n), do: {:bound, Mutare.AST.literal(bumped)}
     end
   end
 end

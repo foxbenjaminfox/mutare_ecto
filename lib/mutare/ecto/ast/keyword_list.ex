@@ -56,7 +56,7 @@ defmodule Mutare.Ecto.AST.KeywordList do
   def replace_key(%__MODULE__{entries: entries} = list, index, key) do
     entries =
       List.update_at(entries, index, fn %Entry{} = entry ->
-        %{entry | key: key, key_node: AST.keyword_key(key)}
+        %{entry | key: key, key_node: Mutare.AST.keyword_key(key)}
       end)
 
     to_ast(%__MODULE__{list | entries: entries})

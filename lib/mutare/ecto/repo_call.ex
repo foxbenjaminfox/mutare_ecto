@@ -7,8 +7,8 @@ defmodule Mutare.Ecto.RepoCall do
   # This mirrors how `Mutare.Ecto.StageDrop` factors the resolve-and-classify shape for the pipeline
   # drop families.
 
+  alias Mutare.Calls
   alias Mutare.Ecto.Config
-  alias Mutare.Transform.Calls
 
   @doc """
   Resolve `node` to a `{fun, args, rebuild}` call on the context's configured `repo`, or `nil` when
@@ -19,7 +19,7 @@ defmodule Mutare.Ecto.RepoCall do
           {atom(), [Macro.t()], (atom(), [Macro.t()] -> Macro.t())} | nil
   def resolve(node, context) do
     with repo when not is_nil(repo) <- context |> Config.from_context() |> Config.repo_key(),
-         {^repo, fun, args, rebuild} <- Calls.resolved_call(node) do
+         {:ok, fun, args, rebuild} <- Calls.resolved_call_to(node, repo) do
       {fun, args, rebuild}
     else
       _ -> nil

@@ -7,18 +7,14 @@ defmodule Mutare.Ecto.QueryTerminal do
   survivor means no test pins *which* end the query is taking.
 
   These are plain `Ecto.Query` functions (not the macro DSL), so they resolve through
-  `Mutare.Transform.Calls` in every written form — qualified (`Ecto.Query.first(q)`), aliased, or
-  bare under `import Ecto.Query` — and ride Mutare's ordinary in-place selector. The `rebuild`
-  keeps the source's written form (and is pipe-agnostic: `q |> first()` has an empty arg list, so
-  `q |> last()` falls out for free). Family `:query_terminal`.
+  `Mutare.Calls.resolved_call_to/3` in every written form — qualified (`Ecto.Query.first(q)`),
+  aliased, or bare under `import Ecto.Query` — and ride Mutare's ordinary in-place selector. The
+  `rebuild` keeps the source's written form (and is pipe-agnostic: `q |> first()` has an empty arg
+  list, so `q |> last()` falls out for free). Family `:query_terminal`.
   """
 
-  alias Mutare.Ecto.AST
-  alias Mutare.Transform.Calls
+  alias Mutare.Calls
 
-  # The resolved-call module key `Mutare.Transform.Calls` returns for an `Ecto.Query` call — the
-  # canonical one owned by `AST.query_module_key/0`, never the hardcoded `[:Ecto, :Query]` split.
-  @query_key AST.query_module_key()
   @swaps %{first: :last, last: :first}
   @terminals Map.keys(@swaps)
 
@@ -28,12 +24,9 @@ defmodule Mutare.Ecto.QueryTerminal do
   @spec mutations(Macro.t(), Mutare.Mutator.context()) :: [{:query_terminal, Macro.t()}]
   @impl Mutare.Ecto.SubMutator
   def mutations(node, _context) do
-    case Calls.resolved_call(node) do
-      {@query_key, fun, args, rebuild} when fun in @terminals ->
-        [{:query_terminal, rebuild.(@swaps[fun], args)}]
-
-      _ ->
-        []
+    case Calls.resolved_call_to(node, Ecto.Query, @terminals) do
+      {:ok, fun, args, rebuild} -> [{:query_terminal, rebuild.(@swaps[fun], args)}]
+      :error -> []
     end
   end
 end

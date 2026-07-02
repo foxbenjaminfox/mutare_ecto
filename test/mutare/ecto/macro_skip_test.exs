@@ -7,7 +7,7 @@ defmodule Mutare.Ecto.MacroSkipTest do
   # they register such a macro `:skip` (or some of its arguments `:skip`), the plugin must leave that
   # argument opaque rather than mutating into the body the author owns — the SQL the macro expands to
   # is the author's, not the catalog's to rewrite. The plugin honours this by reading each nested
-  # call's resolved per-argument routing (`Mutare.Transform.Calls.macro_treatment/1`, stamped by the
+  # call's resolved per-argument routing (`Mutare.Calls.macro_treatment/1`, stamped by the
   # resolve pre-pass) as `Mutare.Ecto.Fragment`/`Mutare.Ecto.Aggregate` walk the hosted condition.
   #
   # `MyApp.QueryHelpers` supplies the author macros and `MyApp.QueryHelperMutator` registers their

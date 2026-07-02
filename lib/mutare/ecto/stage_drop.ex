@@ -11,26 +11,27 @@ defmodule Mutare.Ecto.StageDrop do
   #     (a user `alias X, as: Function` can't redirect it).
   #   * **direct** (`step(x, …)`) — the value is the first argument, so the call collapses to it.
   #
-  # The owner module supplies the resolved module key it matches and a `fun -> family | nil`
-  # classifier (nil = not droppable), keeping the family taxonomy with the family that owns it.
+  # The owner module supplies the module it matches and a `fun -> family | nil` classifier
+  # (nil = not droppable), keeping the family taxonomy with the family that owns it.
 
-  alias Mutare.Ecto.{AST, Config}
-  alias Mutare.Transform.Calls
+  alias Mutare.Calls
+  alias Mutare.Ecto.Config
 
   @doc """
-  Stage-drop mutations for `node` when it resolves (via `Mutare.Transform.Calls`) to a call on
-  `module_key` whose function `family_fun` maps to a family. Returns `{family, node}` pairs, or
-  `[]` when the call is on another module or `family_fun` returns `nil`. Pipe-aware via `pipe_mode`.
+  Stage-drop mutations for `node` when it resolves (via `Mutare.Calls.resolved_call_to/3`) to a
+  call on `module` whose function `family_fun` maps to a family. Returns `{family, node}` pairs,
+  or `[]` when the call is on another module or `family_fun` returns `nil`. Pipe-aware via
+  `pipe_mode`.
   """
   @spec mutations(
           Macro.t(),
-          [atom()] | atom(),
+          module(),
           (atom() -> Config.family() | nil),
           :piped | :unpiped
         ) ::
           [{Config.family(), Macro.t()}]
-  def mutations(node, module_key, family_fun, pipe_mode) do
-    with {^module_key, fun, args, _rebuild} <- Calls.resolved_call(node),
+  def mutations(node, module, family_fun, pipe_mode) do
+    with {:ok, fun, args, _rebuild} <- Calls.resolved_call_to(node, module),
          family when not is_nil(family) <- family_fun.(fun) do
       for dropped <- drop(pipe_mode, args), do: {family, dropped}
     else
@@ -44,5 +45,5 @@ defmodule Mutare.Ecto.StageDrop do
   defp drop(:unpiped, [value | _rest]), do: [value]
   defp drop(:unpiped, []), do: []
 
-  defp identity_call, do: AST.remote_call(AST.absolute_alias([:Function]), :identity, [])
+  defp identity_call, do: Mutare.AST.absolute_call([:Function], :identity, [])
 end

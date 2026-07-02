@@ -4,7 +4,6 @@ defmodule Mutare.Ecto.Host.Target do
   # delivery transform: wrapping logical fragments in `dynamic/2` (the target's `:wrap`), pinning
   # the selector, and splicing it into the original call.
 
-  alias Mutare.Ecto.AST
   alias Mutare.Ecto.AST.{KeywordList, QueryCall}
   alias Mutare.Mutator.MacroHost
 
@@ -62,7 +61,7 @@ defmodule Mutare.Ecto.Host.Target do
 
   defp dynamic_wrap(bindings) do
     fn fragment ->
-      AST.remote_call(AST.absolute_alias([:Ecto, :Query]), :dynamic, [bindings, fragment])
+      Mutare.AST.absolute_call([:Ecto, :Query], :dynamic, [bindings, fragment])
     end
   end
 

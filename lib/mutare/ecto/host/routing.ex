@@ -39,10 +39,8 @@ defmodule Mutare.Ecto.Host.Routing do
   alias Mutare.Ecto.{AST, Binding, Surface}
   alias Mutare.Ecto.AST.{KeywordList, QueryCall}
   alias Mutare.Ecto.Host.Bindings
+  alias Mutare.Calls
   alias Mutare.MacroRouting.{ArgumentRoutes, Call}
-  alias Mutare.Transform.Calls
-
-  @query_key AST.query_module_key()
 
   @doc """
   `c:Mutare.MacroRouting.route_arguments/2` for a `:routing`-registered query macro: the
@@ -147,7 +145,7 @@ defmodule Mutare.Ecto.Host.Routing do
   defp query_builder_call?(node) do
     case QueryCall.parse(node) do
       %QueryCall{name: name} -> Surface.query_builder?(name)
-      nil -> qualified_query_builder?(Calls.resolved_call(node))
+      nil -> qualified_query_builder?(node)
     end
   end
 
@@ -155,10 +153,12 @@ defmodule Mutare.Ecto.Host.Routing do
   # macro has no macro-identity stamp yet. Its explicit `Ecto.Query` receiver is nevertheless
   # authoritative through ordinary call resolution; once routed `:expression`, descent stamps and
   # analyzes it normally. Bare query builders are recognized by the clause above.
-  defp qualified_query_builder?({@query_key, name, _args, _rebuild}),
-    do: Surface.query_builder?(name)
-
-  defp qualified_query_builder?(_call), do: false
+  defp qualified_query_builder?(node) do
+    case Calls.resolved_call_to(node, Ecto.Query) do
+      {:ok, name, _args, _rebuild} -> Surface.query_builder?(name)
+      :error -> false
+    end
+  end
 
   defp host_join_options(routing, args) do
     with %KeywordList{entries: entries} <- KeywordList.nonempty(List.last(args)),

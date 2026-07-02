@@ -40,7 +40,7 @@ defmodule Mutare.Ecto.RepoWrite do
   (`Elixir.Ecto.Changeset.change() |> Elixir.Ecto.Changeset.apply_action(:insert)`) that Mutare
   splices onto the piped value — `cs |> (change() |> apply_action(:insert))`, which flattens to
   the intended two-stage pipe. The `:on_conflict` swap rebuilds the call in its written form via
-  `Mutare.Transform.Calls`, so it is pipe-position-agnostic.
+  `Mutare.Calls`, so it is pipe-position-agnostic.
   """
 
   alias Mutare.Ecto.{AST, RepoCall}
@@ -53,7 +53,7 @@ defmodule Mutare.Ecto.RepoWrite do
   # (`defmodule Ecto.Changeset` nested in `Foo` aliases `Ecto`→`Foo.Ecto`) or a plain
   # `alias Foo, as: Ecto`, silently retargeting the call. The `Elixir.`-prefixed alias resolves to
   # the real module unconditionally (same stance as `Mutare.Ecto.StageDrop`'s `Elixir.Function`).
-  @changeset AST.absolute_alias([:Ecto, :Changeset])
+  @changeset Mutare.AST.absolute_alias([:Ecto, :Changeset])
 
   # Each persisting write → the `apply_action` function (raising or not) and the action atom it
   # passes. The action mirrors the write; `insert_or_update` chooses insert/update at runtime from
@@ -115,18 +115,18 @@ defmodule Mutare.Ecto.RepoWrite do
   # Piped: the changeset is the pipe's LHS (not in `args`), so emit a right-nested pipe stage —
   # `change() |> apply_action(action)` — that Mutare splices onto the piped value. Opts are dropped.
   defp apply_action(action_fun, action, _args, :piped) do
-    {:|>, [], [changeset(:change, []), changeset(action_fun, [AST.atom_literal(action)])]}
+    {:|>, [], [changeset(:change, []), changeset(action_fun, [Mutare.AST.literal(action)])]}
   end
 
   # Unpiped: the changeset is the first argument; wrap it in `change/1` and pass to `apply_action`.
   # Remaining args (the write's opts) are dropped — a non-persisting stub takes none.
   defp apply_action(action_fun, action, [arg | _opts], :unpiped) do
-    changeset(action_fun, [changeset(:change, [arg]), AST.atom_literal(action)])
+    changeset(action_fun, [changeset(:change, [arg]), Mutare.AST.literal(action)])
   end
 
   defp apply_action(_action_fun, _action, [], :unpiped), do: nil
 
-  defp changeset(fun, args), do: AST.remote_call(@changeset, fun, args)
+  defp changeset(fun, args), do: Mutare.AST.remote_call(@changeset, fun, args)
 
   # `:on_conflict` — flip `on_conflict: :nothing` → `:raise` in the trailing keyword-list arg,
   # rebuilding the call in its written form. Pipe-agnostic: the opts list is the last visible arg
@@ -151,7 +151,7 @@ defmodule Mutare.Ecto.RepoWrite do
         Enum.find_value(Enum.with_index(entries), fn {entry, index} ->
           with :on_conflict <- entry.key,
                to when not is_nil(to) <- @on_conflict_swaps[AST.atom_value(entry.value)] do
-            KeywordList.replace_value(options, index, AST.atom_literal(to))
+            KeywordList.replace_value(options, index, Mutare.AST.literal(to))
           else
             _ -> nil
           end

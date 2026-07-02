@@ -175,7 +175,7 @@ defmodule Mutare.Ecto.Query do
        rebuild_from(
          call,
          source,
-         KeywordList.replace_value(clauses, index, AST.int_literal(bumped))
+         KeywordList.replace_value(clauses, index, Mutare.AST.literal(bumped))
        )}
     end
   end

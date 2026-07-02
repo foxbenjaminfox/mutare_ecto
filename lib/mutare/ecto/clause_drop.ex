@@ -22,7 +22,7 @@ defmodule Mutare.Ecto.ClauseDrop do
       alias-proof (a user `alias X, as: Function` can't redirect it).
     * **direct** (`where(q, …)`) — the query is the first argument, so the call collapses to it.
 
-  The call is resolved through `Mutare.Transform.Calls`, so it matches the direct, aliased, and
+  The call is resolved through `Mutare.Calls`, so it matches the direct, aliased, and
   (common) `import Ecto.Query` forms alike, and never a same-named user function.
 
   ## Families
@@ -40,13 +40,9 @@ defmodule Mutare.Ecto.ClauseDrop do
   the mutant is exercised (killing it), never a compile error of the single metamutant build.
   """
 
-  alias Mutare.Ecto.{AST, Config, StageDrop, Surface}
+  alias Mutare.Ecto.{Config, StageDrop, Surface}
 
   use Mutare.Ecto.SubMutator
-
-  # The resolved-call module key `Mutare.Transform.Calls` returns for an `Ecto.Query` call — the
-  # canonical one owned by `AST.query_module_key/0`, never the hardcoded `[:Ecto, :Query]` split.
-  @query_key AST.query_module_key()
 
   @doc """
   Stage-drop mutations for an `Ecto.Query` clause macro as `{family, node}` pairs, or `[]`.
@@ -55,5 +51,5 @@ defmodule Mutare.Ecto.ClauseDrop do
   @spec mutations(Macro.t(), Mutare.Mutator.context()) :: [{Config.family(), Macro.t()}]
   @impl Mutare.Ecto.SubMutator
   def mutations(node, %{pipe_mode: pipe_mode}),
-    do: StageDrop.mutations(node, @query_key, &Surface.stage_drop_family/1, pipe_mode)
+    do: StageDrop.mutations(node, Ecto.Query, &Surface.stage_drop_family/1, pipe_mode)
 end

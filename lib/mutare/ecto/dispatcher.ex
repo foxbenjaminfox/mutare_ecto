@@ -5,7 +5,6 @@ defmodule Mutare.Ecto.Dispatcher do
   # and call resolution even for ordinary literals and operators.
 
   alias Mutare.Ecto.{
-    AST,
     BindingReorder,
     Changeset,
     Clause,
@@ -19,11 +18,14 @@ defmodule Mutare.Ecto.Dispatcher do
     Surface
   }
 
-  alias Mutare.Transform.Calls
+  alias Mutare.Calls
   alias Mutare.Ecto.AST.QueryCall
 
-  @query_key AST.query_module_key()
-  @changeset_key AST.module_key(Ecto.Changeset)
+  # This dispatch is table-driven across *several* modules (Ecto.Query, Ecto.Changeset, the
+  # configured repo), so it matches the raw `Calls.resolved_call/1` tuple against keys encoded
+  # by the published `Calls.module_key/1` — never a hand-built split form.
+  @query_key Calls.module_key(Ecto.Query)
+  @changeset_key Calls.module_key(Ecto.Changeset)
   @doc "The tagged mutations applicable to one AST node."
   # `context` is the `:ecto_config`-augmented callback context (`Mutare.Ecto.mutate/2` injects the
   # parsed config), a superset of `Mutare.Mutator.context()` — hence `map()`, as in

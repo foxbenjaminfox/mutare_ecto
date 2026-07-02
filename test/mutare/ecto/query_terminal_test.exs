@@ -3,7 +3,7 @@ defmodule Mutare.Ecto.QueryTerminalTest do
 
   import Mutare.Ecto.TestSupport
 
-  # `Ecto.Query.first` ↔ `last` — a same-arity rename resolved through `Mutare.Transform.Calls`,
+  # `Ecto.Query.first` ↔ `last` — a same-arity rename resolved through `Mutare.Calls`,
   # so qualified, aliased, and `import`ed forms all match.
 
   test "swaps first to last (qualified)" do

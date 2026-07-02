@@ -103,7 +103,7 @@ hosting):
 The surface divides by **how a mutation is delivered**, not by what it mutates:
 
 1. **Plain calls** (`Bucket 1`) — `Repo.aggregate`, changeset validators, `Repo.insert`,
-   `first`/`last`. Not DSL; resolved through `Mutare.Transform.Calls` (so direct/aliased/imported
+   `first`/`last`. Not DSL; resolved through `Mutare.Calls` (so direct/aliased/imported
    forms all match) and delivered by Mutare's ordinary in-place selector. Needs no new core
    machinery. Modules: `RepoAggregate`, `RepoWrite`, `Changeset`, `QueryTerminal`, plus the
    whole-`from` rewrites in `Query`, the standalone/pipe rewrites in `Clause`, and the
@@ -149,7 +149,7 @@ The surface divides by **how a mutation is delivered**, not by what it mutates:
 | `stage_drop.ex` | Shared pipe-aware stage-drop delivery for `clause_drop.ex` and `changeset.ex` |
 | `changeset.ex` | Changeset pipeline drops (`:validation_drop`, `:hook_drop`) |
 | `config.ex` | `families:`/`dialects:`/`repo:` reading + validation; equivalence-sensitive set + note |
-| `ast.ex` | Small Sourceror AST helpers (literal wrapping, clean-meta emission, module keys) |
+| `ast.ex` | Small Sourceror AST helpers the plugin genuinely owns: typed literal *readers* (`atom_value`/`int_value`), the top-level-pin check, the bound bumps — everything *emitted* comes from core's `Mutare.AST` constructors |
 
 ### Families and configuration
 
@@ -191,7 +191,7 @@ through their `mutate/2` rewrites.
   Mutare mutates **source**, not expansions, so there's nothing "downstream" to protect — the thing
   `:skip` protects is the **argument source**. As they walk the condition, `fragment.ex` and
   `aggregate.ex` read each nested call's per-argument routing via
-  `Mutare.Transform.Calls.macro_treatment/1` (stamped by the resolve pre-pass) and descend into an
+  `Mutare.Calls.macro_treatment/1` (stamped by the resolve pre-pass) and descend into an
   argument **only** when it's plainly standard syntax — a non-macro node, or an argument the macro
   routed `:expression`. Every other routing (`:skip`, `:pattern`, `:hosted`, …) is left raw.
 - **Binding-reorder is always in-place, never a body rewrite.** Transposing `[a, b]` → `[b, a]` swaps
@@ -205,12 +205,18 @@ through their `mutate/2` rewrites.
   selector — a bare `case` in a query position poisons compilation. New query-position families go
   through the host, not the in-place selector.
 - **Sourceror wraps literals** as `{:__block__, meta, [value]}`. Read values through the
-  `AST.*_value/1` helpers, and emit fresh literals with **clean meta** (`AST.atom_literal/1` etc.)
-  — reusing the original meta makes the renderer re-emit the old text even after the value changed
-  (a silent no-op mutant).
+  `AST.*_value/1` helpers, and emit fresh nodes through **core's `Mutare.AST` constructors**
+  (`literal/1`, `keyword_key/1`, `clean_var/1`, …) — they own Sourceror's emission invariants
+  (clean/derived meta so the renderer never re-emits the old text, numeric `:token`s, string
+  delimiters, the negative-number shape). Never hand-build a `{:__block__, meta, [value]}`.
+- **Match calls through `Mutare.Calls`**, never `Mutare.Transform.Calls` (core-internal):
+  `resolved_call_to/3` with the real module atom for single-module matching,
+  `resolved_call/1` + `module_key/1` for table-driven dispatch across modules — never a
+  hand-built `[:Ecto, :Query]` key.
 - **Emitted module references are `Elixir.`-prefixed** (`Elixir.Ecto.Changeset.apply_action`,
-  `Function.identity`). The metamutant recompiles in the author's aliasing scope, where a bare
-  `Ecto.Changeset` could be retargeted by an `alias`; only the absolute name is poison-proof.
+  `Function.identity`) via `Mutare.AST.absolute_alias/1`/`absolute_call/3`. The metamutant
+  recompiles in the author's aliasing scope, where a bare `Ecto.Changeset` could be retargeted by
+  an `alias`; only the absolute name is poison-proof.
 
 ## Tests
 

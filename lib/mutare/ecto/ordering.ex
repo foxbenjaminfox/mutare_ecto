@@ -94,10 +94,10 @@ defmodule Mutare.Ecto.Ordering do
   defp tag(_family, nil, _field, _direction), do: []
 
   defp tag(:ordering, to, field, direction),
-    do: [{:ordering, {AST.keyword_key(to), field}, direction_label(direction)}]
+    do: [{:ordering, {Mutare.AST.keyword_key(to), field}, direction_label(direction)}]
 
   defp tag(:ordering_nulls, to, field, direction),
-    do: [{:ordering_nulls, {AST.keyword_key(to), field}, placement_label(direction)}]
+    do: [{:ordering_nulls, {Mutare.AST.keyword_key(to), field}, placement_label(direction)}]
 
   # The direction half of a sort key (`:asc_nulls_first` → `"asc"`); every flippable key starts asc/desc.
   defp direction_label(direction) do

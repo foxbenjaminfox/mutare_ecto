@@ -1,7 +1,6 @@
 defmodule Mutare.Ecto.NormalizedASTTest do
   use ExUnit.Case, async: true
 
-  alias Mutare.Ecto.AST
   alias Mutare.Ecto.AST.{BindingList, KeywordList, QueryCall}
   alias Mutare.Transform.Meta
 
@@ -10,13 +9,13 @@ defmodule Mutare.Ecto.NormalizedASTTest do
   describe "QueryCall" do
     test "normalizes a stamped Ecto.Query macro and rebuilds its written form" do
       {head, meta, args} = parse("Ecto.Query.limit(q, 10)")
-      meta = Meta.stamp_macro_call(meta, {AST.query_module_key(), :limit, :unpiped})
+      meta = Meta.stamp_macro_call(meta, {Mutare.Calls.module_key(Ecto.Query), :limit, :unpiped})
       call = QueryCall.parse({head, meta, args})
 
       assert %QueryCall{name: :limit, args: [_query, _bound]} = call
 
       assert call
-             |> QueryCall.replace_arg(1, AST.int_literal(20))
+             |> QueryCall.replace_arg(1, Mutare.AST.literal(20))
              |> Sourceror.to_string() == "Ecto.Query.limit(q, 20)"
     end
 
@@ -69,7 +68,7 @@ defmodule Mutare.Ecto.NormalizedASTTest do
       assert Enum.map(list.entries, & &1.key) == [:where, :limit]
 
       assert list
-             |> KeywordList.replace_value(1, AST.int_literal(20))
+             |> KeywordList.replace_value(1, Mutare.AST.literal(20))
              |> Sourceror.to_string() == "[where: u.active, limit: 20]"
 
       assert list |> KeywordList.replace_key(1, :offset) |> Sourceror.to_string() ==

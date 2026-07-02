@@ -3,7 +3,7 @@ defmodule MyApp.QueryHelpers do
   # Author-defined query-helper macros — the surface that proves a nested macro the *author* wrote
   # inside an Ecto `where`/`having` fragment is left opaque when registered `:skip`. The plugin's
   # in-fragment catalogs (`Mutare.Ecto.Fragment`, `Mutare.Ecto.Aggregate`) read that routing via
-  # `Mutare.Transform.Calls.macro_treatment/1` as they walk the condition, so a `:skip` argument is
+  # `Mutare.Calls.macro_treatment/1` as they walk the condition, so a `:skip` argument is
   # never mutated into.
   #
   # Each macro only builds operator/aggregate AST that Ecto interprets *where the macro is used*, so

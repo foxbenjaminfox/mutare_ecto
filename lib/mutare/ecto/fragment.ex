@@ -91,13 +91,13 @@ defmodule Mutare.Ecto.Fragment do
   macro is free to accept arguments that are valid Elixir *tokens* but not standard Elixir/Ecto
   syntax. So the catalog descends into a nested call's argument **only** when it is plainly a standard
   expression: either the node is not a known macro at all, or the macro routed that argument
-  `:expression` (read from the resolve-pass stamp via `Mutare.Transform.Calls.macro_treatment/1`).
+  `:expression` (read from the resolve-pass stamp via `Mutare.Calls.macro_treatment/1`).
   Any other routing — `:skip`, `:pattern`, `:hosted`, … — marks an argument whose meaning is the
   macro's own, so it is left raw. We mutate only what the author wrote in a form we understand.
   """
 
-  alias Mutare.Ecto.{AST, Config, Scalar}
-  alias Mutare.Transform.Calls
+  alias Mutare.Calls
+  alias Mutare.Ecto.{Config, Scalar}
 
   # The finer `# mutare:ignore` label(s) a mutant carries beyond its family — the operator a swap
   # mutates (`<`), or a literal's kind (`zero`) — or a *list* when one mutant collapses several kinds
@@ -269,23 +269,13 @@ defmodule Mutare.Ecto.Fragment do
   # (`n±1`) plus the zero sentinel, deduped and never equal to `n` — owned here so it stays
   # SQL-safe (core can't reach it: the clause is raw).
   defp literal_mutants({:__block__, _meta, [int]}) when is_integer(int) do
-    value_mutants(
-      [{int + 1, "succ"}, {int - 1, "pred"}, {0, "zero"}],
-      int,
-      :integer_literal,
-      &AST.int_literal/1
-    )
+    value_mutants([{int + 1, "succ"}, {int - 1, "pred"}, {0, "zero"}], int, :integer_literal)
   end
 
   # FloatLiteral: mirrors the integer arm with a `1.0` step and a `0.0` sentinel (core's
   # `FloatLiteral` convention), deduped and never equal to `f`.
   defp literal_mutants({:__block__, _meta, [f]}) when is_float(f) do
-    value_mutants(
-      [{f + 1.0, "succ"}, {f - 1.0, "pred"}, {0.0, "zero"}],
-      f,
-      :float_literal,
-      &AST.float_literal/1
-    )
+    value_mutants([{f + 1.0, "succ"}, {f - 1.0, "pred"}, {0.0, "zero"}], f, :float_literal)
   end
 
   # StringLiteral: a plain string literal → the empty string (`empty`) and the `"mutare"` sentinel
@@ -293,26 +283,21 @@ defmodule Mutare.Ecto.Fragment do
   # typical string yields two mutants. An interpolated string is a `<<>>` node, not this `:__block__`
   # shape, so it is left to core upstream.
   defp literal_mutants({:__block__, _meta, [s]}) when is_binary(s) do
-    value_mutants(
-      [{"", "empty"}, {@string_sentinel, "sentinel"}],
-      s,
-      :string_literal,
-      &AST.string_literal/1
-    )
+    value_mutants([{"", "empty"}, {@string_sentinel, "sentinel"}], s, :string_literal)
   end
 
   # BooleanLiteral: `true` ↔ `false` (core's `Literal` boolean arm). Not aimed at direct boolean
   # comparisons (rarely idiomatic), but at a boolean used elsewhere in a fragment — worth mutating
   # exactly when it is worth using. `nil` is *not* a boolean and is left alone (NULL/absence).
   defp literal_mutants({:__block__, _meta, [bool]}) when is_boolean(bool),
-    do: [{:boolean_literal, AST.atom_literal(not bool), "negate"}]
+    do: [{:boolean_literal, Mutare.AST.literal(not bool), "negate"}]
 
   # AtomLiteral: any other literal atom → the `:mutare` sentinel (core's `AtomLiteral` convention),
   # dropped when the atom already is the sentinel. `true`/`false` are BooleanLiteral's (above) and
   # `nil` is excluded — it is NULL/absence, with no clean swap.
   defp literal_mutants({:__block__, _meta, [atom]})
        when is_atom(atom) and atom not in [true, false, nil] and atom != @atom_sentinel,
-       do: [{:atom_literal, AST.atom_literal(@atom_sentinel), "sentinel"}]
+       do: [{:atom_literal, Mutare.AST.literal(@atom_sentinel), "sentinel"}]
 
   # `nil` and the already-sentinel atom carry no clean swap.
   defp literal_mutants(_node), do: []
@@ -404,7 +389,7 @@ defmodule Mutare.Ecto.Fragment do
   # to the original, then dedup by value while **merging** the kind labels of colliding candidates —
   # so `1`'s `pred` (`n-1` = 0) and its `zero` sentinel collapse to one `0` tagged `["pred", "zero"]`
   # (mirroring core's `Literal`), and a qualifier naming *either* suppresses it. Order-stable.
-  defp value_mutants(candidates, original, family, build) do
+  defp value_mutants(candidates, original, family) do
     candidates
     |> Enum.reject(fn {value, _kind} -> value == original end)
     |> Enum.reduce([], fn {value, kind}, acc ->
@@ -413,6 +398,6 @@ defmodule Mutare.Ecto.Fragment do
         {^value, kinds} -> List.keyreplace(acc, value, 0, {value, kinds ++ [kind]})
       end
     end)
-    |> Enum.map(fn {value, kinds} -> {family, build.(value), kinds} end)
+    |> Enum.map(fn {value, kinds} -> {family, Mutare.AST.literal(value), kinds} end)
   end
 end

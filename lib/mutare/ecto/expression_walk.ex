@@ -11,9 +11,9 @@ defmodule Mutare.Ecto.ExpressionWalk do
   # author wrote may invent its own argument grammar (Mutare mutates source, not expansions), so
   # a call's argument is descended **only** when it is plainly standard syntax — a non-macro node
   # (`nil` routing) or an argument the macro routed `:expression` — read from the resolve-pass
-  # stamp via `Mutare.Transform.Calls.macro_treatment/1`.
+  # stamp via `Mutare.Calls.macro_treatment/1`.
 
-  alias Mutare.Transform.Calls
+  alias Mutare.Calls
 
   @typedoc "One tagged single-point mutant: `{family, node, finer_label}`."
   @type tagged :: {atom(), Macro.t(), String.t()}

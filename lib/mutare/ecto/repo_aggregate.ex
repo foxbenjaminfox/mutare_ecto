@@ -43,7 +43,7 @@ defmodule Mutare.Ecto.RepoAggregate do
          source = AST.atom_value(node),
          to when not is_nil(to) <- Aggregate.swap(source) do
       [
-        {rebuild.(:aggregate, List.replace_at(args, index, AST.atom_literal(to))),
+        {rebuild.(:aggregate, List.replace_at(args, index, Mutare.AST.literal(to))),
          to_string(source)}
       ]
     else

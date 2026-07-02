@@ -6,7 +6,6 @@ defmodule Mutare.Ecto.Config do
   # (and/or `repo:`) is how a user narrows the catalog, names a sub-family in the report, or covers
   # multiple repos.
 
-  alias Mutare.Ecto.AST
   alias Mutare.Mutator.Mutation
 
   @valid_options ~w(repo families dialects)a
@@ -300,9 +299,10 @@ defmodule Mutare.Ecto.Config do
   def family_enabled?(opts, family), do: opts |> parse!() |> family_enabled?(family)
 
   @doc """
-  The configured `repo`'s resolved module key (`Mutare.Ecto.AST.module_key/1`), ready to compare
-  against a `Mutare.Transform.Calls.resolved_call/1` module, or `nil` when no `repo:` is set.
-  Shared by the Repo-call families (`Mutare.Ecto.RepoWrite`, `Mutare.Ecto.RepoAggregate`).
+  The configured `repo`'s resolved module key (`Mutare.Calls.module_key/1`), ready to compare
+  against a `Mutare.Calls.resolved_call/1` module (or to hand to
+  `Mutare.Calls.resolved_call_to/3`, which accepts an encoded key), or `nil` when no `repo:` is
+  set. Shared by the Repo-call families (`Mutare.Ecto.RepoWrite`, `Mutare.Ecto.RepoAggregate`).
   """
   @spec repo_key(keyword() | t()) :: [atom()] | atom() | nil
   def repo_key(%__MODULE__{repo_key: repo_key}), do: repo_key
@@ -416,7 +416,7 @@ defmodule Mutare.Ecto.Config do
   end
 
   defp parse_repo!(nil), do: nil
-  defp parse_repo!(module) when is_atom(module), do: AST.module_key(module)
+  defp parse_repo!(module) when is_atom(module), do: Mutare.Calls.module_key(module)
 
   defp parse_repo!(other) do
     raise ArgumentError, "Mutare.Ecto :repo must be a module atom, got: #{inspect(other)}"

@@ -24,13 +24,9 @@ defmodule Mutare.Ecto.Changeset do
   changeset is the first argument, so the call collapses to that argument.
   """
 
-  alias Mutare.Ecto.{AST, StageDrop}
+  alias Mutare.Ecto.StageDrop
 
   use Mutare.Ecto.SubMutator
-
-  # The resolved-call module key `Mutare.Transform.Calls` returns for an `Ecto.Changeset` call,
-  # derived from the canonical `AST.module_key/1` rather than hardcoding its split form.
-  @changeset_key AST.module_key(Ecto.Changeset)
 
   # Transparent validators and constraints — each returns the changeset, so dropping it only
   # removes its rule. Content-*producing* calls (`cast`, `change`, `put_change`, …) are NOT
@@ -55,7 +51,7 @@ defmodule Mutare.Ecto.Changeset do
           [{:validation_drop | :hook_drop, Macro.t()}]
   @impl Mutare.Ecto.SubMutator
   def mutations(node, %{pipe_mode: pipe_mode}),
-    do: StageDrop.mutations(node, @changeset_key, &family/1, pipe_mode)
+    do: StageDrop.mutations(node, Ecto.Changeset, &family/1, pipe_mode)
 
   defp family(fun) when fun in @droppable, do: :validation_drop
   defp family(fun) when fun in @hooks, do: :hook_drop

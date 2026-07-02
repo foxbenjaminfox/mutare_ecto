@@ -140,10 +140,10 @@ defmodule Mutare.Ecto.Host.Bindings do
   end
 
   defp declaration({name, _meta, ctx} = var) when is_atom(name) and is_atom(ctx),
-    do: [AST.clean_var(var)]
+    do: [Mutare.AST.clean_var(var)]
 
   defp declaration({key, {name, _meta, ctx} = var}) when is_atom(name) and is_atom(ctx),
-    do: [{AST.keyword_key(AST.atom_value(key)), AST.clean_var(var)}]
+    do: [{Mutare.AST.keyword_key(AST.atom_value(key)), Mutare.AST.clean_var(var)}]
 
   defp declaration({:..., _meta, _ctx}), do: [Binding.ellipsis()]
   defp declaration(_node), do: []
