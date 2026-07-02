@@ -3,8 +3,9 @@ defmodule Mutare.Ecto.Host.Routing do
   The **routing classifier** half of the selector host (`Mutare.Ecto.Host`): the
   `c:Mutare.MacroRouting.route_arguments/2` callback that decides, per visible argument of a
   `:routing`-registered query macro, how core should treat that position — `:hosted` (the plugin's
-  host weaves it), `:expression` (mutate it normally), `:skip` (leave it raw), `:pinned` (core
-  mutates a scalar value, delivered `^`-pinned), or `{:keyword, …}` (per-pair shorthand routing).
+  host weaves it), `:expression` (mutate it normally), `:skip` (leave it raw), `:interpolated`
+  (core mutates a scalar value, delivered through `^` interpolation), or `{:keyword, …}` (per-pair
+  shorthand routing).
   `Mutare.Ecto.Host` then consumes the `:hosted` decision to build and weave the `^`/`dynamic` target.
 
   Both query syntaxes are covered, routed by call shape:
@@ -14,7 +15,7 @@ defmodule Mutare.Ecto.Host.Routing do
       …)`). A non-shorthand *expression* condition routes `:hosted` — under a bare source it can only
       reference a named binding (`from("t", as: :t, where: as(:t).x == v)`), which the host weaves
       behind an empty-binding `dynamic([], …)`. A keyword-**shorthand** condition (`where: [x: v]`)
-      instead routes its values individually `{:keyword, …}`: each scalar value `:pinned` (core
+      instead routes its values individually `{:keyword, …}`: each scalar value `:interpolated` (core
       mutates it, `^`-pinned — Ecto rejects a bare selector `case` there, and a shorthand value is
       plain interpolated data, core's literal families to mutate, not the SQL catalog), while the
       column-name keys, the `nil`-valued pairs (an `IS NULL`, never `= nil`), and compound values are
@@ -31,7 +32,7 @@ defmodule Mutare.Ecto.Host.Routing do
       query (first arg → `:expression`) and leave every data position raw for the plugin's own
       `mutate/2` mutators.
 
-  This relies on core's recursive per-pair routing, hosted values, and `:pinned` extensions; see
+  This relies on core's recursive per-pair routing, hosted values, and `:interpolated` extensions; see
   `c:Mutare.MacroRouting.route_arguments/2`.
   """
 
@@ -224,12 +225,12 @@ defmodule Mutare.Ecto.Host.Routing do
   end
 
   # The treatment for one shorthand pair's *value*: a scalar literal (string, number, boolean — but
-  # not `nil`) is mutated by core's literal families and delivered `:pinned` (the query position
-  # needs `^`). A `nil` (an `IS NULL` predicate, never `= nil`) and any compound/interpolated value
-  # are left raw (`:skip`) — pinning is scalar-only, since a compound value would mutate nested nodes
-  # where an inner `^` still poisons.
+  # not `nil`) is routed `:interpolated`: core's literal families mutate it, delivered through `^`
+  # interpolation (the query position needs the pin). A `nil` (an `IS NULL` predicate, never
+  # `= nil`) and any compound/interpolated value are left raw (`:skip`) — interpolation routing is
+  # scalar-only, since a compound value would mutate nested nodes where an inner `^` still poisons.
   defp pair_treatment(value) do
-    if scalar_literal?(value), do: :pinned, else: :skip
+    if scalar_literal?(value), do: :interpolated, else: :skip
   end
 
   # A Sourceror-wrapped scalar literal, excluding `nil` — an atom, but an `IS NULL`, not core's to

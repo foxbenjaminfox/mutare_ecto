@@ -312,7 +312,7 @@ defmodule Mutare.Ecto.Fragment do
   # the node is not a known macro (`nil` routing — an ordinary operator/call/field we own) or the
   # macro routed this argument `:expression` (the one treatment that asserts "a standard expression
   # here, mutate it"). Every other treatment — `:skip`, `:pattern`, `:binding_pattern`, `:hosted`,
-  # `:pinned`, `{:keyword, …}` — marks an argument whose grammar is the macro's own, so it is left
+  # `:interpolated`, `{:keyword, …}` — marks an argument whose grammar is the macro's own, so it is left
   # raw. We mutate only what the author wrote in a form we understand.
   defp descend_arg?(nil, _index), do: true
   defp descend_arg?(routing, index), do: Enum.at(routing, index) == :expression

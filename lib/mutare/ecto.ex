@@ -92,7 +92,7 @@ defmodule Mutare.Ecto do
     * the `from` opener and the `where`/`having` family route via the `:routing` classifier
       (`route_arguments/2`), so a binding-referencing condition is delivered through the plugin's
       **selector host** (`host/2` — Ecto's `^`/`dynamic` injection), while keyword-shorthand data
-      is routed to core's literal families (`{:keyword, …}`/`:pinned`). The whole-`from` mutations
+      is routed to core's literal families (`{:keyword, …}`/`:interpolated`). The whole-`from` mutations
       (clause/bound drop, order/join swaps, select aggregates) ride `mutate/2` over the routed node.
     * the standalone/pipe clause macros (`order_by`, `limit`, `offset`, `select`, `join`, …) also
       route via the `:routing` classifier: their data positions stay raw (so core descends nothing),

@@ -9,7 +9,7 @@ defmodule Mutare.Ecto.ShorthandTest do
   # val])` carry *data* values (not binding-referencing fragments), so they are mutated by core's
   # literal families — but delivered `^`-pinned (Ecto rejects a bare selector `case` in a query
   # value position), with the column-name keys left raw. This rides core's per-keyword-pair
-  # routing + `:pinned` extensions; here we assert the routing the plugin emits and the end-to-end
+  # routing + `:interpolated` extensions; here we assert the routing the plugin emits and the end-to-end
   # behaviour (value mutated, keys raw, metamutant compiles).
 
   @all [:all, {Mutare.Ecto, repo: MyApp.Repo}]
@@ -17,23 +17,23 @@ defmodule Mutare.Ecto.ShorthandTest do
   defp routing(code), do: code |> Sourceror.parse_string!() |> Host.Routing.treatments()
 
   describe "treatments — the per-pair treatment the plugin emits" do
-    test "a standalone shorthand routes each scalar value :pinned, keys raw, query :expression" do
+    test "a standalone shorthand routes each scalar value :interpolated, keys raw, query :expression" do
       # The directly-written query (`q`) is the threaded value — an ordinary expression.
       assert routing(~s|where(q, category: "Foo", count: 5)|) ==
-               [:expression, {:keyword, [:pinned, :pinned]}]
+               [:expression, {:keyword, [:interpolated, :interpolated]}]
     end
 
     test "the piped shorthand routes its sole keyword argument" do
       # Piped: the query is the `|>` left side (routed runtime separately), so the only visible
       # argument is the shorthand keyword list.
-      assert routing(~s|where(category: "Foo")|) == [{:keyword, [:pinned]}]
+      assert routing(~s|where(category: "Foo")|) == [{:keyword, [:interpolated]}]
     end
 
     test "a nil-valued pair is skipped (IS NULL, never = nil)" do
       assert routing(~s|where(q, deleted_at: nil)|) == [:expression, {:keyword, [:skip]}]
     end
 
-    test "a compound (non-scalar) value is skipped (pinning is scalar-only)" do
+    test "a compound (non-scalar) value is skipped (interpolation routing is scalar-only)" do
       assert routing(~s|where(q, ids: [1, 2])|) == [:expression, {:keyword, [:skip]}]
     end
 
@@ -56,13 +56,13 @@ defmodule Mutare.Ecto.ShorthandTest do
       assert [:skip, {:keyword, treatments}] =
                routing(~s|from("posts", where: [a: 1], select: [:id])|)
 
-      # where value → nested {:keyword, [:pinned]}; select → :skip.
-      assert treatments == [{:keyword, [:pinned]}, :skip]
+      # where value → nested {:keyword, [:interpolated]}; select → :skip.
+      assert treatments == [{:keyword, [:interpolated]}, :skip]
     end
 
     test "a binding from can mix hosted expressions with shorthand values" do
       assert routing(~s|from(p in "posts", where: p.x == p.y, where: [active: true])|) ==
-               [:skip, {:keyword, [:hosted, {:keyword, [:pinned]}]}]
+               [:skip, {:keyword, [:hosted, {:keyword, [:interpolated]}]}]
     end
   end
 

@@ -934,15 +934,15 @@ defmodule Mutare.Ecto.HostTest do
     end
 
     test "from keyword form: a bindingless source routes where-shorthand values per-pair" do
-      # The `where:` value is a keyword list → `{:keyword, [:pinned]}` (core mutates the scalar,
+      # The `where:` value is a keyword list → `{:keyword, [:interpolated]}` (core mutates the scalar,
       # `^`-pinned); `select:` is not a condition key → `:skip`. The order_by variant proves a
       # *non-condition* clause whose value is itself a keyword list still routes `:skip`, not the
       # condition treatment (pins the `key in @condition_keys` test, not just "has a kw value").
       assert routing(~s|from("users", where: [active: true], select: [:id])|) ==
-               [:skip, {:keyword, [{:keyword, [:pinned]}, :skip]}]
+               [:skip, {:keyword, [{:keyword, [:interpolated]}, :skip]}]
 
       assert routing(~s|from("t", where: [a: 1], order_by: [asc: :x])|) ==
-               [:skip, {:keyword, [{:keyword, [:pinned]}, :skip]}]
+               [:skip, {:keyword, [{:keyword, [:interpolated]}, :skip]}]
 
       assert routing(~s|from("users", select: [:id])|) == [:skip, {:keyword, [:skip]}]
     end
@@ -956,7 +956,7 @@ defmodule Mutare.Ecto.HostTest do
                [:skip, {:keyword, [:skip, :hosted, :skip]}]
 
       assert routing(~s|from("posts", as: :post, where: [active: true], select: [:id])|) ==
-               [:skip, {:keyword, [:skip, {:keyword, [:pinned]}, :skip]}]
+               [:skip, {:keyword, [:skip, {:keyword, [:interpolated]}, :skip]}]
     end
 
     test "from keyword form leaves a top-level interpolation raw" do
@@ -966,7 +966,10 @@ defmodule Mutare.Ecto.HostTest do
 
     test "shorthand pair values: scalars pin, nil/interpolation/compound stay raw" do
       assert routing(~s|where(q, name: "x", age: 5, tag: :a, active: true)|) ==
-               [:expression, {:keyword, [:pinned, :pinned, :pinned, :pinned]}]
+               [
+                 :expression,
+                 {:keyword, [:interpolated, :interpolated, :interpolated, :interpolated]}
+               ]
 
       # nil is an `IS NULL` (never `= nil`); `^v` is already interpolated; a list/field is compound
       # — all raw. (Pins scalar_literal?'s nil exclusion and pair_treatment.)
@@ -995,7 +998,7 @@ defmodule Mutare.Ecto.HostTest do
     end
 
     test "a shorthand condition macro routes its trailing pairs per-pair" do
-      assert routing("where(query, active: true)") == [:expression, {:keyword, [:pinned]}]
+      assert routing("where(query, active: true)") == [:expression, {:keyword, [:interpolated]}]
     end
 
     test "plain clause macros thread the query and leave every data position raw" do

@@ -52,7 +52,7 @@ analyzes `lib/`, not the test-only fixtures.
 `mix.exs` uses `{:mutare, path: "../mutare"}`, so both local development and CI use the sibling
 checkout (until Mutare is published to Hex). Several features here required **new Mutare-core
 extensions** (the selector host, `:routing`/`:hosted` macro routing, `{:keyword, …}` per-pair
-routing, `:pinned` in-place delivery, the `Site` `note` channel). When a task needs core
+routing, `:interpolated` in-place delivery, the `Site` `note` channel). When a task needs core
 machinery that doesn't exist yet, it is added to `../mutare`. Core's public test 
 surface for plugins is `Mutare.Test` (wrapped here by `Mutare.Ecto.TestSupport`).
 
@@ -128,7 +128,7 @@ The surface divides by **how a mutation is delivered**, not by what it mutates:
 | `surface.ex` | Single descriptor table for every owned query macro and `from` key: routing kind, standalone mutation capabilities, stage/whole-`from` drop families, and hosted/binding/join capabilities |
 | `sub_mutator.ex` | The uniform `mutations(node, context)` behaviour implemented by each mutation producer |
 | `host.ex` | Selector-host **coordinator** (#3): turns a hosted call into `Target`s, delegating to the `host/*` parts below |
-| `host/routing.ex` | `route_arguments/2` — the per-argument routing classifier (`:hosted`/`:expression`/`:skip`/`:pinned`/`{:keyword,…}`), over `treatments/1` |
+| `host/routing.ex` | `route_arguments/2` — the per-argument routing classifier (`:hosted`/`:expression`/`:skip`/`:interpolated`/`{:keyword,…}`), over `treatments/1` |
 | `host/bindings.ex` | Interprets Ecto binding declarations and renders the binding list re-declared by a woven `dynamic/2` |
 | `host/catalog.ex` | The enabled, noted logical mutants for one hosted condition (Fragment + Aggregate) |
 | `host/join_on.ex` | Which join `on:` conditions are safe to host: only a join's **sole, top-level** on-expression (not a multi-`on:` or `assoc` join, whose conditions Ecto folds into one `and` where a `^dynamic` operand is illegal) |
