@@ -106,7 +106,10 @@ The surface divides by **how a mutation is delivered**, not by what it mutates:
    `first`/`last`. Not DSL; resolved through `Mutare.Transform.Calls` (so direct/aliased/imported
    forms all match) and delivered by Mutare's ordinary in-place selector. Needs no new core
    machinery. Modules: `RepoAggregate`, `RepoWrite`, `Changeset`, `QueryTerminal`, plus the
-   whole-`from` rewrites in `Query` and the standalone/pipe rewrites in `Clause`.
+   whole-`from` rewrites in `Query`, the standalone/pipe rewrites in `Clause`, and the
+   free-standing `dynamic/1,2` rewrites in `Dynamic` — a `dynamic` call sits in ordinary
+   expression position (its value is a runtime `DynamicExpr`), so its in-fragment mutants (the
+   same `Fragment`/`Aggregate` catalogs the host uses) are whole-call rewrites, not woven.
 2. **Skipped** (`Bucket 2`) — `schema`/`embedded_schema` bodies. A mutated field name/type is a
    broken schema, not a mutant.
 3. **Hosted DSL** (`Bucket 3`, the heart) — in-fragment `where`/`having` operator swaps (and the
@@ -139,6 +142,7 @@ The surface divides by **how a mutation is delivered**, not by what it mutates:
 | `clause_drop.ex` | Drop a standalone/pipe clause stage (`q \|> where(…)` → `q`), via `stage_drop.ex` |
 | `ordering.ex` / `aggregate.ex` | Shared `{family, node}` catalogs used by `query.ex`, `clause.ex`, and (aggregate) the `having` host |
 | `combination.ex` | Shared set-operation swap catalog (`intersect`↔`except`, `intersect_all`↔`except_all`; `union` deliberately unswapped) used by `query.ex` (clause-key swap) and `clause.ex` (macro-name swap) |
+| `dynamic.ex` | In-fragment mutations of a **free-standing** `dynamic/1,2` (`d = dynamic([p], p.x > ^v)`): the shared `Fragment`/`Aggregate` catalogs over its condition, each mutant the whole call rebuilt and delivered in place (the `dynamic` registers `:skip` so core keeps its DSL args raw, but core still offers the whole call to `mutate/2`) |
 | `repo_aggregate.ex` / `repo_write.ex` / `query_terminal.ex` | Bucket-1 Repo/query-function families |
 | `repo_call.ex` | Shared "resolve a call on the configured `repo:`" preamble for `repo_aggregate.ex`/`repo_write.ex` |
 | `stage_drop.ex` | Shared pipe-aware stage-drop delivery for `clause_drop.ex` and `changeset.ex` |

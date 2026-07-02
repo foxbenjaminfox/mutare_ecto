@@ -1,11 +1,13 @@
 defmodule Mutare.Ecto.Fragment do
   @moduledoc """
   The plugin's **own** SQL-semantics mutation catalog for a query fragment — the boolean
-  condition of a `where`/`having` clause. Given a condition's AST, `mutants/1` returns every
-  *single-point* variant: the same condition with **exactly one** operator/predicate swapped,
-  one variant per mutatable position. Each variant is a full, compile-safe alternative the SQL
-  engine will actually run; the host (`Mutare.Ecto.Host`) weaves them behind a `^`/`dynamic`
-  selector so one of them bakes into the query per run.
+  condition of a `where`/`having` clause or of a free-standing `dynamic/1,2`. Given a condition's
+  AST, `mutants/1` returns every *single-point* variant: the same condition with **exactly one**
+  operator/predicate swapped, one variant per mutatable position. Each variant is a full,
+  compile-safe alternative the SQL engine will actually run; the host (`Mutare.Ecto.Host`) weaves
+  them behind a `^`/`dynamic` selector so one of them bakes into the query per run, while
+  `Mutare.Ecto.Dynamic` rebuilds a free-standing `dynamic` call whole (an ordinary expression
+  position, needing no weave).
 
   The catalog reuses **none** of Mutare's built-in mutators: the operators look like Elixir's
   but they evaluate under SQL's semantics — three-valued boolean logic for the connectives,

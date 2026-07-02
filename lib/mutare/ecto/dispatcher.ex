@@ -11,6 +11,7 @@ defmodule Mutare.Ecto.Dispatcher do
     Clause,
     ClauseDrop,
     Config,
+    Dynamic,
     Query,
     QueryTerminal,
     RepoAggregate,
@@ -52,6 +53,12 @@ defmodule Mutare.Ecto.Dispatcher do
       BindingReorder.mutations(call, context) ++ ClauseDrop.mutations(node, context)
   end
 
+  # A free-standing `dynamic/1,2` builds a condition value in ordinary expression position: its
+  # in-fragment SQL mutants are whole-call rewrites (`Dynamic`), and its written binding list
+  # reorders in place (`BindingReorder`) — but it threads no query, so it never stage-drops.
+  defp query_macro_mutations(:dynamic, call, context),
+    do: Dynamic.mutations(call, context) ++ BindingReorder.mutations(call, context)
+
   defp query_macro_mutations(_kind, _node, _context), do: []
 
   # A query macro normally takes the branch above. Keeping the query-call classification here makes
@@ -63,6 +70,9 @@ defmodule Mutare.Ecto.Dispatcher do
 
       kind when kind in [:clause, :join] ->
         invoke([Clause, BindingReorder, ClauseDrop], node, context)
+
+      :dynamic ->
+        invoke([Dynamic, BindingReorder], node, context)
 
       _other ->
         QueryTerminal.mutations(node, context)

@@ -18,9 +18,10 @@ defmodule Mutare.Ecto do
   (changeset pipelines), `Mutare.Ecto.Query` (whole-`from` mutations), `Mutare.Ecto.Clause` and
   `Mutare.Ecto.QueryTerminal` (standalone/pipe clause macros and `first`/`last`),
   `Mutare.Ecto.BindingReorder` (positional binding transpositions on any binding-list macro),
-  `Mutare.Ecto.ClauseDrop` (removing a standalone/pipe clause stage — `q |> where(…)` → `q`), and
-  `Mutare.Ecto.Host` (localized in-fragment `where`/`having` mutations, via the SQL catalog in
-  `Mutare.Ecto.Fragment`).
+  `Mutare.Ecto.ClauseDrop` (removing a standalone/pipe clause stage — `q |> where(…)` → `q`),
+  `Mutare.Ecto.Dynamic` (in-fragment mutations of a free-standing `dynamic/1,2`, rewritten whole-call
+  in place), and `Mutare.Ecto.Host` (localized in-fragment `where`/`having` mutations, via the SQL
+  catalog in `Mutare.Ecto.Fragment`).
 
   ## Configuration
 
@@ -99,7 +100,11 @@ defmodule Mutare.Ecto do
       so the upstream query is mutated through the stage (a static `:skip` would suppress it). Their
       own `mutate/2` mutations still fire — direction/bound/aggregate (`Mutare.Ecto.Clause`) and
       **stage removal** (`q |> where(…)` → `q`, `Mutare.Ecto.ClauseDrop`). `dynamic` and the
-      `is_named_binding` guard helper stay `:skip` because neither is a query-threading stage.
+      `is_named_binding` guard helper also register `:skip` (neither is a query-threading stage,
+      so core must not descend into their DSL/guard arguments) — but a free-standing `dynamic/1,2`
+      is still mutated: core offers the whole call to `mutate/2`, where `Mutare.Ecto.Dynamic`
+      rewrites its condition through the same SQL catalog a hosted `where`/`having` uses,
+      delivered in place (the call sits in ordinary expression position, so no host is needed).
 
   Resolution of these macros relies on Mutare's `use`-expansion (so the
   `use Ecto.Schema`-injected `import Ecto.Schema`, and a `use MyAppWeb, :live_view`-bundled
@@ -139,8 +144,11 @@ defmodule Mutare.Ecto do
   # `Mutare.Ecto.BindingReorder` (positional binding transpositions), and
   # `Mutare.Ecto.ClauseDrop` (stage removal — `q |> where(…)` → `q`).
   #
-  # `dynamic` and `is_named_binding` stay `:skip`: neither is a query-threading pipe stage, so core
-  # must not descend into their DSL/guard arguments.
+  # `dynamic` and `is_named_binding` register `:skip`: neither is a query-threading pipe stage, so
+  # core must not descend into their DSL/guard arguments. A `:skip` registration still offers the
+  # *whole call* to `mutate/2`, which is how a free-standing `dynamic/1,2` gets its in-fragment
+  # mutations (`Mutare.Ecto.Dynamic`, whole-call rewrites delivered in place) and its binding-list
+  # reorder — while `is_named_binding` stays entirely inert.
   @impl Mutare.Mutator
   def name, do: :ecto
 

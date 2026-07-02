@@ -4,7 +4,7 @@ defmodule Mutare.Ecto.Surface do
   # Consumers derive routing, stage removal, hosted conditions, binding accumulation, and mutation
   # capabilities from these descriptors; adding a builder no longer means updating parallel lists.
 
-  @macro_kinds [:from, :condition, :join, :clause, :skip]
+  @macro_kinds [:from, :condition, :join, :clause, :dynamic, :skip]
   @mutation_capabilities [:ordering, :bound, :aggregate, :combination]
   @from_capabilities [
     :hosted,
@@ -135,7 +135,7 @@ defmodule Mutare.Ecto.Surface do
       stage_drop: :clause_drop,
       from: [:combination]
     },
-    %{name: :dynamic, macro: :skip},
+    %{name: :dynamic, macro: :dynamic},
     %{name: :is_named_binding, macro: :skip},
     %{name: :on, from: [:hosted]},
     %{name: :inner_join, from: [:join_binding, :join_type]},
@@ -179,7 +179,7 @@ defmodule Mutare.Ecto.Surface do
     end
   end)
 
-  @type macro_kind :: :from | :condition | :join | :clause | :skip
+  @type macro_kind :: :from | :condition | :join | :clause | :dynamic | :skip
   @type mutation_capability :: :ordering | :bound | :aggregate | :combination
   @type from_capability ::
           :hosted | :ordering | :bound | :aggregate | :join_binding | :join_type | :combination
@@ -205,11 +205,16 @@ defmodule Mutare.Ecto.Surface do
   @spec macro_kind(atom()) :: macro_kind() | nil
   def macro_kind(name), do: get(name, :macro)
 
-  @doc "Every Ecto.Query macro registration as `{name, :routing | :skip}`."
+  @doc """
+  Every Ecto.Query macro registration as `{name, :routing | :skip}`. The `:dynamic` kind registers
+  `:skip` like the fully-skipped macros: a free-standing `dynamic/1,2` threads no query and its
+  DSL arguments must stay raw for core — but core still offers the *whole call* to `mutate/2`,
+  where `Mutare.Ecto.Dynamic` rewrites it in place.
+  """
   @spec macro_registrations() :: [{atom(), :routing | :skip}]
   def macro_registrations do
     for %{name: name, macro: kind} <- @surface do
-      {name, if(kind == :skip, do: :skip, else: :routing)}
+      {name, if(kind in [:dynamic, :skip], do: :skip, else: :routing)}
     end
   end
 
@@ -233,13 +238,13 @@ defmodule Mutare.Ecto.Surface do
 
   @doc """
   Whether a routed macro accepts a written binding list eligible for positional reordering — the
-  `:condition` macros (`where`/`having`/…), `:join`, and the `:clause` macros. Each takes the
-  binding list as an ordinary argument, so the reorder is delivered **in place** by
-  `Mutare.Ecto.BindingReorder` (the `from`-level binding-list source reorders at the whole-`from`
-  level instead — `Mutare.Ecto.Query`).
+  `:condition` macros (`where`/`having`/…), `:join`, the `:clause` macros, and the free-standing
+  `dynamic/2`. Each takes the binding list as an ordinary argument, so the reorder is delivered
+  **in place** by `Mutare.Ecto.BindingReorder` (the `from`-level binding-list source reorders at
+  the whole-`from` level instead — `Mutare.Ecto.Query`).
   """
   @spec binding_list_macro?(atom()) :: boolean()
-  def binding_list_macro?(name), do: macro_kind(name) in [:condition, :join, :clause]
+  def binding_list_macro?(name), do: macro_kind(name) in [:condition, :join, :clause, :dynamic]
 
   @doc "The family used when a composable stage is removed, or `nil` when it is not droppable."
   @spec stage_drop_family(atom()) :: drop_family() | nil

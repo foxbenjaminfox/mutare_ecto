@@ -85,7 +85,8 @@ defmodule Mutare.Ecto.Host.Bindings do
   # The trailing argument as a host-owned condition with no binding declarations, or `nil` when it is
   # not a condition to host. The shapes that are *not* a binding-less condition: a list (a binding
   # list like `[u]`, a keyword shorthand like `[active: true]`, or an empty `[]` — none a predicate
-  # body), a `^dynamic` operand (Ecto's own composition primitive, mutated where it is built), and a
+  # body), a `^dynamic` operand (Ecto's own composition primitive, mutated where it is built —
+  # `Mutare.Ecto.Dynamic` rewrites the free-standing `dynamic/1,2` call whole), and a
   # bare variable (a degenerate non-condition call). Everything else — a comparison/connective/null/
   # membership expression, possibly referencing only named bindings — is hosted; the catalog then
   # decides whether there is anything to mutate.

@@ -6,10 +6,12 @@ defmodule Mutare.Ecto.Aggregate do
   # keyword list of them), so `swaps/1` walks the whole structure and returns one *single-point*
   # mutant per aggregate position — each the expression with exactly one aggregate swapped.
   #
-  # Callers feed it three positions: a `select`/`select_merge` value and an `order_by` value
+  # Callers feed it four positions: a `select`/`select_merge` value and an `order_by` value
   # (both whole-`from` and standalone/pipe — `Mutare.Ecto.Query`/`Mutare.Ecto.Clause`, delivered
-  # in place), and a `where`/`having` condition (`Mutare.Ecto.Host`, delivered `^`/`dynamic`-hosted
-  # so a `having: sum(p.x) > n` swaps its aggregate behind the same selector as its operators).
+  # in place), a `where`/`having` condition (`Mutare.Ecto.Host`, delivered `^`/`dynamic`-hosted
+  # so a `having: sum(p.x) > n` swaps its aggregate behind the same selector as its operators),
+  # and a free-standing `dynamic/1,2` condition (`Mutare.Ecto.Dynamic`, a whole-call rewrite
+  # delivered in place).
   #
   # `count` is deliberately excluded (as in `Mutare.Ecto.RepoAggregate`): swapping it for a
   # value aggregate changes the result's meaning in a way its `:distinct`/arity contract makes

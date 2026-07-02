@@ -2,8 +2,8 @@ defmodule Mutare.Ecto.BindingReorder do
   @moduledoc """
   Positional **binding-reorder** mutants for every standalone/pipe query macro that takes a binding
   pattern list — the `where`/`having` condition macros, `select`, `select_merge`, `order_by`,
-  `group_by`, `distinct`, `join`, `preload`, `windows`, … (the condition/clause/join descriptors in
-  `Mutare.Ecto.Surface`).
+  `group_by`, `distinct`, `join`, `preload`, `windows`, …, and the free-standing `dynamic/2`
+  (the condition/clause/join/dynamic descriptors in `Mutare.Ecto.Surface`).
 
   A binding list maps names to the query's bindings **by position**: `[a, b]` binds `a`→1st,
   `b`→2nd. Transposing two positional entries (`[a, b]` → `[b, a]`) asks whether their order

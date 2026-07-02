@@ -16,7 +16,8 @@ defmodule Mutare.Ecto.Config do
   # Every SQL family the plugin can emit, the source of truth for `families: :all` and for
   # validating a configured subset. Grouped by the surface they mutate:
   #
-  #   * in-fragment (`where`/`having`, via the host): comparison, connective, null_predicate,
+  #   * in-fragment (`where`/`having` via the host; a free-standing `dynamic/1,2` via
+  #     `Mutare.Ecto.Dynamic`, in place): comparison, connective, null_predicate,
   #     membership, arithmetic, integer_literal, float_literal, atom_literal, string_literal,
   #     boolean_literal;
   #   * binding_reorder — a positional binding transposition (`[a, b]` → `[b, a]`), delivered **in

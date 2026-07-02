@@ -147,6 +147,38 @@ defmodule Mutare.Ecto.SemanticTest do
     end
   end
 
+  describe "Comparison — free-standing `dynamic` (whole-call in-place delivery)" do
+    # The build-site path (`Mutare.Ecto.Dynamic`): the condition lives in a *free-standing*
+    # `dynamic/2` spliced later with `where(q, ^d)`. Unlike every family above, the mutant is not
+    # woven into a query clause — the whole `dynamic(...)` call is swapped by core's ordinary
+    # in-place selector, so this proves that delivery builds a *live* `DynamicExpr` (an inert
+    # rewrite would hand back the baseline set) and that the splice site composes it unchanged.
+    test "the >= mutant of a prebuilt dynamic admits the boundary rows" do
+      {mod, sites} =
+        build("""
+        defmodule Q do
+          import Ecto.Query
+          alias MyApp.User
+
+          def q do
+            d = dynamic([u], u.age > 18)
+            from(u in User, where: ^d, select: u.id)
+          end
+        end
+        """)
+
+      baseline = ids(mod, 0)
+
+      mutant =
+        ids(mod, site_id(sites, {"dynamic([u], u.age > 18)", "dynamic([u], u.age >= 18)"}))
+
+      # Same data as the hosted `>`↔`>=` test above: the `>=` mutant admits the age-18 rows.
+      assert baseline == [2, 5, 6]
+      assert mutant == [1, 2, 4, 5, 6]
+      assert mutant -- baseline == [1, 4]
+    end
+  end
+
   describe "Comparison — `==` ↔ `!=` (dynamic-injected)" do
     # The equality arm of the same family: `u.role == "admin"` ↔ `u.role != "admin"`. Every row has a
     # non-null `role`, so the two predicates are exact complements — an inert injection would hand back

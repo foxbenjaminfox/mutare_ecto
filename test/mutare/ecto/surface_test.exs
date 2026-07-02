@@ -16,6 +16,18 @@ defmodule Mutare.Ecto.SurfaceTest do
     assert Enum.count(registrations, fn {name, _routing} -> name == :join end) == 1
   end
 
+  test "dynamic registers :skip for core but keeps its own mutation surface" do
+    # Core must never descend into the DSL arguments (hence the `:skip` registration above), and
+    # the host never sees it — but the whole call is offered to `mutate/2`, where
+    # `Mutare.Ecto.Dynamic` rewrites the condition and `Mutare.Ecto.BindingReorder` transposes the
+    # written binding list.
+    assert Surface.macro_kind(:dynamic) == :dynamic
+    assert Surface.binding_list_macro?(:dynamic)
+    refute :dynamic in Surface.hosted_macro_names()
+    refute Surface.query_builder?(:dynamic)
+    assert Surface.stage_drop_family(:dynamic) == nil
+  end
+
   test "one descriptor separates routing, mutations, and stage/from removal" do
     assert Surface.descriptor(:order_by) == %{
              name: :order_by,
