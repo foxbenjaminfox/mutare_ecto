@@ -10,22 +10,19 @@ defmodule Mutare.EctoTest do
            "expected Ecto >= 3.12 and < 4.0, got #{version}"
   end
 
-  describe "ensure_ecto!/1 (the startup guard for the deployment requirement)" do
-    test "passes when the Ecto surface is loadable, as it is when run inside the app under test" do
-      assert Mutare.Ecto.ensure_ecto!() == :ok
+  describe "required_modules/0 (the declared deployment requirement)" do
+    # Core checks the declaration once at startup — `Mutare.Mutator.Spec` resolution runs
+    # `Mutare.EnvironmentError.verify!/1` before `init/1` — so an external-source run (the Ecto
+    # surface not on the code path) aborts with a `Mutare.EnvironmentError` before any source is
+    # read, instead of silently registering routes against nothing. The missing-module path and
+    # message are core's own (covered by core's environment tests); here we pin what the plugin
+    # *declares* and that the declaration passes inside the app under test.
+    test "declares the Ecto surface the routing registers against" do
+      assert Mutare.Ecto.required_modules() == [Ecto.Schema, Ecto.Query]
     end
 
-    test "an external-source run — the Ecto surface not on the code path — fails loudly, naming the missing module" do
-      assert_raise RuntimeError, ~r/No\.Such\.Ecto.*dependency\s+of the app under test/s, fn ->
-        Mutare.Ecto.ensure_ecto!([Ecto.Query, No.Such.Ecto])
-      end
-    end
-
-    test "registration runs the guard: macro_routes/0 and hosted_macros/0 both pass through it" do
-      # The positive path — both callbacks call `ensure_ecto!/0` before building their entries,
-      # so an external-source run fails at registration, not mid-transform.
-      assert [_ | _] = Mutare.Ecto.macro_routes()
-      assert [_ | _] = Mutare.Ecto.hosted_macros()
+    test "passes core's environment check when run inside the app under test" do
+      assert Mutare.EnvironmentError.verify!(Mutare.Ecto) == :ok
     end
   end
 

@@ -55,18 +55,22 @@ extensions** (the selector host, `:routing`/`:hosted` macro routing, `{:keyword,
 routing, `:interpolated` in-place delivery, the `Site` `note` channel, the plugin-config toolkit —
 `c:Mutare.Mutator.init/1` + `use Mutare.Mutator.Families` — `:mutators` threaded into the
 whole-call `mutate/2` offer of a registered macro (the free-standing-`dynamic` sub-contract seam),
-and the `c:Mutare.Mutator.finalize/2`
-enrichment seam core runs on both delivery paths). When a task needs core
+the `c:Mutare.Mutator.finalize/2` enrichment seam core runs on both delivery paths, and the
+`c:Mutare.Mutator.required_modules/0` environment guard). When a task needs core
 machinery that doesn't exist yet, it is added to `../mutare`. Core's public test 
-surface for plugins is `Mutare.Test` (wrapped here by `Mutare.Ecto.TestSupport`).
+surface for plugins is `Mutare.Test` (wrapped here by `Mutare.Ecto.TestSupport`, which threads
+the plugin's default mutators and forwards every other option — the suites also use core's
+`observe_mutant/3` flip-and-compare and the shipped `Mutare.Test.Fixtures.RoutingExtension`
+for foreign-routing composition).
 
 Deployment requirement: Mutare must run **as a dependency of the app under test** so Ecto and the
 app's schemas are on the BEAM code path. This is what lets `use`-expansion expand `use Ecto.Schema`
 (so `schema do … end` resolves and the `:skip` routing fires) and lets the host build valid
-`dynamic` calls. External-source operation is unsupported and guarded: `Mutare.Ecto.ensure_ecto!/1`
-raises at macro-route registration when the Ecto surface (`Ecto.Schema`/`Ecto.Query`) is not
-loadable. Beyond that guard, unresolved target-app modules can still make routing incomplete or
-invalid.
+`dynamic` calls. External-source operation is unsupported and guarded declaratively:
+`required_modules/0` (`c:Mutare.Mutator.required_modules/0`) declares the Ecto surface
+(`Ecto.Schema`/`Ecto.Query`), and core checks it once at startup — a missing module aborts with a
+`Mutare.EnvironmentError` before any source is read. Beyond that guard, unresolved target-app
+modules can still make routing incomplete or invalid.
 
 CI's `ecto` job is a compatibility matrix that runs the complete suite against **every supported
 Ecto minor line** — from the declared minimum (`3.12`, floor-pinned) through each line up to the
@@ -258,9 +262,12 @@ tuples wrapped by `Config.tagged/1` into `Mutation.tagged(node, [family | finer]
   Test mutators **default to the Ecto plugin alone** (`{Mutare.Ecto, repo: MyApp.Repo}`), so
   recorded mutations are exactly the plugin's — pass `mutators: [:all, …]` to include core's.
 - `semantic_test.exs` proves a recorded mutant is **live**: it compiles the metamutant, flips
-  `:persistent_term`'s `:mutare_active` to a chosen mutant id (resolved from a Site's logical diff
-  via `site_id/2`), runs the query against the seeded SQLite `MyApp.Repo`, and asserts the result
-  set changed the way the mutation predicts. Fixtures: `test/support/myapp.ex` (schemas) and
+  `:persistent_term`'s `:mutare_active` to a chosen mutant id, runs the query against the seeded
+  SQLite `MyApp.Repo`, and asserts the result set changed the way the mutation predicts. The
+  standard shape is core's `observe_mutant/3` flip-and-compare (via the harness's `observe/3` —
+  the mutant resolved from a Site's logical diff, the baseline run first and pinned); `site_id/2`
+  /`site_by/3` + `under/2`/`activate/2` remain for multi-mutant builds, the token-absence drops,
+  and the write path. Fixtures: `test/support/myapp.ex` (schemas) and
   `test/support/seed.ex` (boundary/NULL rows chosen so each family is distinguishable).
 - Because `Code.compile_string` is global, Mutare's public test helpers compile fixtures inside
   uniquely named wrapper modules so async tests defining the same module name do not race.

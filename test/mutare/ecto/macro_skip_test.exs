@@ -3,6 +3,8 @@ defmodule Mutare.Ecto.MacroSkipTest do
 
   import Mutare.Ecto.TestSupport
 
+  alias Mutare.Test.Fixtures.RoutingExtension
+
   # A user can define their own macros and use them *inside* an Ecto `where`/`having` fragment. When
   # they register such a macro `:skip` (or some of its arguments `:skip`), the plugin must leave that
   # argument opaque rather than mutating into the body the author owns — the SQL the macro expands to
@@ -10,50 +12,51 @@ defmodule Mutare.Ecto.MacroSkipTest do
   # call's resolved per-argument routing (`Mutare.Calls.macro_treatment/1`, stamped by the
   # resolve pre-pass) as `Mutare.Ecto.Fragment`/`Mutare.Ecto.Aggregate` walk the hosted condition.
   #
-  # `MyApp.QueryHelpers` supplies the author macros and `MyApp.QueryHelperMutator` registers their
-  # routing; adding that mutator to `:mutators` is how a real library would ship the registration.
-  # Every test pins the contrast: the same source *without* the registration still mutates into the
-  # macro, so each assertion shows the skip is what suppresses it (not some unrelated gap).
+  # The author macros and their routing come from core's shipped routing-only fixture,
+  # `Mutare.Test.Fixtures.RoutingExtension` — `opaque/1` (fully `:skip`) and `tagged/2`
+  # (`[:expression, :skip]`) — enabled through the `:extensions` channel, exactly how an independent
+  # library ships the registration its DSL relies on. Routing applies only when the extension is
+  # enabled, so every test pins the contrast: the same source *without* it still mutates into the
+  # macro, showing the skip is what suppresses it (not some unrelated gap).
   #
   # `families: :all` turns on the opt-in literal arms (string/atom/boolean) too, so the partial-skip
   # test can pin that an atom in a `:skip` position is left raw *even when atom mutation is enabled*.
 
-  @base_mutators [{Mutare.Ecto, repo: MyApp.Repo, families: :all}]
-  @helper_mutators [{Mutare.Ecto, repo: MyApp.Repo, families: :all}, MyApp.QueryHelperMutator]
+  @mutators [{Mutare.Ecto, repo: MyApp.Repo, families: :all}]
+  @routing [RoutingExtension]
 
   # The set of *mutated* renderings the host delivers (the in-fragment `^`/`dynamic` mutations),
   # dropping the whole-`from` query rewrites (which mention `from(`), exactly as `HostTest` does.
-  # `opts` is forwarded to `Mutare.transform_string/2` — the config-channel test threads
-  # `:macro_routes` through it, which core's `Mutare.Test.diffs_for/3` cannot carry.
-  defp hosted_mutateds(source, mutators, opts \\ []) do
-    result = Mutare.transform_string(source, [{:mutators, mutators} | opts])
-
-    for site <- result.mutants,
-        site.mutator == :ecto,
-        not String.starts_with?(site.original_code, "from("),
+  # `opts` rides through `Mutare.Ecto.TestSupport.diffs/2` to `Mutare.transform_string/2`, so the
+  # routed cases thread `extensions:` (and the config-channel test `:macro_routes`) alongside
+  # `:mutators`.
+  defp hosted_mutateds(source, opts) do
+    for {mutator, original, mutated} <- diffs(source, opts),
+        mutator == :ecto,
+        not String.starts_with?(original, "from("),
         into: MapSet.new(),
-        do: site.mutated_code
+        do: mutated
   end
 
   describe "a fully :skip-registered nested macro" do
-    test "is left opaque — its in-fragment literals are not mutated" do
+    test "is left opaque — its in-fragment condition is not mutated" do
       src = """
       defmodule M do
         import Ecto.Query
-        import MyApp.QueryHelpers
-        def q, do: from(u in User, where: between(u.age, 18, 65))
+        import Mutare.Test.Fixtures.RoutingExtension
+        def q, do: from(u in User, where: opaque(u.age > 18))
       end
       """
 
-      # Unregistered, the catalog descends into the call and mutates both literal bounds.
-      bare = hosted_mutateds(src, @base_mutators)
-      assert "between(u.age, 19, 65)" in bare
-      assert "between(u.age, 18, 64)" in bare
+      # Unregistered, the catalog descends into the call and mutates the wrapped condition.
+      bare = hosted_mutateds(src, mutators: @mutators)
+      assert "opaque(u.age >= 18)" in bare
+      assert "opaque(u.age > 19)" in bare
 
-      # Registered `:skip`, the whole call is opaque, so no bound is mutated and the host weaves
-      # nothing into this `where` at all.
-      assert hosted_mutateds(src, @helper_mutators) == MapSet.new()
-      assert_compiles(src, mutators: @helper_mutators)
+      # Registered `:skip`, the whole call is opaque, so nothing inside is mutated and the host
+      # weaves nothing into this `where` at all.
+      assert hosted_mutateds(src, mutators: @mutators, extensions: @routing) == MapSet.new()
+      assert_compiles(src, mutators: @mutators, extensions: @routing)
     end
   end
 
@@ -62,12 +65,12 @@ defmodule Mutare.Ecto.MacroSkipTest do
       src = """
       defmodule M do
         import Ecto.Query
-        import MyApp.QueryHelpers
+        import Mutare.Test.Fixtures.RoutingExtension
         def q, do: from(u in User, where: tagged(u.age > 18, :urgent))
       end
       """
 
-      muts = hosted_mutateds(src, @helper_mutators)
+      muts = hosted_mutateds(src, mutators: @mutators, extensions: @routing)
 
       # The :expression argument (the condition) still mutates under SQL semantics...
       assert "tagged(u.age >= 18, :urgent)" in muts
@@ -78,9 +81,9 @@ defmodule Mutare.Ecto.MacroSkipTest do
       refute "tagged(u.age > 18, :mutare)" in muts
 
       # Without the registration that atom *is* mutated — the contrast that isolates the skip.
-      assert "tagged(u.age > 18, :mutare)" in hosted_mutateds(src, @base_mutators)
+      assert "tagged(u.age > 18, :mutare)" in hosted_mutateds(src, mutators: @mutators)
 
-      assert_compiles(src, mutators: @helper_mutators)
+      assert_compiles(src, mutators: @mutators, extensions: @routing)
     end
   end
 
@@ -89,32 +92,29 @@ defmodule Mutare.Ecto.MacroSkipTest do
       src = """
       defmodule M do
         import Ecto.Query
-        import MyApp.QueryHelpers
+        import Mutare.Test.Fixtures.RoutingExtension
         def q do
           from p in Post,
             group_by: p.user_id,
-            having: clamp(sum(p.views), 10) > 5,
+            having: opaque(sum(p.views)) > 5,
             select: p.user_id
         end
       end
       """
 
-      muts = hosted_mutateds(src, @helper_mutators)
+      muts = hosted_mutateds(src, mutators: @mutators, extensions: @routing)
 
-      # The condition's own comparison and the un-wrapped literal still mutate...
-      assert "clamp(sum(p.views), 10) >= 5" in muts
-      assert "clamp(sum(p.views), 10) > 6" in muts
+      # The condition's own comparison and its literal still mutate...
+      assert "opaque(sum(p.views)) >= 5" in muts
+      assert "opaque(sum(p.views)) > 6" in muts
 
-      # ...but the aggregate and bound *inside* the opaque `clamp` are untouched.
-      refute "clamp(avg(p.views), 10) > 5" in muts
-      refute "clamp(sum(p.views), 11) > 5" in muts
+      # ...but the aggregate *inside* the opaque call is untouched.
+      refute "opaque(avg(p.views)) > 5" in muts
 
-      # Without the registration both the aggregate swap and the inner bound appear.
-      bare = hosted_mutateds(src, @base_mutators)
-      assert "clamp(avg(p.views), 10) > 5" in bare
-      assert "clamp(sum(p.views), 11) > 5" in bare
+      # Without the registration the aggregate swap appears.
+      assert "opaque(avg(p.views)) > 5" in hosted_mutateds(src, mutators: @mutators)
 
-      assert_compiles(src, mutators: @helper_mutators)
+      assert_compiles(src, mutators: @mutators, extensions: @routing)
     end
   end
 
@@ -128,61 +128,61 @@ defmodule Mutare.Ecto.MacroSkipTest do
       src = """
       defmodule M do
         import Ecto.Query
-        import MyApp.QueryHelpers
-        def q(query), do: where(query, [u], between(u.age, 18, 65) and u.score > 5)
+        import Mutare.Test.Fixtures.RoutingExtension
+        def q(query), do: where(query, [u], opaque(u.age > 18) and u.score > 5)
       end
       """
 
-      muts = hosted_mutateds(src, @helper_mutators)
+      muts = hosted_mutateds(src, mutators: @mutators, extensions: @routing)
 
-      # The un-wrapped sibling comparison still mutates; the :skip macro's bound does not.
-      assert "between(u.age, 18, 65) and u.score >= 5" in muts
-      refute "between(u.age, 19, 65) and u.score > 5" in muts
+      # The un-wrapped sibling comparison still mutates; the :skip macro's condition does not.
+      assert "opaque(u.age > 18) and u.score >= 5" in muts
+      refute "opaque(u.age > 19) and u.score > 5" in muts
 
-      # Without the registration the macro's bound mutates too — the contrast.
-      assert "between(u.age, 19, 65) and u.score > 5" in hosted_mutateds(src, @base_mutators)
+      # Without the registration the macro's condition mutates too — the contrast.
+      assert "opaque(u.age > 19) and u.score > 5" in hosted_mutateds(src, mutators: @mutators)
 
-      assert_compiles(src, mutators: @helper_mutators)
+      assert_compiles(src, mutators: @mutators, extensions: @routing)
     end
 
     test "a piped q |> where([u], cond) leaves a nested :skip macro opaque" do
       src = """
       defmodule M do
         import Ecto.Query
-        import MyApp.QueryHelpers
-        def q(query), do: query |> where([u], between(u.age, 18, 65) and u.score > 5)
+        import Mutare.Test.Fixtures.RoutingExtension
+        def q(query), do: query |> where([u], opaque(u.age > 18) and u.score > 5)
       end
       """
 
-      muts = hosted_mutateds(src, @helper_mutators)
+      muts = hosted_mutateds(src, mutators: @mutators, extensions: @routing)
 
-      assert "between(u.age, 18, 65) and u.score >= 5" in muts
-      refute "between(u.age, 19, 65) and u.score > 5" in muts
+      assert "opaque(u.age > 18) and u.score >= 5" in muts
+      refute "opaque(u.age > 19) and u.score > 5" in muts
 
-      assert "between(u.age, 19, 65) and u.score > 5" in hosted_mutateds(src, @base_mutators)
+      assert "opaque(u.age > 19) and u.score > 5" in hosted_mutateds(src, mutators: @mutators)
 
-      assert_compiles(src, mutators: @helper_mutators)
+      assert_compiles(src, mutators: @mutators, extensions: @routing)
     end
 
     test "a piped having([u], cond) leaves a :skip macro wrapping an aggregate opaque" do
       src = """
       defmodule M do
         import Ecto.Query
-        import MyApp.QueryHelpers
-        def q(query), do: query |> having([u], clamp(sum(u.age), 10) > 5)
+        import Mutare.Test.Fixtures.RoutingExtension
+        def q(query), do: query |> having([u], opaque(sum(u.age)) > 5)
       end
       """
 
-      muts = hosted_mutateds(src, @helper_mutators)
+      muts = hosted_mutateds(src, mutators: @mutators, extensions: @routing)
 
-      # The condition's own comparison still swaps; the aggregate inside the opaque `clamp` does not.
-      assert "clamp(sum(u.age), 10) >= 5" in muts
-      refute "clamp(avg(u.age), 10) > 5" in muts
+      # The condition's own comparison still swaps; the aggregate inside the opaque call does not.
+      assert "opaque(sum(u.age)) >= 5" in muts
+      refute "opaque(avg(u.age)) > 5" in muts
 
       # Without the registration the wrapped aggregate swaps too.
-      assert "clamp(avg(u.age), 10) > 5" in hosted_mutateds(src, @base_mutators)
+      assert "opaque(avg(u.age)) > 5" in hosted_mutateds(src, mutators: @mutators)
 
-      assert_compiles(src, mutators: @helper_mutators)
+      assert_compiles(src, mutators: @mutators, extensions: @routing)
     end
   end
 
@@ -196,54 +196,52 @@ defmodule Mutare.Ecto.MacroSkipTest do
       src = """
       defmodule M do
         import Ecto.Query
-        import MyApp.QueryHelpers
+        import Mutare.Test.Fixtures.RoutingExtension
         def q do
           from u in User,
             join: p in Post,
-            on: between(p.views, 1, 100) and p.user_id == u.id,
+            on: opaque(p.views > 1) and p.user_id == u.id,
             select: u.id
         end
       end
       """
 
-      muts = hosted_mutateds(src, @helper_mutators)
+      muts = hosted_mutateds(src, mutators: @mutators, extensions: @routing)
 
-      # The on-condition's own comparison still swaps; the :skip macro's bounds do not.
-      assert "between(p.views, 1, 100) and p.user_id != u.id" in muts
-      refute "between(p.views, 2, 100) and p.user_id == u.id" in muts
+      # The on-condition's own comparison still swaps; the :skip macro's condition does not.
+      assert "opaque(p.views > 1) and p.user_id != u.id" in muts
+      refute "opaque(p.views > 2) and p.user_id == u.id" in muts
 
-      # Without the registration the macro's bound mutates too — the contrast.
-      assert "between(p.views, 2, 100) and p.user_id == u.id" in hosted_mutateds(
-               src,
-               @base_mutators
+      # Without the registration the macro's condition mutates too — the contrast.
+      assert "opaque(p.views > 2) and p.user_id == u.id" in hosted_mutateds(src,
+               mutators: @mutators
              )
 
-      assert_compiles(src, mutators: @helper_mutators)
+      assert_compiles(src, mutators: @mutators, extensions: @routing)
     end
 
     test "a standalone join(:inner, [u], p in S, on:) leaves a nested :skip macro opaque" do
       src = """
       defmodule M do
         import Ecto.Query
-        import MyApp.QueryHelpers
+        import Mutare.Test.Fixtures.RoutingExtension
         def q(query) do
           query
-          |> join(:inner, [u], p in Post, on: between(p.views, 1, 100) and p.user_id == u.id)
+          |> join(:inner, [u], p in Post, on: opaque(p.views > 1) and p.user_id == u.id)
         end
       end
       """
 
-      muts = hosted_mutateds(src, @helper_mutators)
+      muts = hosted_mutateds(src, mutators: @mutators, extensions: @routing)
 
-      assert "between(p.views, 1, 100) and p.user_id != u.id" in muts
-      refute "between(p.views, 2, 100) and p.user_id == u.id" in muts
+      assert "opaque(p.views > 1) and p.user_id != u.id" in muts
+      refute "opaque(p.views > 2) and p.user_id == u.id" in muts
 
-      assert "between(p.views, 2, 100) and p.user_id == u.id" in hosted_mutateds(
-               src,
-               @base_mutators
+      assert "opaque(p.views > 2) and p.user_id == u.id" in hosted_mutateds(src,
+               mutators: @mutators
              )
 
-      assert_compiles(src, mutators: @helper_mutators)
+      assert_compiles(src, mutators: @mutators, extensions: @routing)
     end
   end
 
@@ -257,59 +255,57 @@ defmodule Mutare.Ecto.MacroSkipTest do
       src = """
       defmodule M do
         import Ecto.Query
-        import MyApp.QueryHelpers
-        def q(query), do: where(query, [a, b], between(a.age, 18, b.score))
+        import Mutare.Test.Fixtures.RoutingExtension
+        def q(query), do: where(query, [a, b], opaque(a.age > b.score))
       end
       """
 
-      muts = hosted_mutateds(src, @helper_mutators)
+      muts = hosted_mutateds(src, mutators: @mutators, extensions: @routing)
 
       # The reorder swaps the declared list; the body (the `:skip` macro call) rides along verbatim.
-      assert Enum.any?(muts, &(&1 =~ "where(query, [b, a], between(a.age, 18, b.score))"))
+      assert Enum.any?(muts, &(&1 =~ "where(query, [b, a], opaque(a.age > b.score))"))
 
       # The macro's arguments are never rewritten — no `a`/`b` reference swap reaches into the body…
-      refute Enum.any?(muts, &(&1 =~ "between(b.age, 18, a.score)"))
-      # …and `:skip` still suppresses the literal bound inside the opaque macro.
-      refute Enum.any?(muts, &(&1 =~ "between(a.age, 19"))
+      refute Enum.any?(muts, &(&1 =~ "opaque(b.age > a.score)"))
+      # …and `:skip` still suppresses the comparison inside the opaque macro.
+      refute Enum.any?(muts, &(&1 =~ "opaque(a.age >= b.score)"))
 
-      assert_compiles(src, mutators: @helper_mutators)
+      assert_compiles(src, mutators: @mutators, extensions: @routing)
     end
   end
 
-  # Everything above registers the routing the way a *library* ships it — a provider module
-  # (`MyApp.QueryHelperMutator`) listed in `:mutators`. An end user writes the same skip
-  # *declaratively*, via the `:macro_routes` option (`{module, name, arity, :skip}` in config).
-  # Both channels funnel into the same registry and the same resolve-pass stamp — a config entry
-  # even overrides a code-provided route — so the hosted walkers cannot tell them apart. But the
-  # configuration story is its own public surface, so it gets its own pin: the same source with
-  # *no* provider mutator anywhere, the skip supplied purely by configuration.
+  # Everything above registers the routing the way an independent *library* ships it — a routing
+  # extension listed under `:extensions`. An end user writes the same skip *declaratively*, via the
+  # `:macro_routes` option (`{module, name, arity, :skip}` in config). Both channels funnel into the
+  # same registry and the same resolve-pass stamp — a config entry even overrides a code-provided
+  # route — so the hosted walkers cannot tell them apart. But the configuration story is its own
+  # public surface, so it gets its own pin: the same source with *no* extension anywhere, the skip
+  # supplied purely by configuration.
   describe "the declarative `:macro_routes` config channel" do
-    @config_routes [{MyApp.QueryHelpers, :between, 3, :skip}]
+    @config_routes [{RoutingExtension, :opaque, 1, :skip}]
 
     test "a config-registered :skip is honored inside a hosted where" do
       src = """
       defmodule M do
         import Ecto.Query
-        import MyApp.QueryHelpers
-        def q, do: from(u in User, where: between(u.age, 18, 65) and u.score > 5)
+        import Mutare.Test.Fixtures.RoutingExtension
+        def q, do: from(u in User, where: opaque(u.age > 18) and u.score > 5)
       end
       """
 
-      # Without the config entry, the catalog descends into the call and mutates its bounds.
-      assert "between(u.age, 19, 65) and u.score > 5" in hosted_mutateds(src, @base_mutators)
+      # Without the config entry, the catalog descends into the call and mutates its condition.
+      assert "opaque(u.age > 19) and u.score > 5" in hosted_mutateds(src, mutators: @mutators)
 
       # With only the declarative entry, the macro is opaque: the sibling comparison still
-      # mutates, while neither bound inside the skipped call ever does.
-      muts = hosted_mutateds(src, @base_mutators, macro_routes: @config_routes)
-      assert "between(u.age, 18, 65) and u.score >= 5" in muts
-      refute "between(u.age, 19, 65) and u.score > 5" in muts
-      refute "between(u.age, 18, 64) and u.score > 5" in muts
+      # mutates, while nothing inside the skipped call ever does.
+      muts = hosted_mutateds(src, mutators: @mutators, macro_routes: @config_routes)
+      assert "opaque(u.age > 18) and u.score >= 5" in muts
+      refute "opaque(u.age > 19) and u.score > 5" in muts
+      refute "opaque(u.age >= 18) and u.score > 5" in muts
 
-      # The single-build net still holds with the route applied. `assert_compiles` cannot thread
-      # `:macro_routes` (core's `assert_metamutant_compiles/2` takes only mutators), so use the
-      # option-forwarding `Mutare.Test.compile_metamutant/3` directly.
-      assert {[_ | _], _sites} =
-               Mutare.Test.compile_metamutant(src, @base_mutators, macro_routes: @config_routes)
+      # The single-build net still holds with the route applied — `assert_compiles` forwards
+      # `:macro_routes` to the transform, like every other option.
+      assert_compiles(src, mutators: @mutators, macro_routes: @config_routes)
     end
   end
 end

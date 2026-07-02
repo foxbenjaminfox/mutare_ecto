@@ -10,8 +10,11 @@ defmodule Mutare.Ecto.DynamicTest do
   # needed. This is the build site the `where(q, ^d)` splice deliberately leaves raw ("mutated
   # where it is built" — `Mutare.Ecto.Host.Bindings`).
 
-  # The plugin plus the author-macro routing fixture, for the nested-`:skip` opacity tests.
-  @helper_mutators [{Mutare.Ecto, repo: MyApp.Repo, families: :all}, MyApp.QueryHelperMutator]
+  # The full-family plugin instance plus core's shipped routing-only fixture
+  # (`Mutare.Test.Fixtures.RoutingExtension`, threaded via `extensions:`), for the nested-`:skip`
+  # opacity test — foreign macro routing shipped by an independent module, no hand-rolled provider.
+  @all_families [{Mutare.Ecto, repo: MyApp.Repo, families: :all}]
+  @routing [Mutare.Test.Fixtures.RoutingExtension]
 
   # The mutated whole-node renderings recorded under the `:ecto` family.
   defp mutated(src, opts \\ []), do: src |> ecto_diffs(opts) |> Enum.map(fn {_o, m} -> m end)
@@ -182,19 +185,19 @@ defmodule Mutare.Ecto.DynamicTest do
       src = """
       defmodule M do
         import Ecto.Query
-        import MyApp.QueryHelpers
-        def d(v), do: dynamic([u], between(u.age, 18, 65) and u.role == ^v)
+        import Mutare.Test.Fixtures.RoutingExtension
+        def d(v), do: dynamic([u], opaque(u.age > 18) and u.role == ^v)
       end
       """
 
-      muts = mutated(src, mutators: @helper_mutators)
+      muts = mutated(src, mutators: @all_families, extensions: @routing)
 
       # The sibling positions still mutate (the anchor that proves the walk ran)…
       assert Enum.any?(muts, &(&1 =~ "or u.role"))
       assert Enum.any?(muts, &(&1 =~ "u.role != ^v"))
-      # …but `between/3`'s own bounds are its DSL (routed fully `:skip`), never descended.
-      refute Enum.any?(muts, &(&1 =~ "17" or &1 =~ "19" or &1 =~ "64" or &1 =~ "66"))
-      assert_compiles(src)
+      # …but `opaque/1`'s argument is its DSL (routed fully `:skip`), never descended.
+      refute Enum.any?(muts, &(&1 =~ "u.age >= 18" or &1 =~ "17" or &1 =~ "19"))
+      assert_compiles(src, extensions: @routing)
     end
 
     test "the families: filter applies — a comparison-only run drops the literal arms" do

@@ -457,16 +457,17 @@ defmodule Mutare.Ecto.SubcontractTest do
     end
 
     test "an author macro's :expression argument sub-contracts; its :skip argument never does" do
-      # The island walk reads the same per-argument routing as the catalogs: `tagged/2` routes
-      # its condition `:expression` (standard syntax — descend), `between/3` is fully `:skip`
-      # (the macro's own grammar — opaque). The same sources *without* the registration both
-      # sub-contract, isolating the routing as what suppresses the second.
-      helper = [mutators: [:all, {Mutare.Ecto, repo: MyApp.Repo}, MyApp.QueryHelperMutator]]
+      # The island walk reads the same per-argument routing as the catalogs — the routing shipped
+      # by core's `Mutare.Test.Fixtures.RoutingExtension`: `tagged/2` routes its condition
+      # `:expression` (standard syntax — descend), `opaque/1` is fully `:skip` (the macro's own
+      # grammar — opaque). The same sources *without* the extension both sub-contract, isolating
+      # the routing as what suppresses the second.
+      helper = @with_core ++ [extensions: [Mutare.Test.Fixtures.RoutingExtension]]
 
       tagged = """
       defmodule M do
         import Ecto.Query
-        import MyApp.QueryHelpers
+        import Mutare.Test.Fixtures.RoutingExtension
         def q(n), do: from(u in User, where: tagged(u.age > ^(n + 1), :urgent), select: u.id)
       end
       """
@@ -474,24 +475,24 @@ defmodule Mutare.Ecto.SubcontractTest do
       assert {:arithmetic, "tagged(u.age > ^(n + 1), :urgent)",
               "tagged(u.age > ^(n - 1), :urgent)"} in island_diffs(tagged, helper)
 
-      between = """
+      opaque = """
       defmodule M do
         import Ecto.Query
-        import MyApp.QueryHelpers
-        def q(n), do: from(u in User, where: between(u.age, ^(n + 1), 65), select: u.id)
+        import Mutare.Test.Fixtures.RoutingExtension
+        def q(n), do: from(u in User, where: opaque(u.age > ^(n + 1)), select: u.id)
       end
       """
 
-      assert island_diffs(between, helper) == []
+      assert island_diffs(opaque, helper) == []
 
       # Unregistered, the same call has `nil` routing — plainly standard syntax, descended.
-      assert {:arithmetic, "between(u.age, ^(n + 1), 65)", "between(u.age, ^(n - 1), 65)"} in island_diffs(
-               between,
+      assert {:arithmetic, "opaque(u.age > ^(n + 1))", "opaque(u.age > ^(n - 1))"} in island_diffs(
+               opaque,
                @with_core
              )
 
       assert_compiles(tagged, helper)
-      assert_compiles(between, helper)
+      assert_compiles(opaque, helper)
     end
 
     test "a non-hostable join on: (assoc join) is never hosted, so its pin never sub-contracts" do

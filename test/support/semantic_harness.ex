@@ -111,9 +111,27 @@ defmodule Mutare.Ecto.SemanticHarness do
 
   The query-path observation: `fun` builds and returns an `Ecto.Queryable` (typically
   `fn -> module.some_query() end`), which is run against the seeded Repo under the chosen mutant id.
+  Prefer `observe/3` when the test is the standard flip-and-compare pair; `under/2` remains for a
+  mutant located by an ad-hoc `site_by/3` predicate (the drops) or observed more than once.
   """
   @spec under(non_neg_integer(), (-> Ecto.Queryable.t())) :: [term()]
   def under(id, fun) when is_integer(id) and id >= 0 do
     activate(id, fn -> @repo.all(fun.()) end)
+  end
+
+  @doc """
+  The flip-and-compare pair for the query path: run `fun`'s query at baseline and under the one
+  site matching `pattern`, returning `{baseline_rows, mutant_rows}`.
+
+  Composes core's `Mutare.Test.observe_mutant/3` — which resolves the mutant id (`site_id/2`) and
+  runs the baseline **first, pinned to core's baseline selection** (not the current one), so a
+  leaked active id can't masquerade as baseline and a wrong first element indicts the fixture,
+  not the mutant — with the harness's Repo observation (`MyApp.Repo.all/1` of the queryable `fun`
+  builds). `sites` and `pattern` are as in `Mutare.Test.site_id/2`.
+  """
+  @spec observe([Site.t()], {pattern, pattern}, (-> Ecto.Queryable.t())) :: {[term()], [term()]}
+        when pattern: String.t() | Regex.t()
+  def observe(sites, pattern, fun) do
+    Test.observe_mutant(sites, pattern, fn -> @repo.all(fun.()) end)
   end
 end
