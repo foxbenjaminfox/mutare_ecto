@@ -181,6 +181,16 @@ defmodule Mutare.Ecto.Surface do
     end
   end
 
+  @doc """
+  Every query macro whose `:routing` classifier can route a position `:hosted` — the `from`
+  opener, the `:condition` macros, and `:join`. The plugin subscribes exactly these through
+  `c:Mutare.Mutator.MacroHost.hosted_macros/0`.
+  """
+  @spec hosted_macro_names() :: [atom()]
+  def hosted_macro_names do
+    for %{name: name, macro: kind} <- @surface, kind in [:from, :condition, :join], do: name
+  end
+
   @doc "Whether `name` is a query-building macro whose nested query should remain reachable."
   @spec query_builder?(atom()) :: boolean()
   def query_builder?(name), do: macro_kind(name) in [:from, :condition, :join, :clause]

@@ -10,7 +10,7 @@ defmodule Mutare.Ecto.NormalizedASTTest do
   describe "QueryCall" do
     test "normalizes a stamped Ecto.Query macro and rebuilds its written form" do
       {head, meta, args} = parse("Ecto.Query.limit(q, 10)")
-      meta = Meta.stamp_macro_call(meta, {AST.query_module_key(), :limit})
+      meta = Meta.stamp_macro_call(meta, {AST.query_module_key(), :limit, :unpiped})
       call = QueryCall.parse({head, meta, args})
 
       assert %QueryCall{name: :limit, args: [_query, _bound]} = call
@@ -24,7 +24,7 @@ defmodule Mutare.Ecto.NormalizedASTTest do
       assert QueryCall.parse(parse("limit(q, 10)")) == nil
 
       {head, meta, args} = parse("Other.limit(q, 10)")
-      meta = Meta.stamp_macro_call(meta, {[:Other], :limit})
+      meta = Meta.stamp_macro_call(meta, {[:Other], :limit, :unpiped})
       assert QueryCall.parse({head, meta, args}) == nil
     end
   end

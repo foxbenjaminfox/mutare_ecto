@@ -14,9 +14,9 @@ defmodule Mutare.Ecto.ShorthandTest do
 
   @all [:all, {Mutare.Ecto, repo: MyApp.Repo}]
 
-  defp routing(code), do: code |> Sourceror.parse_string!() |> Host.Routing.macro_routing()
+  defp routing(code), do: code |> Sourceror.parse_string!() |> Host.Routing.treatments()
 
-  describe "macro_routing — the per-pair treatment the plugin emits" do
+  describe "treatments — the per-pair treatment the plugin emits" do
     test "a standalone shorthand routes each scalar value :pinned, keys raw, query :expression" do
       # The directly-written query (`q`) is the threaded value — an ordinary expression.
       assert routing(~s|where(q, category: "Foo", count: 5)|) ==

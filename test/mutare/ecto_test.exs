@@ -10,16 +10,16 @@ defmodule Mutare.EctoTest do
            "expected Ecto >= 3.12 and < 4.0, got #{version}"
   end
 
-  describe "macros/0" do
+  describe "macro_routes/0" do
     test "skips schema, routes the host macros and the clause macros, skips dynamic" do
-      macros = Mutare.Ecto.macros()
+      macros = Mutare.Ecto.macro_routes()
 
       # Schema bodies are never mutated.
       assert {Ecto.Schema, :schema, :skip} in macros
       assert {Ecto.Schema, :embedded_schema, :skip} in macros
 
       # The `from` opener and the where/having family route through the selector host
-      # (`:routing` → `macro_routing/1` → `host/2`).
+      # (`:routing` → `route_arguments/2` → `host/2`).
       assert {Ecto.Query, :from, :any, :routing} in macros
       assert {Ecto.Query, :where, :any, :routing} in macros
       assert {Ecto.Query, :or_where, :any, :routing} in macros
@@ -39,7 +39,7 @@ defmodule Mutare.EctoTest do
 
     test "classifies every macro exported by the supported Ecto.Query version" do
       registered =
-        Mutare.Ecto.macros()
+        Mutare.Ecto.macro_routes()
         |> Enum.flat_map(fn
           {Ecto.Query, name, _treatment} -> [name]
           {Ecto.Query, name, _arity, _treatment} -> [name]

@@ -925,8 +925,8 @@ defmodule Mutare.Ecto.HostTest do
   # shape failures easy to diagnose without manufacturing resolver metadata or bypassing the
   # public transform for mutation delivery.
 
-  describe "macro_routing/1 — per-argument treatment" do
-    defp routing(code), do: code |> Sourceror.parse_string!() |> Host.Routing.macro_routing()
+  describe "treatments/1 — per-argument treatment" do
+    defp routing(code), do: code |> Sourceror.parse_string!() |> Host.Routing.treatments()
 
     test "from keyword form routes each binding condition independently" do
       assert routing("from(u in User, where: u.x == u.y, select: u.id)") ==

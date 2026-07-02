@@ -4,7 +4,7 @@ defmodule Mutare.Ecto.QualifiedTest do
   import Mutare.Ecto.TestSupport
 
   # The query DSL macros can be written three ways, all of which core's resolver recognizes and
-  # hands to the plugin's `macro_routing/1`/`host/2`/`mutate/2`: **bare/imported** (`where(q, …)`),
+  # hands to the plugin's `route_arguments/2`/`host/2`/`mutate/2`: **bare/imported** (`where(q, …)`),
   # **qualified** (`Ecto.Query.where(q, …)`), and **aliased** (`Q.where(q, …)`). The plugin used to
   # pattern-match only the bare atom head, so the qualified/aliased forms escaped routing entirely —
   # core then descended into the raw query fragment, splicing selector `case`s into binding-list /

@@ -75,14 +75,22 @@ When a new Ecto minor is published, add a matrix entry in `.github/workflows/ci.
 ## Architecture
 
 `Mutare.Ecto` (`lib/mutare/ecto.ex`) is a thin `Mutare.Mutator` front that **dispatches by the
-node it sees** to a family of sub-mutators. It implements three core callbacks:
+node it sees** to a family of sub-mutators. Beyond `Mutare.Mutator` it implements core's two
+adapter behaviours — `Mutare.MacroRouting` (DSL routing) and `Mutare.Mutator.MacroHost` (selector
+hosting):
 
-- `macros/0` — registers the compile-time DSL routing so core never splices a runtime selector
-  into a query expression (which would poison the single build). `schema`/`embedded_schema` →
-  `:skip`; query-building macros (`from`, `where`, `order_by`, `limit`, `select`, `join`, …) →
-  `:routing`. The classifier hosts SQL conditions, keeps DSL data raw, and marks a directly passed
-  query argument `:expression` so upstream query mutations remain reachable through a stage.
-- `macro_routing/1` and `host/2` — both delegate to `Mutare.Ecto.Host` (the selector host).
+- `macro_routes/0` (`Mutare.MacroRouting`) — registers the compile-time DSL routing so core never
+  splices a runtime selector into a query expression (which would poison the single build).
+  `schema`/`embedded_schema` → `:skip`; query-building macros (`from`, `where`, `order_by`,
+  `limit`, `select`, `join`, …) → `:routing`. The classifier hosts SQL conditions, keeps DSL data
+  raw, and marks a directly passed query argument `:expression` so upstream query mutations remain
+  reachable through a stage.
+- `route_arguments/2` (`Mutare.MacroRouting`, the `:routing` classifier — receives a resolved
+  `Mutare.MacroRouting.Call`, returns `Mutare.MacroRouting.ArgumentRoutes`) and `host/2`
+  (`Mutare.Mutator.MacroHost` — returns `Mutare.Mutator.MacroHost.Target`s) — both delegate to
+  `Mutare.Ecto.Host` (the selector host). `hosted_macros/0` subscribes the host to exactly the
+  macros the classifier can route `:hosted` (`from`, the condition macros, `join` —
+  `Surface.hosted_macro_names/0`).
 - `mutate/2` — normalizes configuration, asks `Mutare.Ecto.Dispatcher` to classify the node and
   invoke only relevant sub-mutators, then filters the resulting `{family, node}` pairs by the
   configured `families:`. Everything runs through `mutate/2` because all mutations read
@@ -110,12 +118,12 @@ The surface divides by **how a mutation is delivered**, not by what it mutates:
 
 | Module | Role |
 |---|---|
-| `ecto.ex` | `Mutare.Mutator` callbacks: normalizes config, delegates node classification, filters by `families:`, applies the note |
+| `ecto.ex` | `Mutare.Mutator` + `Mutare.MacroRouting` + `Mutare.Mutator.MacroHost` callbacks: normalizes config, delegates node classification, filters by `families:`, applies the note |
 | `dispatcher.ex` | Classifies each node once and invokes only the sub-mutators relevant to that query macro, Ecto call, or configured Repo call |
 | `surface.ex` | Single descriptor table for every owned query macro and `from` key: routing kind, standalone mutation capabilities, stage/whole-`from` drop families, and hosted/binding/join capabilities |
 | `sub_mutator.ex` | The uniform `mutations(node, context)` behaviour implemented by each mutation producer |
-| `host.ex` | Selector-host **coordinator** (#3): turns a hosted node into `Target`s, delegating to the `host/*` parts below |
-| `host/routing.ex` | `macro_routing/1` — the per-argument routing classifier (`:hosted`/`:expression`/`:skip`/`:pinned`/`{:keyword,…}`) |
+| `host.ex` | Selector-host **coordinator** (#3): turns a hosted call into `Target`s, delegating to the `host/*` parts below |
+| `host/routing.ex` | `route_arguments/2` — the per-argument routing classifier (`:hosted`/`:expression`/`:skip`/`:pinned`/`{:keyword,…}`), over `treatments/1` |
 | `host/bindings.ex` | Interprets Ecto binding declarations and renders the binding list re-declared by a woven `dynamic/2` |
 | `host/catalog.ex` | The enabled, noted logical mutants for one hosted condition (Fragment + Aggregate) |
 | `host/join_on.ex` | Which join `on:` conditions are safe to host: only a join's **sole, top-level** on-expression (not a multi-`on:` or `assoc` join, whose conditions Ecto folds into one `and` where a `^dynamic` operand is illegal) |

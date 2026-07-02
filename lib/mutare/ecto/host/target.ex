@@ -1,19 +1,14 @@
 defmodule Mutare.Ecto.Host.Target do
   @moduledoc false
-  # Builds the host-target map consumed by Mutare core and owns every delivery transform: wrapping
-  # logical fragments in `dynamic/2`, pinning the selector, and splicing it into the original call.
+  # Builds the `Mutare.Mutator.MacroHost.Target` values consumed by Mutare core and owns every
+  # delivery transform: wrapping logical fragments in `dynamic/2` (the target's `:wrap`), pinning
+  # the selector, and splicing it into the original call.
 
   alias Mutare.Ecto.AST
   alias Mutare.Ecto.AST.{KeywordList, QueryCall}
+  alias Mutare.Mutator.MacroHost
 
-  @type wrap :: (Macro.t() -> Macro.t())
-  @type splice :: (Macro.t(), Macro.t() -> Macro.t())
-  @type t :: %{
-          required(:original) => Macro.t(),
-          required(:mutants) => [Mutare.Mutator.mutation()],
-          required(:wrap) => wrap(),
-          required(:splice) => splice()
-        }
+  @type t :: MacroHost.Target.t()
 
   @doc "A target for one condition in a `from` keyword clause."
   @spec from_clause(
@@ -62,7 +57,7 @@ defmodule Mutare.Ecto.Host.Target do
   end
 
   defp new(original, mutants, bindings, splice) do
-    %{original: original, mutants: mutants, wrap: dynamic_wrap(bindings), splice: splice}
+    MacroHost.Target.new(original, mutants, splice, wrap: dynamic_wrap(bindings))
   end
 
   defp dynamic_wrap(bindings) do

@@ -1,7 +1,7 @@
 defmodule Mutare.Ecto.Host.Routing do
   @moduledoc """
   The **routing classifier** half of the selector host (`Mutare.Ecto.Host`): the
-  `c:Mutare.Mutator.MacroAware.macro_routing/1` callback that decides, per visible argument of a
+  `c:Mutare.MacroRouting.route_arguments/2` callback that decides, per visible argument of a
   `:routing`-registered query macro, how core should treat that position — `:hosted` (the plugin's
   host weaves it), `:expression` (mutate it normally), `:skip` (leave it raw), `:pinned` (core
   mutates a scalar value, delivered `^`-pinned), or `{:keyword, …}` (per-pair shorthand routing).
@@ -32,39 +32,37 @@ defmodule Mutare.Ecto.Host.Routing do
       `mutate/2` mutators.
 
   This relies on core's recursive per-pair routing, hosted values, and `:pinned` extensions; see
-  `c:Mutare.Mutator.MacroAware.macro_routing/1`.
+  `c:Mutare.MacroRouting.route_arguments/2`.
   """
 
   alias Mutare.Ecto.{AST, Binding, Surface}
   alias Mutare.Ecto.AST.{KeywordList, QueryCall}
   alias Mutare.Ecto.Host.Bindings
+  alias Mutare.MacroRouting.{ArgumentRoutes, Call}
   alias Mutare.Transform.Calls
 
   @query_key AST.query_module_key()
 
   @doc """
-  Per-visible-argument routing for a `:routing`-registered query macro (`from`, the `where`/`having`
-  family, and the plain clause macros), consulted by Mutare core with the concrete
-  node. Returns `[]` for anything else.
+  `c:Mutare.MacroRouting.route_arguments/2` for a `:routing`-registered query macro: the
+  per-visible-argument `treatments/1` classification, wrapped as `ArgumentRoutes`. Core hands in a
+  resolved `Mutare.MacroRouting.Call`, so the written form (bare/qualified/aliased/piped) is already
+  normalized. A piped call's hidden left side is the threaded query, so it keeps `from_visible`'s
+  `:expression` default — the upstream query stays mutable through the stage.
   """
-  @spec macro_routing(Macro.t()) ::
-          [Mutare.Macro.Spec.treatment() | :pinned | {:keyword, [term()]}]
-  # A qualified/aliased call (`Ecto.Query.where(…)`, `Q.where(…)`) — its head is a `{:., …}` remote
-  # node, not a bare macro atom, so the per-name clauses below never match it. Normalize it to its
-  # bare equivalent (`Mutare.Ecto.AST.QueryCall.parse/1`, reading the resolved-macro identity core
-  # stamped) and re-dispatch: routing is a list indexed by *visible argument position*, identical for
-  # every written form, so the head and meta are irrelevant here. A remote head core didn't resolve
-  # to a known macro yields `[]` (not a routing macro).
-  # mutare:ignore[guard_drop] equivalent — `args` is a `{head, meta, args}` node's argument slot, always a list; the guard is redundant
-  def macro_routing({head, _meta, args} = node) when not is_atom(head) and is_list(args) do
-    case QueryCall.parse(node) do
-      %QueryCall{name: name, args: visible_args} -> macro_routing({name, [], visible_args})
-      nil -> []
-    end
+  @spec route_arguments(Call.t(), Mutare.MacroRouting.routing_context()) :: ArgumentRoutes.t()
+  def route_arguments(%Call{name: name, arguments: args} = call, _context) do
+    ArgumentRoutes.from_visible(call, treatments({name, [], args}))
   end
 
+  @doc """
+  Per-visible-argument treatment for a `:routing`-registered query macro (`from`, the
+  `where`/`having` family, `join`, and the plain clause macros), one entry per visible argument.
+  Returns `[]` for anything else.
+  """
+  @spec treatments(Macro.t()) :: [Mutare.MacroRouting.treatment()]
   # mutare:ignore[guard_drop] equivalent — `rest` is the tail of the `[source | rest]` cons match, so it is always a list; the guard is redundant
-  def macro_routing({:from, _meta, [_source | rest]}) when is_list(rest) do
+  def treatments({:from, _meta, [_source | rest]}) when is_list(rest) do
     # The source is never mutated (a table/schema swap is a broken query, not a mutant). Each clause
     # routes independently: a binding-referencing `where`/`having` expression is hosted, while a
     # keyword-shorthand condition routes its values per pair so core mutates them (`^`-pinned). This
@@ -84,11 +82,11 @@ defmodule Mutare.Ecto.Host.Routing do
     [:skip | List.duplicate(clause_treatment, length(rest))]
   end
 
-  def macro_routing({macro, _meta, args}) when is_atom(macro) and is_list(args) do
+  def treatments({macro, _meta, args}) when is_atom(macro) and is_list(args) do
     route_macro(Surface.macro_kind(macro), args)
   end
 
-  def macro_routing(_node), do: []
+  def treatments(_node), do: []
 
   defp route_macro(:condition, args) do
     # The threaded query (the first arg, when written directly) is an ordinary expression; its own

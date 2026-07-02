@@ -34,19 +34,20 @@ end
 
 defmodule MyApp.QueryHelperMutator do
   @moduledoc false
-  # A macro-aware mutator that registers `MyApp.QueryHelpers`' macros' argument routing — the way a
-  # library ships the macro registration its DSL relies on (`c:Mutare.Mutator.MacroAware.macros/0`).
-  # It produces no mutations of its own (`mutate/1` is always `:skip`); it exists only to teach the
-  # transform that these author macros own (some of) their arguments, so `Mutare.Ecto` leaves a
-  # `:skip` position raw inside a hosted fragment. Tests add it alongside `{Mutare.Ecto, repo: …}`.
+  # A routing-providing mutator that registers `MyApp.QueryHelpers`' macros' argument routing — the
+  # way a library ships the macro registration its DSL relies on
+  # (`c:Mutare.MacroRouting.macro_routes/0`). It produces no mutations of its own (`mutate/1` is
+  # always `:skip`); it exists only to teach the transform that these author macros own (some of)
+  # their arguments, so `Mutare.Ecto` leaves a `:skip` position raw inside a hosted fragment. Tests
+  # add it alongside `{Mutare.Ecto, repo: …}`.
   @behaviour Mutare.Mutator
-  @behaviour Mutare.Mutator.MacroAware
+  @behaviour Mutare.MacroRouting
 
   @impl Mutare.Mutator
   def name, do: :query_helpers
 
-  @impl Mutare.Mutator.MacroAware
-  def macros do
+  @impl Mutare.MacroRouting
+  def macro_routes do
     [
       {MyApp.QueryHelpers, :between, 3, :skip},
       {MyApp.QueryHelpers, :tagged, 2, [:expression, :skip]},

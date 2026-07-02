@@ -12,10 +12,15 @@ defmodule Mutare.Ecto.Host do
   alias Mutare.Ecto.AST.{KeywordList, QueryCall}
   alias Mutare.Ecto.AST.KeywordList.Entry
   alias Mutare.Ecto.Host.{Bindings, Catalog, JoinOn, Target}
+  alias Mutare.MacroRouting.Call
 
-  @doc "The selector-host targets for an Ecto.Query macro node."
-  @spec host(Macro.t(), Mutare.Mutator.context()) :: [Target.t()]
-  def host(node, context) do
+  @doc """
+  `c:Mutare.Mutator.MacroHost.host/2`: the selector-host targets for a resolved Ecto.Query macro
+  call. The call's `node` is re-read through `Mutare.Ecto.AST.QueryCall` so the splice transforms
+  rebuild the author's written form.
+  """
+  @spec host(Call.t(), Mutare.Mutator.context()) :: [Target.t()]
+  def host(%Call{node: node}, context) do
     config = Config.from_context(context)
 
     case QueryCall.parse(node) do

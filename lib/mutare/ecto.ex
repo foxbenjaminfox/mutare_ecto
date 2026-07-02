@@ -9,7 +9,7 @@ defmodule Mutare.Ecto do
       # .mutare.exs
       [mutators: [:all, {Mutare.Ecto, repo: MyApp.Repo}]]
 
-  Listing it both registers the plugin's macro routing (via `c:Mutare.Mutator.MacroAware.macros/0`,
+  Listing it both registers the plugin's macro routing (via `c:Mutare.MacroRouting.macro_routes/0`,
   discovered automatically) and enables its mutations. Query, changeset, and schema handling do
   not require `repo:`; that option only identifies the module matched by the Repo-call families.
 
@@ -82,13 +82,13 @@ defmodule Mutare.Ecto do
 
   ## Macro routing
 
-  `macros/0` registers the compile-time DSL so Mutare core never splices a runtime selector into
-  a query expression (which would poison the single build):
+  `macro_routes/0` registers the compile-time DSL so Mutare core never splices a runtime selector
+  into a query expression (which would poison the single build):
 
     * `schema`/`embedded_schema` are `:skip`ped — a mutated field name or type is a
       broken schema, not a mutant.
     * the `from` opener and the `where`/`having` family route via the `:routing` classifier
-      (`macro_routing/1`), so a binding-referencing condition is delivered through the plugin's
+      (`route_arguments/2`), so a binding-referencing condition is delivered through the plugin's
       **selector host** (`host/2` — Ecto's `^`/`dynamic` injection), while keyword-shorthand data
       is routed to core's literal families (`{:keyword, …}`/`:pinned`). The whole-`from` mutations
       (clause/bound drop, order/join swaps, select aggregates) ride `mutate/2` over the routed node.
@@ -107,11 +107,12 @@ defmodule Mutare.Ecto do
   """
 
   @behaviour Mutare.Mutator
-  @behaviour Mutare.Mutator.MacroAware
+  @behaviour Mutare.MacroRouting
+  @behaviour Mutare.Mutator.MacroHost
 
   alias Mutare.Ecto.{Aggregate, Config, Dispatcher, Fragment, Host, Ordering, Query, Surface}
 
-  # Query macros routed through the plugin's **selector host** (`c:Mutare.Mutator.MacroAware.host/2`) — the
+  # Query macros routed through the plugin's **selector host** (`c:Mutare.Mutator.MacroHost.host/2`) — the
   # `from` opener and the standalone/pipe condition macros — via the `:routing` classifier, which
   # decides per call shape whether a position carries a hosted DSL fragment (a binding-referencing
   # `where`/`having` condition) or plain data. See `Mutare.Ecto.Host`.
@@ -181,8 +182,8 @@ defmodule Mutare.Ecto do
       Query.variant_labels()
   end
 
-  @impl Mutare.Mutator.MacroAware
-  def macros do
+  @impl Mutare.MacroRouting
+  def macro_routes do
     schema = [
       {Ecto.Schema, :schema, :skip},
       {Ecto.Schema, :embedded_schema, :skip}
@@ -200,13 +201,20 @@ defmodule Mutare.Ecto do
 
   # Shape-aware routing for the `:routing` query macros — which positions carry a hosted DSL
   # fragment vs. plain data. Delegated to `Mutare.Ecto.Host.Routing` (the classifier half of the host).
-  @impl Mutare.Mutator.MacroAware
-  defdelegate macro_routing(node), to: Host.Routing
+  @impl Mutare.MacroRouting
+  defdelegate route_arguments(call, context), to: Host.Routing
+
+  # The host's subscription list: exactly the query macros whose `:routing` classifier can route a
+  # position `:hosted` — the `from` opener, the condition macros, and `join`.
+  @impl Mutare.Mutator.MacroHost
+  def hosted_macros do
+    for name <- Surface.hosted_macro_names(), do: {Ecto.Query, name, :any}
+  end
 
   # The selector host: per hosted `where`/`having` condition, the `{original, mutants}` pair plus
   # the `dynamic`/`^` `wrap`/`splice` transforms. Delegated to `Mutare.Ecto.Host`.
-  @impl Mutare.Mutator.MacroAware
-  defdelegate host(node, context), to: Host
+  @impl Mutare.Mutator.MacroHost
+  defdelegate host(call, context), to: Host
 
   # Every node mutation runs through `mutate/2` (not `mutate/1`), because all of them now read
   # `context.opts` — the `families:` filter (every family is independently toggleable) and the
