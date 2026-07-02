@@ -334,6 +334,40 @@ defmodule Mutare.Ecto.SubcontractTest do
       refute site(sites, :arithmetic, "u.age > ^(min / 2)").ignored,
              "the island mutant belongs to core's family, not [ecto]'s vocabulary"
     end
+
+    test "the vocabulary holds on the whole-call relays of a free-standing dynamic too" do
+      # The dynamic's island mutants ride the in-place selector, not a weave — but the ignore
+      # resolution is the same: `[arithmetic]` names the relay, `[ecto]` names only the
+      # plugin's own catalog on the same call.
+      arithmetic_src = """
+      defmodule M do
+        import Ecto.Query
+        def d(min) do
+          dynamic([p], p.views > ^(min * 2)) # mutare:ignore[arithmetic]
+        end
+      end
+      """
+
+      sites = sites_for(arithmetic_src)
+
+      assert site(sites, :arithmetic, "p.views > ^(min / 2)").ignored
+      refute site(sites, :ecto, "p.views >= ^(min * 2)").ignored
+      refute site(sites, :literal, "p.views > ^(min * 3)").ignored
+
+      ecto_src = """
+      defmodule M do
+        import Ecto.Query
+        def d(min) do
+          dynamic([p], p.views > ^(min * 2)) # mutare:ignore[ecto]
+        end
+      end
+      """
+
+      sites = sites_for(ecto_src)
+
+      assert site(sites, :ecto, "p.views >= ^(min * 2)").ignored
+      refute site(sites, :arithmetic, "p.views > ^(min / 2)").ignored
+    end
   end
 
   describe "reach — islands follow the catalog's own descent rules" do
@@ -532,13 +566,19 @@ defmodule Mutare.Ecto.SubcontractTest do
       refute Enum.any?(diffs(src, @with_core), fn {_m, _o, mutated} -> mutated =~ "n - 1" end)
       assert_compiles(src, @with_core)
     end
+  end
 
-    test "a free-standing dynamic's inline island sub-contracts as a whole-call rewrite" do
-      # `dynamic` registers `:skip`, so core keeps the DSL argument raw — but core threads the
-      # run's specs into the whole-call offer of a registered macro (`context.mutators`), so
-      # `Mutare.Ecto.Dynamic` sub-contracts the island through the same seam as the host. Only
-      # delivery differs: each relayed mutant is the whole `dynamic` call rebuilt, through the
-      # ordinary in-place selector (no weave — the call sits in expression position).
+  describe "the whole-call seam — a free-standing dynamic's islands" do
+    # The second consumer of the sub-contract: `dynamic` registers `:skip`, so core keeps the
+    # DSL argument raw — but core threads the run's specs into the whole-call offer of a
+    # registered macro (`context.mutators`), so `Mutare.Ecto.Dynamic` sub-contracts each island
+    # through the same seam as the host (`Host.Catalog.subcontracted/3`). Only delivery differs:
+    # each relayed mutant is the whole `dynamic` call rebuilt, passed through
+    # `Mutare.Ecto.mutate/2` untouched (no `families:` filter — the mutant is a core family's)
+    # and delivered by the ordinary in-place selector (no weave — the call sits in expression
+    # position).
+
+    test "an inline island sub-contracts as a whole-call rewrite" do
       src = """
       defmodule M do
         import Ecto.Query
@@ -558,6 +598,120 @@ defmodule Mutare.Ecto.SubcontractTest do
                ecto_diffs(src, @with_core)
 
       assert_compiles(src, @with_core)
+    end
+
+    test "the binding-less dynamic/1 form sub-contracts too" do
+      # The condition sits at a different argument slot (the trailing argument, no written
+      # binding list) — `Bindings.hosted_condition/1` resolves the index the whole-call wrap
+      # rebuilds around, so both shapes must relay.
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def d(min), do: dynamic(as(:post).views > ^(min + 1))
+      end
+      """
+
+      assert {:arithmetic, "dynamic(as(:post).views > ^(min + 1))",
+              "dynamic(as(:post).views > ^(min - 1))"} in island_diffs(src, @with_core)
+
+      assert_compiles(src, @with_core)
+    end
+
+    test "every pin is its own single-point whole-call rewrite" do
+      # Each island's rebuild wraps back into the whole call independently — the sibling pin
+      # rides along verbatim in every relayed mutant.
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def d(lo, hi), do: dynamic([p], p.views > ^(lo + 1) and p.views < ^(hi - 1))
+      end
+      """
+
+      islands = island_diffs(src, @with_core)
+      original = "dynamic([p], p.views > ^(lo + 1) and p.views < ^(hi - 1))"
+
+      assert {:arithmetic, original, "dynamic([p], p.views > ^(lo - 1) and p.views < ^(hi - 1))"} in islands
+
+      assert {:arithmetic, original, "dynamic([p], p.views > ^(lo + 1) and p.views < ^(hi + 1))"} in islands
+
+      refute Enum.any?(islands, fn {_m, _o, mutated} ->
+               mutated =~ "lo - 1" and mutated =~ "hi + 1"
+             end)
+
+      assert_compiles(src, @with_core)
+    end
+
+    test "the islands honor the catalog's descent rules inside a dynamic too" do
+      # The same `Fragment.islands/1` walk serves both consumers — an `is_nil` argument is a
+      # hard boundary in a dynamic exactly as in a hosted where.
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def d(v), do: dynamic([p], is_nil(coalesce(p.views, ^(v + 1))))
+      end
+      """
+
+      assert island_diffs(src, @with_core) == []
+      assert_compiles(src, @with_core)
+    end
+
+    test "a :skip author macro's pin inside a dynamic never sub-contracts" do
+      # The author-macro rule rides the shared walk: registered fully `:skip`, `between/3`'s
+      # arguments are its own grammar — opaque to the island walk. Unregistered, the same pin
+      # is reached (the contrast that isolates the routing).
+      helper = [mutators: [:all, {Mutare.Ecto, repo: MyApp.Repo}, MyApp.QueryHelperMutator]]
+
+      src = """
+      defmodule M do
+        import Ecto.Query
+        import MyApp.QueryHelpers
+        def d(n), do: dynamic([u], between(u.age, ^(n + 1), 65))
+      end
+      """
+
+      assert island_diffs(src, helper) == []
+
+      assert {:arithmetic, "dynamic([u], between(u.age, ^(n + 1), 65))",
+              "dynamic([u], between(u.age, ^(n - 1), 65))"} in island_diffs(src, @with_core)
+
+      assert_compiles(src, helper)
+    end
+
+    test "the plugin's families: filter never touches the whole-call relays" do
+      # The pass-through in `Mutare.Ecto.mutate/2`: with `families:` narrowed to something this
+      # condition can't produce, the plugin's own catalog contributes nothing — yet the call
+      # still mutates, purely to carry the relayed island mutants (mutate/2 must not collapse
+      # to :skip while relays remain).
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def d(min), do: dynamic([p], p.views > ^(min * 2))
+      end
+      """
+
+      opts = [
+        mutators: [:arithmetic, {Mutare.Ecto, repo: MyApp.Repo, families: [:null_predicate]}]
+      ]
+
+      assert [{:arithmetic, _, "dynamic([p], p.views > ^(min / 2))"}] = island_diffs(src, opts)
+      assert ecto_diffs(src, opts) == []
+      assert_compiles(src, opts)
+    end
+
+    test "an :as-renamed core instance attributes the whole-call relays under the rename" do
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def d(min), do: dynamic([p], p.views > ^(min * 2))
+      end
+      """
+
+      islands =
+        island_diffs(src,
+          mutators: [{Mutare.Mutators.Arithmetic, as: :math}, {Mutare.Ecto, repo: MyApp.Repo}]
+        )
+
+      assert [{:math, _, "dynamic([p], p.views > ^(min / 2))"}] = islands
     end
 
     test "parity — the same interior yields the same core mutants in a where and a dynamic" do
