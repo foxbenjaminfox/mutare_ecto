@@ -5,13 +5,13 @@ defmodule Mutare.Ecto.Surface do
   # capabilities from these descriptors; adding a builder no longer means updating parallel lists.
 
   @macro_kinds [:from, :condition, :join, :clause, :dynamic, :skip]
-  @mutation_capabilities [:ordering, :bound, :aggregate, :arithmetic, :combination]
+  @mutation_capabilities [:ordering, :bound, :aggregate, :scalar, :combination]
   @from_capabilities [
     :hosted,
     :ordering,
     :bound,
     :aggregate,
-    :arithmetic,
+    :scalar,
     :join_binding,
     :join_type,
     :combination
@@ -52,28 +52,28 @@ defmodule Mutare.Ecto.Surface do
     %{
       name: :select,
       macro: :clause,
-      mutations: [:aggregate, :arithmetic],
+      mutations: [:aggregate, :scalar],
       stage_drop: :clause_drop,
-      from: [:aggregate, :arithmetic]
+      from: [:aggregate, :scalar]
     },
     %{
       name: :select_merge,
       macro: :clause,
-      mutations: [:aggregate, :arithmetic],
+      mutations: [:aggregate, :scalar],
       stage_drop: :clause_drop,
-      from: [:aggregate, :arithmetic]
+      from: [:aggregate, :scalar]
     },
     %{
       name: :order_by,
       macro: :clause,
-      mutations: [:ordering, :aggregate, :arithmetic],
+      mutations: [:ordering, :aggregate, :scalar],
       stage_drop: :clause_drop,
-      from: [:ordering, :aggregate, :arithmetic]
+      from: [:ordering, :aggregate, :scalar]
     },
     %{
       name: :prepend_order_by,
       macro: :clause,
-      mutations: [:ordering, :aggregate, :arithmetic],
+      mutations: [:ordering, :aggregate, :scalar],
       stage_drop: :clause_drop
     },
     %{name: :group_by, macro: :clause, stage_drop: :clause_drop},
@@ -181,13 +181,13 @@ defmodule Mutare.Ecto.Surface do
   end)
 
   @type macro_kind :: :from | :condition | :join | :clause | :dynamic | :skip
-  @type mutation_capability :: :ordering | :bound | :aggregate | :arithmetic | :combination
+  @type mutation_capability :: :ordering | :bound | :aggregate | :scalar | :combination
   @type from_capability ::
           :hosted
           | :ordering
           | :bound
           | :aggregate
-          | :arithmetic
+          | :scalar
           | :join_binding
           | :join_type
           | :combination

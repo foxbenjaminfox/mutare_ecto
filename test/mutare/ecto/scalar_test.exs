@@ -12,7 +12,7 @@ defmodule Mutare.Ecto.ScalarTest do
     code
     |> Sourceror.parse_string!()
     |> Scalar.swaps()
-    |> Enum.map(fn {:arithmetic, node, _label} -> Sourceror.to_string(node) end)
+    |> Enum.map(fn {_family, node, _label} -> Sourceror.to_string(node) end)
     |> MapSet.new()
   end
 
@@ -21,7 +21,7 @@ defmodule Mutare.Ecto.ScalarTest do
     code
     |> Sourceror.parse_string!()
     |> Scalar.swaps()
-    |> Enum.map(fn {:arithmetic, node, label} -> {Sourceror.to_string(node), label} end)
+    |> Enum.map(fn {_family, node, label} -> {Sourceror.to_string(node), label} end)
     |> Map.new()
   end
 
@@ -68,6 +68,32 @@ defmodule Mutare.Ecto.ScalarTest do
 
   test "a tuple select descends into both sides" do
     assert swaps("{u.id, u.a + u.b}") == MapSet.new(["{u.id, u.a - u.b}"])
+  end
+
+  test "coalesce drops its NULL fallback, tagged with its own family" do
+    assert swaps("coalesce(u.score, 0)") == MapSet.new(["u.score"])
+    assert swap_labels("coalesce(u.score, 0)") == %{"u.score" => "coalesce"}
+
+    tagged = "coalesce(u.score, 0)" |> Sourceror.parse_string!() |> Scalar.swaps()
+    assert [{:coalesce, _node, "coalesce"}] = tagged
+  end
+
+  test "a nested coalesce drops one layer per mutant, and its default is still descended" do
+    # `coalesce(coalesce(u.a, u.b), 0)` — dropping the outer keeps the inner, dropping the inner
+    # keeps the outer; each is a single point.
+    assert swaps("coalesce(coalesce(u.a, u.b), 0)") ==
+             MapSet.new(["coalesce(u.a, u.b)", "coalesce(u.a, 0)"])
+
+    # A default that is itself arithmetic keeps its swap (the default is ordinary data).
+    assert swaps("coalesce(u.score, u.a + u.b)") ==
+             MapSet.new(["u.score", "coalesce(u.score, u.a - u.b)"])
+  end
+
+  test "an off-arity coalesce is not Ecto's and is left alone" do
+    # Ecto's coalesce is exactly /2; a same-named author helper of another arity keeps only the
+    # descent into its (standard-syntax) arguments.
+    assert swaps("coalesce(u.a)") == MapSet.new([])
+    assert swaps("coalesce(u.a, u.b, u.c)") == MapSet.new([])
   end
 
   test "a scalar-free select yields nothing" do

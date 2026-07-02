@@ -69,7 +69,8 @@ defmodule Mutare.Ecto do
   `:comparison` is a boundary value (`< vs <=`) or, for `==`/`!=`, a non-NULL row; `:connective`
   (`and`/`or`) is the one genuine three-valued-logic case; `:null_predicate` (`is_nil`/`not is_nil`)
   and `:ordering_nulls` (NULLs placement) both need NULL rows in the column; `:arithmetic` needs an
-  operand off the operation's identity (`+`/`-` coincide on a 0 operand, `*`/`/` on ±1); and `:join_type` needs
+  operand off the operation's identity (`+`/`-` coincide on a 0 operand, `*`/`/` on ±1);
+  `:coalesce` needs a NULL row in the wrapped expression (the drop differs only there); and `:join_type` needs
   an orphan row (an INNER↔LEFT↔RIGHT↔FULL swap only changes the result when a preserved-side row has
   no match, so a mandatory/complete FK makes it legitimately equivalent). The note rides onto the
   `Mutare.Site` via a `%Mutare.Mutator.Mutation{}`, which core accepts on both delivery
@@ -169,7 +170,8 @@ defmodule Mutare.Ecto do
   The families whose survivors may be legitimately unkillable for a data reason, not a test gap —
   `:comparison` (a boundary value, or a non-NULL row for `==`/`!=`), `:connective` (SQL three-valued
   logic), `:null_predicate` and `:ordering_nulls` (NULL rows in the column), `:arithmetic` (an
-  operand off the operation's identity — 0 for `+`/`-`, ±1 for `*`/`/`), and `:join_type` (join
+  operand off the operation's identity — 0 for `+`/`-`, ±1 for `*`/`/`), `:coalesce` (a NULL row in
+  the wrapped expression), and `:join_type` (join
   cardinality — an orphan row). Each carries a report note phrased for its own reason; run them under
   their own `:as` name to group "kill requires …" survivors in the report (see "Configuration").
   """

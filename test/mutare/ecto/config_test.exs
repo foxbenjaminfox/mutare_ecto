@@ -240,6 +240,7 @@ defmodule Mutare.Ecto.ConfigTest do
                :connective,
                :null_predicate,
                :arithmetic,
+               :coalesce,
                :ordering_nulls,
                :join_type
              ]
@@ -266,7 +267,7 @@ defmodule Mutare.Ecto.ConfigTest do
       assert :string_literal in Mutare.Ecto.families()
       assert :boolean_literal in Mutare.Ecto.families()
 
-      assert length(Mutare.Ecto.families()) == 24
+      assert length(Mutare.Ecto.families()) == 25
     end
 
     test "the default set is the full set minus the opt-in literal arms" do
@@ -456,6 +457,38 @@ defmodule Mutare.Ecto.ConfigTest do
       assert multiplicative.note =~ "not ±1"
 
       refute additive.note == multiplicative.note
+    end
+
+    test "a coalesce drop carries its NULL-data note on both delivery paths" do
+      # The same family rides the host (a `where` coalesce) and the in-place `select` rewrite —
+      # the note must surface on each, since either survivor may be an honest NULL-data gap.
+      src = """
+      defmodule M do
+        import Ecto.Query
+
+        def q(d) do
+          from(u in User, where: coalesce(u.score, ^d) > 10, select: coalesce(u.rank, ^d))
+        end
+      end
+      """
+
+      %Mutare.Transform.Result{mutants: sites} =
+        Mutare.transform_string(src,
+          mutators: [{Mutare.Ecto, repo: MyApp.Repo}],
+          expand_uses: true
+        )
+
+      hosted = Enum.find(sites, &(&1.mutated_code == "u.score > 10" and &1.mutator == :ecto))
+      assert hosted.note =~ "NULL rows in the wrapped expression"
+
+      in_place =
+        Enum.find(
+          sites,
+          &(&1.mutator == :ecto and &1.mutated_code =~ "select: u.rank" and
+              &1.mutated_code =~ "from(")
+        )
+
+      assert in_place.note =~ "NULL rows in the wrapped expression"
     end
 
     test "a non-hosted ordering_nulls mutant carries the note too (mutate/2 delivery)" do

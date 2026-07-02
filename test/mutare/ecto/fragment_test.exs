@@ -353,6 +353,20 @@ defmodule Mutare.Ecto.FragmentTest do
     end
   end
 
+  describe "Coalesce" do
+    test "the NULL fallback drops inside a hosted condition, alongside the operator swaps" do
+      # Pinned operands isolate the two structural mutants: the comparison swap and the
+      # coalesce drop (the pins' values are core's, upstream).
+      assert mutants("coalesce(u.score, ^d) > ^m") ==
+               MapSet.new(["coalesce(u.score, ^d) >= ^m", "u.score > ^m"])
+    end
+
+    test "a written default is ordinary data — its literal mutants ride alongside the drop" do
+      assert "coalesce(u.score, 1) > ^m" in mutants("coalesce(u.score, 0) > ^m")
+      assert "u.score > ^m" in mutants("coalesce(u.score, 0) > ^m")
+    end
+  end
+
   describe "nothing to mutate" do
     test "a bare boolean column / non-catalog node yields no mutant" do
       assert mutants("u.active") == MapSet.new([])

@@ -18,8 +18,9 @@ defmodule Mutare.Ecto.Config do
   #
   #   * in-fragment (`where`/`having` via the host; a free-standing `dynamic/1,2` via
   #     `Mutare.Ecto.Dynamic`, in place): comparison, connective, null_predicate,
-  #     membership, arithmetic, integer_literal, float_literal, atom_literal, string_literal,
-  #     boolean_literal;
+  #     membership, arithmetic, coalesce, integer_literal, float_literal, atom_literal,
+  #     string_literal, boolean_literal — arithmetic and coalesce (the scalar catalog,
+  #     `Mutare.Ecto.Scalar`) are also delivered in place inside `select`/`order_by` values;
   #   * binding_reorder — a positional binding transposition (`[a, b]` → `[b, a]`), delivered **in
   #     place** by swapping the written list: `Mutare.Ecto.BindingReorder` for every standalone/pipe
   #     binding-list macro (`where`/`having`/`select`/`order_by`/`join`/…) and `Mutare.Ecto.Query` for
@@ -37,7 +38,7 @@ defmodule Mutare.Ecto.Config do
   #     `:replace_all`→`:nothing`);
   #   * changeset: validation_drop (validators/constraints), hook_drop (prepare_changes/optimistic_lock).
   @families ~w(
-    comparison connective null_predicate membership arithmetic binding_reorder
+    comparison connective null_predicate membership arithmetic coalesce binding_reorder
     integer_literal float_literal atom_literal string_literal boolean_literal
     filter_drop ordering ordering_nulls bound join_type combination aggregate query_terminal clause_drop
     persistence on_conflict validation_drop hook_drop
@@ -70,6 +71,7 @@ defmodule Mutare.Ecto.Config do
           | :null_predicate
           | :membership
           | :arithmetic
+          | :coalesce
           | :binding_reorder
           | :integer_literal
           | :float_literal
@@ -114,6 +116,9 @@ defmodule Mutare.Ecto.Config do
   #     or the left is 0 (`@arithmetic_multiplicative_note`) — a zero *divisor*, by contrast, makes
   #     the swapped query raise, which is a kill, not an equivalence. `equivalence_note/2` picks
   #     between them from the finer operator label, like `:comparison`.
+  #   * `:coalesce` (`@coalesce_note`) — `coalesce(x, default)` → `x`. The two forms differ
+  #     exactly on the rows where `x` is NULL (the default's whole purpose), so with no NULL row
+  #     seeded the drop is legitimately equivalent.
   #   * `:ordering_nulls` (`@ordering_nulls_note`) — `*_nulls_first`↔`*_nulls_last`. Not three-valued
   #     logic at all but NULL *ordering*: the placement only shows when the ordered column holds NULL
   #     rows.
@@ -132,6 +137,7 @@ defmodule Mutare.Ecto.Config do
   @null_predicate_note "kill may require NULL data in the column — is_nil and not is_nil keep complementary row sets, told apart only by which rows are NULL"
   @arithmetic_additive_note "kill may require a row whose right operand is nonzero — a + b and a - b compute the same value exactly when b is 0 (the identity of both)"
   @arithmetic_multiplicative_note "kill may require a row whose right operand is not ±1 (with a nonzero left) — a * b and a / b coincide there, while a zero divisor raises (a kill, not an equivalence)"
+  @coalesce_note "kill may require NULL rows in the wrapped expression — coalesce(x, default) and x differ only where x is NULL, the exact rows the default exists for"
   @ordering_nulls_note "kill may require NULL rows in the ordered column — nulls_first and nulls_last only change where NULLs sort, ordering all other rows identically"
   @join_note "kill may require an orphan row — a preserved-side row with no match (join kinds coincide when every row matches)"
 
@@ -145,6 +151,7 @@ defmodule Mutare.Ecto.Config do
     connective: @connective_note,
     null_predicate: @null_predicate_note,
     arithmetic: @arithmetic_additive_note,
+    coalesce: @coalesce_note,
     ordering_nulls: @ordering_nulls_note,
     join_type: @join_note
   }

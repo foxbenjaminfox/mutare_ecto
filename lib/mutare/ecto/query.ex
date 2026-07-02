@@ -33,10 +33,12 @@ defmodule Mutare.Ecto.Query do
       or `order_by` clause value (`sum`↔`avg`, `min`↔`max`), via the shared `Mutare.Ecto.Aggregate`
       walker. "Does any test pin which aggregate the column is reduced/sorted by?" (An aggregate
       inside a `having` is delivered through the host instead — see `Mutare.Ecto.Host`.)
-    * **Arithmetic (in `select`/`order_by`)** — swap a scalar arithmetic operator inside a
-      `select`/`select_merge` or `order_by` clause value (`+`↔`-`, `*`↔`/`), via the shared
-      `Mutare.Ecto.Scalar` catalog. "Does any test pin the computed value?" (Arithmetic inside a
-      `where`/`having` condition is hosted instead, alongside the operator swaps.)
+    * **Scalar (in `select`/`order_by`)** — mutate a value-computing form inside a
+      `select`/`select_merge` or `order_by` clause value, via the shared `Mutare.Ecto.Scalar`
+      catalog: the arithmetic swaps (`+`↔`-`, `*`↔`/`; "does any test pin the computed value?")
+      and the coalesce fallback drop (`coalesce(x, d)` → `x`; "does any test exercise the NULL
+      row the default is for?"). (The same forms inside a `where`/`having` condition are hosted
+      instead, alongside the operator swaps.)
     * **Binding reorder (source list)** — when the source declares a positional binding list
       (`from [a, b] in q, …`), transpose a pair of those bindings (`[a, b]` → `[b, a]`) for every
       pair, whether referenced or not. "Did the author bind the sources in the right order?"
@@ -126,7 +128,7 @@ defmodule Mutare.Ecto.Query do
       join_swaps(call, source, clauses, config),
       combination_swaps(call, source, clauses),
       aggregate_swaps(call, source, clauses),
-      arithmetic_swaps(call, source, clauses),
+      scalar_swaps(call, source, clauses),
       binding_reorders(call, source)
     ])
   end
@@ -253,13 +255,13 @@ defmodule Mutare.Ecto.Query do
     end
   end
 
-  # Swap each scalar arithmetic operator inside a `select`/`select_merge`/`order_by` clause value —
-  # one mutant per operator position (`Mutare.Ecto.Scalar`). Like the aggregate swap, a
-  # `where`/`having` arithmetic is deliberately *not* here: the condition is hosted, so its swap
-  # rides the host via `Mutare.Ecto.Fragment` (no double-delivery).
-  defp arithmetic_swaps(call, source, %KeywordList{entries: entries} = clauses) do
+  # Mutate each scalar form inside a `select`/`select_merge`/`order_by` clause value — one mutant
+  # per position, arithmetic swap or coalesce drop (`Mutare.Ecto.Scalar`). Like the aggregate
+  # swap, a `where`/`having` scalar is deliberately *not* here: the condition is hosted, so its
+  # mutants ride the host via `Mutare.Ecto.Fragment` (no double-delivery).
+  defp scalar_swaps(call, source, %KeywordList{entries: entries} = clauses) do
     for {%Entry{key: key, value: value}, index} <- Enum.with_index(entries),
-        Surface.from_clause?(key, :arithmetic),
+        Surface.from_clause?(key, :scalar),
         {family, swapped, label} <- Scalar.swaps(value) do
       {family, rebuild_from(call, source, KeywordList.replace_value(clauses, index, swapped)),
        label}

@@ -1,8 +1,15 @@
 defmodule Mutare.Ecto.Scalar do
   @moduledoc false
-  # The shared **scalar-expression** catalog: mutations of value-computing operators that may
-  # appear in *any* query expression, not only a boolean condition — the Arithmetic family
-  # (`+`↔`-`, `*`↔`/`, paired by identity: 0 for the additive pair, 1 for the multiplicative).
+  # The shared **scalar-expression** catalog: mutations of value-computing forms that may
+  # appear in *any* query expression, not only a boolean condition —
+  #
+  #   * **Arithmetic** — `+`↔`-`, `*`↔`/`, paired by identity: 0 for the additive pair, 1 for
+  #     the multiplicative;
+  #   * **Coalesce** — `coalesce(x, default)` → `x`, dropping the NULL fallback ("does any test
+  #     exercise the row where the default kicks in?"). The one catalog mutation that *changes*
+  #     an expression's NULL-ness — that is its entire point: the two forms differ exactly on the
+  #     rows where `x` is NULL, so its survivors carry a NULL-data equivalence note.
+  #
   # Two consumers, mirroring `Mutare.Ecto.Aggregate`'s split:
   #
   #   * a hosted `where`/`having` condition — `Mutare.Ecto.Fragment` applies `local/1` per node
@@ -36,18 +43,25 @@ defmodule Mutare.Ecto.Scalar do
   The scalar mutants of one node — **no descent** — the per-node hook `Mutare.Ecto.Fragment`
   applies as it walks a hosted condition (its own traversal already handles descent). The
   two-element args pattern is the binary-arity guard: a written `-5` is the arity-1 `-` over the
-  wrapped literal, sign syntax with no swap (and Ecto has no unary `+`).
+  wrapped literal, sign syntax with no swap (and Ecto has no unary `+`); `coalesce` is exactly
+  `/2` in Ecto, so an off-arity call is left alone.
   """
   @spec local(Macro.t()) :: [ExpressionWalk.tagged()]
   def local({form, meta, [_l, _r] = args}) when is_map_key(@arithmetic_swaps, form),
     do: [{:arithmetic, {@arithmetic_swaps[form], meta, args}, to_string(form)}]
 
+  # The coalesce drop replaces the whole call with its wrapped expression — a same-type,
+  # compile-safe alternative whose only difference is where NULL rows land. The *default*'s own
+  # value mutants are the traversal's job (it is an ordinary data argument).
+  def local({:coalesce, _meta, [x, _default]}), do: [{:coalesce, x, "coalesce"}]
+
   def local(_node), do: []
 
   @doc false
-  # The finer `# mutare:ignore` labels the scalar catalog can emit — each swappable operator,
-  # derived from the swap table so the vocabulary can't drift from what's produced. Folded into
-  # the plugin's variant vocabulary by `Mutare.Ecto.variants/0`.
+  # The finer `# mutare:ignore` labels the scalar catalog can emit — each swappable operator
+  # (derived from the swap table so the vocabulary can't drift from what's produced) plus the
+  # coalesce drop. Folded into the plugin's variant vocabulary by `Mutare.Ecto.variants/0`.
   @spec variant_labels() :: [String.t()]
-  def variant_labels, do: @arithmetic_swaps |> Map.keys() |> Enum.map(&to_string/1)
+  def variant_labels,
+    do: (@arithmetic_swaps |> Map.keys() |> Enum.map(&to_string/1)) ++ ["coalesce"]
 end

@@ -21,11 +21,13 @@ defmodule Mutare.Ecto.Fragment do
       false); its equivalences differ from Elixir's, so it is owned here, never reused from core.
     * **NullPredicate** — `is_nil(x)`↔`not is_nil(x)`. The uniquely-SQL family with no Elixir
       analog worth borrowing; treated as one unit so `not is_nil(x)` flips back to `is_nil(x)`
-      rather than producing a double-negation. Its argument is **never descended**: every catalog
-      family preserves an expression's NULL-ness (an arithmetic or literal swap changes the value,
-      never whether it is NULL), so any mutant of the argument is *provably equivalent* inside
-      `is_nil` — emitting one would manufacture the always-equivalent noise the catalog exists to
-      avoid.
+      rather than producing a double-negation. Its argument is **never descended**: the value
+      families (arithmetic, the literal arms) preserve an expression's NULL-ness — they change the
+      value, never whether it is NULL — so their mutants are *provably equivalent* inside the one
+      predicate that observes only NULL-ness, and the sole NULL-ness-changing mutation (the
+      coalesce drop) would only apply under an `is_nil` the author already wrote constant
+      (`is_nil(coalesce(x, d))` is false for every row when `d` is non-NULL). Emitting either
+      would manufacture the always-equivalent noise the catalog exists to avoid.
     * **Membership** — `x in ^list`↔`x not in ^list` and `exists(subquery)`↔`not exists(subquery)`
       (polarity flips that treat the predicate as one unit — the reverse direction flips back, no
       double negation), plus one **element drop** per entry of a *written* in-list
@@ -42,6 +44,10 @@ defmodule Mutare.Ecto.Fragment do
       *database's* division — integer truncation and a zero divisor raising are the engine's
       behaviour, not Elixir's float `//2`. Binary forms only: the `-` of a written negative
       number (`-5`) is arity-1 sign syntax, not an operator to swap.
+    * **Coalesce** — `coalesce(x, default)` → `x`, dropping the NULL fallback (also
+      `Mutare.Ecto.Scalar`, also delivered in `select`/`order_by` values). The one catalog
+      mutation that *changes* an expression's NULL-ness — its entire point: the forms differ
+      exactly on the rows where `x` is NULL, so a survivor carries the NULL-data note.
     * **IntegerLiteral** — a *non-pinned* integer literal written into the fragment
       (`u.age > 18` → `19`/`17`/`0`): boundary (`n±1`) plus the zero sentinel, deduped and never
       equal to the original.
@@ -144,10 +150,11 @@ defmodule Mutare.Ecto.Fragment do
     do: [{:null_predicate, inner, "is_nil"}]
 
   # `is_nil(x)` → `not is_nil(x)`. The argument is deliberately **not** descended — and not
-  # because there is nothing there (`is_nil(u.a + u.b)` is legal SQL): every catalog family
-  # preserves an expression's NULL-ness (an arithmetic/literal swap changes the value, never
-  # whether it is NULL), so inside a predicate that asks *only* about NULL-ness, any argument
-  # mutant is provably equivalent. Clean meta on the fresh `not`.
+  # because there is nothing there (`is_nil(u.a + u.b)` is legal SQL): the value families
+  # preserve an expression's NULL-ness (an arithmetic/literal swap changes the value, never
+  # whether it is NULL), so inside a predicate that asks *only* about NULL-ness their mutants are
+  # provably equivalent — and the coalesce drop, the one NULL-ness-changing mutation, would only
+  # fire under an `is_nil` the author already wrote constantly false. Clean meta on the fresh `not`.
   defp do_mutants({:is_nil, _meta, [_arg]} = node, _opts, _position),
     do: [{:null_predicate, {:not, [], [node]}, "is_nil"}]
 

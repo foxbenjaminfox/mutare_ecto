@@ -437,6 +437,52 @@ defmodule Mutare.Ecto.SemanticTest do
     end
   end
 
+  describe "Coalesce — drop the NULL fallback in a `where` (dynamic-injected)" do
+    # `coalesce(u.score, 100) > 60` admits the NULL-score rows through the default; the drop
+    # (`u.score > 60`) excludes them (NULL compares unknown). The difference is exactly the rows
+    # the default exists for — if the injected dynamic were inert, the mutant would keep them.
+    test "without the default the NULL-score rows fall out" do
+      {mod, sites} =
+        build("""
+        defmodule Q do
+          import Ecto.Query
+          alias MyApp.User
+          def q, do: from(u in User, where: coalesce(u.score, 100) > 60, select: u.id)
+        end
+        """)
+
+      baseline = ids(mod, 0)
+      mutant = ids(mod, site_id(sites, {"coalesce(u.score, 100) > 60", "u.score > 60"}))
+
+      # Alice (100), Bob (NULL → 100), Dave (NULL → 100), Frank (70); Carol 50 / Eve 0 miss.
+      assert baseline == [1, 2, 4, 6]
+      # Dropping the default excludes the NULL scores: Alice and Frank remain.
+      assert mutant == [1, 6]
+    end
+  end
+
+  describe "Coalesce — drop the fallback in a `select` (whole-`from`)" do
+    # The in-place twin: a `select` coalesce is rewritten as a whole-`from` mutant
+    # (`Mutare.Ecto.Scalar` via `Mutare.Ecto.Query`), so the selected value itself goes NULL.
+    test "the selected default becomes NULL for the NULL-score row" do
+      {mod, sites} =
+        build("""
+        defmodule Q do
+          import Ecto.Query
+          alias MyApp.User
+          def q, do: from(u in User, where: u.id == 2, select: coalesce(u.score, 0))
+        end
+        """)
+
+      # Bob's score is NULL, so the baseline selects the default…
+      assert q_under(mod, 0) == [0]
+
+      # …and the drop selects the raw NULL.
+      drop = site_id(sites, {~r/select: coalesce\(u\.score, 0\)/, ~r/select: u\.score/})
+      assert q_under(mod, drop) == [nil]
+    end
+  end
+
   describe "binding-reorder — swap two author-written binding refs (in place)" do
     # The reorder swaps the **author-written** positional list in place — a `where([a, b], …)` whose
     # `[a, b]` the author could have transposed becomes `where([b, a], …)`, leaving the condition body

@@ -41,6 +41,9 @@ defmodule Mutare.Ecto.VariantTest do
       assert "and" in variants
       assert "+" in variants
       assert "/" in variants
+      assert "coalesce" in variants
+      assert "element" in variants
+      assert "exists" in variants
       assert "is_nil" in variants
       assert "zero" in variants
 

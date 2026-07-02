@@ -140,7 +140,7 @@ The surface divides by **how a mutation is delivered**, not by what it mutates:
 | `query.ex` | Whole-`from` rewrites (clause drop, order flip, bound, join-type, `select`/`order_by` aggregate, source binding-reorder for a `[a, b] in q` source) |
 | `clause.ex` | Standalone/pipe cousins of `query.ex` (`order_by`/`limit`/`offset`/`select`) |
 | `clause_drop.ex` | Drop a standalone/pipe clause stage (`q \|> where(…)` → `q`), via `stage_drop.ex` |
-| `ordering.ex` / `aggregate.ex` / `scalar.ex` | Shared `{family, node}` catalogs used by `query.ex`, `clause.ex`, and the condition host — `scalar.ex` owns the Arithmetic swaps, applied per node by `fragment.ex` in hosted conditions and walked over `select`/`order_by` values |
+| `ordering.ex` / `aggregate.ex` / `scalar.ex` | Shared `{family, node}` catalogs used by `query.ex`, `clause.ex`, and the condition host — `scalar.ex` owns the Arithmetic swaps and the Coalesce fallback drop, applied per node by `fragment.ex` in hosted conditions and walked over `select`/`order_by` values |
 | `expression_walk.ex` | The generic single-point structural walker under the expression catalogs (`aggregate.ex`, `scalar.ex`) |
 | `combination.ex` | Shared set-operation swap catalog (`intersect`↔`except`, `intersect_all`↔`except_all`; `union` deliberately unswapped) used by `query.ex` (clause-key swap) and `clause.ex` (macro-name swap) |
 | `dynamic.ex` | In-fragment mutations of a **free-standing** `dynamic/1,2` (`d = dynamic([p], p.x > ^v)`): the shared `Fragment`/`Aggregate` catalogs over its condition, each mutant the whole call rebuilt and delivered in place (the `dynamic` registers `:skip` so core keeps its DSL args raw, but core still offers the whole call to `mutate/2`) |
@@ -164,13 +164,15 @@ literal at a known DSL form's structural argument. `dialects:` gates non-portabl
 mutations (`like`↔`ilike` under `:postgres`; `LEFT`↔`RIGHT` join under `:postgres`/`:mysql` —
 SQLite lacks `RIGHT JOIN`). Multi-repo and per-family report naming fall out of Mutare's `:as`
 convention (list the plugin twice). The **equivalence-sensitive** families (`:comparison`,
-`:connective`, `:null_predicate`, `:arithmetic`, `:ordering_nulls`, `:join_type`) carry a report
+`:connective`, `:null_predicate`, `:arithmetic`, `:coalesce`, `:ordering_nulls`, `:join_type`)
+carry a report
 `note` — a survivor reads
 `… kill may require …` — because their unkillability can be honest signal (a data gap, not a test
 gap). Each family's note names the **specific** data a kill needs, because the reasons differ: a
 boundary row (`:comparison` ordering swaps), a non-NULL row (`:comparison` `==`/`!=`), a disagreeing
 row under three-valued logic (`:connective`), NULL rows in the column (`:null_predicate`,
-`:ordering_nulls`), or an operand off the operation's identity (`:arithmetic` — 0 for `+`/`-`, ±1
+`:ordering_nulls`) or in the coalesced expression (`:coalesce`), or an operand off the operation's
+identity (`:arithmetic` — 0 for `+`/`-`, ±1
 for `*`/`/`). `Config.equivalence_note/2` resolves the note (refining `:comparison` and
 `:arithmetic` by the swapped operator). The note rides onto the `Site` via `Config.enrich/3`
 (wrapping the node in a `%Mutare.Mutator.Mutation{}`), which core accepts on **both** delivery
