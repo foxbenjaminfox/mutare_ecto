@@ -241,6 +241,7 @@ defmodule Mutare.Ecto.ConfigTest do
                :null_predicate,
                :arithmetic,
                :coalesce,
+               :temporal,
                :ordering_nulls,
                :join_type
              ]
@@ -267,7 +268,7 @@ defmodule Mutare.Ecto.ConfigTest do
       assert :string_literal in Mutare.Ecto.families()
       assert :boolean_literal in Mutare.Ecto.families()
 
-      assert length(Mutare.Ecto.families()) == 25
+      assert length(Mutare.Ecto.families()) == 26
     end
 
     test "the default set is the full set minus the opt-in literal arms" do

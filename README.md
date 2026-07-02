@@ -79,6 +79,7 @@ the query still compiles once and the active mutant is chosen at build time:
 | `membership` | `x in ^list` → `x not in ^list`; `exists(…)` → `not exists(…)`; `x in [a, b]` → `x in [b]`; `like` → `ilike` | Polarity / set membership / case-sensitivity |
 | `arithmetic` | `u.a + u.b` → `u.a - u.b`; `*` ↔ `/` (also in `select`/`order_by` values) | Does the computed value matter? |
 | `coalesce` | `coalesce(u.x, 0)` → `u.x` (also in `select`/`order_by` values) | Is the NULL fallback exercised? |
+| `temporal` | `ago(3, "day")` ↔ `from_now(3, "day")` | Does a row near *now* pin the direction? |
 | `integer_literal` | `u.age > 18` → `19` / `17` / `0` | Off-by-one in an integer literal |
 | `float_literal` | `u.score > 2.5` → `3.5` / `1.5` / `0.0` | Off-by-one in a float literal |
 | `string_literal` † | `u.name == "ok"` → `""` / `"mutare"` | Is the string value tested? |
@@ -170,7 +171,8 @@ and gives each a note naming the **specific** data a kill needs, so the report r
 
 The reasons are distinct — a boundary value, NULL exclusion (`==`/`!=`), three-valued `and`/`or`,
 an arithmetic identity operand (0 for `+`/`-`, ±1 for `*`/`/`), a NULL row for the `coalesce`
-default, NULL ordering, join cardinality — so the notes are too, rather than one catch-all string.
+default, a near-*now* row for the `ago`/`from_now` flip, NULL ordering, join cardinality — so the
+notes are too, rather than one catch-all string.
 
 `Mutare.Ecto.equivalence_sensitive_families/0` returns that set, and with `as:` you can group them
 under their own report name to separate "needs a boundary fixture" from "needs any test at all":

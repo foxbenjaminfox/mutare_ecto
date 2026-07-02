@@ -18,7 +18,7 @@ defmodule Mutare.Ecto.Config do
   #
   #   * in-fragment (`where`/`having` via the host; a free-standing `dynamic/1,2` via
   #     `Mutare.Ecto.Dynamic`, in place): comparison, connective, null_predicate,
-  #     membership, arithmetic, coalesce, integer_literal, float_literal, atom_literal,
+  #     membership, arithmetic, coalesce, temporal, integer_literal, float_literal, atom_literal,
   #     string_literal, boolean_literal — arithmetic and coalesce (the scalar catalog,
   #     `Mutare.Ecto.Scalar`) are also delivered in place inside `select`/`order_by` values;
   #   * binding_reorder — a positional binding transposition (`[a, b]` → `[b, a]`), delivered **in
@@ -38,7 +38,7 @@ defmodule Mutare.Ecto.Config do
   #     `:replace_all`→`:nothing`);
   #   * changeset: validation_drop (validators/constraints), hook_drop (prepare_changes/optimistic_lock).
   @families ~w(
-    comparison connective null_predicate membership arithmetic coalesce binding_reorder
+    comparison connective null_predicate membership arithmetic coalesce temporal binding_reorder
     integer_literal float_literal atom_literal string_literal boolean_literal
     filter_drop ordering ordering_nulls bound join_type combination aggregate query_terminal clause_drop
     persistence on_conflict validation_drop hook_drop
@@ -72,6 +72,7 @@ defmodule Mutare.Ecto.Config do
           | :membership
           | :arithmetic
           | :coalesce
+          | :temporal
           | :binding_reorder
           | :integer_literal
           | :float_literal
@@ -119,6 +120,10 @@ defmodule Mutare.Ecto.Config do
   #   * `:coalesce` (`@coalesce_note`) — `coalesce(x, default)` → `x`. The two forms differ
   #     exactly on the rows where `x` is NULL (the default's whole purpose), so with no NULL row
   #     seeded the drop is legitimately equivalent.
+  #   * `:temporal` (`@temporal_note`) — `ago(n, unit)`↔`from_now(n, unit)`. The two instants sit
+  #     the same distance on opposite sides of now, so a comparison against them differs only for
+  #     rows whose timestamp falls between them — all-historical (or all-far-future) data makes
+  #     the flip legitimately equivalent.
   #   * `:ordering_nulls` (`@ordering_nulls_note`) — `*_nulls_first`↔`*_nulls_last`. Not three-valued
   #     logic at all but NULL *ordering*: the placement only shows when the ordered column holds NULL
   #     rows.
@@ -138,6 +143,7 @@ defmodule Mutare.Ecto.Config do
   @arithmetic_additive_note "kill may require a row whose right operand is nonzero — a + b and a - b compute the same value exactly when b is 0 (the identity of both)"
   @arithmetic_multiplicative_note "kill may require a row whose right operand is not ±1 (with a nonzero left) — a * b and a / b coincide there, while a zero divisor raises (a kill, not an equivalence)"
   @coalesce_note "kill may require NULL rows in the wrapped expression — coalesce(x, default) and x differ only where x is NULL, the exact rows the default exists for"
+  @temporal_note "kill may require a row timestamped near now — ago(n, unit) and from_now(n, unit) sit the same distance on opposite sides of now, so comparisons against them differ only for rows between the two instants"
   @ordering_nulls_note "kill may require NULL rows in the ordered column — nulls_first and nulls_last only change where NULLs sort, ordering all other rows identically"
   @join_note "kill may require an orphan row — a preserved-side row with no match (join kinds coincide when every row matches)"
 
@@ -152,6 +158,7 @@ defmodule Mutare.Ecto.Config do
     null_predicate: @null_predicate_note,
     arithmetic: @arithmetic_additive_note,
     coalesce: @coalesce_note,
+    temporal: @temporal_note,
     ordering_nulls: @ordering_nulls_note,
     join_type: @join_note
   }

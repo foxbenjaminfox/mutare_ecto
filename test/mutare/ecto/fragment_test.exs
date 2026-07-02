@@ -353,6 +353,36 @@ defmodule Mutare.Ecto.FragmentTest do
     end
   end
 
+  describe "Temporal" do
+    test "the interval helpers flip their time direction, unit intact" do
+      # `ago`/`from_now` sit the same distance on opposite sides of now — the flip re-asks the
+      # comparison against the mirror instant. The unit stays structural (no string mutants of
+      # "day"); the count is ordinary data and keeps its literal mutants.
+      assert mutants(~s|u.inserted_at > ago(3, "day")|) ==
+               MapSet.new([
+                 ~s|u.inserted_at >= ago(3, "day")|,
+                 ~s|u.inserted_at > from_now(3, "day")|,
+                 ~s|u.inserted_at > ago(4, "day")|,
+                 ~s|u.inserted_at > ago(2, "day")|,
+                 ~s|u.inserted_at > ago(0, "day")|
+               ])
+    end
+
+    test "from_now flips back to ago" do
+      assert ~s|u.due_at < ago(1, "week")| in mutants(~s|u.due_at < from_now(1, "week")|)
+    end
+
+    test "an off-arity same-named call is an author helper, left alone" do
+      assert mutants("u.x > ago(3)") ==
+               MapSet.new(["u.x >= ago(3)", "u.x > ago(4)", "u.x > ago(2)", "u.x > ago(0)"])
+    end
+
+    test "the flip labels by its source helper" do
+      assert "ago" in labels(~s|u.t > ago(3, "day")|)
+      assert "from_now" in labels(~s|u.t > from_now(3, "day")|)
+    end
+  end
+
   describe "Coalesce" do
     test "the NULL fallback drops inside a hosted condition, alongside the operator swaps" do
       # Pinned operands isolate the two structural mutants: the comparison swap and the
@@ -426,8 +456,11 @@ defmodule Mutare.Ecto.FragmentTest do
     end
 
     test "from_now/ago's interval unit (arg 1) is skipped; the count (arg 0) is not" do
+      # Alongside the temporal direction flip (the helper's own swap), only the *count* literal
+      # mutates — never the unit string.
       assert mutants(~s|from_now(3, "month")|) ==
                MapSet.new([
+                 ~s|ago(3, "month")|,
                  ~s|from_now(4, "month")|,
                  ~s|from_now(2, "month")|,
                  ~s|from_now(0, "month")|
@@ -435,6 +468,7 @@ defmodule Mutare.Ecto.FragmentTest do
 
       assert mutants(~s|ago(3, "day")|) ==
                MapSet.new([
+                 ~s|from_now(3, "day")|,
                  ~s|ago(4, "day")|,
                  ~s|ago(2, "day")|,
                  ~s|ago(0, "day")|

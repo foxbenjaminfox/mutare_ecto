@@ -15,6 +15,11 @@ defmodule MyApp.Seed do
   #   * Arithmetic +↔- / *↔/ (age, score) — Alice's score (100) lifts `age + score` over 100 where
   #                                      the difference falls short; `age * 2 > 40` keeps Bob/Eve
   #                                      where the (integer-)division mutant keeps nobody.
+  #   * Coalesce drop (score)          — Bob/Dave's NULL scores take the default the drop removes.
+  #   * Temporal ago↔from_now (joined_at) — Frank joined *now* (between the two instants); everyone
+  #                                      else ten days back (outside the window either way). Seeded
+  #                                      at runtime in `populate!/1`, since the helpers are
+  #                                      now-anchored.
   #   * Ordering asc↔desc (age)        — youngest vs oldest sorts to the top.
   #   * Bound limit/offset             — a `limit: 2` window shifts when dropped/bumped.
   #   * JoinType inner↔left            — post P3's `user_id` matches no user (orphan).
@@ -52,9 +57,18 @@ defmodule MyApp.Seed do
   @doc "(Re)create the fixture tables — dropping any existing ones first — and insert the seed rows."
   def populate!(repo) do
     create_tables!(repo)
-    repo.insert_all(MyApp.User, @users)
+    repo.insert_all(MyApp.User, Enum.map(@users, &put_joined_at/1))
     repo.insert_all(MyApp.Post, @posts)
     :ok
+  end
+
+  # `joined_at` is computed per run because `ago`/`from_now` are anchored to *now*: Frank (id 6)
+  # joined a minute ago — inside any day-scale window around now — while everyone else joined ten
+  # days back, on the historical side of both instants.
+  defp put_joined_at(%{id: id} = user) do
+    now = NaiveDateTime.truncate(NaiveDateTime.utc_now(), :second)
+    offset = if id == 6, do: -60, else: -10 * 24 * 60 * 60
+    Map.put(user, :joined_at, NaiveDateTime.add(now, offset, :second))
   end
 
   @doc """
@@ -84,7 +98,8 @@ defmodule MyApp.Seed do
         age INTEGER,
         active INTEGER,
         role TEXT,
-        score INTEGER
+        score INTEGER,
+        joined_at TEXT
       )
       """,
       []

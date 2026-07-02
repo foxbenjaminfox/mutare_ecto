@@ -48,6 +48,11 @@ defmodule Mutare.Ecto.Fragment do
       `Mutare.Ecto.Scalar`, also delivered in `select`/`order_by` values). The one catalog
       mutation that *changes* an expression's NULL-ness — its entire point: the forms differ
       exactly on the rows where `x` is NULL, so a survivor carries the NULL-data note.
+    * **Temporal** — `ago(n, unit)`↔`from_now(n, unit)`, the time-direction flip of Ecto's
+      interval helpers. The pair is symmetric around *now* (same distance, opposite side), so a
+      comparison against them differs only for rows inside that window — the family's
+      equivalence note names exactly that. The interval `unit` stays structural (never mutated,
+      as below); the count is ordinary data and keeps its literal mutants.
     * **IntegerLiteral** — a *non-pinned* integer literal written into the fragment
       (`u.age > 18` → `19`/`17`/`0`): boundary (`n±1`) plus the zero sentinel, deduped and never
       equal to the original.
@@ -108,6 +113,11 @@ defmodule Mutare.Ecto.Fragment do
   @connective_swaps %{:and => :or, :or => :and}
   @membership_op_swaps %{:like => :ilike, :ilike => :like}
 
+  # The interval helpers' time-direction flip. A same-arity rename (`ago/2`↔`from_now/2`), so the
+  # mutant always compiles, and the structural-position registry stays aligned — both forms carry
+  # their unit at arg 1. Portable: every adapter that runs the original runs the swap.
+  @temporal_swaps %{ago: :from_now, from_now: :ago}
+
   # The literal-arm sentinels, mirroring core's families (`Mutare.Mutators.AtomLiteral` /
   # `StringLiteral`): a literal atom collapses to `:mutare`, a string to the empty string or
   # `"mutare"`. Reused from core's `Mutare.AST` so the survivor marker matches the built-ins.
@@ -134,7 +144,7 @@ defmodule Mutare.Ecto.Fragment do
   @spec variant_labels() :: [String.t()]
   def variant_labels do
     swap_ops =
-      [@comparison_swaps, @connective_swaps, @membership_op_swaps]
+      [@comparison_swaps, @connective_swaps, @membership_op_swaps, @temporal_swaps]
       |> Enum.flat_map(&Map.keys/1)
       |> Enum.map(&to_string/1)
 
@@ -340,10 +350,14 @@ defmodule Mutare.Ecto.Fragment do
       Map.has_key?(@membership_op_swaps, form) and Config.dialect_enabled?(opts, [:postgres]) ->
         [{:membership, {@membership_op_swaps[form], meta, args}, to_string(form)}]
 
-      # Anything else may still be a scalar-expression operator — the arithmetic swaps owned by
-      # the shared catalog (`Mutare.Ecto.Scalar.local/1`, which carries the binary-arity guard: a
-      # written `-5` is sign syntax, never swapped). Its inner literal is still reached by
-      # `lift/4` as usual.
+      # `ago(n, unit)` ↔ `from_now(n, unit)` — Ecto's interval helpers are exactly /2, so an
+      # off-arity same-named call is an author helper, left alone.
+      Map.has_key?(@temporal_swaps, form) and length(args) == 2 ->
+        [{:temporal, {@temporal_swaps[form], meta, args}, to_string(form)}]
+
+      # Anything else may still be a scalar-expression operator — the arithmetic swaps and the
+      # coalesce drop owned by the shared catalog (`Mutare.Ecto.Scalar.local/1`, which carries
+      # its own arity guards). Inner literals are still reached by `lift/4` as usual.
       true ->
         Scalar.local({form, meta, args})
     end

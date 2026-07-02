@@ -437,6 +437,38 @@ defmodule Mutare.Ecto.SemanticTest do
     end
   end
 
+  describe "Temporal — `ago` ↔ `from_now` (dynamic-injected)" do
+    # `joined_at > ago(1, "day")` keeps the row seeded a minute ago (Frank); the flip re-asks the
+    # comparison against tomorrow's instant, which nothing clears. Only a row *between* the two
+    # instants distinguishes them — exactly what Frank is seeded to be.
+    test "flipping the time direction empties the recent-rows window" do
+      {mod, sites} =
+        build("""
+        defmodule Q do
+          import Ecto.Query
+          alias MyApp.User
+          def q, do: from(u in User, where: u.joined_at > ago(1, "day"), select: u.id)
+        end
+        """)
+
+      baseline = ids(mod, 0)
+
+      mutant =
+        ids(
+          mod,
+          site_id(
+            sites,
+            {~s|u.joined_at > ago(1, "day")|, ~s|u.joined_at > from_now(1, "day")|}
+          )
+        )
+
+      # Frank joined a minute ago; everyone else ten days back.
+      assert baseline == [6]
+      # Nothing is newer than tomorrow.
+      assert mutant == []
+    end
+  end
+
   describe "Coalesce — drop the NULL fallback in a `where` (dynamic-injected)" do
     # `coalesce(u.score, 100) > 60` admits the NULL-score rows through the default; the drop
     # (`u.score > 60`) excludes them (NULL compares unknown). The difference is exactly the rows

@@ -15,8 +15,9 @@ defmodule MyApp.User do
   # The fixture schema the semantic tests mutate queries over. The columns are chosen so each SQL
   # family has a boundary/NULL row that *distinguishes* its mutant from the baseline (see the seed
   # in `test/support/seed.ex`): `age` carries the off-by-one boundary (Comparison/FragmentLiteral),
-  # `score` is nullable (NullPredicate), `active`+`age` exercise the Connective, `role` the equality
-  # swap and Membership polarity.
+  # `score` is nullable (NullPredicate/Coalesce), `active`+`age` exercise the Connective, `role`
+  # the equality swap and Membership polarity, and `joined_at` — seeded relative to *now*, since
+  # `ago`/`from_now` are now-anchored — the Temporal direction flip.
   use Ecto.Schema
 
   schema "users" do
@@ -25,6 +26,7 @@ defmodule MyApp.User do
     field(:active, :boolean)
     field(:role, :string)
     field(:score, :integer)
+    field(:joined_at, :naive_datetime)
 
     has_many(:posts, MyApp.Post)
   end
