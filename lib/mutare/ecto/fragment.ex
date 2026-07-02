@@ -22,10 +22,11 @@ defmodule Mutare.Ecto.Fragment do
     * **NullPredicate** — `is_nil(x)`↔`not is_nil(x)`. The uniquely-SQL family with no Elixir
       analog worth borrowing; treated as one unit so `not is_nil(x)` flips back to `is_nil(x)`
       rather than producing a double-negation.
-    * **Membership** — `x in ^list`↔`x not in ^list` (polarity, a unit like NullPredicate) and
-      `like`↔`ilike` (case-sensitivity; an atom-form swap). `ilike` is Postgres-specific, so the
-      `like`↔`ilike` swap is **dialect-gated** — emitted only when `dialects:` includes `:postgres`
-      (the `x in ^list` polarity is portable and always emitted).
+    * **Membership** — `x in ^list`↔`x not in ^list` and `exists(subquery)`↔`not exists(subquery)`
+      (polarity, each a unit like NullPredicate) and `like`↔`ilike` (case-sensitivity; an atom-form
+      swap). `ilike` is Postgres-specific, so the `like`↔`ilike` swap is **dialect-gated** —
+      emitted only when `dialects:` includes `:postgres` (the `in`/`exists` polarities are portable
+      and always emitted).
     * **Arithmetic** — `+`↔`-`, `*`↔`/`, owned by the shared scalar catalog (`Mutare.Ecto.Scalar`,
       which also delivers it in `select`/`order_by` values): NULL propagates through every arm
       alike (the swap changes a row's computed value, never its NULL-ness), and `/` is the
@@ -122,7 +123,7 @@ defmodule Mutare.Ecto.Fragment do
       |> Enum.flat_map(&Map.keys/1)
       |> Enum.map(&to_string/1)
 
-    swap_ops ++ ~w(in is_nil succ pred zero empty sentinel negate)
+    swap_ops ++ ~w(in exists is_nil succ pred zero empty sentinel negate)
   end
 
   # NullPredicate, as a unit. `not is_nil(x)` → `is_nil(x)`: flip the whole predicate, never
@@ -148,6 +149,18 @@ defmodule Mutare.Ecto.Fragment do
   # `x in ^list` → `x not in ^list`. A unit too. Clean meta on the fresh `not`.
   defp do_mutants({:in, _meta, [_l, _r]} = node, _opts, _position),
     do: [{:membership, {:not, [], [node]}, "in"}]
+
+  # Existence polarity, as a unit (the subquery cousin of the `in` flip — SQL's other membership
+  # predicate). `not exists(subquery)` → `exists(subquery)`: flip the whole predicate, no descent
+  # (the argument is a subquery whose internals are their own routed query, not this condition's
+  # syntax). Both directions are tagged `"exists"` (`not exists` has a space — not a wire-safe
+  # label), so `# mutare:ignore[ecto:exists]` names the flip whichever way it points.
+  defp do_mutants({:not, _meta, [{:exists, _, [_arg]} = inner]}, _opts, _position),
+    do: [{:membership, inner, "exists"}]
+
+  # `exists(subquery)` → `not exists(subquery)`. Clean meta on the fresh `not`.
+  defp do_mutants({:exists, _meta, [_arg]} = node, _opts, _position),
+    do: [{:membership, {:not, [], [node]}, "exists"}]
 
   # A literal (int/float/string/bool/atom) written directly into the fragment (Sourceror-wrapped).
   # At a *structural* position of a known Ecto DSL form — the `fragment` template, an interval unit

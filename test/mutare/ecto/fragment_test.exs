@@ -76,6 +76,14 @@ defmodule Mutare.Ecto.FragmentTest do
       assert mutants("u.role not in ^roles") == MapSet.new(["u.role in ^roles"])
     end
 
+    test "exists polarity flips both ways as a unit" do
+      # The subquery cousin of the `in` flip. The argument (a whole subquery) is left raw — its
+      # internals are their own routed query, not this condition's syntax — so no double negation
+      # and no descent-produced mutants.
+      assert mutants("exists(subquery(sq))") == MapSet.new(["not exists(subquery(sq))"])
+      assert mutants("not exists(subquery(sq))") == MapSet.new(["exists(subquery(sq))"])
+    end
+
     test "like/ilike case-sensitivity swap is dialect-gated (Postgres)" do
       # Without a dialect, the ilike swap is not offered (the portable default).
       assert mutants("like(u.name, ^q)") == MapSet.new([])
@@ -148,12 +156,14 @@ defmodule Mutare.Ecto.FragmentTest do
       assert families("like(u.x, ^q)", dialects: [:postgres]) == MapSet.new([:membership])
     end
 
-    test "the reverse-polarity unit clauses (not in / not is_nil) carry their family too" do
-      # `not in`→`in` and `not is_nil`→`is_nil` are *separate* clauses from their forward
-      # directions, so each one's tag is pinned in its own right — otherwise an `atom` mutation
-      # of the family name on the reverse clause survives unnoticed.
+    test "the reverse-polarity unit clauses (not in / not is_nil / not exists) carry their family too" do
+      # `not in`→`in`, `not is_nil`→`is_nil`, and `not exists`→`exists` are *separate* clauses
+      # from their forward directions, so each one's tag is pinned in its own right — otherwise an
+      # `atom` mutation of the family name on the reverse clause survives unnoticed.
       assert families("u.role not in ^r") == MapSet.new([:membership])
       assert families("not is_nil(u.x)") == MapSet.new([:null_predicate])
+      assert families("exists(subquery(sq))") == MapSet.new([:membership])
+      assert families("not exists(subquery(sq))") == MapSet.new([:membership])
     end
   end
 
@@ -380,11 +390,14 @@ defmodule Mutare.Ecto.FragmentTest do
     end
 
     test "the unit predicates label by their core operator (the wire-safe half)" do
-      # `not is_nil`/`not in` carry a space, so both directions are labelled by the bare operator.
+      # `not is_nil`/`not in`/`not exists` carry a space, so both directions are labelled by the
+      # bare operator.
       assert labels("is_nil(u.x)") == MapSet.new(["is_nil"])
       assert labels("not is_nil(u.x)") == MapSet.new(["is_nil"])
       assert labels("u.role in ^roles") == MapSet.new(["in"])
       assert labels("u.role not in ^roles") == MapSet.new(["in"])
+      assert labels("exists(subquery(sq))") == MapSet.new(["exists"])
+      assert labels("not exists(subquery(sq))") == MapSet.new(["exists"])
     end
 
     test "value families label by kind, not operator" do

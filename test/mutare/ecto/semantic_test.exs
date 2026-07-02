@@ -326,6 +326,36 @@ defmodule Mutare.Ecto.SemanticTest do
     end
   end
 
+  describe "Membership — `exists` ↔ `not exists` (dynamic-injected)" do
+    # The subquery cousin of the `in` polarity flip, correlated via `parent_as`: the baseline keeps
+    # users who have at least one post; the mutant keeps exactly the complement. If the injected
+    # `dynamic(not exists(...))` were inert, the mutant would return the baseline set.
+    test "flipping exists returns the users without posts instead" do
+      {mod, sites} =
+        build("""
+        defmodule Q do
+          import Ecto.Query
+          alias MyApp.{Post, User}
+
+          def q do
+            from u in User,
+              as: :user,
+              where: exists(from(p in Post, where: parent_as(:user).id == p.user_id)),
+              select: u.id
+          end
+        end
+        """)
+
+      baseline = ids(mod, 0)
+      mutant = ids(mod, site_id(sites, {~r/\Aexists\(from/, ~r/\Anot exists\(from/}))
+
+      # Users with a post: Alice (P1), Bob (P2). P3's user_id (99) matches nobody.
+      assert baseline == [1, 2]
+      # The complement: everyone else.
+      assert mutant == [3, 4, 5, 6]
+    end
+  end
+
   describe "Arithmetic — `+` ↔ `-` (dynamic-injected)" do
     # `u.age + u.score > 100` vs `u.age - u.score > 100` differ on any row whose score is nonzero;
     # the NULL-score rows (Bob, Dave) drop out of both — the swap changes the computed value, never
