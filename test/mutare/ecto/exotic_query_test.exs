@@ -784,9 +784,10 @@ defmodule Mutare.Ecto.ExoticQueryTest do
       assert drop
       refute drop =~ "with_ties"
 
-      # The off-by-one bumps keep the pair intact.
-      assert Enum.any?(mutated, &(&1 =~ "limit: 4,\n  with_ties: true"))
-      assert Enum.any?(mutated, &(&1 =~ "limit: 2,\n  with_ties: true"))
+      # The off-by-one bumps are hosted pin-only (bare-integer diffs), so the limit/with_ties
+      # pair — and the whole query — stays intact around the woven selector.
+      assert {"3", "4"} in diffs
+      assert {"3", "2"} in diffs
 
       # The single-build net: this exact shape used to fail to compile.
       assert_compiles(src, @all)

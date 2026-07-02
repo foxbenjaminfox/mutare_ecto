@@ -53,11 +53,18 @@ defmodule Mutare.Ecto.SurfaceTest do
     end
 
     for bound <- [:limit, :offset] do
-      assert Surface.mutations(bound) == [:bound]
+      # The ±1 bump is hosted (pin-only), not a `mutate/2` capability — only the drops stay here.
+      assert Surface.mutations(bound) == []
+      assert Surface.bound?(bound)
       assert Surface.stage_drop_family(bound) == :bound
       assert Surface.from_clause?(bound, :bound)
       assert Surface.from_drop_family(bound) == :bound
+      assert bound in Surface.hosted_macro_names()
     end
+
+    # No other clause macro is bound-hostable.
+    refute Surface.bound?(:select)
+    refute :select in Surface.hosted_macro_names()
   end
 
   test "join descriptors distinguish binding accumulation from join-type mutation" do

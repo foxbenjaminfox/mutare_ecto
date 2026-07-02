@@ -72,8 +72,9 @@ defmodule Mutare.Ecto.ClauseDropTest do
 
       m = mutated(src)
       assert "query" in m
-      assert "limit(query, 11)" in m
-      assert "limit(query, 9)" in m
+      # The bumps are hosted pin-only, so their diffs are the bare integers.
+      assert "11" in m
+      assert "9" in m
       assert_compiles(src)
     end
   end
@@ -99,8 +100,9 @@ defmodule Mutare.Ecto.ClauseDropTest do
     test ":bound drops the limit stage (and is where the n±1 bumps live too)" do
       m = mutated(@src, mutators: [{Mutare.Ecto, repo: MyApp.Repo, families: [:bound]}])
       assert "Elixir.Function.identity()" in m
-      assert "limit(11)" in m
-      assert "limit(9)" in m
+      # The bumps are hosted pin-only (bare-integer diffs), gated by the same `:bound` family.
+      assert "11" in m
+      assert "9" in m
     end
 
     test ":clause_drop drops the order_by stage (not where/limit, which have their own families)" do

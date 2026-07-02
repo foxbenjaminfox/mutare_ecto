@@ -96,7 +96,8 @@ defmodule Mutare.Ecto.QualifiedTest do
       bare = wrap(~S/from(s in "t") |> limit(10)/)
       qual = wrap(~S/from(s in "t") |> Ecto.Query.limit(10)/)
 
-      assert {"limit(10)", "limit(11)"} in normalized_ecto_diffs(qual)
+      # The bump is hosted pin-only, so its diff carries no call prefix on either form.
+      assert {"10", "11"} in normalized_ecto_diffs(qual)
       assert normalized_ecto_diffs(qual) == normalized_ecto_diffs(bare)
     end
 

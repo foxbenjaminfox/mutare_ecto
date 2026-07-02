@@ -76,6 +76,21 @@ defmodule Mutare.Ecto.VariantTest do
       assert site(sites, "u.age > 19").variant == ["integer_literal", "succ"]
     end
 
+    test "a hosted bound bump is tagged family-only (no finer kind)" do
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q, do: from(u in User, limit: 10, select: u.id)
+      end
+      """
+
+      # The pin-only weave still runs through `Config.tagged/1` + `finalize/2`, so the Site
+      # carries its `:bound` family label like every other host-delivered mutant.
+      bump = Enum.find(sites_for(src), &(&1.mutator == :ecto and &1.mutated_code == "11"))
+
+      assert bump.variant == ["bound"]
+    end
+
     test "a mutate/2-delivered structural mutant carries only its family (no finer kind)" do
       # Dropping the `where:` rewrites the whole `from`; delivered in place via `mutate/2`, not the
       # host. A clause drop has no operator/kind to name, so it's family-only.

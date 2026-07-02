@@ -41,14 +41,15 @@ defmodule Mutare.Ecto.ShorthandTest do
       assert routing(~s|where(q, [u], u.x == u.y)|) == [:expression, :skip, :hosted]
     end
 
-    test "a plain clause macro's non-query first argument routes :skip, never :expression" do
+    test "a plain clause macro's non-query first argument is never :expression" do
       # In the piped form the threaded query is the `|>` LHS (routed separately); the only visible
-      # argument is data — a literal bound, an ordering. It must stay raw (`:skip`): routing it
-      # `:expression` would have core mutate the bound/ordering, duplicating the plugin's own
-      # families and (for an ordering) poisoning the query position. Pins `query_arg?/1`
-      # distinguishing a real query argument from such data.
-      assert routing(~s|limit(10)|) == [:skip]
-      assert routing(~s|offset(5)|) == [:skip]
+      # argument is data — a literal bound, an ordering. It must never route `:expression`: core
+      # would mutate the bound/ordering, duplicating the plugin's own families and (for an
+      # ordering) poisoning the query position. Pins `query_arg?/1` distinguishing a real query
+      # argument from such data. A literal bound routes `:hosted` (the plugin's own pin-only
+      # `:bound` bump — still not core's); an ordering stays raw.
+      assert routing(~s|limit(10)|) == [:hosted]
+      assert routing(~s|offset(5)|) == [:hosted]
       assert routing(~s|order_by(asc: :name)|) == [:skip]
     end
 

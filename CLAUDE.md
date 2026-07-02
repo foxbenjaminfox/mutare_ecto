@@ -99,8 +99,8 @@ hosting):
   `Mutare.MacroRouting.Call`, returns `Mutare.MacroRouting.ArgumentRoutes`) and `host/2`
   (`Mutare.Mutator.MacroHost` — returns `Mutare.Mutator.MacroHost.Target`s) — both delegate to
   `Mutare.Ecto.Host` (the selector host). `hosted_macros/0` subscribes the host to exactly the
-  macros the classifier can route `:hosted` (`from`, the condition macros, `join` —
-  `Surface.hosted_macro_names/0`).
+  macros the classifier can route `:hosted` (`from`, the condition macros, `join`, and the bound
+  clause macros `limit`/`offset` — `Surface.hosted_macro_names/0`).
 - `init/1` (`Mutare.Mutator`) — parses the instance's options once, at spec resolution, via
   `Config.parse!/1`; a typo'd option raises at startup, and core delivers the parsed `%Config{}`
   to every context-aware callback as `context.config`.
@@ -138,7 +138,12 @@ The surface divides by **how a mutation is delivered**, not by what it mutates:
    host a runtime `case`, so the host weaves each mutant behind Ecto's `^` + `dynamic` injection
    (`Mutare.Ecto.Host` + the SQL catalog in `Mutare.Ecto.Fragment`, plus `Mutare.Ecto.Aggregate`
    for the aggregate). Exactly one branch bakes into the compiled query per run, selected by
-   `:persistent_term.get(:mutare_active, 0)`. A hosted condition's **interpolation islands**
+   `:persistent_term.get(:mutare_active, 0)`. The `:bound` ±1 bump of a literal `limit`/`offset`
+   is hosted too, as a **pin-only** target (`limit: ^(case …)` — no `dynamic/2` wrap, no
+   bindings): a bound is an integer parameter, so the pinned selector is plain Ecto
+   interpolation with a behaviorally identical baseline, and the bump never duplicates the whole
+   query the way a whole-`from` rewrite would (the bound *drop* stays a whole-`from`/stage
+   rewrite in `Query`/`ClauseDrop`). A hosted condition's **interpolation islands**
    (`^expr` interiors — ordinary Elixir evaluated at runtime) are **sub-contracted to core's
    generation**: `Fragment.islands/1` finds each pin under the catalog's own descent rules,
    `Host.Catalog` runs `Mutare.Analyze.expression_mutations/3` over `context.mutators` (the
@@ -153,18 +158,18 @@ The surface divides by **how a mutation is delivered**, not by what it mutates:
 | `dispatcher.ex` | Classifies each node once and invokes only the sub-mutators relevant to that query macro, Ecto call, or configured Repo call |
 | `surface.ex` | Single descriptor table for every owned query macro and `from` key: routing kind, standalone mutation capabilities, stage/whole-`from` drop families, and hosted/binding/join capabilities |
 | `sub_mutator.ex` | The uniform `mutations(node, context)` behaviour implemented by each mutation producer |
-| `host.ex` | Selector-host **coordinator** (#3): turns a hosted call into `Target`s, delegating to the `host/*` parts below |
+| `host.ex` | Selector-host **coordinator** (#3): turns a hosted call into `Target`s — condition weaves plus the pin-only bound-bump targets — delegating to the `host/*` parts below |
 | `host/routing.ex` | `route_arguments/2` — the per-argument routing classifier (`:hosted`/`:expression`/`:skip`/`:interpolated`/`{:keyword,…}`), over `treatments/1` |
 | `host/bindings.ex` | Interprets Ecto binding declarations and renders the binding list re-declared by a woven `dynamic/2` |
-| `host/catalog.ex` | The tagged logical mutants for one hosted condition (Fragment + Aggregate, filtered/noted later by `finalize/2`), plus the core-produced island mutants sub-contracted per `^` pin (`Mutare.Analyze.expression_mutations/3`, relayed with `producer:`) — `subcontracted/3` is the shared seam, parameterized by delivery (`deliver`), so `dynamic.ex` relays through it too |
+| `host/catalog.ex` | The tagged logical mutants for one hosted condition (Fragment + Aggregate, filtered/noted later by `finalize/2`), plus the core-produced island mutants sub-contracted per `^` pin (`Mutare.Analyze.expression_mutations/3`, relayed with `producer:`) — `subcontracted/3` is the shared seam, parameterized by delivery (`deliver`), so `dynamic.ex` relays through it too — and the `:bound` ±1 bumps of a literal `limit`/`offset` value (`bounds/1`) |
 | `host/join_on.ex` | Which join `on:` conditions are safe to host: only a join's **sole, top-level** on-expression (not a multi-`on:` or `assoc` join, whose conditions Ecto folds into one `and` where a `^dynamic` operand is illegal) |
-| `host/target.ex` | The `dynamic`-wrap + `^`-pin + splice transforms consumed by core |
+| `host/target.ex` | The `dynamic`-wrap + `^`-pin + splice transforms consumed by core, plus the pin-only bound targets (no wrap — each branch is a bare integer) |
 | `fragment.ex` | The **SQL-semantics catalog** for `where`/`having` conditions (Comparison, Connective, NullPredicate, Membership, Arithmetic, Coalesce, Temporal, the literal arms IntegerLiteral/FloatLiteral/StringLiteral/AtomLiteral/BooleanLiteral) — stops at every `^` pin, whose interiors `islands/1` collects for the host's core sub-contract |
 | `ast/query_call.ex` / `ast/binding_list.ex` / `ast/keyword_list.ex` | Normalized query-call, binding-list, and keyword/clause-list values; preserve written form while centralizing validation and reconstruction |
 | `binding.ex` | Primitive binding-entry vocabulary (`variable?`/`ellipsis?`/`entry?`) used by the normalized binding list |
 | `binding_reorder.ex` | Positional binding-reorder (`[a, b]`→`[b, a]`) for **every** standalone/pipe binding-list macro — `where`/`having` included — delivered **in-place** by swapping the written list (never the condition body). A `from` binding-list *source* (`[a, b] in q`) reorders at the whole-`from` level (`query.ex`) instead. Reorders only eligible positional entries in the list the **author wrote** — never a synthesized list, a named binding, or an `_`-prefixed binding |
-| `query.ex` | Whole-`from` rewrites (clause drop, order flip, bound, join-type, `select`/`order_by` aggregate, source binding-reorder for a `[a, b] in q` source) |
-| `clause.ex` | Standalone/pipe cousins of `query.ex` (`order_by`/`limit`/`offset`/`select`) |
+| `query.ex` | Whole-`from` rewrites (clause drop, order flip, bound **drop**, join-type, `select`/`order_by` aggregate, source binding-reorder for a `[a, b] in q` source) — the bound *bump* is hosted instead |
+| `clause.ex` | Standalone/pipe cousins of `query.ex` (`order_by`/`select`/set-operation macros; the `limit`/`offset` bump is hosted) |
 | `clause_drop.ex` | Drop a standalone/pipe clause stage (`q \|> where(…)` → `q`), via `stage_drop.ex` |
 | `ordering.ex` / `aggregate.ex` / `scalar.ex` | Shared `{family, node}` catalogs used by `query.ex`, `clause.ex`, and the condition host — `scalar.ex` owns the Arithmetic swaps and the Coalesce fallback drop, applied per node by `fragment.ex` in hosted conditions and walked over `select`/`order_by` values |
 | `expression_walk.ex` | The generic single-point structural walker under the expression catalogs (`aggregate.ex`, `scalar.ex`) |

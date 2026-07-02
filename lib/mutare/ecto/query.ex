@@ -12,10 +12,10 @@ defmodule Mutare.Ecto.Query do
       clause value.
     * **Order flip** — flip an `order_by` direction (`:asc`↔`:desc`, and the `*_nulls_*`
       variants). "Does any test pin the sort direction?"
-    * **Bound** — drop a `limit`/`offset` clause, and bump its integer value by `±1` (the
-      off-by-one boundary). "Does any test pin the page size / window edge?" Non-negative only
-      (a negative `limit`/`offset` is invalid SQL), and a `^pinned` or expression bound is left
-      to its own value mutation — only a literal integer is bumped here.
+    * **Bound (drop)** — drop a `limit`/`offset` clause. "Is the window tested at all?" The
+      family's other half, the `±1` bump of a literal bound, is **hosted** (a pin-only
+      `limit: ^(case …)` weave — `Mutare.Ecto.Host`), so it no longer duplicates the whole
+      `from` per mutant; only the structural drop is a whole-`from` rewrite.
     * **JoinType** — swap a join's kind by rewriting its clause *key*: `join`/`inner_join`
       ↔ `left_join`. "Does any test exercise rows the join's cardinality changes?" An inner
       join drops rows a left join keeps, so the swap is a strong, killable mutation. The
@@ -56,7 +56,7 @@ defmodule Mutare.Ecto.Query do
   nothing, while a source binding list (`from([a, b] in query)`) can still reorder.
   """
 
-  alias Mutare.Ecto.{Aggregate, AST, Combination, Config, Ordering, Scalar, Surface}
+  alias Mutare.Ecto.{Aggregate, Combination, Config, Ordering, Scalar, Surface}
   alias Mutare.Ecto.AST.{BindingList, KeywordList, QueryCall}
   alias Mutare.Ecto.AST.KeywordList.Entry
 
@@ -124,7 +124,6 @@ defmodule Mutare.Ecto.Query do
       drops(call, source, clauses, :filter_drop),
       drops(call, source, clauses, :bound),
       order_flips(call, source, clauses),
-      bound_bumps(call, source, clauses),
       join_swaps(call, source, clauses, config),
       combination_swaps(call, source, clauses),
       aggregate_swaps(call, source, clauses),
@@ -175,24 +174,6 @@ defmodule Mutare.Ecto.Query do
   end
 
   defp drop_clause(clauses, _entry, index), do: KeywordList.delete(clauses, index)
-
-  # Bump each `limit`/`offset` whose value is a literal integer by `±1` (non-negative only).
-  # A `^pinned`/expression bound has no literal here, so it yields nothing — its value is
-  # mutated where it is bound, in ordinary Elixir.
-  defp bound_bumps(call, source, %KeywordList{entries: entries} = clauses) do
-    for {%Entry{key: key, value: value}, index} <- Enum.with_index(entries),
-        Surface.from_clause?(key, :bound),
-        n = AST.int_value(value),
-        is_integer(n),
-        bumped <- AST.bumps(n) do
-      {:bound,
-       rebuild_from(
-         call,
-         source,
-         KeywordList.replace_value(clauses, index, Mutare.AST.literal(bumped))
-       )}
-    end
-  end
 
   # Swap each join clause's *kind* by rewriting its key (`join`/`inner_join` ↔ `left_join`, plus
   # `left_join`↔`right_join` under a `RIGHT`-capable dialect and `*`→`full_join` under a

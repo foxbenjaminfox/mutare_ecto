@@ -1001,8 +1001,7 @@ defmodule Mutare.Ecto.HostTest do
       assert routing("where(query, active: true)") == [:expression, {:keyword, [:interpolated]}]
     end
 
-    test "plain clause macros thread the query and leave every data position raw" do
-      assert routing("limit(query, 10)") == [:expression, :skip]
+    test "plain clause macros thread the query and leave their data positions raw" do
       assert routing("order_by(query, [u], asc: u.x)") == [:expression, :skip, :skip]
 
       # the threaded query is recognized as a bare var, a from(…), or a pipe — each → :expression.
@@ -1011,9 +1010,19 @@ defmodule Mutare.Ecto.HostTest do
       assert routing("select(q |> base(), [u], u.id)") == [:expression, :skip, :skip]
     end
 
+    test "a literal bound routes :hosted (the pin-only bound bump); a non-literal stays raw" do
+      assert routing("limit(query, 10)") == [:expression, :hosted]
+      assert routing("offset(query, 5)") == [:expression, :hosted]
+      # A pinned/expression bound has no literal to bump — raw, exactly as before.
+      assert routing("limit(query, ^n)") == [:expression, :skip]
+      assert routing("limit(query, n + 1)") == [:expression, :skip]
+    end
+
     test "a piped clause macro's first data argument is not the query" do
-      # `q |> limit(10)` → `limit(10)`: the `10` is a bound, not the threaded query, so `:skip`.
-      assert routing("limit(10)") == [:skip]
+      # `q |> limit(10)` → `limit(10)`: the `10` is a bound — hosted for the pin-only bump,
+      # never `:expression` (the threaded query is the `|>` left side, routed separately).
+      assert routing("limit(10)") == [:hosted]
+      assert routing("order_by(asc: :name)") == [:skip]
     end
 
     test "join hosts the trailing on option in direct and piped forms" do
@@ -1076,6 +1085,25 @@ defmodule Mutare.Ecto.HostTest do
 
       for code <- [original, mutated] do
         refute code =~ "dynamic"
+        refute code =~ "case"
+        refute code =~ "^"
+      end
+    end
+
+    test "a bound bump's diff is the bare integers — no pin/case scaffolding either" do
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q, do: from(u in User, limit: 10, select: u.id)
+      end
+      """
+
+      # The pin-only weave (`limit: ^(case …)`) reports only the logical pair; the drop is the
+      # sole whole-`from` diff.
+      bumps = hosted(src)
+      assert Enum.sort(bumps) == [{"10", "11"}, {"10", "9"}]
+
+      for {original, mutated} <- bumps, code <- [original, mutated] do
         refute code =~ "case"
         refute code =~ "^"
       end

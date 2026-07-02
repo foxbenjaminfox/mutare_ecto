@@ -83,7 +83,7 @@ defmodule Mutare.Ecto.ClauseTest do
   end
 
   describe "Bound (standalone / pipe limit/offset)" do
-    test "bumps a limit value both ways" do
+    test "bumps a limit value both ways (woven pin-only, not a rebuilt call)" do
       src = """
       defmodule M do
         import Ecto.Query
@@ -91,9 +91,12 @@ defmodule Mutare.Ecto.ClauseTest do
       end
       """
 
-      mutated = Enum.map(ecto_diffs(src), fn {_o, m} -> m end)
-      assert "limit(11)" in mutated
-      assert "limit(9)" in mutated
+      diffs = ecto_diffs(src)
+      # The recorded diff is the logical pair alone — the hosted pin-only bump, no call rewrite.
+      assert {"10", "11"} in diffs
+      assert {"10", "9"} in diffs
+      # Delivery shape: the selector is pinned straight into the bound argument.
+      assert metamutant(src) =~ ~r/limit\(\s*\^case/
       assert_compiles(src)
     end
 
@@ -105,9 +108,9 @@ defmodule Mutare.Ecto.ClauseTest do
       end
       """
 
-      mutated = Enum.map(ecto_diffs(src), fn {_o, m} -> m end)
-      assert "offset(query, 6)" in mutated
-      assert "offset(query, 4)" in mutated
+      diffs = ecto_diffs(src)
+      assert {"5", "6"} in diffs
+      assert {"5", "4"} in diffs
     end
 
     test "clamps the lower bound non-negative" do
@@ -118,9 +121,9 @@ defmodule Mutare.Ecto.ClauseTest do
       end
       """
 
-      mutated = Enum.map(ecto_diffs(src), fn {_o, m} -> m end)
-      assert "offset(1)" in mutated
-      refute "offset(-1)" in mutated
+      diffs = ecto_diffs(src)
+      assert {"0", "1"} in diffs
+      refute {"0", "-1"} in diffs
     end
 
     test "n = 1 bumps to both 2 and 0 (the lower bump reaches zero, which is valid SQL)" do
@@ -134,9 +137,9 @@ defmodule Mutare.Ecto.ClauseTest do
       end
       """
 
-      mutated = Enum.map(ecto_diffs(src), fn {_o, m} -> m end)
-      assert "limit(2)" in mutated
-      assert "limit(0)" in mutated
+      diffs = ecto_diffs(src)
+      assert {"1", "2"} in diffs
+      assert {"1", "0"} in diffs
     end
 
     test "a pinned bound is not bumped (runtime value), but the stage is still dropped" do

@@ -34,9 +34,9 @@ defmodule Mutare.Ecto.AST do
 
   @doc """
   The off-by-one boundary bumps for an integer `limit`/`offset` bound: `n+1` always, and `n-1`
-  only when it stays non-negative (a negative bound is invalid SQL). Shared by the whole-`from`
-  bound mutator (`Mutare.Ecto.Query`) and the standalone/pipe one (`Mutare.Ecto.Clause`), which
-  feed it `int_value/1` and re-emit each result through `Mutare.AST.literal/1`.
+  only when it stays non-negative (a negative bound is invalid SQL). Consumed by the host's
+  bound catalog (`Mutare.Ecto.Host.Catalog.bounds/1`), which feeds it `int_value/1` and re-emits
+  each result through `Mutare.AST.literal/1` as a branch of the pin-only weave.
   """
   @spec bumps(integer()) :: [integer()]
   def bumps(n) when n > 0, do: [n + 1, n - 1]

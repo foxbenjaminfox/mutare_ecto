@@ -8,6 +8,12 @@ defmodule Mutare.Ecto.Host do
   mutants it sub-contracts for each `^` pin island via `Mutare.Analyze.expression_mutations/3`
   (which is why `context` threads down to the catalog) — and `Host.Target` constructs the
   `dynamic/2` wrap and selector splice consumed by Mutare core.
+
+  Besides conditions, the host also weaves the `:bound` ±1 bump of a literal `limit`/`offset`
+  value as a **pin-only** target (`limit: ^(case …)` — no `dynamic/2` wrap, no bindings): a bound
+  is an integer parameter, so pinning the selector directly is plain Ecto interpolation with a
+  behaviorally identical baseline, and the bump never duplicates the whole query the way a
+  whole-`from` rewrite would.
   """
 
   alias Mutare.Ecto.{AST, Config, Surface}
@@ -36,6 +42,7 @@ defmodule Mutare.Ecto.Host do
         case Surface.macro_kind(macro) do
           :condition -> condition_target(args, config, context)
           :join -> join_target(args, config, context)
+          :clause -> bound_target(macro, args)
           _other -> []
         end
 
@@ -50,9 +57,22 @@ defmodule Mutare.Ecto.Host do
     entries
     |> Enum.with_index()
     |> Enum.flat_map(fn {entry, index} ->
-      bindings = Bindings.from(source, %{clauses | entries: Enum.take(entries, index + 1)})
-      from_target({entry, index}, bindings, {opts, context}, hostable_on)
+      # A bound clause (`limit:`/`offset:`) weaves pin-only — no `dynamic/2` wrap, so no bindings
+      # to accumulate; every other entry takes the condition path.
+      if Surface.bound?(entry.key) do
+        bound_from_target(entry, index)
+      else
+        bindings = Bindings.from(source, %{clauses | entries: Enum.take(entries, index + 1)})
+        from_target({entry, index}, bindings, {opts, context}, hostable_on)
+      end
     end)
+  end
+
+  defp bound_from_target(%Entry{value: value}, index) do
+    case Catalog.bounds(value) do
+      [] -> []
+      mutants -> [Target.bound_from_clause(value, mutants, index)]
+    end
   end
 
   defp from_target(
@@ -89,6 +109,22 @@ defmodule Mutare.Ecto.Host do
       _ -> []
     end
   end
+
+  # A plain clause macro is subscribed only for its bound value (`limit`/`offset` —
+  # `Surface.bound?/1`); the bound is the **last argument** in both the direct and pipe forms
+  # (the same last-arg convention the clause mutators use). Pin-only: `Catalog.bounds/1` guards
+  # on a literal integer exactly like the routing classifier, so a `^pinned`/expression bound
+  # (or a degenerate `limit()`) yields no target and the call degrades safely to raw.
+  defp bound_target(macro, [_ | _] = args) do
+    with true <- Surface.bound?(macro),
+         [_ | _] = mutants <- Catalog.bounds(List.last(args)) do
+      [Target.bound_argument(List.last(args), mutants, length(args) - 1)]
+    else
+      _ -> []
+    end
+  end
+
+  defp bound_target(_macro, _args), do: []
 
   defp join_target(args, config, context) do
     with {arg_index, options} <- trailing_options(args),

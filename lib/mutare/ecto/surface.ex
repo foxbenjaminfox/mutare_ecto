@@ -5,7 +5,7 @@ defmodule Mutare.Ecto.Surface do
   # capabilities from these descriptors; adding a builder no longer means updating parallel lists.
 
   @macro_kinds [:from, :condition, :join, :clause, :dynamic, :skip]
-  @mutation_capabilities [:ordering, :bound, :aggregate, :scalar, :combination]
+  @mutation_capabilities [:ordering, :aggregate, :scalar, :combination]
   @from_capabilities [
     :hosted,
     :ordering,
@@ -81,7 +81,6 @@ defmodule Mutare.Ecto.Surface do
     %{
       name: :limit,
       macro: :clause,
-      mutations: [:bound],
       stage_drop: :bound,
       from: [:bound],
       from_drop: :bound
@@ -89,7 +88,6 @@ defmodule Mutare.Ecto.Surface do
     %{
       name: :offset,
       macro: :clause,
-      mutations: [:bound],
       stage_drop: :bound,
       from: [:bound],
       from_drop: :bound
@@ -181,7 +179,7 @@ defmodule Mutare.Ecto.Surface do
   end)
 
   @type macro_kind :: :from | :condition | :join | :clause | :dynamic | :skip
-  @type mutation_capability :: :ordering | :bound | :aggregate | :scalar | :combination
+  @type mutation_capability :: :ordering | :aggregate | :scalar | :combination
   @type from_capability ::
           :hosted
           | :ordering
@@ -228,12 +226,15 @@ defmodule Mutare.Ecto.Surface do
 
   @doc """
   Every query macro whose `:routing` classifier can route a position `:hosted` — the `from`
-  opener, the `:condition` macros, and `:join`. The plugin subscribes exactly these through
+  opener, the `:condition` macros, `:join`, and the `:clause` macros whose value position hosts
+  the `:bound` bump (`limit`/`offset`, `bound?/1`). The plugin subscribes exactly these through
   `c:Mutare.Mutator.MacroHost.hosted_macros/0`.
   """
   @spec hosted_macro_names() :: [atom()]
   def hosted_macro_names do
-    for %{name: name, macro: kind} <- @surface, kind in [:from, :condition, :join], do: name
+    for %{name: name, macro: kind} <- @surface,
+        kind in [:from, :condition, :join] or (kind == :clause and bound?(name)),
+        do: name
   end
 
   @doc "Whether `name` is a query-building macro whose nested query should remain reachable."
@@ -257,6 +258,15 @@ defmodule Mutare.Ecto.Surface do
   @doc "The family used when a composable stage is removed, or `nil` when it is not droppable."
   @spec stage_drop_family(atom()) :: drop_family() | nil
   def stage_drop_family(name), do: get(name, :stage_drop)
+
+  @doc """
+  Whether `name`'s value position hosts the `:bound` ±1 bump — `limit`/`offset`, both as `from`
+  clause keys and as standalone/pipe clause macros. The bump is delivered as a **pin-only**
+  hosted target (`limit: ^(case …)` — no `dynamic/2` wrap, no bindings), which is why these
+  clause macros also appear in `hosted_macro_names/0`.
+  """
+  @spec bound?(atom()) :: boolean()
+  def bound?(name), do: from_clause?(name, :bound)
 
   @doc "Whether a `from` clause key carries a particular mutation/routing capability."
   @spec from_clause?(atom(), from_capability()) :: boolean()

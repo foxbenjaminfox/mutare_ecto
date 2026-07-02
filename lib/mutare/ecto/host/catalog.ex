@@ -15,17 +15,35 @@ defmodule Mutare.Ecto.Host.Catalog do
   #     vocabulary) belongs to the producing core family, while **delivery stays host-owned**:
   #     the relayed rebuilds are just more branches of the same woven `^`/`dynamic` selector.
   #
+  # Besides conditions (`mutants/3`), the catalog also produces the `:bound` ±1 bumps of a
+  # literal `limit`/`offset` value (`bounds/1`) — the host weaves them pin-only, no `dynamic/2`.
+  #
   # Delivery concerns (`dynamic`, pinning, and splicing) deliberately live in `Mutare.Ecto.Host.Target`.
   # A binding-reorder is *not* hosted: it swaps a written binding list in place (`Mutare.Ecto.BindingReorder`
   # for the standalone/pipe macros, `Mutare.Ecto.Query` for a `from` source list), never the condition body.
 
-  alias Mutare.Ecto.{Aggregate, Config, Fragment}
+  alias Mutare.Ecto.{Aggregate, AST, Config, Fragment}
   alias Mutare.Mutator.Mutation
 
   @doc "The tagged logical mutants for a hosted condition (own catalogs + island sub-contract)."
   @spec mutants(Macro.t(), Config.t(), Mutare.Mutator.context()) :: [Mutare.Mutator.mutation()]
   def mutants(condition, config, context) do
     own(condition, config) ++ subcontracted(condition, context)
+  end
+
+  @doc """
+  The tagged ±1 bumps for a hosted bound value (`limit:`/`offset:`): the off-by-one boundary,
+  non-negative only (`Mutare.Ecto.AST.bumps/1`). `[]` unless the value is a literal integer — the
+  same guard the routing classifier applies, so routing and host stay trivially in agreement (a
+  `^pinned`/expression bound is left raw; its value is mutated where it is bound, in ordinary
+  Elixir).
+  """
+  @spec bounds(Macro.t()) :: [Mutare.Mutator.mutation()]
+  def bounds(value) do
+    case AST.int_value(value) do
+      nil -> []
+      n -> for bumped <- AST.bumps(n), do: Config.tagged({:bound, Mutare.AST.literal(bumped)})
+    end
   end
 
   # Pure production: each catalog tag becomes `Mutation.tagged(node, [family | finer])` — the

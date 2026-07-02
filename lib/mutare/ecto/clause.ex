@@ -7,8 +7,6 @@ defmodule Mutare.Ecto.Clause do
     * **Ordering** — `order_by(q, [u], asc: u.name)` / `q |> order_by(asc: u.name)`: flip a
       sort direction (`:asc`↔`:desc`, nulls-placement variants), via the shared
       `Mutare.Ecto.Ordering` catalog.
-    * **Bound** — `limit(q, 10)` / `q |> offset(5)`: bump the literal value by `±1`
-      (non-negative only).
     * **Aggregate** — `select(q, [u], sum(u.amount))` / `q |> select_merge(%{n: max(u.x)})`, and
       an aggregate written into an `order_by` (`q |> order_by([u], desc: sum(u.amount))`): swap the
       aggregate (`sum`↔`avg`, `min`↔`max`), via the shared `Mutare.Ecto.Aggregate` walker. (A
@@ -30,21 +28,25 @@ defmodule Mutare.Ecto.Clause do
   an expression, so the selector `case` can wrap it whole. The orthogonal **stage removal**
   (`q |> order_by(…)` → `q`) lives in `Mutare.Ecto.ClauseDrop`.
 
-  The mutated position is always the **last argument** (the ordering / the bound value), which
+  The mutated position is always the **last argument** (the ordering / the selector), which
   is true for both the direct form (`order_by(q, binds, ordering)`) and the pipe form
   (`q |> order_by(binds, ordering)`, where `q` is the piped left side, not in `args`) — so no
   pipe-mode bookkeeping is required.
+
+  The `:bound` `±1` bump of a literal `limit(q, 10)` / `q |> offset(5)` used to live here too;
+  it is now **hosted** (a pin-only `limit(q, ^(case …))` weave — `Mutare.Ecto.Host`), so this
+  module no longer rebuilds the call for it. Only the orthogonal stage drop
+  (`Mutare.Ecto.ClauseDrop`) still touches a bound macro in place.
   """
 
-  alias Mutare.Ecto.{Aggregate, AST, Combination, Ordering, Scalar, Surface}
+  alias Mutare.Ecto.{Aggregate, Combination, Ordering, Scalar, Surface}
   alias Mutare.Ecto.AST.QueryCall
 
   @behaviour Mutare.Ecto.SubMutator
 
   @doc """
   Standalone/pipe clause-macro mutations for `node` as self-tagging `{family, node, label}` entries
-  (a swap family — order/aggregate — carries the finer operator/kind label; `:bound` carries none),
-  or `[]`.
+  (a swap family — order/aggregate — carries the finer operator/kind label), or `[]`.
   """
   @spec mutations(Macro.t() | QueryCall.t(), Mutare.Mutator.context()) ::
           [Mutare.Ecto.SubMutator.tagged()]
@@ -67,17 +69,16 @@ defmodule Mutare.Ecto.Clause do
   end
 
   defp capability_mutations(:ordering, call), do: mutate_last(call, &Ordering.flips/1)
-  defp capability_mutations(:bound, call), do: mutate_last(call, &bound_flips/1)
   defp capability_mutations(:aggregate, call), do: mutate_last(call, &Aggregate.swaps/1)
   defp capability_mutations(:scalar, call), do: mutate_last(call, &Scalar.swaps/1)
   defp capability_mutations(:combination, call), do: combination_swaps(call)
 
-  # The shape all three clause-macro mutators share: split the mutated **last argument** off (the
-  # ordering / bound / selector — `init` keeps the binding list when one is written), map it to
+  # The shape the last-argument clause-macro mutators share: split the mutated **last argument**
+  # off (the ordering / selector — `init` keeps the binding list when one is written), map it to
   # tagged mutants via `catalog`, and rebuild the call around each, keeping the source's written
-  # form. Every catalog emits uniform `{family, node, label}` triples (`bound_flips/1` with a `nil`
-  # label — no finer `# mutare:ignore` vocabulary), so the rebuilt entry threads the finer label
-  # through. The `args != []` guard in `mutations/2` makes the `[last]` destructure total.
+  # form. Every catalog emits uniform `{family, node, label}` triples, so the rebuilt entry
+  # threads the finer label through. The `args != []` guard in `mutations/2` makes the `[last]`
+  # destructure total.
   defp mutate_last(%QueryCall{args: args} = call, catalog) do
     {init, [last]} = Enum.split(args, -1)
 
@@ -93,16 +94,6 @@ defmodule Mutare.Ecto.Clause do
     case Combination.swap(name) do
       nil -> []
       to -> [{:combination, QueryCall.rename(call, to), Combination.label(name)}]
-    end
-  end
-
-  # `limit`/`offset` boundary bumps as `{:bound, literal, nil}` triples: bump a literal integer by
-  # `±1` (non-negative only). A `^pinned`/expression bound has no literal here, so it yields
-  # nothing — its value is mutated where it is bound, in ordinary Elixir.
-  defp bound_flips(value) do
-    case AST.int_value(value) do
-      nil -> []
-      n -> for bumped <- AST.bumps(n), do: {:bound, Mutare.AST.literal(bumped), nil}
     end
   end
 end

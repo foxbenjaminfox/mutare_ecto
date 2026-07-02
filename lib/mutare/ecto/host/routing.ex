@@ -29,8 +29,12 @@ defmodule Mutare.Ecto.Host.Routing do
       routes `:hosted` too (the woven `dynamic/2` re-declares an empty binding list; see
       `Mutare.Ecto.Host.Bindings`). A keyword-shorthand `where(q, x: v)` instead routes its trailing
       pairs `{:keyword, …}`. The plain clause macros (`limit`/`order_by`/…) only thread the
-      query (first arg → `:expression`) and leave every data position raw for the plugin's own
-      `mutate/2` mutators.
+      query (first arg → `:expression`) and leave their data positions raw for the plugin's own
+      `mutate/2` mutators — with one exception: a **literal-integer bound** (`limit(q, 10)` /
+      `q |> offset(5)`, and the `limit:`/`offset:` keys of the `from` keyword form) routes
+      `:hosted`, so the `:bound` ±1 bump weaves pin-only (`limit: ^(case …)`) instead of
+      duplicating the whole call. The literal-only guard keeps routing and the host trivially in
+      agreement — a `^pinned`/expression bound stays raw exactly as before.
 
   This relies on core's recursive per-pair routing, hosted values, and `:interpolated` extensions; see
   `c:Mutare.MacroRouting.route_arguments/2`.
@@ -82,12 +86,12 @@ defmodule Mutare.Ecto.Host.Routing do
   end
 
   def treatments({macro, _meta, args}) when is_atom(macro) and is_list(args) do
-    route_macro(Surface.macro_kind(macro), args)
+    route_macro(Surface.macro_kind(macro), macro, args)
   end
 
   def treatments(_node), do: []
 
-  defp route_macro(:condition, args) do
+  defp route_macro(:condition, _name, args) do
     # The threaded query (the first arg, when written directly) is an ordinary expression; its own
     # data positions stay raw. The condition/shorthand overlay then marks what the host/core own.
     base = query_threading_route(args)
@@ -101,19 +105,34 @@ defmodule Mutare.Ecto.Host.Routing do
     end
   end
 
-  defp route_macro(:join, args) do
+  defp route_macro(:join, _name, args) do
     args
     |> query_threading_route()
     |> host_join_options(args)
   end
 
-  defp route_macro(:clause, args) do
-    # No hosted fragment, no shorthand: just thread the query (first arg → `:expression` when it is
-    # one) and leave every data position raw for the plugin's own `mutate/2` mutators.
-    query_threading_route(args)
+  defp route_macro(:clause, name, args) do
+    # No hosted fragment, no shorthand: thread the query (first arg → `:expression` when it is
+    # one) and leave the data positions raw for the plugin's own `mutate/2` mutators — except a
+    # bound macro's literal-integer value (the **last** argument in the direct and pipe forms
+    # alike; a piped call's visible args exclude the threaded query), which routes `:hosted` so
+    # the `:bound` bump weaves pin-only. `List.last([])` is `nil`, never a literal integer, so a
+    # degenerate `limit()` keeps the empty route.
+    base = query_threading_route(args)
+
+    if Surface.bound?(name) and bound_literal?(List.last(args)) do
+      List.replace_at(base, length(args) - 1, :hosted)
+    else
+      base
+    end
   end
 
-  defp route_macro(_kind, _args), do: []
+  defp route_macro(_kind, _name, _args), do: []
+
+  # The routing half of the literal-only bound guard (`Mutare.Ecto.Host.Catalog.bounds/1` is the
+  # host half): only a written integer hosts. A `^pinned`/expression bound is left raw — its
+  # value is mutated where it is bound, in ordinary Elixir.
+  defp bound_literal?(value), do: is_integer(AST.int_value(value))
 
   # The base routing for a query-threading macro: mark the first argument `:expression` **iff it is
   # the threaded query** (a bare query variable, a `from(…)`, or a nested pipe — not a binding list,
@@ -186,15 +205,18 @@ defmodule Mutare.Ecto.Host.Routing do
   end
 
   # A `from`'s clause list, one treatment per clause: a `where`/`having` clause routes by its
-  # condition value (below); every other clause (select/order_by/limit — whole-`from`'s job, or a
-  # field-name carrier) is left raw.
+  # condition value (below); a bound clause (`limit:`/`offset:`) routes `:hosted` iff its value
+  # is a literal integer (the pin-only bound bump — an interpolated/expression bound stays raw);
+  # every other clause (select/order_by — whole-`from`'s job, or a field-name carrier) is left raw.
   defp clause_treatments(clauses) do
     case KeywordList.parse(clauses) do
       %KeywordList{entries: entries} ->
         Enum.map(entries, fn entry ->
-          if Surface.from_clause?(entry.key, :hosted),
-            do: condition_treatment(entry.value),
-            else: :skip
+          cond do
+            Surface.from_clause?(entry.key, :hosted) -> condition_treatment(entry.value)
+            Surface.bound?(entry.key) and bound_literal?(entry.value) -> :hosted
+            true -> :skip
+          end
         end)
 
       nil ->

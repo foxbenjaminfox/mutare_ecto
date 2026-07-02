@@ -81,7 +81,7 @@ defmodule Mutare.Ecto.QueryTest do
   end
 
   describe "Bound (limit/offset)" do
-    test "drops a limit clause and bumps its value by ±1" do
+    test "drops a limit clause and bumps its value by ±1 (the bump woven pin-only)" do
       src = """
       defmodule Posts do
         import Ecto.Query
@@ -91,14 +91,25 @@ defmodule Mutare.Ecto.QueryTest do
 
       diffs = ecto_diffs(src)
 
-      # The whole-`from` drop removes the limit (the surviving query keeps select).
+      # The whole-`from` drop removes the limit (the surviving query keeps select)…
       assert Enum.any?(diffs, fn {_o, mutated} ->
                mutated =~ "from" and not (mutated =~ "limit")
              end)
 
-      # And the literal bound bumps off-by-one both ways.
-      assert Enum.any?(diffs, fn {_o, mutated} -> mutated =~ "limit: 11" end)
-      assert Enum.any?(diffs, fn {_o, mutated} -> mutated =~ "limit: 9" end)
+      # …while the literal bound bumps are hosted: the recorded diff is the logical pair alone,
+      # with the literal's own range — never a rewritten copy of the whole query.
+      assert {"10", "11"} in diffs
+      assert {"10", "9"} in diffs
+
+      # Delivery shape: the bump is woven pin-only into the bound position
+      # (`limit: ^case mutare_active do … end`)…
+      mm = metamutant(src)
+      assert mm =~ ~r/limit:\s*\^case/
+      # …so the query is not duplicated per bump: `from(` appears exactly twice — the baseline
+      # and the (whole-`from`) drop mutant. The bumps used to add two more full copies.
+      assert length(String.split(mm, "from(")) - 1 == 2
+
+      assert_compiles(src)
     end
 
     test "bumps a limit of 1 to both 2 and 0 (the lower bump reaches zero, still valid SQL)" do
@@ -113,8 +124,8 @@ defmodule Mutare.Ecto.QueryTest do
       """
 
       diffs = ecto_diffs(src)
-      assert Enum.any?(diffs, fn {_o, mutated} -> mutated =~ "limit: 2" end)
-      assert Enum.any?(diffs, fn {_o, mutated} -> mutated =~ "limit: 0" end)
+      assert {"1", "2"} in diffs
+      assert {"1", "0"} in diffs
     end
 
     test "bumps an offset and clamps the lower bound non-negative" do
@@ -127,9 +138,9 @@ defmodule Mutare.Ecto.QueryTest do
 
       diffs = ecto_diffs(src)
 
-      assert Enum.any?(diffs, fn {_o, mutated} -> mutated =~ "offset: 1" end)
+      assert {"0", "1"} in diffs
       # offset: -1 is invalid SQL — never offered.
-      refute Enum.any?(diffs, fn {_o, mutated} -> mutated =~ "offset: -1" end)
+      refute {"0", "-1"} in diffs
     end
 
     test "leaves a pinned limit's value to core (no literal bump)" do
@@ -140,10 +151,11 @@ defmodule Mutare.Ecto.QueryTest do
       end
       """
 
-      # No integer literal in the bound, so only the drop fires — no bump mutant.
-      refute Enum.any?(ecto_diffs(src), fn {_o, mutated} ->
-               mutated =~ "limit:" and mutated =~ ~r/limit: \d/
-             end)
+      # No integer literal in the bound, so no bump target: the only diff is the whole-`from`
+      # drop, and the pinned bound is left raw (no woven selector in the limit position).
+      assert [{_original, mutated}] = ecto_diffs(src)
+      refute mutated =~ "limit"
+      refute metamutant(src) =~ ~r/limit:\s*\^case/
 
       assert_compiles(src)
     end
@@ -349,14 +361,13 @@ defmodule Mutare.Ecto.QueryTest do
     end
 
     test "bound bumps fire only on limit/offset, not another integer-valued clause" do
-      bounds =
-        family_diffs("from(p in Post, select: 1, limit: 10)", :bound)
-        |> Enum.map(fn {_original, mutated} -> mutated end)
+      bounds = family_diffs("from(p in Post, select: 1, limit: 10)", :bound)
 
-      # The literal `10` bumps both ways; the `select: 1` constant is never bumped.
-      assert "from(p in Post, select: 1, limit: 11)" in bounds
-      assert "from(p in Post, select: 1, limit: 9)" in bounds
-      refute Enum.any?(bounds, &(&1 =~ "select: 2" or &1 =~ "select: 0"))
+      # The literal `10` bumps both ways (hosted logical pairs); the `select: 1` constant is
+      # never bumped — no diff anchors on it.
+      assert {"10", "11"} in bounds
+      assert {"10", "9"} in bounds
+      refute Enum.any?(bounds, fn {original, _mutated} -> original == "1" end)
     end
 
     test "aggregate swaps fire on select/select_merge and order_by, but leave a hosted having alone" do

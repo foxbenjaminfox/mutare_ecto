@@ -689,7 +689,7 @@ defmodule Mutare.Ecto.SemanticTest do
     end
   end
 
-  describe "Bound — drop / bump `limit` (whole-`from`)" do
+  describe "Bound — drop (whole-`from`) / bump (pin-only weave) of `limit`" do
     test "dropping the limit returns the whole table; +1 widens the window by one row" do
       {mod, sites} =
         build("""
@@ -702,7 +702,9 @@ defmodule Mutare.Ecto.SemanticTest do
 
       assert ids(mod, 0) == [1, 2]
 
-      bump = site_id(sites, {~r/limit: 2/, ~r/limit: 3/})
+      # The bump is woven pin-only (`limit: ^(case …)`), so its recorded diff is the bare
+      # integer pair — the only site whose original is exactly "2".
+      bump = site_id(sites, {"2", "3"})
 
       assert ids(mod, bump) == [1, 2, 3]
 
@@ -719,7 +721,7 @@ defmodule Mutare.Ecto.SemanticTest do
     end
   end
 
-  describe "Bound — drop / bump `offset` (whole-`from`)" do
+  describe "Bound — drop (whole-`from`) / bump (pin-only weave) of `offset`" do
     # `offset` is the other half of the Bound family (`@bound_keys ~w(limit offset)a`): it slides the
     # window's start rather than its size. SQLite only honours `OFFSET` alongside a `LIMIT`, so the
     # fixture carries a wide `limit: 10` that never clips the six rows — every observable shift is the
@@ -736,8 +738,9 @@ defmodule Mutare.Ecto.SemanticTest do
 
       # offset 2: skip Alice/Bob, keep the rest.
       assert ids(mod, 0) == [3, 4, 5, 6]
-      # offset 3 skips one more from the top.
-      bump = site_id(sites, {~r/offset: 2/, ~r/offset: 3/})
+      # offset 3 skips one more from the top. The bump's pin-only diff is the bare integer pair;
+      # "2" is unambiguous here (the limit's bumps anchor on "10").
+      bump = site_id(sites, {"2", "3"})
 
       assert ids(mod, bump) == [4, 5, 6]
 

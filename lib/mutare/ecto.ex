@@ -99,9 +99,13 @@ defmodule Mutare.Ecto do
     * the standalone/pipe clause macros (`order_by`, `limit`, `offset`, `select`, `join`, …) also
       route via the `:routing` classifier: their data positions stay raw (so core descends nothing),
       but the **threaded query** (the first argument / the piped left side) is routed `:expression`
-      so the upstream query is mutated through the stage (a static `:skip` would suppress it). Their
-      own `mutate/2` mutations still fire — direction/bound/aggregate (`Mutare.Ecto.Clause`) and
-      **stage removal** (`q |> where(…)` → `q`, `Mutare.Ecto.ClauseDrop`). `dynamic` and the
+      so the upstream query is mutated through the stage (a static `:skip` would suppress it). One
+      data position is an exception: a **literal-integer bound** (`limit(q, 10)` / `q |> offset(5)`,
+      and the `limit:`/`offset:` keys of the `from` keyword form) routes `:hosted`, so the `:bound`
+      ±1 bump is woven **pin-only** (`limit: ^(case …)` — no `dynamic/2`, no bindings) instead of
+      duplicating the whole call. Their own `mutate/2` mutations still fire —
+      direction/aggregate/scalar (`Mutare.Ecto.Clause`) and **stage removal** (`q |> where(…)` → `q`,
+      `Mutare.Ecto.ClauseDrop`). `dynamic` and the
       `is_named_binding` guard helper also register `:skip` (neither is a query-threading stage,
       so core must not descend into their DSL/guard arguments) — but a free-standing `dynamic/1,2`
       is still mutated: core offers the whole call to `mutate/2` (with `context.mutators`, the
@@ -145,10 +149,11 @@ defmodule Mutare.Ecto do
   # the **threaded query** (the first argument / the piped left side) an `:expression`, so core
   # mutates the upstream query through a pipe stage (a static `:skip` would stamp the piped value
   # `:skip` and silently drop every upstream mutation); (2) it keeps their *data* positions raw, so
-  # core never descends a binding/expression (poison). A routed node is still offered to `mutate/2`,
-  # where the plugin's own mutators fire: `Mutare.Ecto.Clause` (ordering/bound/aggregate),
-  # `Mutare.Ecto.BindingReorder` (positional binding transpositions), and
-  # `Mutare.Ecto.ClauseDrop` (stage removal — `q |> where(…)` → `q`).
+  # core never descends a binding/expression (poison) — except a literal `limit`/`offset` bound,
+  # which routes `:hosted` so its `:bound` bump weaves pin-only through the host. A routed node is
+  # still offered to `mutate/2`, where the plugin's own mutators fire: `Mutare.Ecto.Clause`
+  # (ordering/aggregate/scalar), `Mutare.Ecto.BindingReorder` (positional binding transpositions),
+  # and `Mutare.Ecto.ClauseDrop` (stage removal — `q |> where(…)` → `q`).
   #
   # `dynamic` and `is_named_binding` register `:skip`: neither is a query-threading pipe stage, so
   # core must not descend into their DSL/guard arguments. A `:skip` registration still offers the
@@ -248,14 +253,16 @@ defmodule Mutare.Ecto do
   defdelegate route_arguments(call, context), to: Host.Routing
 
   # The host's subscription list: exactly the query macros whose `:routing` classifier can route a
-  # position `:hosted` — the `from` opener, the condition macros, and `join`.
+  # position `:hosted` — the `from` opener, the condition macros, `join`, and the bound clause
+  # macros (`limit`/`offset`, whose literal value hosts the pin-only `:bound` bump).
   @impl Mutare.Mutator.MacroHost
   def hosted_macros do
     for name <- Surface.hosted_macro_names(), do: {Ecto.Query, name, :any}
   end
 
   # The selector host: per hosted `where`/`having` condition, the `{original, mutants}` pair plus
-  # the `dynamic`/`^` `wrap`/`splice` transforms. Delegated to `Mutare.Ecto.Host`.
+  # the `dynamic`/`^` `wrap`/`splice` transforms — and per literal `limit`/`offset` bound, the
+  # pin-only bump target (no wrap). Delegated to `Mutare.Ecto.Host`.
   @impl Mutare.Mutator.MacroHost
   defdelegate host(call, context), to: Host
 

@@ -26,7 +26,9 @@ defmodule Mutare.Ecto.Config do
   #     binding-list macro (`where`/`having`/`select`/`order_by`/`join`/…) and `Mutare.Ecto.Query` for
   #     a `from` `[a, b] in q` source. Unused declarations still swap; `_`-prefixed and named
   #     bindings do not. Never a host/body rewrite;
-  #   * whole-query / clause-macro: filter_drop (drop a where/having), bound (limit/offset),
+  #   * whole-query / clause-macro: filter_drop (drop a where/having), bound (limit/offset — the
+  #     drop is a whole-`from`/stage rewrite, while the literal ±1 bump is hosted **pin-only**,
+  #     `limit: ^(case …)`, via `Mutare.Ecto.Host`),
   #     ordering (sort direction), ordering_nulls (NULLs placement), join_type,
   #     combination (`intersect`↔`except`/`intersect_all`↔`except_all`, as a `from` clause key or a
   #     standalone/pipe macro name — `Mutare.Ecto.Combination`),
