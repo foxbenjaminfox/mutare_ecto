@@ -23,12 +23,16 @@ defmodule Mutare.Ecto.MacroSkipTest do
 
   # The set of *mutated* renderings the host delivers (the in-fragment `^`/`dynamic` mutations),
   # dropping the whole-`from` query rewrites (which mention `from(`), exactly as `HostTest` does.
-  defp hosted_mutateds(source, mutators) do
-    source
-    |> ecto_diffs(mutators: mutators)
-    |> Enum.reject(fn {original, _mutated} -> String.starts_with?(original, "from(") end)
-    |> Enum.map(fn {_original, mutated} -> mutated end)
-    |> MapSet.new()
+  # `opts` is forwarded to `Mutare.transform_string/2` — the config-channel test threads
+  # `:macro_routes` through it, which core's `Mutare.Test.diffs_for/3` cannot carry.
+  defp hosted_mutateds(source, mutators, opts \\ []) do
+    result = Mutare.transform_string(source, [{:mutators, mutators} | opts])
+
+    for site <- result.mutants,
+        site.mutator == :ecto,
+        not String.starts_with?(site.original_code, "from("),
+        into: MapSet.new(),
+        do: site.mutated_code
   end
 
   describe "a fully :skip-registered nested macro" do
@@ -269,6 +273,43 @@ defmodule Mutare.Ecto.MacroSkipTest do
       refute Enum.any?(muts, &(&1 =~ "between(a.age, 19"))
 
       assert_compiles(src, mutators: @helper_mutators)
+    end
+  end
+
+  # Everything above registers the routing the way a *library* ships it — a provider module
+  # (`MyApp.QueryHelperMutator`) listed in `:mutators`. An end user writes the same skip
+  # *declaratively*, via the `:macro_routes` option (`{module, name, arity, :skip}` in config).
+  # Both channels funnel into the same registry and the same resolve-pass stamp — a config entry
+  # even overrides a code-provided route — so the hosted walkers cannot tell them apart. But the
+  # configuration story is its own public surface, so it gets its own pin: the same source with
+  # *no* provider mutator anywhere, the skip supplied purely by configuration.
+  describe "the declarative `:macro_routes` config channel" do
+    @config_routes [{MyApp.QueryHelpers, :between, 3, :skip}]
+
+    test "a config-registered :skip is honored inside a hosted where" do
+      src = """
+      defmodule M do
+        import Ecto.Query
+        import MyApp.QueryHelpers
+        def q, do: from(u in User, where: between(u.age, 18, 65) and u.score > 5)
+      end
+      """
+
+      # Without the config entry, the catalog descends into the call and mutates its bounds.
+      assert "between(u.age, 19, 65) and u.score > 5" in hosted_mutateds(src, @base_mutators)
+
+      # With only the declarative entry, the macro is opaque: the sibling comparison still
+      # mutates, while neither bound inside the skipped call ever does.
+      muts = hosted_mutateds(src, @base_mutators, macro_routes: @config_routes)
+      assert "between(u.age, 18, 65) and u.score >= 5" in muts
+      refute "between(u.age, 19, 65) and u.score > 5" in muts
+      refute "between(u.age, 18, 64) and u.score > 5" in muts
+
+      # The single-build net still holds with the route applied. `assert_compiles` cannot thread
+      # `:macro_routes` (core's `assert_metamutant_compiles/2` takes only mutators), so use the
+      # option-forwarding `Mutare.Test.compile_metamutant/3` directly.
+      assert {[_ | _], _sites} =
+               Mutare.Test.compile_metamutant(src, @base_mutators, macro_routes: @config_routes)
     end
   end
 end
