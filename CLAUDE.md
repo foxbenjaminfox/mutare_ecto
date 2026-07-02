@@ -52,7 +52,8 @@ analyzes `lib/`, not the test-only fixtures.
 `mix.exs` uses `{:mutare, path: "../mutare"}`, so both local development and CI use the sibling
 checkout (until Mutare is published to Hex). Several features here required **new Mutare-core
 extensions** (the selector host, `:routing`/`:hosted` macro routing, `{:keyword, …}` per-pair
-routing, `:interpolated` in-place delivery, the `Site` `note` channel). When a task needs core
+routing, `:interpolated` in-place delivery, the `Site` `note` channel, the plugin-config toolkit —
+`c:Mutare.Mutator.init/1` + `use Mutare.Mutator.Families`). When a task needs core
 machinery that doesn't exist yet, it is added to `../mutare`. Core's public test 
 surface for plugins is `Mutare.Test` (wrapped here by `Mutare.Ecto.TestSupport`).
 
@@ -93,10 +94,12 @@ hosting):
   `Mutare.Ecto.Host` (the selector host). `hosted_macros/0` subscribes the host to exactly the
   macros the classifier can route `:hosted` (`from`, the condition macros, `join` —
   `Surface.hosted_macro_names/0`).
-- `mutate/2` — normalizes configuration, asks `Mutare.Ecto.Dispatcher` to classify the node and
-  invoke only relevant sub-mutators, then filters the resulting `{family, node}` pairs by the
-  configured `families:`. Everything runs through `mutate/2` because all mutations read
-  `context.opts`.
+- `init/1` (`Mutare.Mutator`) — parses the instance's options once, at spec resolution, via
+  `Config.parse!/1`; a typo'd option raises at startup, and core delivers the parsed `%Config{}`
+  to every context-aware callback as `context.config`.
+- `mutate/2` — asks `Mutare.Ecto.Dispatcher` to classify the node and invoke only relevant
+  sub-mutators, then filters the resulting `{family, node}` pairs by the configured `families:`.
+  Everything runs through `mutate/2` because all mutations read `context.config`.
 
 ### The three delivery buckets (the spine of the design)
 
@@ -123,7 +126,7 @@ The surface divides by **how a mutation is delivered**, not by what it mutates:
 
 | Module | Role |
 |---|---|
-| `ecto.ex` | `Mutare.Mutator` + `Mutare.MacroRouting` + `Mutare.Mutator.MacroHost` callbacks: normalizes config, delegates node classification, filters by `families:`, applies the note |
+| `ecto.ex` | `Mutare.Mutator` + `Mutare.MacroRouting` + `Mutare.Mutator.MacroHost` callbacks: parses config once via `init/1`, delegates node classification, filters by `families:`, applies the note |
 | `dispatcher.ex` | Classifies each node once and invokes only the sub-mutators relevant to that query macro, Ecto call, or configured Repo call |
 | `surface.ex` | Single descriptor table for every owned query macro and `from` key: routing kind, standalone mutation capabilities, stage/whole-`from` drop families, and hosted/binding/join capabilities |
 | `sub_mutator.ex` | The uniform `mutations(node, context)` behaviour implemented by each mutation producer |
@@ -148,7 +151,7 @@ The surface divides by **how a mutation is delivered**, not by what it mutates:
 | `repo_call.ex` | Shared "resolve a call on the configured `repo:`" preamble for `repo_aggregate.ex`/`repo_write.ex` |
 | `stage_drop.ex` | Shared pipe-aware stage-drop delivery for `clause_drop.ex` and `changeset.ex` |
 | `changeset.ex` | Changeset pipeline drops (`:validation_drop`, `:hook_drop`) |
-| `config.ex` | `families:`/`dialects:`/`repo:` reading + validation; equivalence-sensitive set + note |
+| `config.ex` | `families:`/`dialects:`/`repo:` parsing + validation (`parse!/1`, run once by `init/1`; the family catalog via core's `use Mutare.Mutator.Families`); equivalence-sensitive set + note |
 | `ast.ex` | Small Sourceror AST helpers the plugin genuinely owns: typed literal *readers* (`atom_value`/`int_value`), the top-level-pin check, the bound bumps — everything *emitted* comes from core's `Mutare.AST` constructors |
 
 ### Families and configuration

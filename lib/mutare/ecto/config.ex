@@ -1,7 +1,8 @@
 defmodule Mutare.Ecto.Config do
   @moduledoc false
-  # Reads the plugin's per-instance options (the `opts` of a `{Mutare.Ecto, opts}` entry, reaching
-  # a callback as `context.opts`): which SQL **families** are enabled and which SQL **dialects** to
+  # Parses the plugin's per-instance options (the `opts` of a `{Mutare.Ecto, opts}` entry) once, at
+  # spec resolution — `Mutare.Ecto.init/1` calls `parse!/1`, and core delivers the result to every
+  # callback as `context.config`: which SQL **families** are enabled and which SQL **dialects** to
   # gate dialect-specific mutations on. Listing the plugin twice with different `families:`/`as:`
   # (and/or `repo:`) is how a user narrows the catalog, names a sub-family in the report, or covers
   # multiple repos.
@@ -36,61 +37,54 @@ defmodule Mutare.Ecto.Config do
   #     `on_conflict:` atom on insert/insert!/insert_all — `:nothing`→`:raise`, `:raise`→`:nothing`,
   #     `:replace_all`→`:nothing`);
   #   * changeset: validation_drop (validators/constraints), hook_drop (prepare_changes/optimistic_lock).
-  @families ~w(
-    comparison connective null_predicate membership arithmetic coalesce temporal binding_reorder
-    integer_literal float_literal atom_literal string_literal boolean_literal
-    filter_drop ordering ordering_nulls bound join_type combination aggregate query_terminal clause_drop
-    persistence on_conflict validation_drop hook_drop
-  )a
-  @all_family_set MapSet.new(@families)
-
-  # The in-fragment literal arms that are **off by default**, opt-in for safety. A string, atom, or
-  # boolean literal mutant is the most likely to be a noisy/odd survivor — a string or atom because
-  # its value space is large (an in-fragment string the broadest), a boolean because a direct
-  # boolean literal in a condition is rarely idiomatic — so they are not in the default set: a user
-  # enables them with `families: :all`, by naming them in an explicit list, or via
-  # `{:default, except: …}`/`{:all, except: …}`. Even when enabled, the structural-position guard in
-  # `Mutare.Ecto.Fragment` still suppresses them at a DSL form's structural argument.
-  @opt_in_families ~w(string_literal atom_literal boolean_literal)a
-
-  # The default family set — every family the plugin emits *except* the opt-in ones — used when
-  # `families:` is unset or given as `:default`. The default-on literal arms (integer/float) are
-  # kept; `:all` re-adds the opt-in arms.
-  @default_families @families -- @opt_in_families
-  @default_family_set MapSet.new(@default_families)
-
-  @typedoc """
-  A SQL mutation family — the tag every mutant carries. `all_families/0` is the full set and
-  `families:` narrows it. This union mirrors `@families` above: the two are the single source of
-  truth for the vocabulary and must be kept in lockstep when a family is added or removed.
-  """
-  @type family ::
-          :comparison
-          | :connective
-          | :null_predicate
-          | :membership
-          | :arithmetic
-          | :coalesce
-          | :temporal
-          | :binding_reorder
-          | :integer_literal
-          | :float_literal
-          | :atom_literal
-          | :string_literal
-          | :boolean_literal
-          | :filter_drop
-          | :ordering
-          | :ordering_nulls
-          | :bound
-          | :join_type
-          | :combination
-          | :aggregate
-          | :query_terminal
-          | :clause_drop
-          | :persistence
-          | :on_conflict
-          | :validation_drop
-          | :hook_drop
+  #
+  # Generates the catalog machinery from this one declaration: `@type family` (the union),
+  # `all_families/0` (`:all`, ordered), `default_families/0` (`:all` minus `:opt_in`),
+  # `parse_families!/1` (the `:default | :all | list | {base, except: […]}` grammar, core's own),
+  # and `family_enabled?/2` — so the plugin parses `families:` exactly as core parses
+  # `{:builtins, except: […]}`, with fail-loud errors blaming "Mutare.Ecto".
+  #
+  # The `:opt_in` entries are the in-fragment literal arms that are **off by default**, opt-in for
+  # safety. A string, atom, or boolean literal mutant is the most likely to be a noisy/odd
+  # survivor — a string or atom because its value space is large (an in-fragment string the
+  # broadest), a boolean because a direct boolean literal in a condition is rarely idiomatic — so
+  # they are not in the default set: a user enables them with `families: :all`, by naming them in
+  # an explicit list, or via `{:default, except: …}`/`{:all, except: …}`. Even when enabled, the
+  # structural-position guard in `Mutare.Ecto.Fragment` still suppresses them at a DSL form's
+  # structural argument.
+  # (The lists are plain literals — `use` options are expanded with `Macro.expand_literals/2`,
+  # which leaves sigils and module attributes unexpanded.)
+  use Mutare.Mutator.Families,
+    plugin: "Mutare.Ecto",
+    all: [
+      :comparison,
+      :connective,
+      :null_predicate,
+      :membership,
+      :arithmetic,
+      :coalesce,
+      :temporal,
+      :binding_reorder,
+      :integer_literal,
+      :float_literal,
+      :atom_literal,
+      :string_literal,
+      :boolean_literal,
+      :filter_drop,
+      :ordering,
+      :ordering_nulls,
+      :bound,
+      :join_type,
+      :combination,
+      :aggregate,
+      :query_terminal,
+      :clause_drop,
+      :persistence,
+      :on_conflict,
+      :validation_drop,
+      :hook_drop
+    ],
+    opt_in: [:string_literal, :atom_literal, :boolean_literal]
 
   # The families whose survivors may be **legitimately unkillable for a data reason**, not a test
   # gap — each carrying a report *note* phrased for its **own** equivalence reason, so the report
@@ -148,7 +142,7 @@ defmodule Mutare.Ecto.Config do
 
   # The note for each equivalence-sensitive family; the single source of truth for the set (a family
   # is equivalence-sensitive iff it appears here). `equivalence_sensitive_families/0` derives the
-  # ordered set by filtering `@families`. `:comparison` and `:arithmetic` map to their default
+  # ordered set by filtering `all_families()`. `:comparison` and `:arithmetic` map to their default
   # sub-case notes; `equivalence_note/2` overrides them with `@comparison_equality_note` for an
   # `==`/`!=` swap and `@arithmetic_multiplicative_note` for a `*`/`/` swap.
   @equivalence_notes %{
@@ -191,36 +185,23 @@ defmodule Mutare.Ecto.Config do
   def parse!(other),
     do: raise(ArgumentError, "Mutare.Ecto options must be a keyword list, got: #{inspect(other)}")
 
-  @doc "The normalized config already attached to a callback context, or one parsed from its opts."
+  @doc "The `Mutare.Ecto.init/1`-normalized config core delivers on every callback context."
   @spec from_context(map()) :: t()
-  def from_context(%{ecto_config: %__MODULE__{} = config}), do: config
-  def from_context(%{opts: opts}), do: parse!(opts)
+  def from_context(%{config: %__MODULE__{} = config}), do: config
 
-  # No legitimate callback context omits both keys (`mutate/2` injects `:ecto_config`; every Mutare
-  # context carries `:opts`), so a miss is a programming error — fail loudly rather than silently
+  # Core delivers the `init/1`-parsed struct as `:config` on every per-spec context path
+  # (`mutate/2`, `host/2`), so a miss is a programming error — fail loudly rather than silently
   # defaulting to an all-families, no-repo config.
   def from_context(other) do
     raise ArgumentError,
-          "Mutare.Ecto.Config.from_context/1 expected a context with :ecto_config or :opts, " <>
+          "Mutare.Ecto.Config.from_context/1 expected a context with the init/1-parsed :config, " <>
             "got: #{inspect(other)}"
   end
-
-  @doc "Every family the plugin can emit (the `:all` set)."
-  @spec all_families() :: [family()]
-  def all_families, do: @families
-
-  @doc """
-  The families enabled by default (when `families:` is unset or `:default`) — every family except
-  the opt-in literal arms (`:string_literal`, `:atom_literal`, `:boolean_literal`), which are off
-  for safety until a user enables them with `families: :all`/an explicit list/`{:default, except: …}`.
-  """
-  @spec default_families() :: [atom()]
-  def default_families, do: @default_families
 
   @doc "The families whose survivors may be unkillable for a data reason (see the report note)."
   @spec equivalence_sensitive_families() :: [family()]
   def equivalence_sensitive_families,
-    do: Enum.filter(@families, &Map.has_key?(@equivalence_notes, &1))
+    do: Enum.filter(all_families(), &Map.has_key?(@equivalence_notes, &1))
 
   @doc """
   The report note for a `family`'s mutants — a string for an equivalence-sensitive family
@@ -287,16 +268,15 @@ defmodule Mutare.Ecto.Config do
   """
   @spec families(keyword() | t()) :: [family()]
   def families(%__MODULE__{families: enabled}),
-    do: Enum.filter(@families, &MapSet.member?(enabled, &1))
+    do: Enum.filter(all_families(), &MapSet.member?(enabled, &1))
 
   def families(opts), do: opts |> parse!() |> families()
 
-  @doc "Whether `family` is enabled by `opts`."
-  @spec family_enabled?(keyword() | t(), family()) :: boolean()
-  def family_enabled?(%__MODULE__{families: families}, family),
-    do: MapSet.member?(families, family)
-
-  def family_enabled?(opts, family), do: opts |> parse!() |> family_enabled?(family)
+  # A parsed `%Config{}` unwraps to its family set; every other shape (a `MapSet`, raw options)
+  # keeps the generated behaviour.
+  @spec family_enabled?(t() | MapSet.t(family()) | keyword(), family()) :: boolean()
+  def family_enabled?(%__MODULE__{families: enabled}, family), do: super(enabled, family)
+  def family_enabled?(enabled, family), do: super(enabled, family)
 
   @doc """
   The configured `repo`'s resolved module key (`Mutare.Calls.module_key/1`), ready to compare
@@ -335,65 +315,6 @@ defmodule Mutare.Ecto.Config do
         raise ArgumentError,
               "unknown Mutare.Ecto options: #{inspect(unknown)} — valid options are " <>
                 inspect(@valid_options)
-    end
-  end
-
-  defp parse_families!(:all), do: @all_family_set
-  defp parse_families!(:default), do: @default_family_set
-
-  # `{:all | :default, except: [families]}` — the named base set minus an `:except` list. Mirrors
-  # core's `{:builtins, except: […]}`: `:all` re-adds the opt-in arms then drops the named ones,
-  # `:default` is the easy way to disable a default-on family (e.g.
-  # `{:default, except: [:integer_literal, :float_literal]}`).
-  defp parse_families!({:all, opts}), do: @families |> except!(opts) |> MapSet.new()
-  defp parse_families!({:default, opts}), do: @default_families |> except!(opts) |> MapSet.new()
-
-  defp parse_families!(families) when is_list(families) do
-    case families -- @families do
-      [] ->
-        MapSet.new(families)
-
-      unknown ->
-        raise ArgumentError,
-              "unknown Mutare.Ecto families: #{inspect(unknown)} — valid families are " <>
-                inspect(@families)
-    end
-  end
-
-  defp parse_families!(other) do
-    raise ArgumentError,
-          "Mutare.Ecto :families must be :all, :default, a list, or {:all | :default, except: [...]}, " <>
-            "got: #{inspect(other)}"
-  end
-
-  # The base family list minus a validated `:except` list. The only accepted key is `:except`, and
-  # each named family must be real, so a typo (`{:default, exept: …}` / `except: [:integr_literal]`)
-  # fails loudly rather than silently keeping a family it meant to drop.
-  defp except!(base, opts) do
-    unless Keyword.keyword?(opts) do
-      raise ArgumentError,
-            "Mutare.Ecto families {:all | :default, ...} options must be a keyword list with an " <>
-              ":except family list, got: #{inspect(opts)}"
-    end
-
-    case Keyword.keys(opts) -- [:except] do
-      [] ->
-        :ok
-
-      bad ->
-        raise ArgumentError,
-              "unknown Mutare.Ecto families option: #{inspect(bad)} — the only option is :except"
-    end
-
-    except = opts |> Keyword.get(:except, []) |> List.wrap()
-
-    case except -- @families do
-      [] ->
-        base -- except
-
-      unknown ->
-        raise ArgumentError,
-              "unknown Mutare.Ecto families in :except: #{inspect(unknown)} — valid families are #{inspect(@families)}"
     end
   end
 

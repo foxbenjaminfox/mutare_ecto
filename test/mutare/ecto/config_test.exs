@@ -364,19 +364,21 @@ defmodule Mutare.Ecto.ConfigTest do
       end
     end
 
-    test "from_context/1 raises when the context carries neither :ecto_config nor :opts" do
-      # The permissive default is gone: a context missing both keys is a programming error, not an
+    test "from_context/1 raises when the context lacks the init/1-parsed :config" do
+      # Core delivers `init/1`'s parsed `%Config{}` as `context.config` on every callback path, so
+      # a context missing it (or carrying raw options there) is a programming error, not an
       # implicit all-families/no-repo config.
-      assert_raise ArgumentError, ~r/expected a context with :ecto_config or :opts/, fn ->
+      assert_raise ArgumentError, ~r/expected a context with the init\/1-parsed :config/, fn ->
         Mutare.Ecto.Config.from_context(%{})
       end
 
-      # A well-formed context still resolves: :opts is parsed, a pre-parsed :ecto_config passes through.
-      assert %Mutare.Ecto.Config{} =
-               Mutare.Ecto.Config.from_context(%{opts: [families: [:comparison]]})
+      assert_raise ArgumentError, ~r/expected a context with the init\/1-parsed :config/, fn ->
+        Mutare.Ecto.Config.from_context(%{config: [families: [:comparison]]})
+      end
 
+      # A well-formed context resolves: the pre-parsed :config passes through.
       config = Mutare.Ecto.Config.parse!(families: [:bound])
-      assert Mutare.Ecto.Config.from_context(%{ecto_config: config}) == config
+      assert Mutare.Ecto.Config.from_context(%{config: config}) == config
     end
 
     test "an equivalence-sensitive mutant carries the report note; an ordinary one does not" do

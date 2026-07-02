@@ -276,16 +276,21 @@ defmodule Mutare.Ecto do
   @impl Mutare.Mutator.MacroHost
   defdelegate host(call, context), to: Host
 
-  # Every node mutation runs through `mutate/2` (not `mutate/1`), because all of them now read
-  # `context.opts` — the `families:` filter (every family is independently toggleable) and the
+  # Parse the instance's options **once**, at spec resolution (`c:Mutare.Mutator.init/1`): a typo'd
+  # option raises at startup next to core's own option validation, and every context-aware callback
+  # (`mutate/2`, `host/2`) reads the parsed `%Config{}` back as `context.config` instead of
+  # re-parsing `context.opts` per offered node.
+  @impl Mutare.Mutator
+  def init(opts), do: Config.parse!(opts)
+
+  # Every node mutation runs through `mutate/2` (not `mutate/1`), because all of them read
+  # `context.config` — the `families:` filter (every family is independently toggleable) and the
   # `dialects:` gate (so a non-portable mutation only fires under a supporting adapter).
   @impl Mutare.Mutator
   def mutate(_node), do: :skip
 
   @impl Mutare.Mutator
-  def mutate(node, %{opts: opts} = context) do
-    config = Config.parse!(opts)
-    context = Map.put(context, :ecto_config, config)
+  def mutate(node, %{config: %Config{} = config} = context) do
     tagged = Dispatcher.mutations(node, context)
 
     case for tag <- tagged,

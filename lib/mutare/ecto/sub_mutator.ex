@@ -4,10 +4,11 @@ defmodule Mutare.Ecto.SubMutator do
   # node, invokes only the relevant producers (`RepoAggregate`, `Changeset`, `Query`, …), and merges
   # their results through this shared callback shape.
   #
-  # `mutations/2` takes the AST `node` and the mutation `context` (carrying `:opts` — the
-  # `families:`/`dialects:` config — and `:pipe_mode`), and returns the `{family, node}` mutation
-  # pairs it produces, or `[]`. A sub-mutator that needs neither opts nor pipe-mode simply ignores
-  # the context; `Mutare.Ecto.mutate/2` then filters the merged pairs by the configured `families:`.
+  # `mutations/2` takes the AST `node` and the mutation `context` (carrying `:config` — the
+  # `init/1`-parsed `families:`/`dialects:`/`repo:` `%Config{}` — and `:pipe_mode`), and returns the
+  # `{family, node}` mutation pairs it produces, or `[]`. A sub-mutator that needs neither config
+  # nor pipe-mode simply ignores the context; `Mutare.Ecto.mutate/2` then filters the merged pairs
+  # by the configured `families:`.
   #
   # A sub-mutator whose first `mutations/2` clause pattern-matches the context *shape* (e.g.
   # `%{pipe_mode: …}`) needs a defensive catch-all so a context lacking that key returns `[]` rather
