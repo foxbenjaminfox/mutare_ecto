@@ -22,6 +22,13 @@ defmodule Mutare.Ecto.Query do
       **portable** pair (every adapter supports `INNER`/`LEFT`) is always offered; the
       `LEFT`↔`RIGHT` pair is **dialect-gated** (`:postgres`/`:mysql` — SQLite lacks `RIGHT`),
       and the `*`→`FULL` swap is gated to `:postgres`/`:sqlite` (MySQL has no `FULL JOIN`).
+    * **Combination** — swap a set-operation clause's *key*: `intersect:`↔`except:` and
+      `intersect_all:`↔`except_all:` (the shared `Mutare.Ecto.Combination` catalog). "Does any
+      test pin which rows the combination keeps?" `A INTERSECT B` and `A EXCEPT B` partition the
+      left query's rows, so any left-query row kills the swap. Portable (no dialect gate): it only
+      permutes forms of equal adapter support, and `_all`-ness is preserved so the set-op swap is
+      never conflated with a distinctness change. `union`/`union_all` have no principled single
+      complement, so they only get the orthogonal clause drop.
     * **Aggregate (in `select`/`order_by`)** — swap an aggregate inside a `select`/`select_merge`
       or `order_by` clause value (`sum`↔`avg`, `min`↔`max`), via the shared `Mutare.Ecto.Aggregate`
       walker. "Does any test pin which aggregate the column is reduced/sorted by?" (An aggregate
@@ -43,7 +50,7 @@ defmodule Mutare.Ecto.Query do
   nothing, while a source binding list (`from([a, b] in query)`) can still reorder.
   """
 
-  alias Mutare.Ecto.{Aggregate, AST, Config, Ordering, Surface}
+  alias Mutare.Ecto.{Aggregate, AST, Combination, Config, Ordering, Surface}
   alias Mutare.Ecto.AST.{BindingList, KeywordList, QueryCall}
   alias Mutare.Ecto.AST.KeywordList.Entry
 
@@ -113,6 +120,7 @@ defmodule Mutare.Ecto.Query do
       order_flips(call, source, clauses),
       bound_bumps(call, source, clauses),
       join_swaps(call, source, clauses, config),
+      combination_swaps(call, source, clauses),
       aggregate_swaps(call, source, clauses),
       binding_reorders(call, source)
     ])
@@ -212,6 +220,20 @@ defmodule Mutare.Ecto.Query do
   defp maybe_merge(flips, _added, false), do: flips
   # mutare:ignore[operand_swap] merge order is irrelevant — targets are consumed as a set
   defp maybe_merge(flips, added, true), do: Map.merge(flips, added, fn _k, a, b -> a ++ b end)
+
+  # Swap each set-operation clause's *kind* by rewriting its key (`intersect:`↔`except:`,
+  # `intersect_all:`↔`except_all:`), keeping the clause's value (the `^combined` query) — exactly
+  # the join-swap delivery, over the shared `Mutare.Ecto.Combination` catalog. The `:combination`
+  # capability is only registered on the flip-table names, so `swap/1` is total here.
+  defp combination_swaps(call, source, %KeywordList{entries: entries} = clauses) do
+    for {%Entry{key: key}, index} <- Enum.with_index(entries),
+        Surface.from_clause?(key, :combination),
+        to = Combination.swap(key),
+        not is_nil(to) do
+      {:combination, rebuild_from(call, source, KeywordList.replace_key(clauses, index, to)),
+       Combination.label(key)}
+    end
+  end
 
   # Swap each aggregate inside a `select`/`select_merge`/`order_by` clause value — one mutant per
   # aggregate position (`Mutare.Ecto.Aggregate`). A `having` aggregate is deliberately *not* here:

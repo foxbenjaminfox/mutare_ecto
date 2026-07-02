@@ -138,6 +138,7 @@ The surface divides by **how a mutation is delivered**, not by what it mutates:
 | `clause.ex` | Standalone/pipe cousins of `query.ex` (`order_by`/`limit`/`offset`/`select`) |
 | `clause_drop.ex` | Drop a standalone/pipe clause stage (`q \|> where(…)` → `q`), via `stage_drop.ex` |
 | `ordering.ex` / `aggregate.ex` | Shared `{family, node}` catalogs used by `query.ex`, `clause.ex`, and (aggregate) the `having` host |
+| `combination.ex` | Shared set-operation swap catalog (`intersect`↔`except`, `intersect_all`↔`except_all`; `union` deliberately unswapped) used by `query.ex` (clause-key swap) and `clause.ex` (macro-name swap) |
 | `repo_aggregate.ex` / `repo_write.ex` / `query_terminal.ex` | Bucket-1 Repo/query-function families |
 | `repo_call.ex` | Shared "resolve a call on the configured `repo:`" preamble for `repo_aggregate.ex`/`repo_write.ex` |
 | `stage_drop.ex` | Shared pipe-aware stage-drop delivery for `clause_drop.ex` and `changeset.ex` |

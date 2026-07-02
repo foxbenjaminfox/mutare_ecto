@@ -191,6 +191,65 @@ defmodule Mutare.Ecto.QueryTest do
     end
   end
 
+  describe "Combination (intersect/except from clauses)" do
+    test "swaps an intersect clause to except, keeping the combined query" do
+      src = """
+      defmodule Posts do
+        import Ecto.Query
+        def q(other) do
+          from p in Post,
+            select: p.id,
+            intersect: ^other
+        end
+      end
+      """
+
+      diffs = ecto_diffs(src)
+
+      assert Enum.any?(diffs, fn {_o, mutated} -> mutated =~ "except: ^other" end)
+      # The swap preserves duplicate-handling: plain never becomes an `_all` variant.
+      refute Enum.any?(diffs, fn {_o, mutated} -> mutated =~ "except_all" end)
+
+      assert_compiles(src)
+    end
+
+    test "swaps an except_all clause to intersect_all (the _all pair swaps as a pair)" do
+      src = """
+      defmodule Posts do
+        import Ecto.Query
+        def q(other) do
+          from p in Post,
+            select: p.id,
+            except_all: ^other
+        end
+      end
+      """
+
+      diffs = ecto_diffs(src)
+
+      assert Enum.any?(diffs, fn {_o, mutated} -> mutated =~ "intersect_all: ^other" end)
+      # …and never the plain variant — `_all`-ness is preserved, so the set-op swap is not
+      # conflated with a distinctness change.
+      refute Enum.any?(diffs, fn {_o, mutated} -> mutated =~ ~r/intersect: \^other/ end)
+    end
+
+    test "a union clause has no combination swap (only the orthogonal clause drop)" do
+      src = """
+      defmodule Posts do
+        import Ecto.Query
+        def q(other) do
+          from p in Post,
+            select: p.id,
+            union: ^other
+        end
+      end
+      """
+
+      # `union` has no principled single complement, so the :combination family stays silent.
+      assert ecto_diffs(src, mutators: [{Mutare.Ecto, families: [:combination]}]) == []
+    end
+  end
+
   describe "Aggregate (in select / order_by)" do
     test "swaps an aggregate inside a from select clause" do
       src = """

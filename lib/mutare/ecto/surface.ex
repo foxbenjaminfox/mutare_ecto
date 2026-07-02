@@ -5,8 +5,16 @@ defmodule Mutare.Ecto.Surface do
   # capabilities from these descriptors; adding a builder no longer means updating parallel lists.
 
   @macro_kinds [:from, :condition, :join, :clause, :skip]
-  @mutation_capabilities [:ordering, :bound, :aggregate]
-  @from_capabilities [:hosted, :ordering, :bound, :aggregate, :join_binding, :join_type]
+  @mutation_capabilities [:ordering, :bound, :aggregate, :combination]
+  @from_capabilities [
+    :hosted,
+    :ordering,
+    :bound,
+    :aggregate,
+    :join_binding,
+    :join_type,
+    :combination
+  ]
   @drop_families [:filter_drop, :bound, :clause_drop]
   @descriptor_keys [:name, :macro, :mutations, :stage_drop, :from, :from_drop]
 
@@ -99,10 +107,34 @@ defmodule Mutare.Ecto.Surface do
     %{name: :windows, macro: :clause, stage_drop: :clause_drop},
     %{name: :union, macro: :clause, stage_drop: :clause_drop},
     %{name: :union_all, macro: :clause, stage_drop: :clause_drop},
-    %{name: :except, macro: :clause, stage_drop: :clause_drop},
-    %{name: :except_all, macro: :clause, stage_drop: :clause_drop},
-    %{name: :intersect, macro: :clause, stage_drop: :clause_drop},
-    %{name: :intersect_all, macro: :clause, stage_drop: :clause_drop},
+    %{
+      name: :except,
+      macro: :clause,
+      mutations: [:combination],
+      stage_drop: :clause_drop,
+      from: [:combination]
+    },
+    %{
+      name: :except_all,
+      macro: :clause,
+      mutations: [:combination],
+      stage_drop: :clause_drop,
+      from: [:combination]
+    },
+    %{
+      name: :intersect,
+      macro: :clause,
+      mutations: [:combination],
+      stage_drop: :clause_drop,
+      from: [:combination]
+    },
+    %{
+      name: :intersect_all,
+      macro: :clause,
+      mutations: [:combination],
+      stage_drop: :clause_drop,
+      from: [:combination]
+    },
     %{name: :dynamic, macro: :skip},
     %{name: :is_named_binding, macro: :skip},
     %{name: :on, from: [:hosted]},
@@ -148,9 +180,9 @@ defmodule Mutare.Ecto.Surface do
   end)
 
   @type macro_kind :: :from | :condition | :join | :clause | :skip
-  @type mutation_capability :: :ordering | :bound | :aggregate
+  @type mutation_capability :: :ordering | :bound | :aggregate | :combination
   @type from_capability ::
-          :hosted | :ordering | :bound | :aggregate | :join_binding | :join_type
+          :hosted | :ordering | :bound | :aggregate | :join_binding | :join_type | :combination
   @type drop_family :: :filter_drop | :bound | :clause_drop
   @type descriptor :: %{
           required(:name) => atom(),

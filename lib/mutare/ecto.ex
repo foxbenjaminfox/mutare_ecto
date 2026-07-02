@@ -113,7 +113,17 @@ defmodule Mutare.Ecto do
   @behaviour Mutare.MacroRouting
   @behaviour Mutare.Mutator.MacroHost
 
-  alias Mutare.Ecto.{Aggregate, Config, Dispatcher, Fragment, Host, Ordering, Query, Surface}
+  alias Mutare.Ecto.{
+    Aggregate,
+    Combination,
+    Config,
+    Dispatcher,
+    Fragment,
+    Host,
+    Ordering,
+    Query,
+    Surface
+  }
 
   # Query macros routed through the plugin's **selector host** (`c:Mutare.Mutator.MacroHost.host/2`) — the
   # `from` opener and the standalone/pipe condition macros — via the `:routing` classifier, which
@@ -161,8 +171,8 @@ defmodule Mutare.Ecto do
   The `# mutare:ignore` variant vocabulary: every SQL **family** the plugin can emit (`families/0`),
   plus the finer **operator/kind** labels its swap and value families tag — a comparison's operator
   (`<`), a literal's kind (`zero`), an aggregate (`sum`), a sort direction (`asc`), a NULLs placement
-  (`nulls_first`), a join kind (`left`). Assembled from each producer's own labels so the vocabulary
-  can't drift from what is emitted.
+  (`nulls_first`), a join kind (`left`), a set operation (`intersect`). Assembled from each producer's
+  own labels so the vocabulary can't drift from what is emitted.
 
   Every recorded mutant carries its family label and, for a swap/value family, the finer label too —
   so a qualified directive suppresses **either** the whole family or one operator at a site, the rest
@@ -183,7 +193,8 @@ defmodule Mutare.Ecto do
       Fragment.variant_labels() ++
       Aggregate.variant_labels() ++
       Ordering.variant_labels() ++
-      Query.variant_labels()
+      Query.variant_labels() ++
+      Combination.variant_labels()
   end
 
   # The Ecto surface the routing table registers against. If these are not loadable, the plugin is

@@ -13,6 +13,10 @@ defmodule Mutare.Ecto.Clause do
       an aggregate written into an `order_by` (`q |> order_by([u], desc: sum(u.amount))`): swap the
       aggregate (`sum`↔`avg`, `min`↔`max`), via the shared `Mutare.Ecto.Aggregate` walker. (A
       `having` aggregate is hosted instead — `Mutare.Ecto.Host`.)
+    * **Combination** — `q |> intersect(^other)` / `except_all(q, ^other)`: swap the set
+      operation by renaming the macro itself (`intersect`↔`except`, `intersect_all`↔`except_all`),
+      via the shared `Mutare.Ecto.Combination` catalog. Unlike the other three this mutates the
+      call's *name*, not its last argument — the operand queries are untouched.
 
   These macros are registered through the `:routing` classifier (`Mutare.Ecto.Host`), which keeps
   their *data* positions (binding list, ordering, bound, selector) raw — so core never descends a
@@ -28,7 +32,7 @@ defmodule Mutare.Ecto.Clause do
   pipe-mode bookkeeping is required.
   """
 
-  alias Mutare.Ecto.{Aggregate, AST, Config, Ordering, Surface}
+  alias Mutare.Ecto.{Aggregate, AST, Combination, Config, Ordering, Surface}
   alias Mutare.Ecto.AST.QueryCall
 
   @behaviour Mutare.Ecto.SubMutator
@@ -61,6 +65,7 @@ defmodule Mutare.Ecto.Clause do
   defp capability_mutations(:ordering, call), do: mutate_last(call, &Ordering.flips/1)
   defp capability_mutations(:bound, call), do: mutate_last(call, &bound_flips/1)
   defp capability_mutations(:aggregate, call), do: mutate_last(call, &Aggregate.swaps/1)
+  defp capability_mutations(:combination, call), do: combination_swaps(call)
 
   # The shape all three clause-macro mutators share: split the mutated **last argument** off (the
   # ordering / bound / selector — `init` keeps the binding list when one is written), map it to
@@ -75,6 +80,17 @@ defmodule Mutare.Ecto.Clause do
     for tag <- catalog.(last),
         {family, mutated, label} = Config.split_tag(tag),
         do: {family, QueryCall.rebuild(call, init ++ [mutated]), label}
+  end
+
+  # Swap the set operation by renaming the macro call itself (`q |> intersect(^other)` →
+  # `q |> except(^other)`), keeping every argument as written — the one clause mutation that
+  # rewrites the call's *name* rather than its last argument (`Mutare.Ecto.Combination`). The
+  # capability is only registered on the four flip-table names, so `swap/1` is total here.
+  defp combination_swaps(%QueryCall{name: name} = call) do
+    case Combination.swap(name) do
+      nil -> []
+      to -> [{:combination, QueryCall.rename(call, to), Combination.label(name)}]
+    end
   end
 
   # `limit`/`offset` boundary bumps as `{:bound, literal}` pairs: bump a literal integer by `±1`

@@ -32,6 +32,10 @@ defmodule Mutare.Ecto.AST.QueryCall do
   @spec rebuild(t(), [Macro.t()]) :: Macro.t()
   def rebuild(%__MODULE__{name: name, rebuild: rebuild}, args), do: rebuild.(name, args)
 
+  @doc "Rebuild the call under a different macro `name`, keeping the written args and form."
+  @spec rename(t(), atom()) :: Macro.t()
+  def rename(%__MODULE__{args: args, rebuild: rebuild}, name), do: rebuild.(name, args)
+
   @doc "Rebuild the call with `value` substituted for the argument at `index`."
   @spec replace_arg(t(), non_neg_integer(), Macro.t()) :: Macro.t()
   def replace_arg(%__MODULE__{args: args} = call, index, value),

@@ -542,6 +542,62 @@ defmodule Mutare.Ecto.SemanticTest do
     end
   end
 
+  describe "Combination — `intersect` ↔ `except` (whole-`from` clause key)" do
+    # `A INTERSECT B` and `A EXCEPT B` partition the left query's rows (A∩B vs A∖B are disjoint), so
+    # the swap flips the result to the *other* side of the partition — impossible to confuse with an
+    # inert rewrite. Left: active users {1,2,5,6}; right: adults (age > 18) {2,5,6}.
+    test "swapping intersect for except returns the left-only rows instead of the shared ones" do
+      {mod, sites} =
+        build("""
+        defmodule Q do
+          import Ecto.Query
+          alias MyApp.User
+
+          def q do
+            adults = from(u in User, where: u.age > 18, select: u.id)
+            from(u in User, where: u.active, select: u.id, intersect: ^adults)
+          end
+        end
+        """)
+
+      baseline = ids(mod, 0)
+      mutant = ids(mod, site_id(sites, {~r/intersect: \^adults/, ~r/except: \^adults/}))
+
+      # active ∩ adults: Bob, Eve, Frank.
+      assert baseline == [2, 5, 6]
+      # active ∖ adults: only Alice (active but sitting on the age-18 boundary).
+      assert mutant == [1]
+    end
+  end
+
+  describe "Combination — piped `intersect` ↔ `except` (standalone/pipe macro rename)" do
+    # The standalone/pipe twin: the swap renames the *macro call itself* (`|> intersect(^adults)` →
+    # `|> except(^adults)`), delivered by the in-place selector over the pipe stage — a different
+    # rewrite path from the clause-key swap above, so its liveness is proven separately.
+    test "renaming the piped intersect to except flips the partition side" do
+      {mod, sites} =
+        build("""
+        defmodule Q do
+          import Ecto.Query
+          alias MyApp.User
+
+          def q do
+            adults = from(u in User, where: u.age > 18, select: u.id)
+
+            from(u in User, where: u.active, select: u.id)
+            |> intersect(^adults)
+          end
+        end
+        """)
+
+      baseline = ids(mod, 0)
+      mutant = ids(mod, site_id(sites, {~r/intersect\(\^adults\)/, ~r/except\(\^adults\)/}))
+
+      assert baseline == [2, 5, 6]
+      assert mutant == [1]
+    end
+  end
+
   describe "Regression — multi-condition join `on:` keeps a green baseline (BUG-multi-condition-join-on)" do
     # The host wraps even the *baseline* branch in `^dynamic`, so hosting an `on:` that isn't its
     # join's whole, top-level on-expression corrupts mutant id 0 itself: Ecto folds a join's

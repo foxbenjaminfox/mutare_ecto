@@ -44,11 +44,13 @@ defmodule Mutare.Ecto.VariantTest do
       assert "is_nil" in variants
       assert "zero" in variants
 
-      # ...and the mutate/2 swap families (aggregate / ordering / join).
+      # ...and the mutate/2 swap families (aggregate / ordering / join / combination).
       assert "sum" in variants
       assert "asc" in variants
       assert "nulls_first" in variants
       assert "left" in variants
+      assert "intersect" in variants
+      assert "except_all" in variants
     end
   end
 

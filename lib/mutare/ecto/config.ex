@@ -26,6 +26,8 @@ defmodule Mutare.Ecto.Config do
   #     bindings do not. Never a host/body rewrite;
   #   * whole-query / clause-macro: filter_drop (drop a where/having), bound (limit/offset),
   #     ordering (sort direction), ordering_nulls (NULLs placement), join_type,
+  #     combination (`intersect`↔`except`/`intersect_all`↔`except_all`, as a `from` clause key or a
+  #     standalone/pipe macro name — `Mutare.Ecto.Combination`),
   #     aggregate (`sum`↔`avg`/`min`↔`max` in `select`/`order_by`/`Repo.aggregate` delivered in
   #     place, and in a hosted `having` condition via `Mutare.Ecto.Host`), query_terminal (`first`↔`last`),
   #     clause_drop (drop a standalone/pipe order_by/select/join/… stage — `Mutare.Ecto.ClauseDrop`);
@@ -36,7 +38,7 @@ defmodule Mutare.Ecto.Config do
   @families ~w(
     comparison connective null_predicate membership arithmetic binding_reorder
     integer_literal float_literal atom_literal string_literal boolean_literal
-    filter_drop ordering ordering_nulls bound join_type aggregate query_terminal clause_drop
+    filter_drop ordering ordering_nulls bound join_type combination aggregate query_terminal clause_drop
     persistence on_conflict validation_drop hook_drop
   )a
   @all_family_set MapSet.new(@families)
@@ -78,6 +80,7 @@ defmodule Mutare.Ecto.Config do
           | :ordering_nulls
           | :bound
           | :join_type
+          | :combination
           | :aggregate
           | :query_terminal
           | :clause_drop

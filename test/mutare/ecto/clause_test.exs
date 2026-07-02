@@ -216,13 +216,65 @@ defmodule Mutare.Ecto.ClauseTest do
     end
   end
 
+  describe "Combination (standalone / pipe intersect/except)" do
+    test "swaps intersect to except in the pipe form, keeping the operand query" do
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q(query, other), do: query |> intersect(^other)
+      end
+      """
+
+      mutated = Enum.map(ecto_diffs(src), fn {_o, m} -> m end)
+      assert "except(^other)" in mutated
+      # The swap preserves duplicate-handling — never the `_all` variant…
+      refute Enum.any?(mutated, &(&1 =~ "except_all"))
+      # …alongside the orthogonal stage drop (`q |> intersect(…)` → `q`, as identity).
+      assert Enum.any?(mutated, &(&1 =~ "identity"))
+      assert_compiles(src)
+    end
+
+    test "swaps except_all to intersect_all in the direct form (the _all pair swaps as a pair)" do
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q(query, other), do: except_all(query, ^other)
+      end
+      """
+
+      mutated = Enum.map(ecto_diffs(src), fn {_o, m} -> m end)
+      assert "intersect_all(query, ^other)" in mutated
+      refute Enum.any?(mutated, &(&1 =~ ~r/intersect\(/))
+      assert_compiles(src)
+    end
+
+    test "a union stage has no combination swap (only the orthogonal stage drop)" do
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q(query, other), do: query |> union(^other)
+      end
+      """
+
+      # `union` has no principled single complement, so the :combination family stays silent.
+      assert ecto_diffs(src, mutators: [{Mutare.Ecto, families: [:combination]}]) == []
+    end
+  end
+
   describe "totality — a degenerate zero-arg macro node yields no mutant, never a crash" do
     # `mutations/1` is offered every node in the source, so each clause guards `args != []`: it
     # protects the `{init, [last]} = Enum.split(args, -1)` destructuring, which would raise a
     # MatchError on `[]` rather than returning the no-op `[]`. A bare `order_by()`/`limit()`/
     # `select()` (no query, no value) is the degenerate node that exercises that guard.
     test "an empty-args order_by / limit / select returns []" do
-      for code <- ["order_by()", "limit()", "offset()", "select()", "select_merge()"] do
+      for code <- [
+            "order_by()",
+            "limit()",
+            "offset()",
+            "select()",
+            "select_merge()",
+            "intersect()"
+          ] do
         assert Mutare.Ecto.Clause.mutations(Sourceror.parse_string!(code), %{}) == [],
                "expected no mutant for #{code}"
       end

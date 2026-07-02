@@ -257,6 +257,7 @@ defmodule Mutare.Ecto.ConfigTest do
       assert :query_terminal in Mutare.Ecto.families()
       assert :hook_drop in Mutare.Ecto.families()
       assert :ordering_nulls in Mutare.Ecto.families()
+      assert :combination in Mutare.Ecto.families()
       assert :clause_drop in Mutare.Ecto.families()
 
       assert :integer_literal in Mutare.Ecto.families()
