@@ -7,7 +7,7 @@ gaps without needing an app of your own. Each is a real mix project with its own
 | Example | What it is | What it shows |
 | --- | --- | --- |
 | [`hello`](hello/) | A "hello world" — one schema, one changeset, three queries | The smallest end-to-end run: a comparison, a sort, a limit, a validation drop |
-| [`habit_tracker`](habit_tracker/) | A SQLite-backed habit-tracker CLI | The full catalog — joins, `group_by`/`having`, aggregates, `Ecto.Enum`, upserts, transactions, dynamically-built (`Enum.reduce`) queries — plus the SQL-equivalence annotations |
+| [`habit_tracker`](habit_tracker/) | A SQLite-backed habit-tracker CLI | The full catalog — joins, `group_by`/`having`, aggregates, scalar SQL (`coalesce`, arithmetic), `Ecto.Enum`, upserts, transactions, dynamically-built (`Enum.reduce`) queries — plus the SQL-equivalence annotations |
 
 ## Running
 
@@ -22,7 +22,9 @@ example wires Mutare and this plugin in as dependencies, and you run from
 cd examples/hello          # or examples/habit_tracker
 mix deps.get
 mix test                   # green baseline — mutation testing needs a passing suite
-mix mutare                 # mutate the Ecto surface and report the survivors
+mix mutare --sandbox ../hello_sandbox
+                           # or ../habit_tracker_sandbox from habit_tracker/
+                           # mutate the Ecto surface and report the survivors
 ```
 
 ## The point isn't the score

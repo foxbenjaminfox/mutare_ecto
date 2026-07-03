@@ -5,7 +5,8 @@ defmodule HabitTracker.MixProject do
   # a deliberately Ecto-dense app to point the mutator at. It exercises schemas
   # and associations, `Ecto.Enum`, changeset validations, migrations, the query
   # DSL (`where`/`join`/`group_by`/`having`/`order_by`/`limit`), aggregates,
-  # `Repo.aggregate`, an upsert (`on_conflict`), and an `Ecto.Multi` transaction.
+  # scalar SQL (`coalesce`, arithmetic), `Repo.aggregate`, an upsert
+  # (`on_conflict`), and an `Ecto.Multi` transaction.
   #
   # Run the mutator from this directory (Mutare must run as a dependency of the
   # app under test, so the Repo and schemas are loadable):
@@ -13,13 +14,15 @@ defmodule HabitTracker.MixProject do
   #     cd examples/habit_tracker
   #     mix deps.get
   #     mix test          # green baseline
-  #     mix mutare        # mutate the data layer and report survivors
+  #     mix mutare --sandbox ../habit_tracker_sandbox
+  #                       # mutate the data layer and report survivors
   #
   # And use it as an actual CLI (data lands in ./habit_tracker.db):
   #
   #     bin/habit add "Read" --target 1
   #     bin/habit check "Read"
   #     bin/habit stats
+  #     bin/habit progress
   def project do
     [
       app: :habit_tracker,

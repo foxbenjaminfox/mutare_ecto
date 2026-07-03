@@ -1,12 +1,14 @@
 defmodule HabitTracker.Stats do
   @moduledoc """
-  Analytics over the habit log: leaderboards, totals, and gaps.
+  Analytics over the habit log: leaderboards, totals, progress, and gaps.
 
   This is the dense end of the query DSL — joins, `group_by`/`having`, aggregates
-  (`sum`/`avg`/`count`), a `left_join` with `is_nil`, a date-range filter, and an
-  explicit NULLS-placement ordering — exactly the surface where the Ecto mutator
-  earns its keep. Swap `sum` for `avg`, an inner join for a left one, `>=` for `>`,
-  or move where NULLs sort, and only a sharp test will notice.
+  (`sum`/`avg`/`count`), scalar SQL (`coalesce` and arithmetic), a
+  `left_join` with `is_nil`, a date-range filter, and an explicit NULLS-placement
+  ordering — exactly the surface where the Ecto mutator earns its keep. Swap
+  `sum` for `avg`, an inner join for a left one, `>=` for `>`, drop a
+  `coalesce` fallback, or move where NULLs sort, and only a sharp test will
+  notice.
   """
   import Ecto.Query
 
@@ -52,6 +54,31 @@ defmodule HabitTracker.Stats do
   def average_count(%Habit{} = habit) do
     from(c in CheckIn, where: c.habit_id == ^habit.id)
     |> Repo.aggregate(:avg, :count)
+  end
+
+  @doc """
+  Progress toward each active habit's target in a date window.
+
+  Habits with no check-ins in the window still appear: the date predicates live
+  in the `left_join`'s `on:` clause, not in a `where` that would discard the
+  NULL side. `coalesce(sum(c.count), 0)` turns that missing aggregate into a
+  usable zero, and `- h.target` computes the SQL-side delta the report sorts by.
+  """
+  def progress_report(since, through) do
+    from(h in Habit,
+      left_join: c in assoc(h, :check_ins),
+      on: c.date >= ^since and c.date <= ^through,
+      where: h.archived == false,
+      group_by: [h.id, h.name, h.target],
+      order_by: [desc: coalesce(sum(c.count), 0) - h.target, asc: h.name],
+      select: %{
+        name: h.name,
+        total: coalesce(sum(c.count), 0),
+        target: h.target,
+        delta: coalesce(sum(c.count), 0) - h.target
+      }
+    )
+    |> Repo.all()
   end
 
   @doc """

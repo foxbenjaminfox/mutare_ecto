@@ -14,7 +14,7 @@ of Ecto:
 - **The query DSL** — `where` (with `in` membership and `and` / `or` / `not`
   connectives), `join` / `left_join`, `group_by`, `having`, `order_by` (including
   an explicit `:desc_nulls_last` NULLS placement), `limit`, `is_nil`, aggregates
-  (`sum` / `avg` / `count` / `max`), `preload`.
+  (`sum` / `avg` / `count` / `max`), scalar SQL (`coalesce`, `+` / `-`), `preload`.
 - **`Repo.aggregate`**, an **upsert** (`on_conflict`), and an **`Ecto.Multi`**
   transaction.
 - **Optimistic locking** — a `lock_version` column + `optimistic_lock/3`, so a
@@ -40,6 +40,7 @@ bin/habit check "Read" --date 2024-03-10 --count 2
 bin/habit streak "Read"
 bin/habit list
 bin/habit stats
+bin/habit progress --since 2024-03-04 --until 2024-03-10
 bin/habit history --habit Read --since 2024-03-01 --min-count 2
 bin/habit rm "Exercise"
 ```
@@ -51,7 +52,8 @@ are loadable), so run it from this directory:
 
 ```
 mix test          # green baseline — mutation testing needs a passing suite
-mix mutare        # mutate the Ecto surface and report the survivors
+mix mutare --sandbox ../habit_tracker_sandbox
+                  # mutate the Ecto surface and report the survivors
 ```
 
 `.mutare.exs` enables just the Ecto plugin and excludes the CLI / boot glue, so
@@ -60,29 +62,30 @@ Elixir — the streak arithmetic, the changeset literals — for a fuller pictur
 
 ## What you'll see
 
-Abridged — a handful of the 32 survivors, and the trailing note on the
-equivalence-sensitive ones is shortened (the real run spells it out further):
+Abridged — a handful of the 33 survivors, and the trailing note on the
+equivalence-sensitive ones is shortened here (the real run spells it out
+further):
 
 ```
-mutare: 93 mutants across 5 file(s)
+mutare: 104 mutants across 5 file(s)
 
-lib/habit_tracker/habit.ex:35  [ecto, in-place]  SURVIVED
+lib/habit_tracker/habit.ex:36  [ecto, in-place]  SURVIVED
 -    |> validate_length(:name, min: 2, max: 40)
 +    |> Elixir.Function.identity()
 
-lib/habit_tracker/stats.ex:22  [ecto, in-place]  SURVIVED  — kill may require an orphan row — a preserved-side row with no match (join kinds coincide when every row matches)
+lib/habit_tracker/stats.ex:24  [ecto, in-place]  SURVIVED  — kill may require an orphan row — a preserved-side row with no match (join kinds coincide when every row matches)
 -      join: c in assoc(h, :check_ins),
 +      left_join: c in assoc(h, :check_ins),
 
-lib/habit_tracker/stats.ex:26  [ecto, in-place]  SURVIVED  — kill may require a row whose value sits exactly on the bound — strict and non-strict comparisons (< vs <=, > vs >=) select the same rows except one equal to the bound
+lib/habit_tracker/stats.ex:28  [ecto, in-place]  SURVIVED  — kill may require a row whose value sits exactly on the bound — strict and non-strict comparisons (< vs <=, > vs >=) select the same rows except one equal to the bound
 -      having: sum(c.count) >= ^min_total,
 +      having: sum(c.count) > ^min_total,
 
-lib/habit_tracker/stats.ex:84  [ecto, in-place]  SURVIVED  — kill may require NULL rows in the ordered column — nulls_first and nulls_last only change where NULLs sort, ordering all other rows identically
+lib/habit_tracker/stats.ex:111  [ecto, in-place]  SURVIVED  — kill may require NULL rows in the ordered column — nulls_first and nulls_last only change where NULLs sort, ordering all other rows identically
 -      order_by: [desc_nulls_last: max(c.date)],
 +      order_by: [desc_nulls_first: max(c.date)],
 
-lib/habit_tracker/tracker.ex:82  [ecto, in-place]  SURVIVED
+lib/habit_tracker/tracker.ex:114  [ecto, in-place]  SURVIVED
 -      from(c in CheckIn, where: c.habit_id == ^habit.id, select: c.date)
 +      from(c in CheckIn, select: c.date)
 
@@ -94,10 +97,10 @@ lib/habit_tracker/habit.ex:40  [ecto, in-place]  SURVIVED
 -    |> optimistic_lock(:lock_version)
 +    |> Elixir.Function.identity()
 
-mutation score: 64.0%  (57 killed, 32 survived, 4 no-coverage, 93 total)
+mutation score: 67.0%  (67 killed, 33 survived, 4 no-coverage, 104 total)
 ```
 
-The 32 survivors cluster into a few honest lessons.
+The 33 survivors cluster into a few honest lessons.
 
 ### 1. Validations no test exercises
 
@@ -192,11 +195,11 @@ direction flip and both `max → min` aggregate swaps (in the `order_by` and the
 note:
 
 ```
-lib/habit_tracker/stats.ex:84  SURVIVED  — kill may require NULL rows in the ordered column — …
+lib/habit_tracker/stats.ex:111  SURVIVED  — kill may require NULL rows in the ordered column — …
 -      order_by: [desc_nulls_last: max(c.date)],
 +      order_by: [desc_nulls_first: max(c.date)],
 
-lib/habit_tracker/stats.ex:84  SURVIVED  — kill may require an orphan row — …
+lib/habit_tracker/stats.ex:111  SURVIVED  — kill may require an orphan row — …
 -      left_join: c in assoc(h, :check_ins),
 +      inner_join: c in assoc(h, :check_ins),
 ```
@@ -228,6 +231,10 @@ rows, in order:
   (a check-in *on* the cutoff is asserted to be included).
 - `total_count/1` — `sum` → `avg` is killed (two differing counts give different
   numbers).
+- `progress_report/2` — the left join keeps zero-progress habits in the report,
+  the date predicates stay in `on:`, `coalesce(sum(...), 0)` turns missing
+  aggregates into zeros, and the SQL-side `total - target` delta is asserted in
+  the result and the sort.
 - `list_habits/1` — the alphabetical order and the `archived == false` filter
   are both asserted.
 - `Search.check_ins/1` — filtering by habit, by the `since` boundary, and by a

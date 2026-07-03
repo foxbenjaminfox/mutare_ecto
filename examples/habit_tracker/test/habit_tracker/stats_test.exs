@@ -94,6 +94,37 @@ defmodule HabitTracker.StatsTest do
     # be killed (it shows up as no-coverage, not as a survivor).
   end
 
+  describe "progress_report/2" do
+    # Pins several surfaces at once:
+    #
+    #   * the left join must keep a habit with no matching check-ins;
+    #   * the date filters belong in the join `on:`, so out-of-window rows do not
+    #     inflate the total but zero-progress habits still survive;
+    #   * `coalesce(sum(...), 0)` must turn the dormant habit's NULL aggregate into
+    #     zero;
+    #   * the SQL arithmetic delta and its descending sort are asserted exactly;
+    #   * archived habits are excluded.
+    test "ranks active habits by window progress against target" do
+      read = habit_fixture(name: "Read", target: 4)
+      run = habit_fixture(name: "Run", target: 3)
+      _idle = habit_fixture(name: "Idle", target: 2)
+      archived = habit_fixture(name: "Old", target: 1)
+      {:ok, _} = Tracker.archive_habit(archived)
+
+      check_in_fixture(read, ~D[2024-03-10], 3)
+      check_in_fixture(read, ~D[2024-03-11], 2)
+      check_in_fixture(run, ~D[2024-03-10], 1)
+      check_in_fixture(run, ~D[2024-03-01], 20)
+      check_in_fixture(archived, ~D[2024-03-10], 50)
+
+      assert Stats.progress_report(~D[2024-03-10], ~D[2024-03-11]) == [
+               %{name: "Read", total: 5, target: 4, delta: 1},
+               %{name: "Idle", total: 0, target: 2, delta: -2},
+               %{name: "Run", total: 1, target: 3, delta: -2}
+             ]
+    end
+  end
+
   describe "active_since/1" do
     # Pins the ellipsis-binding date filter: a habit whose only check-in sits *on*
     # the cutoff is included (so `>=` → `>` is caught), one whose check-ins are all

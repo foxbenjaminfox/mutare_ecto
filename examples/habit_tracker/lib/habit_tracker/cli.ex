@@ -18,6 +18,7 @@ defmodule HabitTracker.CLI do
       ["set", name | rest] -> set(name, rest)
       ["streak", name] -> streak(name)
       ["stats" | _] -> stats()
+      ["progress" | rest] -> progress(rest)
       ["active" | rest] -> active(rest)
       ["history" | rest] -> history(rest)
       ["rm", name] -> remove(name)
@@ -127,6 +128,33 @@ defmodule HabitTracker.CLI do
     end
   end
 
+  defp progress(rest) do
+    {opts, _} = OptionParser.parse!(rest, strict: [since: :string, until: :string])
+    today = Date.utc_today()
+
+    default_since = today |> Date.add(-6) |> Date.to_iso8601()
+    since_raw = opts[:since] || default_since
+    through_raw = opts[:until] || Date.to_iso8601(today)
+
+    with {:ok, since} <- parse_date(since_raw),
+         {:ok, through} <- parse_date(through_raw) do
+      case Stats.progress_report(since, through) do
+        [] ->
+          puts("no active habits")
+
+        rows ->
+          puts("progress from #{since} through #{through}:")
+
+          for row <- rows do
+            delta = if row.delta >= 0, do: "+#{row.delta}", else: to_string(row.delta)
+            puts("  #{pad(row.name)} #{row.total}/#{row.target} (#{delta})")
+          end
+      end
+    else
+      {:error, reason} -> puts(reason)
+    end
+  end
+
   defp active(rest) do
     {opts, _} = OptionParser.parse!(rest, strict: [since: :string])
 
@@ -215,6 +243,7 @@ defmodule HabitTracker.CLI do
       habit set NAME [--target N] [--cadence daily|weekly]
       habit streak NAME
       habit stats
+      habit progress [--since DATE] [--until DATE]
       habit active [--since DATE]
       habit history [--habit NAME] [--cadence daily|weekly] [--since DATE] [--until DATE] [--min-count N] [--limit N]
       habit rm NAME
