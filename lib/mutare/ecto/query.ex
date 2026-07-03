@@ -231,6 +231,7 @@ defmodule Mutare.Ecto.Query do
     for {%Entry{key: key}, index} <- Enum.with_index(entries),
         Surface.from_clause?(key, :combination),
         to = Combination.swap(key),
+        # mutare:ignore[conditional] equivalent — Surface only registers :combination on the 4 names Combination.swap/1's flip table covers, so swap/1 is total here and `to` is never nil
         not is_nil(to) do
       {:combination, rebuild_from(call, source, KeywordList.replace_key(clauses, index, to)),
        Combination.label(key)}

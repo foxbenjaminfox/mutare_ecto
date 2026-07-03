@@ -158,6 +158,12 @@ defmodule Mutare.Ecto.ConfigTest do
                mutators: [{Mutare.Ecto, families: [:comparison]}]
              )
     end
+
+    test "repo_key/1 also accepts raw opts, parsing them first (like families/1 and dialects/1)" do
+      config = Mutare.Ecto.Config.parse!(repo: MyApp.Repo)
+      assert Mutare.Ecto.Config.repo_key(config) == Mutare.Ecto.Config.repo_key(repo: MyApp.Repo)
+      assert Mutare.Ecto.Config.repo_key(repo: MyApp.Repo) == Mutare.Calls.module_key(MyApp.Repo)
+    end
   end
 
   describe "dialects: gates non-portable mutations" do
@@ -287,6 +293,18 @@ defmodule Mutare.Ecto.ConfigTest do
       assert Mutare.Ecto.Config.families(families: :all) == Mutare.Ecto.families()
     end
 
+    test "family_enabled?/2 also accepts a raw MapSet or keyword opts, like families/1" do
+      config = Mutare.Ecto.Config.parse!(families: [:comparison])
+      assert Mutare.Ecto.Config.family_enabled?(config, :comparison)
+      refute Mutare.Ecto.Config.family_enabled?(config, :arithmetic)
+
+      assert Mutare.Ecto.Config.family_enabled?(MapSet.new([:comparison]), :comparison)
+      refute Mutare.Ecto.Config.family_enabled?(MapSet.new([:comparison]), :arithmetic)
+
+      assert Mutare.Ecto.Config.family_enabled?([families: [:comparison]], :comparison)
+      refute Mutare.Ecto.Config.family_enabled?([families: [:comparison]], :arithmetic)
+    end
+
     test "an unknown family in an :except list fails loudly" do
       assert_raise ArgumentError, ~r/unknown Mutare.Ecto families in :except: \[:bogus\]/, fn ->
         Mutare.Ecto.Config.families(families: {:default, except: [:bogus]})
@@ -327,9 +345,11 @@ defmodule Mutare.Ecto.ConfigTest do
     end
 
     test "unknown and malformed dialects fail deliberately" do
-      assert_raise ArgumentError, ~r/unknown Mutare.Ecto dialects: \[:oracle\]/, fn ->
-        Mutare.Ecto.Config.parse!(dialects: [:oracle])
-      end
+      assert_raise ArgumentError,
+                   ~r/\Aunknown Mutare.Ecto dialects: \[:oracle\] — valid dialects are \[:postgres, :mysql, :sqlite\]\z/,
+                   fn ->
+                     Mutare.Ecto.Config.parse!(dialects: [:oracle])
+                   end
 
       assert_raise ArgumentError, ~r/:dialects must be a list/, fn ->
         Mutare.Ecto.Config.parse!(dialects: :postgres)
@@ -368,13 +388,17 @@ defmodule Mutare.Ecto.ConfigTest do
       # Core delivers `init/1`'s parsed `%Config{}` as `context.config` on every callback path, so
       # a context missing it (or carrying raw options there) is a programming error, not an
       # implicit all-families/no-repo config.
-      assert_raise ArgumentError, ~r/expected a context with the init\/1-parsed :config/, fn ->
-        Mutare.Ecto.Config.from_context(%{})
-      end
+      assert_raise ArgumentError,
+                   ~r/expected a context with the init\/1-parsed :config, got: %\{\}\z/,
+                   fn ->
+                     Mutare.Ecto.Config.from_context(%{})
+                   end
 
-      assert_raise ArgumentError, ~r/expected a context with the init\/1-parsed :config/, fn ->
-        Mutare.Ecto.Config.from_context(%{config: [families: [:comparison]]})
-      end
+      assert_raise ArgumentError,
+                   ~r/expected a context with the init\/1-parsed :config, got: %\{config: \[families: \[:comparison\]\]\}\z/,
+                   fn ->
+                     Mutare.Ecto.Config.from_context(%{config: [families: [:comparison]]})
+                   end
 
       # A well-formed context resolves: the pre-parsed :config passes through.
       config = Mutare.Ecto.Config.parse!(families: [:bound])
@@ -406,6 +430,30 @@ defmodule Mutare.Ecto.ConfigTest do
       # The membership polarity flip (in → not in) is not equivalence-sensitive → no note.
       membership = Enum.find(sites, &(&1.mutated_code =~ "not in" and &1.mutator == :ecto))
       assert membership.note == nil
+    end
+
+    test "the != -> == direction reads the same NULL-exclusion note (finer tags the source operator)" do
+      # `equivalence_note/2`'s `"!="` guard arm is reached only when the *written* operator is
+      # `!=` (swapped to `==`) — the finer label tags the source operator, not the mutated one
+      # (`u.x == u.y` above only ever exercises the `"=="` arm). Written the other way round, the
+      # same NULL-exclusion note must still apply.
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q, do: from(u in User, where: u.x != u.y, select: u.id)
+      end
+      """
+
+      %Mutare.Transform.Result{mutants: sites} =
+        Mutare.transform_string(src,
+          mutators: [{Mutare.Ecto, repo: MyApp.Repo}],
+          expand_uses: true
+        )
+
+      equality = Enum.find(sites, &(&1.mutated_code =~ "u.x == u.y" and &1.mutator == :ecto))
+
+      assert equality.note ==
+               "kill may require a non-NULL row — == and != differ on every concrete value but both exclude NULLs (compared as unknown), so they coincide only when every row is NULL"
     end
 
     test "the two comparison sub-cases carry different notes (boundary vs NULL exclusion)" do
@@ -460,6 +508,27 @@ defmodule Mutare.Ecto.ConfigTest do
       assert multiplicative.note =~ "not ±1"
 
       refute additive.note == multiplicative.note
+    end
+
+    test "the / -> * direction reads the same multiplicative-identity note (finer tags the source operator)" do
+      # Mirrors the comparison case above: the `"/"` guard arm is reached only when the *written*
+      # operator is `/` (swapped to `*`) — the earlier test's `u.a * u.b` only ever exercises the
+      # `"*"` arm.
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q(v), do: from(u in User, where: u.a / u.b < ^v, select: u.id)
+      end
+      """
+
+      %Mutare.Transform.Result{mutants: sites} =
+        Mutare.transform_string(src,
+          mutators: [{Mutare.Ecto, repo: MyApp.Repo}],
+          expand_uses: true
+        )
+
+      multiplicative = Enum.find(sites, &(&1.mutated_code =~ "u.a * u.b" and &1.mutator == :ecto))
+      assert multiplicative.note =~ "not ±1"
     end
 
     test "a coalesce drop carries its NULL-data note on both delivery paths" do
@@ -547,6 +616,38 @@ defmodule Mutare.Ecto.ConfigTest do
 
       assert join.note ==
                "kill may require an orphan row — a preserved-side row with no match (join kinds coincide when every row matches)"
+    end
+
+    test "tagged/1 only relays an already-final Mutation when it actually carries a producer" do
+      # `tagged/1`'s `%Mutation{producer: producer} = relayed when not is_nil(producer)` clause is
+      # the *only* clause that can ever match a bare `%Mutation{}` struct (the other two clauses
+      # match plain `{family, node}`/`{family, node, finer}` tuples) — so it isn't merely narrowing
+      # an already-Mutation-shaped input, it's the contract that every relayed struct reaching here
+      # is producer-set (as every real caller — `Mutare.Ecto.Dynamic`'s island sub-contract —
+      # guarantees). A producer-less Mutation is a contract violation, and should fail loudly
+      # rather than quietly pass through unrelayed.
+      spec = Mutare.Mutator.Spec.for_module(Mutare.Mutators.Arithmetic)
+      relayed = Mutare.Mutator.Mutation.new(quote(do: 1 + 1), producer: spec)
+      assert Mutare.Ecto.Config.tagged(relayed) == relayed
+
+      producerless = Mutare.Mutator.Mutation.new(quote(do: 1 + 1))
+
+      assert_raise FunctionClauseError, fn ->
+        Mutare.Ecto.Config.tagged(producerless)
+      end
+    end
+
+    test "finalize/2 resolves the equivalence note from the *first* finer label, not the last" do
+      # No real producer currently emits more than one finer label for an equivalence-sensitive
+      # family (`:comparison`'s is always a single operator string), so this is a contract pin, not
+      # an observed-in-the-wild shape: construct a variant whose finer list disagrees between its
+      # first (">",  the default boundary note) and last ("==", the NULL-exclusion note) label, and
+      # confirm the first one wins.
+      context = %{config: Mutare.Ecto.Config.parse!([])}
+      mutation = Mutare.Mutator.Mutation.new(quote(do: 1 > 2), variant: [:comparison, ">", "=="])
+
+      assert %Mutare.Mutator.Mutation{note: note} = Mutare.Ecto.Config.finalize(mutation, context)
+      assert note =~ "a row whose value sits exactly on the bound"
     end
   end
 

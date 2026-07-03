@@ -62,6 +62,15 @@ defmodule Mutare.Ecto.Host do
       if Surface.bound?(entry.key) do
         bound_from_target(entry, index)
       else
+        # `index + 1` includes the current entry itself in the truncated list handed to
+        # `Bindings.from/2` — harmless because a *hostable* key (`where`/`having`/`on`,
+        # `Surface.from_clause?(_, :hosted)`) never also carries `:join_binding`, so the current
+        # entry never itself contributes a binding; only the join entries *before* it (already
+        # included at `index - 1` and below) matter. Dropping to `index + 0` is therefore
+        # equivalent given every current descriptor — hence the ignore below — while going the
+        # other way (`index + 2`, pulling in a *future* join) is a real bug (see "each join
+        # condition sees bindings introduced up to that join, not future joins" in host_test.exs).
+        # mutare:ignore[literal:pred] equivalent: the current entry never contributes a binding
         bindings = Bindings.from(source, %{clauses | entries: Enum.take(entries, index + 1)})
         from_target({entry, index}, bindings, {opts, context}, hostable_on)
       end
@@ -118,12 +127,28 @@ defmodule Mutare.Ecto.Host do
   defp bound_target(macro, [_ | _] = args) do
     with true <- Surface.bound?(macro),
          [_ | _] = mutants <- Catalog.bounds(List.last(args)) do
+      # `length(args) - 1` is always the bound's own (last) position, since `limit`/`offset` are
+      # arity-1 (piped) or arity-2 (direct) macros — never more. `List.replace_at/3` (which
+      # consumes this index in `Target.bound_argument/3`) treats a negative index as counting
+      # from the end, so the operand-swapped `1 - length(args)` still lands on the same last
+      # element for both possible arities (0 for arity 1, -1 for arity 2) — equivalent given the
+      # macros' fixed arity, not a real index bug.
+      # mutare:ignore[operand_swap] equivalent: List.replace_at/3's negative index still hits the last element
       [Target.bound_argument(List.last(args), mutants, length(args) - 1)]
     else
       _ -> []
     end
   end
 
+  # Unreachable through `host/2`'s real calling contract: `Host.host/2` is only invoked once
+  # `Mutare.Transform.Analyze.Macros.attach_hosted_candidates/5` (core) already found a `:hosted`
+  # position via routing — and for a `:clause` macro, routing marks `:hosted` only when
+  # `Surface.bound?(macro) and bound_literal?(List.last(args))`, which itself requires a
+  # non-empty `args`. So by the time core calls `bound_target/2`, `args` always matches the
+  # `[_ | _]` clause above; this fallback is a defensive totality guard against args ever being
+  # `[]` (a degenerate `limit()`), not a reachable branch — kept for safety if that calling
+  # contract ever loosens.
+  # mutare:ignore[clause_drop] unreachable: core only calls host/2 after routing confirms a non-empty, literal-bound arg list
   defp bound_target(_macro, _args), do: []
 
   defp join_target(args, config, context) do

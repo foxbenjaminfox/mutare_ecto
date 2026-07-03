@@ -216,6 +216,7 @@ defmodule Mutare.Ecto.Fragment do
       |> Enum.flat_map(&Map.keys/1)
       |> Enum.map(&to_string/1)
 
+    # mutare:ignore[operand_swap] equivalent — the result is consumed as a set of known labels, never order-sensitive
     swap_ops ++ ~w(in element exists is_nil succ pred zero empty sentinel negate)
   end
 
@@ -245,6 +246,7 @@ defmodule Mutare.Ecto.Fragment do
   defp do_mutants({:not, meta, [{:in, imeta, [_l, _r] = iargs} = inner]}, opts, _position) do
     [
       {:membership, inner, "in"}
+      # mutare:ignore[operand_swap] equivalent — two independent mutant lists, consumed as a set
       | rewrap(element_drops(inner) ++ lift(:in, imeta, iargs, opts), meta)
     ]
   end
@@ -254,6 +256,7 @@ defmodule Mutare.Ecto.Fragment do
   defp do_mutants({:in, meta, [_l, _r] = args} = node, opts, _position) do
     [
       {:membership, {:not, [], [node]}, "in"}
+      # mutare:ignore[operand_swap] equivalent — two independent mutant lists, consumed as a set
       | element_drops(node) ++ lift(:in, meta, args, opts)
     ]
   end
@@ -296,6 +299,7 @@ defmodule Mutare.Ecto.Fragment do
   # A Sourceror block wrapping a written list argument is transparent syntax: thread the incoming
   # position through, so the list's elements keep the parent *call's* position (a
   # `json_extract_path` path element must know it is one — see `json_path_position?/1`).
+  # mutare:ignore[guard_drop] equivalent — the literal clause above already claims every non-list scalar Sourceror wraps in a single-element block (int/float/binary/atom), so by clause order only a genuine list ever reaches here regardless of this guard
   defp do_mutants({:__block__, meta, [list]}, opts, position) when is_list(list) do
     for {family, mutated, label} <- do_mutants(list, opts, position),
         do: {family, {:__block__, meta, [mutated]}, label}
@@ -383,6 +387,7 @@ defmodule Mutare.Ecto.Fragment do
   # dropped when the atom already is the sentinel. `true`/`false` are BooleanLiteral's (above) and
   # `nil` is excluded — it is NULL/absence, with no clean swap.
   defp literal_mutants({:__block__, _meta, [atom]})
+       # mutare:ignore[literal] equivalent — the preceding is_boolean/1 clause already claims every true/false atom, so by clause order neither value can ever reach this guard regardless of which of the two is named here
        when is_atom(atom) and atom not in [true, false, nil] and atom != @atom_sentinel,
        do: [{:atom_literal, Mutare.AST.literal(@atom_sentinel), "sentinel"}]
 

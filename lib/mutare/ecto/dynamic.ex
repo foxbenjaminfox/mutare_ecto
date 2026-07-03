@@ -67,6 +67,7 @@ defmodule Mutare.Ecto.Dynamic do
         for {family, mutated, label} <- catalog(condition, config),
             do: {family, QueryCall.replace_arg(call, index, mutated), label}
 
+      # mutare:ignore[operand_swap] equivalent — two independent mutant lists, consumed as a set
       own ++ subcontracted(condition, call, index, context)
     else
       _ -> []
@@ -87,6 +88,7 @@ defmodule Mutare.Ecto.Dynamic do
   # dispatched tag (`Config.tagged/1`) and core's finalize pass (`Mutare.Ecto.finalize/2`)
   # applies the `families:` filter and the equivalence note.
   defp catalog(condition, config),
+    # mutare:ignore[operand_swap] equivalent — two independent mutant catalogs, consumed as a set
     do: Fragment.mutants(condition, config) ++ Aggregate.swaps(condition)
 
   # The island sub-contract, through the same seam the host uses

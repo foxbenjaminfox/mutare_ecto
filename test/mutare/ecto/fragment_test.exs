@@ -139,6 +139,20 @@ defmodule Mutare.Ecto.FragmentTest do
                ])
     end
 
+    test "a non-list literal right-hand side has no elements to drop, never crashes" do
+      # `element_drops/1`'s clause structurally matches any `x in <wrapped-literal>` — including a
+      # right-hand side that *isn't* a list, an unusual shape but syntactically valid AST — and its
+      # body assumes a list (`length/1`, `List.delete_at/2`). Without the `when is_list(elems)`
+      # guard this raises `ArgumentError` instead of degrading to "no drops"; the polarity flip and
+      # the literal's own value mutants still fire as usual.
+      assert mutants(~s|u.x in "abc"|) ==
+               MapSet.new([
+                 ~s|u.x not in "abc"|,
+                 ~s|u.x in ""|,
+                 ~s|u.x in "mutare"|
+               ])
+    end
+
     test "exists polarity flips both ways as a unit" do
       # The subquery cousin of the `in` flip. The argument (a whole subquery) is left raw — its
       # internals are their own routed query, not this condition's syntax — so no double negation
@@ -272,6 +286,35 @@ defmodule Mutare.Ecto.FragmentTest do
       assert Enum.sort(labels) == ["pred", "zero"]
     end
 
+    test "distinct-value literal mutants stay in candidate (succ, pred, zero) order" do
+      # `value_mutants/3` documents itself as order-stable: each newly-seen value is appended, not
+      # prepended, to the accumulator. `u.age > 1` sees `succ` (2) first, then `pred`/`zero` (both
+      # 0, merging into one entry) — pin the *un-sorted* order so an accumulator that prepends
+      # instead of appends (reversing which value comes first) is caught.
+      ordered =
+        "u.age > 1"
+        |> Sourceror.parse_string!()
+        |> Fragment.mutants()
+        |> Enum.filter(fn {family, _node, _label} -> family == :integer_literal end)
+        |> Enum.map(fn {_family, node, _label} -> Sourceror.to_string(node) end)
+
+      assert ordered == ["u.age > 2", "u.age > 0"]
+    end
+
+    test "a value's merged kind labels stay in first-seen order (pred before zero)" do
+      # The same collision as above, but pinning the *label list's* internal order: `pred` (from
+      # `n - 1`) is seen before `zero` (the sentinel), so the merged entry is `["pred", "zero"]`,
+      # not `["zero", "pred"]` — catches a kind-merge that prepends instead of appending.
+      labels =
+        "u.age > 1"
+        |> Sourceror.parse_string!()
+        |> Fragment.mutants()
+        |> Enum.find(fn {_family, node, _label} -> Sourceror.to_string(node) == "u.age > 0" end)
+        |> elem(2)
+
+      assert labels == ["pred", "zero"]
+    end
+
     test "a pinned interpolation is left to core (no literal mutant)" do
       # `^min_age` is ordinary Elixir bound upstream — the catalog only swaps the operator.
       assert mutants("u.age > ^min_age") == MapSet.new(["u.age >= ^min_age"])
@@ -323,6 +366,10 @@ defmodule Mutare.Ecto.FragmentTest do
       assert mutants("u.status == :mutare") == MapSet.new(["u.status != :mutare"])
     end
 
+    test "the atom mutant is labelled sentinel" do
+      assert labels("u.status == :active") == MapSet.new(["==", "sentinel"])
+    end
+
     test "true / false are BooleanLiteral's, not atoms; nil is left alone" do
       # The atom arm excludes them — booleans get the true↔false flip below, and `nil` (NULL/
       # absence) carries no atom mutant, only the operator swap.
@@ -350,6 +397,10 @@ defmodule Mutare.Ecto.FragmentTest do
 
     test "nil is not a boolean — it yields no boolean mutant" do
       assert :boolean_literal not in families("u.x == nil")
+    end
+
+    test "the boolean flip is labelled negate" do
+      assert labels("u.active == true") == MapSet.new(["==", "negate"])
     end
   end
 
@@ -631,6 +682,61 @@ defmodule Mutare.Ecto.FragmentTest do
                  "selected_as(:total) > 3",
                  "selected_as(:total) > 1",
                  "selected_as(:total) > 0"
+               ])
+    end
+
+    test "a JSON bracket path index's boundary bumps land exactly on succ/pred/zero" do
+      # Index `1` makes `pred` (0) and the `zero` sentinel collide (both 0) while `succ` (2) stays
+      # distinct — isolating the family's own `int + 1` / `int - 1` / `0` literals, the `value >=
+      # 0` filter, and the dedup-merge from the RHS string's unrelated family. Comparing against a
+      # string RHS (not another integer) keeps the two literal families from overlapping.
+      assert mutants(~s|u.meta["k"][1] == "z"|) ==
+               MapSet.new([
+                 ~s|u.meta["k"][1] != "z"|,
+                 ~s|u.meta["k"][2] == "z"|,
+                 ~s|u.meta["k"][0] == "z"|,
+                 ~s|u.meta[""][1] == "z"|,
+                 ~s|u.meta["mutare"][1] == "z"|,
+                 ~s|u.meta["k"][1] == ""|,
+                 ~s|u.meta["k"][1] == "mutare"|
+               ])
+
+      assert :integer_literal in families(~s|u.meta["k"][1] == "z"|)
+
+      # The merged entry (index 0) carries both kind labels, first-seen order; the lone succ entry
+      # (index 2) carries just its own.
+      assert ["pred", "zero"] in labels(~s|u.meta["k"][1] == "z"|)
+      assert ["succ"] in labels(~s|u.meta["k"][1] == "z"|)
+    end
+
+    test "a JSON bracket path index's boundary bumps stay distinct without a collision" do
+      # Index `2`: succ/pred/zero (3, 1, 0) are all distinct and all non-negative, so every one of
+      # the family's three internal literals (`+ 1`, `- 1`, the `0` sentinel), the filter's `0`
+      # threshold, and the `>=` comparison itself each has to hold exactly for this set to survive
+      # unchanged — any single off-by-one there collapses two entries together or drops one.
+      assert mutants(~s|u.meta["k"][2] == "z"|) ==
+               MapSet.new([
+                 ~s|u.meta["k"][2] != "z"|,
+                 ~s|u.meta["k"][3] == "z"|,
+                 ~s|u.meta["k"][1] == "z"|,
+                 ~s|u.meta["k"][0] == "z"|,
+                 ~s|u.meta[""][2] == "z"|,
+                 ~s|u.meta["mutare"][2] == "z"|,
+                 ~s|u.meta["k"][2] == ""|,
+                 ~s|u.meta["k"][2] == "mutare"|
+               ])
+    end
+
+    test "selected_as/2's alias name (arg 1) is never mutated — the same rule as the /1 form" do
+      # `selected_as(named_expr, :mutare)` references an alias no select defined — an unknown-alias
+      # error, not a mutant. The expression and the surrounding comparison keep their full
+      # treatment.
+      assert mutants("selected_as(u.total, :grand_total) > 2") ==
+               MapSet.new([
+                 "selected_as(u.total, :grand_total) >= 2",
+                 "selected_as(u.total, :grand_total) > 3",
+                 "selected_as(u.total, :grand_total) > 1",
+                 "selected_as(u.total, :grand_total) > 0"
                ])
     end
 

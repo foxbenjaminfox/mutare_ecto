@@ -21,6 +21,7 @@ defmodule Mutare.Ecto.Host.Bindings do
         # contiguous slot. Only a *literal* queryable (`x in Schema`, `x in "table"`, `x in {"t", S}`)
         # has no hidden bindings — its joins follow contiguously, so it must *not* anchor.
         {:in, _, [lhs, rhs]} -> {declarations(lhs), composed_source?(rhs)}
+        # mutare:ignore[literal] equivalent — a non-binding source always yields source_decls: [], which forces `join_anchor/4`'s `source_positional == []` disjunct regardless of composed?, so this default is never actually consulted
         _ -> {[], false}
       end
 
@@ -37,6 +38,7 @@ defmodule Mutare.Ecto.Host.Bindings do
   def join(args) do
     with {index, %BindingList{} = list} <- BindingList.find(args),
          binding_list = declarations(list),
+         # mutare:ignore[literal, arithmetic] equivalent — a written join binding list is always preceded by an explicit qualifier atom (Elixir can't skip a middle default arg), and neither an atom nor the binding list itself ever matches the {:in, _, [_, _]} shape Enum.find searches for, so any of these drop counts land on the same first real match
          {:in, _, [lhs, _source]} <- Enum.find(Enum.drop(args, index + 1), &join_expression?/1),
          [_ | _] = join_declarations <- declarations(lhs) do
       # A standalone `join` always composes an external query, so the new binding anchors to the tail.
@@ -91,6 +93,7 @@ defmodule Mutare.Ecto.Host.Bindings do
   # membership expression, possibly referencing only named bindings — is hosted; the catalog then
   # decides whether there is anything to mutate.
   @spec bindingless_condition([Macro.t()]) :: {[], Macro.t(), non_neg_integer()} | nil
+  # mutare:ignore[clause_drop] equivalent — dropping this leaves `Enum.at([], -1)` (nil) as the "condition", and Host.Catalog.mutants/3 (via Fragment.mutants's total catch-all clause) already returns [] for `nil`, so `Host.condition_target/3`'s own `[_ | _] = mutants` guard rejects it downstream regardless
   defp bindingless_condition([]), do: nil
 
   defp bindingless_condition(args) do
@@ -99,10 +102,16 @@ defmodule Mutare.Ecto.Host.Bindings do
     if hostable_bare_condition?(condition), do: {[], condition, index}, else: nil
   end
 
+  # Every excluded shape here (a top-level `^` pin, a bare variable) also reaches
+  # `Mutare.Ecto.Fragment.mutants/2`'s own total catch-all clause and yields no catalog mutants
+  # there, so `Mutare.Ecto.Host`'s `[_ | _] = mutants` guard rejects it downstream regardless of
+  # what this predicate answers — hence the ignores below.
   defp hostable_bare_condition?(node) do
     case unwrap_block(node) do
       list when is_list(list) -> false
+      # mutare:ignore[literal, atom] equivalent — see the moduledoc comment above
       {:^, _meta, _args} -> false
+      # mutare:ignore[conditional] equivalent — see the moduledoc comment above
       other -> not Binding.variable?(other)
     end
   end
@@ -121,6 +130,7 @@ defmodule Mutare.Ecto.Host.Bindings do
   defp locate(args) do
     with {binding_index, binding_list} <- BindingList.find(args),
          condition_index = binding_index + 1,
+         # mutare:ignore[relational, conditional] equivalent — loosening/dropping this check just lets an out-of-range condition_index through; Enum.at/2 then returns nil for it, and (as with hostable_bare_condition?/1 above) a nil condition still yields no catalog mutants downstream, so no target is produced either way
          true <- condition_index < length(args) do
       {binding_index, binding_list, condition_index}
     else
@@ -139,9 +149,17 @@ defmodule Mutare.Ecto.Host.Bindings do
     end
   end
 
+  # mutare:ignore[pattern_swap] equivalent — the body only ever uses `var` as the whole matched term, and the guard (`is_atom` of both positions) is symmetric, so which head-bound name aliases which tuple position is unobservable
   defp declaration({name, _meta, ctx} = var) when is_atom(name) and is_atom(ctx),
     do: [Mutare.AST.clean_var(var)]
 
+  # Only `var` as a whole is used (pattern_swap: the guard is symmetric in name/ctx, so relabeling
+  # which sub-position binds to `name` vs `ctx` is unobservable), and every `{key, var}` entry this
+  # clause ever receives already passed `Mutare.Ecto.Binding.entry?/1`'s identical
+  # `is_atom(name) and is_atom(ctx)` check during `Mutare.Ecto.AST.BindingList.parse/1`'s
+  # validation (the only way a `%BindingList{}`'s entries are built), so the guard is always true
+  # by the time it's reached (logical/conditional).
+  # mutare:ignore[pattern_swap, logical, conditional] equivalent — see the comment above
   defp declaration({key, {name, _meta, ctx} = var}) when is_atom(name) and is_atom(ctx),
     do: [{Mutare.AST.keyword_key(AST.atom_value(key)), Mutare.AST.clean_var(var)}]
 
@@ -163,6 +181,7 @@ defmodule Mutare.Ecto.Host.Bindings do
   defp literal_queryable?({:__aliases__, _meta, _parts}), do: true
   defp literal_queryable?({:__block__, _meta, [inner]}), do: literal_queryable?(inner)
 
+  # mutare:ignore[pattern_swap] equivalent — `and` is commutative, so which head-bound name maps to which tuple position doesn't change the result
   defp literal_queryable?({source, schema}),
     do: literal_queryable?(source) and literal_queryable?(schema)
 
@@ -170,6 +189,8 @@ defmodule Mutare.Ecto.Host.Bindings do
   defp literal_queryable?(_node), do: false
 
   defp join_expression?({:in, _, [_lhs, _source]}), do: true
+
+  # mutare:ignore[clause_drop] equivalent — in every reachable call site (Bindings.join/1's Enum.find), the join's `x in Source` expression is positionally the first element checked after the binding list, so Enum.find always matches before this catch-all would ever run; kept as a total predicate for Enum.find's contract, not for an observed false case
   defp join_expression?(_node), do: false
 
   defp join_bindings(%KeywordList{entries: entries}) do

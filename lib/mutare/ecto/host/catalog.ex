@@ -28,6 +28,11 @@ defmodule Mutare.Ecto.Host.Catalog do
   @doc "The tagged logical mutants for a hosted condition (own catalogs + island sub-contract)."
   @spec mutants(Macro.t(), Config.t(), Mutare.Mutator.context()) :: [Mutare.Mutator.mutation()]
   def mutants(condition, config, context) do
+    # The two halves are independent mutant sets (own SQL-catalog swaps vs. sub-contracted pin
+    # interiors); concatenation order only affects which arbitrary branch id each ends up under
+    # in the woven `^`/`dynamic` selector, never which mutants are produced or how any one branch
+    # behaves — equivalent either way.
+    # mutare:ignore[operand_swap] equivalent: concatenation order of two independent mutant sets is not observable
     own(condition, config) ++ subcontracted(condition, context)
   end
 
@@ -49,6 +54,8 @@ defmodule Mutare.Ecto.Host.Catalog do
   # Pure production: each catalog tag becomes `Mutation.tagged(node, [family | finer])` — the
   # `config` threads to `Fragment` only for its `dialects:` gate.
   defp own(condition, config) do
+    # Same equivalence as `mutants/3` above: two independent catalogs, order not observable.
+    # mutare:ignore[operand_swap] equivalent: concatenation order of two independent mutant catalogs is not observable
     Enum.map(Fragment.mutants(condition, config) ++ Aggregate.swaps(condition), &Config.tagged/1)
   end
 

@@ -75,7 +75,7 @@ defmodule Mutare.Ecto.Host.Routing do
     # clauses (select/order_by/… — whole-`from`'s job), keys, and nil pairs are left raw.
     clause_treatment =
       case rest do
-        # mutare:ignore[if_condition] equivalent — a from's clause argument is always a keyword list in parsed Ecto; a non-list reaches here only via malformed AST
+        # mutare:ignore[guard_drop] equivalent — `clause_treatments/1` parses `clauses` via `KeywordList.parse/1`, which already returns `nil`/`[]` safely for a non-list, so dropping this guard doesn't crash or change behavior for malformed AST
         [clauses] when is_list(clauses) -> {:keyword, clause_treatments(clauses)}
         # `rest` is `[clauses]` for the usual `from(source, kw)`. It is `[]` for a clause-less
         # `from(Post)` (nothing to host) and anything else is malformed AST — both route `:skip`.
@@ -121,6 +121,7 @@ defmodule Mutare.Ecto.Host.Routing do
     base = query_threading_route(args)
 
     if Surface.bound?(name) and bound_literal?(List.last(args)) do
+      # mutare:ignore[operand_swap] equivalent — limit/offset are arity-1 (piped) or arity-2 (direct) macros only, and List.replace_at/3's negative index counts from the end, so `1 - length(args)` still lands on the same last element as `length(args) - 1` for both possible arities
       List.replace_at(base, length(args) - 1, :hosted)
     else
       base
@@ -214,6 +215,7 @@ defmodule Mutare.Ecto.Host.Routing do
         Enum.map(entries, fn entry ->
           cond do
             Surface.from_clause?(entry.key, :hosted) -> condition_treatment(entry.value)
+            # mutare:ignore[logical] equivalent — even a wrongly-:hosted non-literal bound produces no observable weave: `Mutare.Ecto.Host.Catalog.bounds/1` independently re-checks literal-ness and returns `[]` for a pin/expression, so `bound_from_target/2`'s target list is empty regardless of what this routing classification says
             Surface.bound?(entry.key) and bound_literal?(entry.value) -> :hosted
             true -> :skip
           end

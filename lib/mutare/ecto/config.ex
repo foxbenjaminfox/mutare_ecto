@@ -324,6 +324,9 @@ defmodule Mutare.Ecto.Config do
   defp validate_option_keys!(opts) do
     case Keyword.keys(opts) -- @valid_options do
       [] ->
+        # Called only for its raise-or-not side effect in parse!/1 — the return value is
+        # never bound or used, so its exact shape is unobservable.
+        # mutare:ignore[return_value, convention] equivalent — the return value is discarded by every caller
         :ok
 
       unknown ->
@@ -333,6 +336,7 @@ defmodule Mutare.Ecto.Config do
     end
   end
 
+  # mutare:ignore[clause_drop] equivalent — the general clause below matches [] too (is_list([]) and [] -- @valid_dialects == []) and returns MapSet.new([]), the same empty set
   defp parse_dialects!([]), do: @empty_dialect_set
 
   defp parse_dialects!(dialects) when is_list(dialects) do
@@ -351,6 +355,7 @@ defmodule Mutare.Ecto.Config do
     raise ArgumentError, "Mutare.Ecto :dialects must be a list, got: #{inspect(other)}"
   end
 
+  # mutare:ignore[clause_drop] equivalent — nil is an atom, so the clause below would handle it via Mutare.Calls.module_key(nil), which itself returns nil unchanged (Macro.classify_atom(nil) isn't :alias)
   defp parse_repo!(nil), do: nil
   defp parse_repo!(module) when is_atom(module), do: Mutare.Calls.module_key(module)
 

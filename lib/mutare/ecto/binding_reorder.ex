@@ -42,6 +42,7 @@ defmodule Mutare.Ecto.BindingReorder do
   # and aliased (`Q.select`) forms reorder exactly like the bare/imported one; `rebuild` re-emits the
   # swap in the source's written form.
   def mutations(%QueryCall{name: macro} = call, _context) do
+    # mutare:ignore[if_condition] equivalent — Dispatcher only ever calls BindingReorder.mutations/2 for a macro of kind :condition/:join/:clause/:dynamic (via either dispatch path), which is exactly Surface.binding_list_macro?/1's true set, so the guard always holds when reached
     if Surface.binding_list_macro?(macro), do: reorders(call), else: []
   end
 

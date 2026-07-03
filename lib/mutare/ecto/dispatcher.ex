@@ -49,10 +49,12 @@ defmodule Mutare.Ecto.Dispatcher do
   # (`BindingReorder`), exactly like the other binding-list macros — its operator/literal swaps are
   # the host's job, but the binding list is an ordinary argument, so it never needs the host.
   defp query_macro_mutations(:condition, %QueryCall{node: node} = call, context),
+    # mutare:ignore[operand_swap] equivalent — two independent sub-mutator result lists, consumed as a set
     do: BindingReorder.mutations(call, context) ++ ClauseDrop.mutations(node, context)
 
   defp query_macro_mutations(kind, %QueryCall{node: node} = call, context)
        when kind in [:clause, :join] do
+    # mutare:ignore[operand_swap] equivalent — three independent sub-mutator result lists, consumed as a set regardless of concatenation grouping/order
     Clause.mutations(call, context) ++
       BindingReorder.mutations(call, context) ++ ClauseDrop.mutations(node, context)
   end
@@ -61,6 +63,7 @@ defmodule Mutare.Ecto.Dispatcher do
   # in-fragment SQL mutants are whole-call rewrites (`Dynamic`), and its written binding list
   # reorders in place (`BindingReorder`) — but it threads no query, so it never stage-drops.
   defp query_macro_mutations(:dynamic, call, context),
+    # mutare:ignore[operand_swap] equivalent — two independent sub-mutator result lists, consumed as a set
     do: Dynamic.mutations(call, context) ++ BindingReorder.mutations(call, context)
 
   defp query_macro_mutations(_kind, _node, _context), do: []
@@ -87,6 +90,7 @@ defmodule Mutare.Ecto.Dispatcher do
     do: Changeset.mutations(node, context)
 
   defp call_mutations({module, _name, _args, _rebuild}, node, context) do
+    # mutare:ignore[conditional] equivalent — RepoAggregate/RepoWrite's own RepoCall.resolve/2 independently re-verifies the module match and yields no mutation for a mismatch either way, so skipping the invoke/2 call here is a pure optimization, not an observable difference
     if module == context |> Config.from_context() |> Config.repo_key() do
       invoke([RepoAggregate, RepoWrite], node, context)
     else

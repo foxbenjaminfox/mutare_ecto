@@ -125,6 +125,29 @@ defmodule Mutare.Ecto.HostTest do
       assert_compiles(src)
     end
 
+    test "a mixed positional+named source over a literal schema still anchors (composed? false)" do
+      # The test above rebinds a *composed* `base` (a bound variable), so `composed?` is already
+      # true there and never isolates the `source_named != []` disjunct on its own. Here the source
+      # is the literal schema `Post` (`composed?` is false), so anchoring must come from the named
+      # rebind alone — proving the disjunct fires independent of `composed?`.
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q do
+          from [a, post: p] in Post,
+            inner_join: j in Comment,
+            on: j.user_id == a.id,
+            where: j.views > 1,
+            select: j.id
+        end
+      end
+      """
+
+      assert metamutant(src) =~ "dynamic([a, ..., j, post: p]"
+      refute metamutant(src) =~ "dynamic([a, j, post: p]"
+      assert_compiles(src)
+    end
+
     test "a positional-only source with a join anchors to the tail (composed query)" do
       # `[a, b] in base` rebinds base's *leading* bindings, but base is an external query that can
       # carry more bindings the host can't see — so an appended join lands at the tail, not
@@ -250,6 +273,29 @@ defmodule Mutare.Ecto.HostTest do
       end
     end
 
+    test "a tuple source with a dynamic table name (non-literal source half) still anchors a join" do
+      # `{table_var, Post}` — a dynamic table name paired with a literal schema — is *not* a
+      # literal queryable overall: `literal_queryable?/1`'s tuple clause requires *both* halves
+      # literal (`and`), so a bound-variable table name still marks the source opaque and the
+      # appended join anchors to the tail, exactly as a bound-variable/function-call source does.
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q(table_var) do
+          from a in {table_var, Post},
+            inner_join: j in Comment,
+            on: j.post_id == a.id,
+            where: j.views > a.views,
+            select: j.id
+        end
+      end
+      """
+
+      assert metamutant(src) =~ "dynamic([a, ..., j]"
+      refute metamutant(src) =~ "dynamic([a, j]"
+      assert_compiles(src)
+    end
+
     test "an explicit `...` in a from source rebind is preserved" do
       # `[..., c] in query` declares `c` as the query's *last* binding. Dropping the `...` (the old
       # behavior) re-binds `c` to position 0 — the same baseline-corruption class as the named-rebind
@@ -331,6 +377,30 @@ defmodule Mutare.Ecto.HostTest do
       """
 
       assert metamutant(src) =~ "dynamic([..., j]"
+      assert_compiles(src)
+    end
+
+    test "a bare literal source (no binding form at all) still anchors an appended join" do
+      # Unlike the case above, `composed?` is *false* here (`"posts"` is a literal queryable, not a
+      # bound query variable) — this isolates the `source_positional == []` disjunct on its own:
+      # a source written with no `x in` binding form at all occupies binding position 0 anonymously
+      # (nothing to declare), so an appended join still can't be assumed contiguous at position 0 and
+      # must anchor, even though the source itself is perfectly literal/non-composed.
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q do
+          from "posts",
+            inner_join: j in Post,
+            on: j.user_id == 1,
+            where: j.views > 1,
+            select: j.id
+        end
+      end
+      """
+
+      assert metamutant(src) =~ "dynamic([..., j]"
+      refute metamutant(src) =~ "dynamic([j]"
       assert_compiles(src)
     end
 
@@ -613,6 +683,28 @@ defmodule Mutare.Ecto.HostTest do
     end
   end
 
+  describe "totality — a degenerate zero-arg bound macro yields no hosted target" do
+    # A piped `limit()`/`offset()` with no explicit argument never reaches `Host.host/2` at all:
+    # core's routing (`Host.Routing`) requires a literal-bound last argument to mark a position
+    # `:hosted`, and an empty `args` has none — so the call is never even offered to the host
+    # (`bound_target/2`'s own `bound_target(_macro, _args), do: []` fallback clause is therefore
+    # unreachable dead code under the current calling contract, `# mutare:ignore`d at its
+    # definition). This test instead pins the routing-level behavior: the degenerate call
+    # produces no hosted mutation and no crash.
+    test "a piped limit()/offset() with no explicit argument hosts nothing, never crashes" do
+      for code <- ["limit()", "offset()"] do
+        src = """
+        defmodule M do
+          import Ecto.Query
+          def q(query), do: query |> #{code}
+        end
+        """
+
+        assert hosted(src) == []
+      end
+    end
+  end
+
   describe "nothing hostable" do
     test "a bindingless from carries no hosted dynamic (clauses are shorthand data)" do
       src = """
@@ -671,6 +763,26 @@ defmodule Mutare.Ecto.HostTest do
       assert_compiles(src)
     end
 
+    test "an on: clause with no owning join (malformed) hosts nothing, never crashes" do
+      # `group_on/2` groups each `on:` under the *preceding* join clause; an `on:` with no join
+      # before it groups under a `nil` key. `hostable_group/1`'s `{nil, _on_indices}` clause is
+      # the only one that can ever match a `nil` group (the other two require a real `{join_index,
+      # value}` tuple) — dropping it would crash with a `FunctionClauseError` instead of correctly
+      # treating the clause as unhostable. Ecto itself rejects this at expansion ("on keyword must
+      # immediately follow a join"), so this is a scan-only check — no `assert_compiles`.
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q do
+          from u in User, on: u.x == 1, select: u.id
+        end
+      end
+      """
+
+      assert hosted(src) == []
+      refute metamutant(src) =~ "dynamic("
+    end
+
     test "an `assoc` join (implicit on) with an explicit `on:` is not hosted" do
       src = """
       defmodule M do
@@ -704,6 +816,41 @@ defmodule Mutare.Ecto.HostTest do
       # The stage-drop mutants (collapse a stage to `identity()`) still fire; the guard is that the
       # `on:` weaves no `^dynamic` — were it hosted, a `dynamic(` would appear in the metamutant.
       refute metamutant(src) =~ "dynamic("
+      assert_compiles(src)
+    end
+
+    test "a standalone join with two `on:` keys is not hosted" do
+      # The standalone/pipe twin of the from-keyword "two on: keys" case above
+      # (`JoinOn.hostable_standalone?/2`'s own `Enum.count(..., :on) == 1` guard).
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q(query) do
+          query
+          |> join(:inner, [u], p in Post, on: p.a == 1, on: p.b == 2)
+        end
+      end
+      """
+
+      refute metamutant(src) =~ "dynamic("
+      assert_compiles(src)
+    end
+
+    test "a standalone join finds `on:` among other keyword options, not just the first" do
+      # `Enum.find_index(options.entries, &(&1.key == :on))` must locate `:on` wherever it sits in
+      # the trailing keyword options — here behind `as:` — not assume it's the first entry.
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q(query) do
+          query
+          |> join(:inner, [u], p in Post, as: :p, on: p.user_id == u.id)
+        end
+      end
+      """
+
+      assert {"p.user_id == u.id", "p.user_id != u.id"} in hosted(src)
+      assert metamutant(src) =~ "dynamic("
       assert_compiles(src)
     end
 
@@ -990,6 +1137,16 @@ defmodule Mutare.Ecto.HostTest do
       assert routing("where(query, [..., c], c.x == c.y)") == [:expression, :skip, :hosted]
     end
 
+    test "a qualified Ecto.Query call that isn't a query builder is not the threaded query" do
+      # `Ecto.Query.exclude/2` resolves to the `Ecto.Query` module (so `qualified_query_builder?/1`
+      # reaches `Surface.query_builder?/1`) but isn't one of the registered query-builder macro
+      # names — unlike `Ecto.Query.where(...)` or a nested `from(...)`, so it must route `:skip`,
+      # not `:expression` (which would let core descend into its own arguments as if it were the
+      # threaded query).
+      assert routing("where(Ecto.Query.exclude(query, :order_by), [u], u.x == u.y)") ==
+               [:skip, :skip, :hosted]
+    end
+
     test "condition macro with no condition after the binding list hosts nothing" do
       # condition_index requires an argument *after* the binding list, so a binding-only call
       # never marks a position `:hosted`.
@@ -1033,8 +1190,42 @@ defmodule Mutare.Ecto.HostTest do
                [:skip, :skip, :skip, :hosted]
     end
 
+    test "join with no on: key at all keeps its trailing options raw" do
+      assert routing("join(query, :inner, [u], p in Post, as: :p)") ==
+               [:expression, :skip, :skip, :skip, :skip]
+    end
+
     test "a non-routing macro yields []" do
       assert routing("foobar(query, 1)") == []
+    end
+
+    test "a node with no macro/call shape at all yields [] (the total catch-all)" do
+      # A bare 2-tuple literal doesn't match `{macro, meta, args}` (a 3-tuple) at all — every
+      # top-level scalar/list Sourceror parses gets wrapped in a 3-element `__block__`, so this is
+      # the one realistic shape that reaches `treatments/1`'s final catch-all clause.
+      assert routing("{1, 2}") == []
+    end
+
+    test "a bare variable that happens to share a query-macro name never crashes" do
+      # `{macro, meta, args}` also matches a bare *variable* reference (`args` is `nil`, not a
+      # list) — e.g. a local variable literally named `where`. Without the `is_list(args)` guard,
+      # a name that collides with a registered macro (`Surface.macro_kind(:where) == :condition`)
+      # would reach `route_macro/3` with `args: nil` and crash in `query_threading_route/1` (which
+      # only matches `[]` or `[first | rest]`).
+      assert routing("where") == []
+    end
+
+    test "a clause-less from(Post) routes :skip (nothing to host)" do
+      assert routing("from(Post)") == [:skip]
+    end
+
+    test "a from with a malformed (non-list) second argument routes it :skip" do
+      # `rest` is `[clauses]` for the ordinary `from(source, kw)` shape; a non-list single trailing
+      # argument is malformed AST that still routes `:skip`, same as a clause-less `from(Post)` —
+      # but unlike the clause-less case (`rest = []`, where `List.duplicate(_, 0)` never places the
+      # computed value in the output at all), this shape actually has one position to fill, so it's
+      # the one that observes what the fallback branch's value actually is.
+      assert routing("from(Post, :not_a_list)") == [:skip, :skip]
     end
 
     test "an empty list is neither a binding list nor a shorthand keyword list" do

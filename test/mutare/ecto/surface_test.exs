@@ -1,6 +1,7 @@
 defmodule Mutare.Ecto.SurfaceTest do
   use ExUnit.Case, async: true
 
+  import Mutare.Ecto.TestSupport
   alias Mutare.Ecto.Surface
 
   test "the descriptor table is the single macro-registration source" do
@@ -14,6 +15,21 @@ defmodule Mutare.Ecto.SurfaceTest do
     assert {:is_named_binding, :skip} in registrations
 
     assert Enum.count(registrations, fn {name, _routing} -> name == :join end) == 1
+  end
+
+  test "is_named_binding is entirely inert — its whole call is offered but yields no mutation" do
+    # Unlike `dynamic`, `is_named_binding`'s `:skip` registration still offers the whole call to
+    # `Mutare.Ecto.Dispatcher.mutations/2` (every `:skip`-registered macro does), but no Ecto
+    # sub-mutator claims a `:skip`-kind macro — `Dispatcher`'s `query_macro_mutations/3` catch-all
+    # degrades it to `[]` rather than crashing or accidentally delegating to some other family.
+    src = """
+    defmodule M do
+      import Ecto.Query
+      def q?(query), do: is_named_binding(query, :comments)
+    end
+    """
+
+    assert ecto_diffs(src) == []
   end
 
   test "dynamic registers :skip for core but keeps its own mutation surface" do
