@@ -15,6 +15,9 @@ defmodule HabitTracker.SearchTest do
 
   defp dates(filters), do: filters |> Search.check_ins() |> Enum.map(& &1.date)
 
+  defp highlighted(rules),
+    do: rules |> Search.highlighted_check_ins() |> Enum.map(&{&1.date, &1.count})
+
   test "no filters returns every check-in, newest first" do
     assert dates([]) == [~D[2024-03-10], ~D[2024-03-10], ~D[2024-03-09], ~D[2024-03-05]]
   end
@@ -43,5 +46,18 @@ defmodule HabitTracker.SearchTest do
              [~D[2024-03-10], ~D[2024-03-09], ~D[2024-03-05]]
 
     assert dates(habit: "Read", cadence: :weekly) == []
+  end
+
+  # Covers the free-standing `dynamic/2` path: each supported rule extends one
+  # predicate with `or`, and the finished predicate is spliced into a single
+  # `where(^predicate)`. The fixture puts rows exactly on both boundaries, so
+  # `>=` → `>` and `or` → `and` have observable effects.
+  test "highlights check-ins matching any dynamic rule" do
+    assert highlighted(since: ~D[2024-03-10], min_count: 5) ==
+             [{~D[2024-03-10], 3}, {~D[2024-03-10], 2}, {~D[2024-03-05], 5}]
+  end
+
+  test "highlight search with no supported rules returns no rows" do
+    assert Search.highlighted_check_ins(ignored: true) == []
   end
 end

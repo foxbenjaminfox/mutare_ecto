@@ -13,16 +13,18 @@ of Ecto:
   `validate_number`, `unique_constraint`, `assoc_constraint`.
 - **The query DSL** — `where` (with `in` membership and `and` / `or` / `not`
   connectives), `join` / `left_join`, `group_by`, `having`, `order_by` (including
-  an explicit `:desc_nulls_last` NULLS placement), `limit`, `is_nil`, aggregates
-  (`sum` / `avg` / `count` / `max`), scalar SQL (`coalesce`, `+` / `-`), `preload`.
+  an explicit `:desc_nulls_last` NULLS placement), `limit`, `is_nil`, `dynamic/2`,
+  aggregates (`sum` / `avg` / `count` / `max`), scalar SQL (`coalesce`, `+` / `-`),
+  `preload`.
 - **`Repo.aggregate`**, an **upsert** (`on_conflict`), and an **`Ecto.Multi`**
   transaction.
 - **Optimistic locking** — a `lock_version` column + `optimistic_lock/3`, so a
   concurrent (stale) update raises `Ecto.StaleEntryError` instead of clobbering.
 - **Composable, dynamically-built queries** — `HabitTracker.Search` folds a set
   of optional filters into a query with `Enum.reduce`, piping each one through
-  `where` / `join` / `limit`, and adds the `habits` join *once* on demand via
-  `with_named_binding/3`.
+  `where` / `join` / `limit`, adds the `habits` join *once* on demand via
+  `with_named_binding/3`, and separately builds a free-standing `dynamic/2`
+  predicate for highlight search.
 - **Ellipsis bindings** — `Stats.active_since/1` filters on the most-recently
   joined table with `where([..., c], ...)`, skipping the bindings ahead of it.
 
@@ -67,7 +69,7 @@ equivalence-sensitive ones is shortened here (the real run spells it out
 further):
 
 ```
-mutare: 104 mutants across 5 file(s)
+mutare: 115 mutants across 5 file(s)
 
 lib/habit_tracker/habit.ex:36  [ecto, in-place]  SURVIVED
 -    |> validate_length(:name, min: 2, max: 40)
@@ -89,7 +91,7 @@ lib/habit_tracker/tracker.ex:114  [ecto, in-place]  SURVIVED
 -      from(c in CheckIn, where: c.habit_id == ^habit.id, select: c.date)
 +      from(c in CheckIn, select: c.date)
 
-lib/habit_tracker/search.ex:59  [ecto, in-place]  SURVIVED
+lib/habit_tracker/search.ex:99  [ecto, in-place]  SURVIVED
 -  defp apply_filter({:until, date}, query), do: where(query, [check_in: c], c.date <= ^date)
 +  defp apply_filter({:until, date}, query), do: query
 
@@ -97,7 +99,7 @@ lib/habit_tracker/habit.ex:40  [ecto, in-place]  SURVIVED
 -    |> optimistic_lock(:lock_version)
 +    |> Elixir.Function.identity()
 
-mutation score: 67.0%  (67 killed, 33 survived, 4 no-coverage, 104 total)
+mutation score: 70.3%  (78 killed, 33 survived, 4 no-coverage, 115 total)
 ```
 
 The 33 survivors cluster into a few honest lessons.
@@ -155,7 +157,7 @@ row there — because the reasons differ (join cardinality versus a missing
 boundary value). That precision comes from the library reasoning in SQL's
 semantics, not Elixir's — the whole point of a dedicated Ecto mutator.
 
-### 5. A dynamically-built query, only partly driven
+### 5. Dynamically-built queries, only partly driven
 
 `HabitTracker.Search` assembles its query by folding filters in with
 `Enum.reduce`, so each filter is its *own* `where` / `join` / `limit` stage that
@@ -170,6 +172,11 @@ the mutator can drop independently. Two parts go unverified:
 
 That every filter is a separately-droppable stage is the point of the composable
 pipe form — and exactly the surface the Ecto mutator's pipe routing covers.
+`Search.highlighted_check_ins/1` is the sibling pattern: instead of many
+`where` stages, it folds rules into one free-standing `dynamic/2` predicate and
+splices that predicate into a single `where(^predicate)`. Its test puts rows on
+both dynamic boundaries (`since` and `min_count`), so comparison flips and the
+`or` connective swap are caught inside the rebuilt dynamic call.
 
 ### 6. A guard whose failure mode no test triggers
 
@@ -241,6 +248,10 @@ rows, in order:
   minimum count are each asserted to exact, ordered results, so dropping those
   `where`s or flipping their comparisons is caught — even though the query is
   built up one stage at a time.
+- `Search.highlighted_check_ins/1` — a free-standing `dynamic/2` predicate is
+  folded from optional rules and applied once. The test asserts the exact rows
+  matching either branch, so the dynamic comparison and connective mutants are
+  exercised directly.
 - `Stats.active_since/1` — the ellipsis-binding date filter (`where([..., c], ...)`)
   is pinned: a habit whose only check-in lands *on* the cutoff is asserted to be
   included, so `>=` → `>` is caught.

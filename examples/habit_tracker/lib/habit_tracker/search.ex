@@ -1,17 +1,24 @@
 defmodule HabitTracker.Search do
   @moduledoc """
-  Build a check-in query *dynamically*, one clause at a time.
+  Build check-in queries dynamically.
 
-  This is the composable, pipe-through-the-query-macros style of Ecto: start from
-  a base query and fold each filter in with `Enum.reduce`, so the SQL grows to fit
-  whatever filters were actually given. The two habit-attribute filters (`:habit`,
-  `:cadence`) need a join onto `habits` — added **once**, on demand, via
-  `with_named_binding/3` so combining them doesn't join twice.
+  `check_ins/1` is the composable, pipe-through-the-query-macros style of
+  Ecto: start from a base query and fold each filter in with `Enum.reduce`, so
+  the SQL grows to fit whatever filters were actually given. The two
+  habit-attribute filters (`:habit`, `:cadence`) need a join onto `habits` —
+  added **once**, on demand, via `with_named_binding/3` so combining them
+  doesn't join twice.
 
-  Because the query is assembled from the composable forms (`q |> where(...)`,
-  `q |> join(...)`, `q |> limit(...)`), it's exactly the surface the Ecto mutator's
-  pipe routing covers — drop a `where`, turn the `inner_join` into a `left_join`,
-  flip a comparison — each a question about whether a filter is really tested.
+  `highlighted_check_ins/1` shows the other dynamic style: build a
+  free-standing `dynamic/2` predicate one rule at a time, then splice the final
+  predicate into a single `where(^predicate)`. That is a distinct mutator path
+  from a normal `where` clause — the predicate is ordinary source until Ecto
+  receives it, so the Ecto mutator rebuilds the whole `dynamic` call in place.
+
+  Together, the two styles cover the query surface the Ecto mutator is built to
+  exercise: drop a `where`, turn an `inner_join` into a `left_join`, flip a
+  comparison inside `dynamic/2`, or swap an `or` for an `and` — each a question
+  about whether a filter is really tested.
   """
   import Ecto.Query
 
@@ -36,9 +43,42 @@ defmodule HabitTracker.Search do
     |> Repo.all()
   end
 
+  @doc """
+  Check-ins matching any highlight rule, newest and largest first.
+
+  Supported rules:
+
+    * `:since`     — checked in on or after this `Date`
+    * `:min_count` — a count of at least this
+
+  Unlike `check_ins/1`, this builds one free-standing `dynamic/2` predicate with
+  `or` branches and applies it once. Unknown rules are ignored; if no supported
+  rule is given, the starting `dynamic(false)` predicate returns no rows.
+  """
+  def highlighted_check_ins(rules \\ []) do
+    rules
+    |> Enum.reduce(dynamic(false), &highlight_predicate/2)
+    |> highlighted_query()
+    |> Repo.all()
+  end
+
   defp base_query do
     from(c in CheckIn, as: :check_in)
   end
+
+  defp highlighted_query(predicate) do
+    base_query()
+    |> where(^predicate)
+    |> order_by([check_in: c], desc: c.date, desc: c.count)
+  end
+
+  defp highlight_predicate({:since, date}, predicate),
+    do: dynamic([check_in: c], ^predicate or c.date >= ^date)
+
+  defp highlight_predicate({:min_count, count}, predicate),
+    do: dynamic([check_in: c], ^predicate or c.count >= ^count)
+
+  defp highlight_predicate(_ignored, predicate), do: predicate
 
   # One clause per filter, each piping the query through a query macro and handing
   # the grown query back to the reduce. The habit-attribute filters bring the join

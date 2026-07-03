@@ -7,7 +7,7 @@ gaps without needing an app of your own. Each is a real mix project with its own
 | Example | What it is | What it shows |
 | --- | --- | --- |
 | [`hello`](hello/) | A "hello world" — one schema, one changeset, three queries | The smallest end-to-end run: a comparison, a sort, a limit, a validation drop |
-| [`habit_tracker`](habit_tracker/) | A SQLite-backed habit-tracker CLI | The full catalog — joins, `group_by`/`having`, aggregates, scalar SQL (`coalesce`, arithmetic), `Ecto.Enum`, upserts, transactions, dynamically-built (`Enum.reduce`) queries — plus the SQL-equivalence annotations |
+| [`habit_tracker`](habit_tracker/) | A SQLite-backed habit-tracker CLI | The full catalog — joins, `group_by`/`having`, aggregates, scalar SQL (`coalesce`, arithmetic), `dynamic/2`, `Ecto.Enum`, upserts, transactions, dynamically-built (`Enum.reduce`) queries — plus the SQL-equivalence annotations |
 
 ## Running
 

@@ -4,7 +4,7 @@ defmodule HabitTracker.MixProject do
   # A command-line habit tracker that stores its data in a local SQLite file —
   # a deliberately Ecto-dense app to point the mutator at. It exercises schemas
   # and associations, `Ecto.Enum`, changeset validations, migrations, the query
-  # DSL (`where`/`join`/`group_by`/`having`/`order_by`/`limit`), aggregates,
+  # DSL (`where`/`join`/`group_by`/`having`/`order_by`/`limit`/`dynamic`), aggregates,
   # scalar SQL (`coalesce`, arithmetic), `Repo.aggregate`, an upsert
   # (`on_conflict`), and an `Ecto.Multi` transaction.
   #
