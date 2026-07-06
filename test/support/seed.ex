@@ -16,6 +16,9 @@ defmodule MyApp.Seed do
   #                                      the difference falls short; `age * 2 > 40` keeps Bob/Eve
   #                                      where the (integer-)division mutant keeps nobody.
   #   * Coalesce drop (score)          — Bob/Dave's NULL scores take the default the drop removes.
+  #   * FloatLiteral (rating)          — `rating > 2.5`→`> 3.5` drops Bob (3.0), the boundary row;
+  #                                      a float column, since Ecto rejects a float literal on the
+  #                                      integer `score`/`age` columns.
   #   * Temporal ago↔from_now (joined_at) — Frank joined *now* (between the two instants); everyone
   #                                      else ten days back (outside the window either way). Seeded
   #                                      at runtime in `populate!/1`, since the helpers are
@@ -34,12 +37,12 @@ defmodule MyApp.Seed do
   # query fixtures.
 
   @users [
-    %{id: 1, name: "Alice", age: 18, active: true, role: "admin", score: 100},
-    %{id: 2, name: "Bob", age: 25, active: true, role: "user", score: nil},
-    %{id: 3, name: "Carol", age: 17, active: false, role: "mod", score: 50},
-    %{id: 4, name: "Dave", age: 18, active: false, role: "user", score: nil},
-    %{id: 5, name: "Eve", age: 40, active: true, role: "admin", score: 0},
-    %{id: 6, name: "Frank", age: 19, active: true, role: "user", score: 70}
+    %{id: 1, name: "Alice", age: 18, active: true, role: "admin", score: 100, rating: 4.5},
+    %{id: 2, name: "Bob", age: 25, active: true, role: "user", score: nil, rating: 3.0},
+    %{id: 3, name: "Carol", age: 17, active: false, role: "mod", score: 50, rating: 2.5},
+    %{id: 4, name: "Dave", age: 18, active: false, role: "user", score: nil, rating: nil},
+    %{id: 5, name: "Eve", age: 40, active: true, role: "admin", score: 0, rating: 5.0},
+    %{id: 6, name: "Frank", age: 19, active: true, role: "user", score: 70, rating: 1.5}
   ]
 
   @posts [
@@ -99,6 +102,7 @@ defmodule MyApp.Seed do
         active INTEGER,
         role TEXT,
         score INTEGER,
+        rating REAL,
         joined_at TEXT
       )
       """,
