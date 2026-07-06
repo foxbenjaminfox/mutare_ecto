@@ -48,24 +48,17 @@ defmodule Mutare.Ecto.Clause do
   Standalone/pipe clause-macro mutations for `node` as self-tagging `{family, node, label}` entries
   (a swap family — order/aggregate — carries the finer operator/kind label), or `[]`.
   """
-  @spec mutations(Macro.t() | QueryCall.t(), Mutare.Mutator.context()) ::
-          [Mutare.Ecto.SubMutator.tagged()]
+  @spec mutations(QueryCall.t(), Mutare.Mutator.context()) :: [Mutare.Ecto.SubMutator.tagged()]
   @impl Mutare.Ecto.SubMutator
-  # Normalize the call (`Mutare.Ecto.AST.QueryCall.parse/1`) so the qualified (`Ecto.Query.order_by`)
-  # and aliased (`Q.order_by`) forms mutate exactly like the bare/imported one; `rebuild` re-emits each
-  # mutant in the source's written form. Each clause guards `args != []` to protect the
-  # `{init, [last]} = Enum.split(args, -1)` destructuring on a degenerate zero-arg macro node.
+  # `Mutare.Ecto.Dispatcher` normalizes the call (`Mutare.Ecto.AST.QueryCall.parse/1`) before
+  # calling here, so the qualified (`Ecto.Query.order_by`) and aliased (`Q.order_by`) forms mutate
+  # exactly like the bare/imported one; `rebuild` re-emits each mutant in the source's written
+  # form. Each clause guards `args != []` to protect the `{init, [last]} = Enum.split(args, -1)`
+  # destructuring on a degenerate zero-arg macro node.
   def mutations(%QueryCall{args: []}, _context), do: []
 
   def mutations(%QueryCall{name: macro} = call, _context) do
     Enum.flat_map(Surface.mutations(macro), &capability_mutations(&1, call))
-  end
-
-  def mutations(node, context) do
-    case QueryCall.parse(node) do
-      %QueryCall{} = call -> mutations(call, context)
-      nil -> []
-    end
   end
 
   defp capability_mutations(:ordering, call), do: mutate_last(call, &Ordering.flips/1)

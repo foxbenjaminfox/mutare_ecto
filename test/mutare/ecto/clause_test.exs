@@ -3,6 +3,9 @@ defmodule Mutare.Ecto.ClauseTest do
 
   import Mutare.Ecto.TestSupport
 
+  alias Mutare.Ecto.AST.QueryCall
+  alias Mutare.Transform.Meta
+
   # The standalone/pipe clause-macro mutations (`order_by`/`limit`/`offset` written as composable
   # calls, not `from` keywords). These ride `mutate/1` + Mutare's in-place selector — the macros
   # route through the `:routing` classifier (their data positions stay raw), but a routed node is
@@ -310,21 +313,24 @@ defmodule Mutare.Ecto.ClauseTest do
   end
 
   describe "totality — a degenerate zero-arg macro node yields no mutant, never a crash" do
-    # `mutations/1` is offered every node in the source, so each clause guards `args != []`: it
-    # protects the `{init, [last]} = Enum.split(args, -1)` destructuring, which would raise a
-    # MatchError on `[]` rather than returning the no-op `[]`. A bare `order_by()`/`limit()`/
-    # `select()` (no query, no value) is the degenerate node that exercises that guard.
+    # Every clause macro reaches `Clause.mutations/2` already normalized into a `%QueryCall{}` by
+    # `Mutare.Ecto.Dispatcher` (which parses the resolved, macro-identity-stamped node first), so
+    # each clause here guards `args != []` against that shape: it protects the
+    # `{init, [last]} = Enum.split(args, -1)` destructuring, which would raise a MatchError on `[]`
+    # rather than returning the no-op `[]`. A bare `order_by()`/`limit()`/`select()` (no query, no
+    # value) is the degenerate call that exercises that guard — built directly as a stamped
+    # `%QueryCall{}` (mirroring `Mutare.Ecto.NormalizedASTTest`) since a real zero-arg call has no
+    # matching macro arity to route through the full pipeline.
     test "an empty-args order_by / limit / select returns []" do
-      for code <- [
-            "order_by()",
-            "limit()",
-            "offset()",
-            "select()",
-            "select_merge()",
-            "intersect()"
-          ] do
-        assert Mutare.Ecto.Clause.mutations(Sourceror.parse_string!(code), %{}) == [],
-               "expected no mutant for #{code}"
+      for name <- [:order_by, :limit, :offset, :select, :select_merge, :intersect] do
+        {head, meta, args} = Sourceror.parse_string!("#{name}()")
+        meta = Meta.stamp_macro_call(meta, {Mutare.Calls.module_key(Ecto.Query), name, :unpiped})
+        call = QueryCall.parse({head, meta, args})
+
+        assert %QueryCall{name: ^name, args: []} = call
+
+        assert Mutare.Ecto.Clause.mutations(call, %{}) == [],
+               "expected no mutant for #{name}()"
       end
     end
   end

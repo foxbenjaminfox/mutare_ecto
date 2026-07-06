@@ -35,22 +35,14 @@ defmodule Mutare.Ecto.BindingReorder do
   @behaviour Mutare.Ecto.SubMutator
 
   @doc "Binding-reorder mutants for `node` as `{:binding_reorder, node}` pairs, or `[]`."
-  @spec mutations(Macro.t() | QueryCall.t(), Mutare.Mutator.context()) ::
-          [{:binding_reorder, Macro.t()}]
+  @spec mutations(QueryCall.t(), Mutare.Mutator.context()) :: [{:binding_reorder, Macro.t()}]
   @impl Mutare.Ecto.SubMutator
-  # Normalize the call (`Mutare.Ecto.AST.QueryCall.parse/1`) so the qualified (`Ecto.Query.select`)
-  # and aliased (`Q.select`) forms reorder exactly like the bare/imported one; `rebuild` re-emits the
-  # swap in the source's written form.
+  # `Mutare.Ecto.Dispatcher` normalizes the call (`Mutare.Ecto.AST.QueryCall.parse/1`) before
+  # calling here, so the qualified (`Ecto.Query.select`) and aliased (`Q.select`) forms reorder
+  # exactly like the bare/imported one; `rebuild` re-emits the swap in the source's written form.
   def mutations(%QueryCall{name: macro} = call, _context) do
-    # mutare:ignore[if_condition] equivalent — Dispatcher only ever calls BindingReorder.mutations/2 for a macro of kind :condition/:join/:clause/:dynamic (via either dispatch path), which is exactly Surface.binding_list_macro?/1's true set, so the guard always holds when reached
+    # mutare:ignore[if_condition] equivalent — Dispatcher only ever calls BindingReorder.mutations/2 for a macro of kind :condition/:join/:clause/:dynamic, which is exactly Surface.binding_list_macro?/1's true set, so the guard always holds when reached
     if Surface.binding_list_macro?(macro), do: reorders(call), else: []
-  end
-
-  def mutations(node, context) do
-    case QueryCall.parse(node) do
-      %QueryCall{} = call -> mutations(call, context)
-      nil -> []
-    end
   end
 
   # One mutant per pair of reorderable positional bindings. Usage is deliberately irrelevant: an

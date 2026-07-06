@@ -88,12 +88,11 @@ defmodule Mutare.Ecto.Query do
   `{family, node, label}` entries (a swap family — order/join/aggregate — appends the finer
   operator/kind label), or `[]`.
   """
-  @spec mutations(Macro.t() | QueryCall.t(), Mutare.Mutator.context()) ::
-          [Mutare.Ecto.SubMutator.tagged()]
+  @spec mutations(QueryCall.t(), Mutare.Mutator.context()) :: [Mutare.Ecto.SubMutator.tagged()]
   @impl Mutare.Ecto.SubMutator
-  # Normalize the call (`Mutare.Ecto.AST.QueryCall.parse/1`) so a qualified `Ecto.Query.from(…)` or
-  # aliased `Q.from(…)` is rewritten exactly like the bare/imported `from(…)`; `rebuild` re-emits each
-  # mutant in the source's written form.
+  # `Mutare.Ecto.Dispatcher` normalizes the call (`Mutare.Ecto.AST.QueryCall.parse/1`) before
+  # calling here, so a qualified `Ecto.Query.from(…)` or aliased `Q.from(…)` is rewritten exactly
+  # like the bare/imported `from(…)`; `rebuild` re-emits each mutant in the source's written form.
   def mutations(%QueryCall{} = call, context) do
     config = Config.from_context(context)
 
@@ -109,13 +108,6 @@ defmodule Mutare.Ecto.Query do
 
       _ ->
         []
-    end
-  end
-
-  def mutations(node, context) do
-    case QueryCall.parse(node) do
-      %QueryCall{} = call -> mutations(call, context)
-      nil -> []
     end
   end
 

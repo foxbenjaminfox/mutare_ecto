@@ -11,9 +11,15 @@ defmodule Mutare.Ecto.DispatcherTest do
   # in the real scan pipeline (core's macro-identity stamping resolves by the same mechanism
   # regardless of import vs. full qualification) — so these tests, despite the shape, do not
   # actually exercise the `call_mutations/3` fallback clause. They still pin real, useful
-  # behavior (a fully-qualified macro call is mutated exactly like an imported one), so they stay;
-  # see `MUTARE-QUESTION-dispatcher-fallback-reachability.md` for the open question of whether
-  # that fallback clause is reachable at all under the current core contract.
+  # behavior (a fully-qualified macro call is mutated exactly like an imported one), so they stay.
+  # `Mutare.Transform.Resolve` stamps macro identity for the whole tree before any mutator runs, off
+  # the same alias/import resolution `Calls.resolved_call/1` reads, so the two classifications can
+  # never disagree for a macro this plugin registers — the fallback's `:condition`/`:clause`/
+  # `:join`/`:dynamic` branches were confirmed unreachable and deleted (along with the identical
+  # raw-node re-parse clauses in `Clause`/`Query`/`Dynamic`/`BindingReorder`); what remains of the
+  # fallback (`{@query_key, _name, ...} -> QueryTerminal.mutations/2`) is the genuinely reachable
+  # case: an `Ecto.Query` function this plugin doesn't register as a macro at all
+  # (`Ecto.Query.exclude/2`, `subquery/1`, …).
   describe "a fully-qualified Ecto.Query macro call (no import in scope)" do
     test "a fully-qualified condition macro still hosts nothing but drops as a stage" do
       src = """

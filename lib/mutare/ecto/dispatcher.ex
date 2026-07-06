@@ -68,23 +68,14 @@ defmodule Mutare.Ecto.Dispatcher do
 
   defp query_macro_mutations(_kind, _node, _context), do: []
 
-  # A query macro normally takes the branch above. Keeping the query-call classification here makes
-  # the dispatcher tolerant of a resolved call that has not received its macro-identity stamp yet.
-  defp call_mutations({@query_key, name, _args, _rebuild}, node, context) do
-    case Surface.macro_kind(name) do
-      :condition ->
-        invoke([BindingReorder, ClauseDrop], node, context)
-
-      kind when kind in [:clause, :join] ->
-        invoke([Clause, BindingReorder, ClauseDrop], node, context)
-
-      :dynamic ->
-        invoke([Dynamic, BindingReorder], node, context)
-
-      _other ->
-        QueryTerminal.mutations(node, context)
-    end
-  end
+  # A registered Ecto.Query macro (`:condition`/`:clause`/`:join`/`:dynamic` in `Surface`) always
+  # takes the branch above: `Mutare.Transform.Resolve` stamps macro identity for the whole tree
+  # before `mutate/2` ever runs, reading the same alias/import resolution `Calls.resolved_call/1`
+  # reads here — so the two classifications can never disagree for a macro this plugin registers.
+  # A call that resolves to `Ecto.Query` and lands here is therefore always a function the plugin
+  # doesn't route as a macro (`Ecto.Query.exclude/2`, `subquery/1`, …); `QueryTerminal` owns those.
+  defp call_mutations({@query_key, _name, _args, _rebuild}, node, context),
+    do: QueryTerminal.mutations(node, context)
 
   defp call_mutations({@changeset_key, _name, _args, _rebuild}, node, context),
     do: Changeset.mutations(node, context)

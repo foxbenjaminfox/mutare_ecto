@@ -46,18 +46,21 @@ defmodule Mutare.Ecto.Dynamic do
   Every single-point in-fragment mutant of a free-standing `dynamic/1,2` call, each the **whole
   call** rebuilt with one condition position swapped — the plugin's own catalog mutants as
   `{family, node, label}` tags, the sub-contracted island mutants as producer-attributed
-  `Mutare.Mutator.Mutation`s (passed through `Mutare.Ecto.mutate/2` untouched) — or `[]` for
-  anything else (a non-`dynamic` call, a body with nothing to mutate, a top-level-pin body).
+  `Mutare.Mutator.Mutation`s (passed through `Mutare.Ecto.mutate/2` untouched) — or `[]` when
+  there is nothing to mutate (a body with no condition, or a top-level-pin body).
 
   The condition is located by `Mutare.Ecto.Host.Bindings.hosted_condition/1`, which resolves both
   shapes exactly as it does for a standalone `where`: the binding form (`dynamic([p], p.x > 1)` —
   the condition one slot past the written list) and the binding-less form
   (`dynamic(as(:t).x > 1)` — the trailing argument).
   """
-  @spec mutations(Macro.t() | QueryCall.t(), map()) :: [
+  @spec mutations(QueryCall.t(), map()) :: [
           Mutare.Ecto.SubMutator.tagged() | Mutare.Mutator.Mutation.t()
         ]
   @impl Mutare.Ecto.SubMutator
+  # `Mutare.Ecto.Dispatcher` only reaches here once it has already classified the call as the
+  # `:dynamic` macro kind, and `Mutare.Ecto.Surface` registers that kind on exactly the `:dynamic`
+  # name — so `call.name` is always `:dynamic` by the time this runs.
   def mutations(%QueryCall{name: :dynamic, args: args} = call, context) do
     config = Config.from_context(context)
 
@@ -71,15 +74,6 @@ defmodule Mutare.Ecto.Dynamic do
       own ++ subcontracted(condition, call, index, context)
     else
       _ -> []
-    end
-  end
-
-  def mutations(%QueryCall{}, _context), do: []
-
-  def mutations(node, context) do
-    case QueryCall.parse(node) do
-      %QueryCall{} = call -> mutations(call, context)
-      nil -> []
     end
   end
 

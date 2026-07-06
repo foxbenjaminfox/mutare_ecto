@@ -4,7 +4,7 @@ defmodule Mutare.Ecto.SubMutator do
   # node, invokes only the relevant producers (`RepoAggregate`, `Changeset`, `Query`, …), and merges
   # their results through this shared callback shape.
   #
-  # `mutations/2` takes the AST `node` and the mutation `context` (carrying `:config` — the
+  # `mutations/2` takes a `node` and the mutation `context` (carrying `:config` — the
   # `init/1`-parsed `families:`/`dialects:`/`repo:` `%Config{}` — and `:pipe_mode`), and returns the
   # `{family, node}` mutation pairs it produces, or `[]`. A sub-mutator that needs neither config
   # nor pipe-mode simply ignores the context; `Mutare.Ecto.mutate/2` returns the merged pairs as
@@ -14,6 +14,15 @@ defmodule Mutare.Ecto.SubMutator do
   # producer-attributed `Mutare.Mutator.Mutation`s, which pass through `Config.tagged/1` untouched
   # and core's finalize pass bypasses — the mutant is a core family's, not one of the plugin's.
   #
+  # `node` is a raw AST `Macro.t()` for most sub-mutators (`RepoAggregate`, `RepoWrite`,
+  # `Changeset`, `ClauseDrop`, `QueryTerminal`) — `Mutare.Ecto.Dispatcher` hands them the node
+  # exactly as `Mutare.Calls.resolved_call/1` classified it. The four query-macro sub-mutators
+  # (`Clause`, `Query`, `Dynamic`, `BindingReorder`) instead receive the already-normalized
+  # `Mutare.Ecto.AST.QueryCall.t()` Dispatcher builds via `QueryCall.parse/1` before dispatch, since
+  # every registered query macro is guaranteed to carry its macro-identity stamp by the time
+  # `mutate/2` runs (`Mutare.Transform.Resolve` stamps the whole tree first) — so those four never
+  # need to re-parse a raw node themselves.
+  #
   # A sub-mutator whose first `mutations/2` clause pattern-matches the context *shape* (e.g.
   # `%{pipe_mode: …}`) needs a defensive catch-all so a context lacking that key returns `[]` rather
   # than raising. `use Mutare.Ecto.SubMutator` supplies both the behaviour and that catch-all
@@ -22,6 +31,7 @@ defmodule Mutare.Ecto.SubMutator do
   # itself) instead writes `@behaviour Mutare.Ecto.SubMutator` directly — a `use` there would inject
   # an unreachable clause.
 
+  alias Mutare.Ecto.AST.QueryCall
   alias Mutare.Ecto.Config
 
   @typedoc """
@@ -34,7 +44,7 @@ defmodule Mutare.Ecto.SubMutator do
           | {family :: Config.family(), mutated :: Macro.t(),
              label :: String.t() | [String.t()] | nil}
 
-  @callback mutations(node :: Macro.t(), context :: Mutare.Mutator.context()) :: [
+  @callback mutations(node :: Macro.t() | QueryCall.t(), context :: Mutare.Mutator.context()) :: [
               tagged() | Mutare.Mutator.Mutation.t()
             ]
 
