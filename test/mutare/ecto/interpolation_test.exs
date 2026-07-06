@@ -157,11 +157,11 @@ defmodule Mutare.Ecto.InterpolationTest do
       assert_compiles(src, @with_core)
     end
 
-    test "join: p in ^sub with a hosted on: — the weave and the join-type swap coexist" do
+    test "left_join: p in ^sub with a hosted on: — the weave and the join-type swap coexist" do
       src = """
       defmodule M do
         import Ecto.Query
-        def q(sub, min), do: from(u in User, join: p in ^sub, on: p.views > ^(min + 1), select: u.id)
+        def q(sub, min), do: from(u in User, left_join: p in ^sub, on: p.views > ^(min + 1), select: u.id)
       end
       """
 
@@ -175,9 +175,10 @@ defmodule Mutare.Ecto.InterpolationTest do
                "min - 1"
              )
 
-      # …while the whole-`from` join-type swap re-emits the pinned source verbatim.
+      # …while the whole-`from` join-type swap (narrowing `left_join`→`inner_join`) re-emits the
+      # pinned source verbatim.
       assert Enum.any?(ecto, fn {_o, mutated} ->
-               mutated =~ "left_join: p in ^sub" and mutated =~ "on: p.views > ^(min + 1)"
+               mutated =~ "inner_join: p in ^sub" and mutated =~ "on: p.views > ^(min + 1)"
              end)
 
       assert_compiles(src, @with_core)

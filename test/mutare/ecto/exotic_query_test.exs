@@ -735,7 +735,7 @@ defmodule Mutare.Ecto.ExoticQueryTest do
 
         def q2 do
           from u in MyApp.User,
-            join: p in assoc(u, :posts),
+            left_join: p in assoc(u, :posts),
             where: p.views > 3,
             preload: [posts: p]
         end
@@ -747,8 +747,8 @@ defmodule Mutare.Ecto.ExoticQueryTest do
 
       # The standalone preload query gets full treatment where it is built…
       assert "p.published != true" in mutated
-      # …the join-preload's join swaps kind, and its filter mutates…
-      assert Enum.any?(mutated, &(&1 =~ "left_join: p in assoc(u, :posts)"))
+      # …the join-preload's join narrows kind, and its filter mutates…
+      assert Enum.any?(mutated, &(&1 =~ "inner_join: p in assoc(u, :posts)"))
       assert "p.views >= 3" in mutated
       # …while the preload declaration itself (which associations to load) stays raw: every
       # mutant that still carries a preload carries it verbatim.

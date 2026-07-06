@@ -195,13 +195,14 @@ defmodule Mutare.Ecto.QueryTest do
   end
 
   describe "JoinType" do
-    test "variant_labels/0 is the deduped, normalized source-kind vocabulary" do
-      # Every flip table's keys, normalized through join_label/1 (join/inner_join → "inner") and
-      # deduped — pins the four label strings against a drifted/blanked/renamed constant.
-      assert Mutare.Ecto.Query.variant_labels() == ["inner", "left", "right", "full"]
+    test "variant_labels/0 is the deduped source-kind vocabulary" do
+      # Every flip table's keys, deduped — pins the three label strings against a
+      # drifted/blanked/renamed constant. `join`/`inner_join` are never a flip source (widening is
+      # deliberately not offered — see the moduledoc), so "inner" is not in this vocabulary.
+      assert Mutare.Ecto.Query.variant_labels() == ["left", "full", "right"]
     end
 
-    test "swaps a default (inner) join to a left join" do
+    test "a default (inner) join has no join_type mutant — widening is not offered" do
       src = """
       defmodule Posts do
         import Ecto.Query
@@ -214,39 +215,28 @@ defmodule Mutare.Ecto.QueryTest do
       end
       """
 
-      diffs = ecto_diffs(src)
+      diffs = ecto_diffs(src, mutators: [{Mutare.Ecto, repo: MyApp.Repo, families: [:join_type]}])
 
-      assert Enum.any?(diffs, fn {_o, mutated} -> mutated =~ "left_join: c in assoc" end)
-      # The portable core stays inner↔left — no non-portable right/full/cross.
-      refute Enum.any?(diffs, fn {_o, mutated} -> mutated =~ "right_join" end)
-
+      assert diffs == []
       assert_compiles(src)
     end
 
-    test "an explicit right_join/full_join clause with no dialect configured yields no mutant, never crashes" do
-      # `join_flips/1`'s merged map has no `:right_join`/`:full_join` key at all unless the
-      # matching dialect is enabled — `Map.get(flips, key, [])` must default to `[]` (no target),
-      # not `nil` (which would raise iterating `for to <- nil`). A query with the clause already
-      # written as `right_join:`/`full_join:` (not merely `left_join:` awaiting a dialect-gated
-      # flip *to* it) is the shape that reaches this key directly.
-      for key <- ~w(right_join full_join)a do
-        src = """
-        defmodule M do
-          import Ecto.Query
-          def q do
-            from p in Post, #{key}: c in assoc(p, :comments), on: c.ok, select: p.id
-          end
+    test "an explicit inner_join clause has no join_type mutant either" do
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q do
+          from p in Post, inner_join: c in assoc(p, :comments), on: c.ok, select: p.id
         end
-        """
-
-        diffs =
-          ecto_diffs(src, mutators: [{Mutare.Ecto, repo: MyApp.Repo, families: [:join_type]}])
-
-        assert diffs == [], "expected no join_type mutant for #{key} with no dialect configured"
       end
+      """
+
+      diffs = ecto_diffs(src, mutators: [{Mutare.Ecto, repo: MyApp.Repo, families: [:join_type]}])
+
+      assert diffs == []
     end
 
-    test "swaps an explicit left join back to inner" do
+    test "narrows an explicit left join back to inner" do
       src = """
       defmodule Posts do
         import Ecto.Query
@@ -259,9 +249,50 @@ defmodule Mutare.Ecto.QueryTest do
       end
       """
 
-      assert Enum.any?(ecto_diffs(src), fn {_o, mutated} ->
-               mutated =~ "inner_join: c in assoc"
-             end)
+      diffs = ecto_diffs(src)
+
+      assert Enum.any?(diffs, fn {_o, mutated} -> mutated =~ "inner_join: c in assoc" end)
+      # Portable core: left↔inner only — no non-portable right without a dialect.
+      refute Enum.any?(diffs, fn {_o, mutated} -> mutated =~ "right_join" end)
+
+      assert_compiles(src)
+    end
+
+    test "an explicit right_join/full_join clause with no dialect configured still narrows via the portable leg" do
+      # `full_join` always narrows to `left_join` (portable, no gate); `right_join` has no
+      # ungated narrowing target of its own (only `left_join`↔`right_join`, dialect-gated), so it
+      # yields no mutant without a dialect. `Map.get(flips, key, [])` must default to `[]` (no
+      # target), not `nil` (which would raise iterating `for to <- nil`).
+      full =
+        ecto_diffs(
+          """
+          defmodule M do
+            import Ecto.Query
+            def q do
+              from p in Post, full_join: c in assoc(p, :comments), on: c.ok, select: p.id
+            end
+          end
+          """,
+          mutators: [{Mutare.Ecto, repo: MyApp.Repo, families: [:join_type]}]
+        )
+
+      assert Enum.any?(full, fn {_o, mutated} -> mutated =~ "left_join: c in assoc" end)
+      refute Enum.any?(full, fn {_o, mutated} -> mutated =~ "right_join" end)
+
+      right =
+        ecto_diffs(
+          """
+          defmodule M2 do
+            import Ecto.Query
+            def q do
+              from p in Post, right_join: c in assoc(p, :comments), on: c.ok, select: p.id
+            end
+          end
+          """,
+          mutators: [{Mutare.Ecto, repo: MyApp.Repo, families: [:join_type]}]
+        )
+
+      assert right == [], "expected no join_type mutant for right_join with no dialect configured"
     end
   end
 

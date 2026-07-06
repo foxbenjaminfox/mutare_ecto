@@ -16,12 +16,18 @@ defmodule Mutare.Ecto.Query do
       family's other half, the `±1` bump of a literal bound, is **hosted** (a pin-only
       `limit: ^(case …)` weave — `Mutare.Ecto.Host`), so it no longer duplicates the whole
       `from` per mutant; only the structural drop is a whole-`from` rewrite.
-    * **JoinType** — swap a join's kind by rewriting its clause *key*: `join`/`inner_join`
-      ↔ `left_join`. "Does any test exercise rows the join's cardinality changes?" An inner
-      join drops rows a left join keeps, so the swap is a strong, killable mutation. The
-      **portable** pair (every adapter supports `INNER`/`LEFT`) is always offered; the
-      `LEFT`↔`RIGHT` pair is **dialect-gated** (`:postgres`/`:mysql` — SQLite lacks `RIGHT`),
-      and the `*`→`FULL` swap is gated to `:postgres`/`:sqlite` (MySQL has no `FULL JOIN`).
+    * **JoinType** — narrow a join's kind by rewriting its clause *key*: `left_join`→`inner_join`,
+      and `full_join`→`left_join`/`right_join` (plus `left_join`↔`right_join` sideways). "Does any
+      test exercise the orphan row this join kind keeps that a narrower kind would drop?" An outer
+      join is written *because* unmatched rows must survive, so seed data built for that reason is
+      likely to already hold the orphan that makes the narrower kind disagree — a strong, killable
+      mutation. The reverse (`inner_join`/`join`→`left_join`, `*`→`full_join`) is deliberately not
+      offered: it widens a join the author picked precisely to *exclude* unmatched rows, and
+      absent a reason to test for an orphan that shouldn't matter, the widened query usually
+      returns identical rows — an equivalent mutant more often than a killable one. The
+      `left_join`↔`right_join` swap and `full_join`→`left_join` are portable (every adapter
+      supports `INNER`/`LEFT`); `full_join`→`right_join` and the `RIGHT` leg of `left_join`↔
+      `right_join` are **dialect-gated** (`:postgres`/`:mysql` — SQLite lacks `RIGHT JOIN`).
     * **Combination** — swap a set-operation clause's *key*: `intersect:`↔`except:` and
       `intersect_all:`↔`except_all:` (the shared `Mutare.Ecto.Combination` catalog). "Does any
       test pin which rows the combination keeps?" `A INTERSECT B` and `A EXCEPT B` partition the
@@ -62,26 +68,24 @@ defmodule Mutare.Ecto.Query do
 
   @behaviour Mutare.Ecto.SubMutator
 
-  # JoinType: each join-clause key's kind swaps. `join` is the keyword-form default inner join.
-  # The portable pair (`INNER`↔`LEFT`) is always offered; the non-portable pairs are added only
-  # under a dialect that supports them:
+  # JoinType: each join-clause key's kind narrows (or, for left↔right, moves sideways) by
+  # rewriting its key. `join`/`inner_join` never appear as a flip *source* — widening an inner
+  # join to an outer one is the direction we deliberately don't offer (see the moduledoc). Every
+  # flip here only permutes a form already reachable from the ones in the source, so none of them
+  # is an *introducing* swap the way a widening `*`→`FULL` used to be; the dialect gates below are
+  # purely about whether the **target** kind's SQL is portable:
   #
-  #   * `LEFT`↔`RIGHT` — `@right_join_dialects` (`:postgres`/`:mysql`); SQLite lacks `RIGHT JOIN`.
-  #   * `*`→`FULL` (and `FULL`→`LEFT`) — `@full_join_dialects` (`:postgres`/`:sqlite` ≥ 3.39);
-  #     MySQL has no `FULL JOIN` at any version. This is an *introducing* swap (the source's
-  #     `inner`/`left` becomes a `FULL` not written by the user), so it must be dialect-gated —
-  #     unlike a swap that only permutes a form already in the source.
-  @portable_join_flips %{join: [:left_join], inner_join: [:left_join], left_join: [:inner_join]}
-  @right_join_flips %{left_join: [:right_join], right_join: [:left_join]}
-  @right_join_dialects [:postgres, :mysql]
-  @full_join_flips %{
-    join: [:full_join],
-    inner_join: [:full_join],
-    left_join: [:full_join],
-    right_join: [:full_join],
-    full_join: [:left_join]
+  #   * `left_join`↔`right_join` and `full_join`→`right_join` need `RIGHT JOIN` —
+  #     `@right_join_dialects` (`:postgres`/`:mysql`); SQLite lacks it.
+  #   * `left_join`→`inner_join` and `full_join`→`left_join` target universally portable kinds,
+  #     so they need no dialect gate at all.
+  @portable_join_flips %{left_join: [:inner_join], full_join: [:left_join]}
+  @right_join_flips %{
+    left_join: [:right_join],
+    right_join: [:left_join],
+    full_join: [:right_join]
   }
-  @full_join_dialects [:postgres, :sqlite]
+  @right_join_dialects [:postgres, :mysql]
 
   @doc """
   Whole-`from` mutations for a `from(...)` node as self-tagging `{family, node}` /
@@ -167,10 +171,10 @@ defmodule Mutare.Ecto.Query do
 
   defp drop_clause(clauses, _entry, index), do: KeywordList.delete(clauses, index)
 
-  # Swap each join clause's *kind* by rewriting its key (`join`/`inner_join` ↔ `left_join`, plus
-  # `left_join`↔`right_join` under a `RIGHT`-capable dialect and `*`→`full_join` under a
-  # `FULL`-capable one), keeping the join's value (`c in assoc(p, :x)`). One mutant per enabled
-  # target.
+  # Swap each join clause's *kind* by rewriting its key (`left_join`→`inner_join`,
+  # `full_join`→`left_join`/`right_join`, and `left_join`↔`right_join` under a `RIGHT`-capable
+  # dialect), keeping the join's value (`c in assoc(p, :x)`). `join`/`inner_join` are never a
+  # flip source, so they never match here. One mutant per enabled target.
   defp join_swaps(call, source, %KeywordList{entries: entries} = clauses, config) do
     flips = join_flips(config)
 
@@ -182,11 +186,10 @@ defmodule Mutare.Ecto.Query do
     end
   end
 
-  # The `# mutare:ignore` label for a join swap: the **source** join kind, normalized
-  # (`inner_join`/`join` → `"inner"`), so `# mutare:ignore[ecto:left]` leaves a left join's kind
-  # alone. Derived alongside `variant_labels/0` from the flip tables' keys.
-  defp join_label(:join), do: "inner"
-  defp join_label(:inner_join), do: "inner"
+  # The `# mutare:ignore` label for a join swap: the **source** join kind, so
+  # `# mutare:ignore[ecto:left]` leaves a left join's kind alone. Derived alongside
+  # `variant_labels/0` from the flip tables' keys — only ever `left_join`/`right_join`/`full_join`,
+  # since `join`/`inner_join` are never a flip source.
   defp join_label(:left_join), do: "left"
   defp join_label(:right_join), do: "right"
   defp join_label(:full_join), do: "full"
@@ -197,18 +200,17 @@ defmodule Mutare.Ecto.Query do
   # vocabulary by `Mutare.Ecto.variants/0`.
   @spec variant_labels() :: [String.t()]
   def variant_labels do
-    [@portable_join_flips, @right_join_flips, @full_join_flips]
+    [@portable_join_flips, @right_join_flips]
     |> Enum.flat_map(&Map.keys/1)
     |> Enum.map(&join_label/1)
     |> Enum.uniq()
   end
 
-  # The portable flips, plus each dialect-gated map whose dialects the `config` enables (`RIGHT`,
-  # `FULL`). Independently gated, so a config can enable one without the other.
+  # The portable (narrowing) flips, plus the RIGHT-capable map when `config` enables a dialect
+  # that supports it.
   defp join_flips(config) do
     @portable_join_flips
     |> maybe_merge(@right_join_flips, Config.dialect_enabled?(config, @right_join_dialects))
-    |> maybe_merge(@full_join_flips, Config.dialect_enabled?(config, @full_join_dialects))
   end
 
   defp maybe_merge(flips, _added, false), do: flips

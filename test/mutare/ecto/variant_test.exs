@@ -300,14 +300,15 @@ defmodule Mutare.Ecto.VariantTest do
       refute site(sites, "asc: u.age").ignored, "the desc → asc flip keeps running"
     end
 
-    test "[ecto:left] kills the left-join swap, leaving the inner-join swap live (join_type)" do
+    test "[ecto:left] kills the left-join swap, leaving the full-join swap live (join_type)" do
       # One line so the whole-`from` site (recorded at the `from`'s start line) sits on the same line
-      # as the trailing directive.
+      # as the trailing directive. `inner_join`/`join` are never a flip source (widening is not
+      # offered), so the second join here is `full_join` — narrows to `left_join`, portably.
       src = """
       defmodule M do
         import Ecto.Query
         def q do
-          from(p in Post, left_join: u in assoc(p, :user), inner_join: a in assoc(p, :author), select: p.id) # mutare:ignore[ecto:left]
+          from(p in Post, left_join: u in assoc(p, :user), full_join: a in assoc(p, :author), select: p.id) # mutare:ignore[ecto:left]
         end
       end
       """
@@ -315,7 +316,7 @@ defmodule Mutare.Ecto.VariantTest do
       sites = sites_for(src)
 
       assert site(sites, "inner_join: u").ignored, "the left → inner swap is suppressed"
-      refute site(sites, "left_join: a").ignored, "the inner → left swap keeps running"
+      refute site(sites, "left_join: a").ignored, "the full → left swap keeps running"
     end
   end
 end

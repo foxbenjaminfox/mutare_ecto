@@ -188,29 +188,27 @@ defmodule Mutare.Ecto.ConfigTest do
       assert Enum.any?(pg, &(&1 =~ "right_join: c in assoc"))
     end
 
-    test "*→full join only under a FULL-capable dialect" do
+    test "full_join → right_join only under a RIGHT-capable dialect; → left_join is always offered" do
       src = """
       defmodule M do
         import Ecto.Query
         def q do
-          from p in Post, left_join: c in assoc(p, :comments), on: c.ok, select: p.id
+          from p in Post, full_join: c in assoc(p, :comments), on: c.ok, select: p.id
         end
       end
       """
 
-      # Portable default and a RIGHT-only dialect never introduce a FULL join.
+      # Portable default: full_join → left_join only (never introduces a right_join).
       portable = mutated(ecto_diffs(src, ecto(families: [:join_type])))
-      refute Enum.any?(portable, &(&1 =~ "full_join"))
+      assert Enum.any?(portable, &(&1 =~ "left_join: c in assoc"))
+      refute Enum.any?(portable, &(&1 =~ "right_join"))
 
-      mysql = mutated(ecto_diffs(src, ecto(families: [:join_type], dialects: [:mysql])))
-      refute Enum.any?(mysql, &(&1 =~ "full_join"))
-
-      # Postgres and SQLite both support FULL JOIN: left_join → full_join is offered.
-      for dialect <- [:postgres, :sqlite] do
+      # Postgres and MySQL both support RIGHT JOIN: full_join → right_join is also offered.
+      for dialect <- [:postgres, :mysql] do
         flips = mutated(ecto_diffs(src, ecto(families: [:join_type], dialects: [dialect])))
 
-        assert Enum.any?(flips, &(&1 =~ "full_join: c in assoc")),
-               "expected a full_join mutant under #{dialect}"
+        assert Enum.any?(flips, &(&1 =~ "right_join: c in assoc")),
+               "expected a right_join mutant under #{dialect}"
       end
 
       # The woven full_join branch is valid Ecto — the single build (every mutant) compiles.
@@ -596,13 +594,13 @@ defmodule Mutare.Ecto.ConfigTest do
 
     test "a join_type mutant carries the join-cardinality note (mutate/2 delivery)" do
       # `:join_type` is equivalence-sensitive for a *data* reason, not three-valued logic: the
-      # INNER↔LEFT swap is equivalent whenever no orphan row exists (e.g. a mandatory FK). Its note
-      # differs from the in-fragment families', and like `:ordering_nulls` it rides the `mutate/2`
-      # whole-`from` rewrite, not the host.
+      # LEFT↔INNER narrowing is equivalent whenever no orphan row exists (e.g. a mandatory FK). Its
+      # note differs from the in-fragment families', and like `:ordering_nulls` it rides the
+      # `mutate/2` whole-`from` rewrite, not the host.
       src = """
       defmodule M do
         import Ecto.Query
-        def q, do: from(p in Post, join: c in assoc(p, :comments), on: c.ok, select: p.id)
+        def q, do: from(p in Post, left_join: c in assoc(p, :comments), on: c.ok, select: p.id)
       end
       """
 
@@ -612,7 +610,7 @@ defmodule Mutare.Ecto.ConfigTest do
           expand_uses: true
         )
 
-      join = Enum.find(sites, &(&1.mutated_code =~ "left_join" and &1.mutator == :ecto))
+      join = Enum.find(sites, &(&1.mutated_code =~ "inner_join" and &1.mutator == :ecto))
 
       assert join.note ==
                "kill may require an orphan row — a preserved-side row with no match (join kinds coincide when every row matches)"

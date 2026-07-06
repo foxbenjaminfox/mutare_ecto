@@ -104,7 +104,7 @@ the SQL, so a mutant would just be a broken query, not a test signal).
 | `ordering` | `order_by: [asc: u.name]` → `[desc: u.name]` |
 | `ordering_nulls` | `:asc_nulls_first` → `:asc_nulls_last` |
 | `bound` | `limit: 10` → `9` / `11`, or drop the `limit`/`offset` |
-| `join_type` | `join`/`inner_join` ↔ `left_join` (changes result cardinality) |
+| `join_type` | `left_join` → `inner_join`, `full_join` → `left_join`/`right_join` (narrows cardinality) |
 | `aggregate` | `sum(u.x)` ↔ `avg(u.x)`, `min` ↔ `max` (in `select` or `Repo.aggregate`) |
 | `query_terminal` | `Ecto.Query.first` ↔ `last` |
 

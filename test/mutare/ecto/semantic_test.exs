@@ -864,61 +864,62 @@ defmodule Mutare.Ecto.SemanticTest do
     end
   end
 
-  describe "JoinType — inner ↔ left (whole-`from`)" do
-    # Cardinality change: an INNER join drops the orphan post (user_id 99 matches no user); the LEFT
-    # mutant keeps it. A strong, killable mutation that must hit the DB to show.
-    test "the left-join mutant keeps the orphan row the inner join drops" do
+  describe "JoinType — left → inner (whole-`from`, narrowing)" do
+    # Cardinality change: a LEFT join keeps the orphan post (user_id 99 matches no user); the INNER
+    # mutant drops it. This is the direction the plugin actually offers — see `Mutare.Ecto.Query`'s
+    # moduledoc for why the reverse (widening inner to left) is deliberately not: a strong,
+    # killable mutation that must hit the DB to show.
+    test "the inner-join mutant drops the orphan row the left join keeps" do
       {mod, sites} =
         build("""
         defmodule Q do
           import Ecto.Query
           alias MyApp.{Post, User}
           def q do
-            from p in Post, join: u in User, on: u.id == p.user_id, select: p.id
+            from p in Post, left_join: u in User, on: u.id == p.user_id, select: p.id
           end
         end
         """)
 
       {baseline, mutant} =
-        observe_ids(mod, sites, {~r/join: u in User/, ~r/left_join: u in User/})
+        observe_ids(mod, sites, {~r/left_join: u in User/, ~r/inner_join: u in User/})
 
-      # Inner join: only posts whose user exists (P1→user1, P2→user2).
-      assert baseline == [1, 2]
-      # Left join additionally keeps the orphan P3 (user_id 99).
-      assert mutant == [1, 2, 3]
+      # Left join: the matched posts plus the orphan P3 (user_id 99).
+      assert baseline == [1, 2, 3]
+      # Inner join narrows away the orphan.
+      assert mutant == [1, 2]
     end
   end
 
-  describe "JoinType — inner → full (dialect-gated, `dialects: [:sqlite]`)" do
-    # The dialect gate's first liveness proof. `dialects: [:sqlite]` enables the *→FULL swap
-    # (SQLite ≥ 3.39 ships FULL JOIN), and FULL keeps orphans from *both* sides: the orphan post
-    # (user_id 99) and every post-less user — strictly more than the LEFT mutant would.
-    test "the full-join mutant keeps both sides' orphans" do
+  describe "JoinType — full → left (whole-`from`, narrowing, portable)" do
+    # `full_join`→`left_join` targets a universally portable kind, so it needs no `dialects:` gate
+    # (unlike the never-offered widening direction, or `full_join`→`right_join`, gated by
+    # `@right_join_dialects` and covered only at the config layer — SQLite can't run RIGHT JOIN, so
+    # there's no live proof for it here). LEFT keeps the orphan post (user_id 99) but drops the
+    # four post-less users that FULL would have kept on the right side.
+    test "the left-join mutant drops the post-less users the full join keeps" do
       # Runtime-guarded rather than tag-skipped: the CI matrix pins the adapter (and its bundled
       # SQLite) per Ecto line, and an engine below 3.39 rejects FULL JOIN at query time — which
       # would be an engine limitation, not a delivery failure.
       if sqlite_version() >= {3, 39} do
         {mod, sites} =
-          H.compile(
-            """
-            defmodule Q do
-              import Ecto.Query
-              alias MyApp.{Post, User}
-              def q do
-                from p in Post, join: u in User, on: u.id == p.user_id, select: {p.id, u.id}
-              end
+          build("""
+          defmodule Q do
+            import Ecto.Query
+            alias MyApp.{Post, User}
+            def q do
+              from p in Post, full_join: u in User, on: u.id == p.user_id, select: {p.id, u.id}
             end
-            """,
-            mutators: [{Mutare.Ecto, repo: MyApp.Repo, dialects: [:sqlite]}]
-          )
+          end
+          """)
 
         {baseline, mutant} =
-          observe_ids(mod, sites, {~r/join: u in User/, ~r/full_join: u in User/})
+          observe_ids(mod, sites, {~r/full_join: u in User/, ~r/left_join: u in User/})
 
-        # Inner join: only the matched pairs.
-        assert baseline == [{1, 1}, {2, 2}]
-        # Full join adds the orphan post (P3 → no user) and the four post-less users.
-        assert mutant == [{1, 1}, {2, 2}, {3, nil}, {nil, 3}, {nil, 4}, {nil, 5}, {nil, 6}]
+        # Full join: the matched pairs, the orphan post (P3 → no user), and the four post-less users.
+        assert baseline == [{1, 1}, {2, 2}, {3, nil}, {nil, 3}, {nil, 4}, {nil, 5}, {nil, 6}]
+        # Left join narrows away the post-less users, keeping only the left-preserved rows.
+        assert mutant == [{1, 1}, {2, 2}, {3, nil}]
       end
     end
   end
