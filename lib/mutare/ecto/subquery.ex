@@ -32,9 +32,11 @@ defmodule Mutare.Ecto.Subquery do
   # `exists`/`in`, invisible to `min`/`max`). None is a clean, deterministic, wrapper-general
   # mutant.
   #
-  # A pinned `^expr` inside the subquery's own condition is **not** this catalog's — its interior is
-  # ordinary Elixir, core's to mutate — so `interior_islands/1` surfaces it (via `Fragment.islands/1`)
-  # for the caller's core sub-contract, exactly as a top-level condition's pin.
+  # A pinned `^expr` inside a mutated clause is **not** this catalog's — its interior is ordinary
+  # Elixir, core's to mutate — so `interior_islands/2` surfaces it (via `Fragment.islands/1`) for the
+  # caller's core sub-contract, exactly as a top-level condition's pin: from the `where`/`having`
+  # conditions under every mode, and from the `select` projection under a value-wrapper (never under
+  # `exists`, whose select is unobserved — a pin mutant there would be equivalent).
   #
   # Only an inline `from(source, clauses)` is recursed. A `subquery(var)`, a scalar `from(Post)`, a
   # piped subquery (`exists(q |> where(…))`), and a *from-source* subquery (`from s in subquery(…)`,
@@ -75,18 +77,20 @@ defmodule Mutare.Ecto.Subquery do
   end
 
   @doc """
-  Every interpolation **island** (`^expr`) inside the subquery's own `where`/`having` conditions, as
+  Every interpolation **island** (`^expr`) inside the subquery's own mutated clauses, as
   `{interior, rebuild}` pairs whose `rebuild` reconstructs the whole inner `from` — composed outward
-  by the caller. `[]` unless `node` is an inline `from(source, clauses)`. (A pin in the subquery's
-  `select` under a value-wrapper is a deliberate v1 gap — its operator is swapped, its pin not yet
-  sub-contracted.)
+  by the caller. `[]` unless `node` is an inline `from(source, clauses)`. Which clauses' pins are
+  surfaced tracks exactly what each `mode` mutates: the `where`/`having` conditions under every
+  mode, plus the `select`/`select_merge` projection under `:value` (its pins are ordinary Elixir the
+  outer comparison evaluates). An EXISTS select is unobserved, so its pins — like its swaps — are
+  left alone.
   """
-  @spec interior_islands(Macro.t()) :: [{Macro.t(), (Macro.t() -> Macro.t())}]
-  def interior_islands(node) do
+  @spec interior_islands(Macro.t(), mode()) :: [{Macro.t(), (Macro.t() -> Macro.t())}]
+  def interior_islands(node, mode) do
     with %QueryCall{name: :from, args: [source, clauses_node]} = call <- QueryCall.parse(node),
          %KeywordList{entries: entries} = clauses <- KeywordList.parse(clauses_node) do
       for {%Entry{key: key, value: value}, index} <- Enum.with_index(entries),
-          Surface.from_clause?(key, :hosted),
+          island_clause?(key, mode),
           {interior, rebuild} <- Fragment.islands(value) do
         {interior, &rebuild_clause(call, source, clauses, index, rebuild.(&1))}
       end
@@ -94,6 +98,11 @@ defmodule Mutare.Ecto.Subquery do
       _ -> []
     end
   end
+
+  # A clause whose pins we sub-contract: the hosted conditions (every mode), plus a value-wrapper's
+  # observed `select` projection. Mirrors exactly the clauses `interior_mutants/3` mutates.
+  defp island_clause?(key, mode),
+    do: Surface.from_clause?(key, :hosted) or (mode == :value and key in [:select, :select_merge])
 
   # The row-set structural families: `Query.mutations_for/2` (the config-taking entry) over the
   # inner `from`, filtered to the families every wrapper observes, normalized to `Fragment`'s

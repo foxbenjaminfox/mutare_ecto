@@ -575,6 +575,48 @@ defmodule Mutare.Ecto.ExoticQueryTest do
       assert_compiles(src, opts)
     end
 
+    test "a pin inside a value-wrapper's select is sub-contracted to core; under exists it is not" do
+      value_src = """
+      defmodule Q do
+        import Ecto.Query
+
+        def q(bump) do
+          from p in MyApp.Post,
+            where: p.views < any(from p2 in MyApp.Post, select: p2.views + ^(bump + 1))
+        end
+      end
+      """
+
+      exists_src = """
+      defmodule Q do
+        import Ecto.Query
+
+        def q(bump) do
+          from u in MyApp.User,
+            where: exists(from p in MyApp.Post, select: p.views + ^(bump + 1), where: p.views > 0)
+        end
+      end
+      """
+
+      opts = [mutators: [:all, {Mutare.Ecto, repo: MyApp.Repo, families: :all}]]
+      value_mutated = for {_m, _o, mut} <- diffs(value_src, opts), do: mut
+      exists_mutated = for {_m, _o, mut} <- diffs(exists_src, opts), do: mut
+
+      # Under a value-wrapper the projected select IS observed: its SQL `+` swaps (ours), and its
+      # pin interior (`bump + 1`) is sub-contracted to core (arithmetic), both through the weave.
+      assert Enum.any?(value_mutated, &(&1 =~ "p2.views - "))
+      assert Enum.any?(value_mutated, &(&1 =~ "bump - 1"))
+
+      # Under exists the select is unobserved — neither the SQL swap nor the pin sub-contract fires
+      # (a pin mutant there would be equivalent); the observed inner `where` still mutates.
+      refute Enum.any?(exists_mutated, &(&1 =~ "bump - 1"))
+      refute Enum.any?(exists_mutated, &(&1 =~ "p.views - "))
+      assert Enum.any?(exists_mutated, &(&1 =~ "p.views >= 0"))
+
+      assert_compiles(value_src, opts)
+      assert_compiles(exists_src, opts)
+    end
+
     test "a subquery source is mutated where the query is built, not inline" do
       src = """
       defmodule Q do

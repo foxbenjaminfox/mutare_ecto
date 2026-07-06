@@ -162,11 +162,12 @@ defmodule Mutare.Ecto.Fragment do
   catalog would not have walked past: an `is_nil` argument is never entered (value mutants of a
   parameter preserve its NULL-ness, so they are provably equivalent inside the one predicate that
   observes only NULL-ness); an `exists`/`all`/`any`/`in` subquery argument surfaces the pins inside
-  its **own** `where`/`having` conditions (via `Mutare.Ecto.Subquery`, each rebuilt back into this
-  condition) — those interiors are ordinary Elixir, core's to mutate, exactly like a top-level pin;
-  a nested author macro's argument is entered only when routed `:expression` (or not a macro at
-  all); and the pin itself is a boundary — core owns everything beneath it, including any nested pin
-  (`^` does not nest in Ecto).
+  the subquery's own mutated clauses (via `Mutare.Ecto.Subquery`, each rebuilt back into this
+  condition) — its `where`/`having` conditions, plus a value-wrapper's observed `select` (never an
+  EXISTS select, unobserved) — those interiors are ordinary Elixir, core's to mutate, exactly like a
+  top-level pin; a nested author macro's argument is entered only when routed `:expression` (or not a
+  macro at all); and the pin itself is a boundary — core owns everything beneath it, including any
+  nested pin (`^` does not nest in Ecto).
   """
   @spec islands(Macro.t()) :: [{Macro.t(), (Macro.t() -> Macro.t())}]
   def islands(condition), do: island_walk(condition)
@@ -182,7 +183,7 @@ defmodule Mutare.Ecto.Fragment do
   # rebuild inside the `exists`. (A bare inline `from` argument only; a `subquery(var)`/scalar
   # `from` yields nothing.)
   defp island_walk({:exists, ex_meta, [arg]}) do
-    for {interior, rebuild} <- Subquery.interior_islands(arg),
+    for {interior, rebuild} <- Subquery.interior_islands(arg, :existence),
         do: {interior, fn m -> {:exists, ex_meta, [rebuild.(m)]} end}
   end
 
@@ -208,7 +209,7 @@ defmodule Mutare.Ecto.Fragment do
       end)
 
     # mutare:ignore[operand_swap] equivalent — the per-argument islands and the subquery interior islands are independent, consumed as a set
-    descended ++ Subquery.interior_islands(node)
+    descended ++ Subquery.interior_islands(node, :value)
   end
 
   # A plain list (a written in-list): an island may sit among the elements (`x in [1, ^two]`).
