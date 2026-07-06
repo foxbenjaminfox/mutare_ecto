@@ -118,22 +118,40 @@ defmodule Mutare.Ecto.DynamicTest do
       end
       """
 
-      muts = mutated(src)
-      assert "dynamic([p], avg(p.views) > ^n)" in muts
-      assert "dynamic([p], sum(p.views) >= ^n)" in muts
+      diffs = ecto_diffs(src)
+      orig = "dynamic([p], sum(p.views) > ^n)"
+      # Origin pinned: the aggregate swaps down its ladder and the comparison swaps, each a
+      # distinct single-point mutant of the same rebuilt call.
+      assert {orig, "dynamic([p], avg(p.views) > ^n)"} in diffs
+      assert {orig, "dynamic([p], sum(p.views) >= ^n)"} in diffs
       assert_compiles(src)
     end
 
     test "the qualified form mutates exactly like the imported one" do
-      src = """
+      qualified = """
       defmodule M do
         require Ecto.Query
         def d(v), do: Ecto.Query.dynamic([p], p.views > ^v)
       end
       """
 
-      assert Enum.any?(mutated(src), &(&1 =~ "p.views >= ^v"))
-      assert_compiles(src)
+      imported = """
+      defmodule M do
+        import Ecto.Query
+        def d(v), do: dynamic([p], p.views > ^v)
+      end
+      """
+
+      # "Exactly like" is asserted, not sampled: strip the written `Ecto.Query.` prefix and the
+      # two forms' full diff sets must be identical — they resolve to the one macro.
+      strip = fn diffs ->
+        Enum.map(diffs, fn {o, m} ->
+          {String.replace(o, "Ecto.Query.", ""), String.replace(m, "Ecto.Query.", "")}
+        end)
+      end
+
+      assert strip.(ecto_diffs(qualified)) == ecto_diffs(imported)
+      assert_compiles(qualified)
     end
 
     test "the written binding list reorders in place (BindingReorder, never a body rewrite)" do
@@ -144,12 +162,13 @@ defmodule Mutare.Ecto.DynamicTest do
       end
       """
 
-      muts = mutated(src)
+      # Exactly two single-point mutants, origin pinned: the operator swap and the in-place
+      # binding transposition (which swaps only the declaration — the body is byte-for-byte intact).
+      assert ecto_diffs(src) == [
+               {"dynamic([a, b], a.id > b.id)", "dynamic([a, b], a.id >= b.id)"},
+               {"dynamic([a, b], a.id > b.id)", "dynamic([b, a], a.id > b.id)"}
+             ]
 
-      # The transposition swaps only the declaration — the condition body is byte-for-byte intact.
-      assert "dynamic([b, a], a.id > b.id)" in muts
-      # And the operator swap rides alongside as its own single-point mutant.
-      assert "dynamic([a, b], a.id >= b.id)" in muts
       assert_compiles(src)
     end
   end
@@ -163,7 +182,10 @@ defmodule Mutare.Ecto.DynamicTest do
       end
       """
 
-      assert "dynamic(as(:post).views >= 100)" in mutated(src)
+      assert {"dynamic(as(:post).views > 100)", "dynamic(as(:post).views >= 100)"} in ecto_diffs(
+               src
+             )
+
       assert_compiles(src)
     end
   end

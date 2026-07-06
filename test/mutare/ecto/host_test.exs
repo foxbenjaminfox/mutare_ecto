@@ -224,6 +224,12 @@ defmodule Mutare.Ecto.HostTest do
 
       assert metamutant(src) =~ "dynamic([a, b, ..., j]"
       refute metamutant(src) =~ "dynamic([a, b, j]"
+
+      # …and the appended join's conditions are actually hosted — real mutants fire, so this can't
+      # pass on scaffolding shape alone if every mutation silently vanished.
+      assert {"j.user_id == a.id", "j.user_id != a.id"} in hosted(src)
+      assert {"j.views > b.views", "j.views >= b.views"} in hosted(src)
+
       assert_compiles(src)
     end
 
@@ -245,6 +251,12 @@ defmodule Mutare.Ecto.HostTest do
 
       assert metamutant(src) =~ "dynamic([a, b, ..., j]"
       refute metamutant(src) =~ "dynamic([a, b, j]"
+
+      # …and the appended join's conditions are actually hosted — real mutants fire, so this can't
+      # pass on scaffolding shape alone if every mutation silently vanished.
+      assert {"j.user_id == a.id", "j.user_id != a.id"} in hosted(src)
+      assert {"j.views > b.views", "j.views >= b.views"} in hosted(src)
+
       assert_compiles(src)
     end
 

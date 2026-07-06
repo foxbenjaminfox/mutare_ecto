@@ -23,7 +23,9 @@ defmodule Mutare.Ecto.BindingReorderTest do
       end
       """
 
-      assert Enum.any?(mutated(src), &(&1 =~ "order_by(query, [p, u]"))
+      assert {"order_by(query, [u, p], asc: [u.name, p.title])",
+              "order_by(query, [p, u], asc: [u.name, p.title])"} in ecto_diffs(src)
+
       assert_compiles(src)
     end
 
@@ -35,7 +37,9 @@ defmodule Mutare.Ecto.BindingReorderTest do
       end
       """
 
-      assert Enum.any?(mutated(src), &(&1 =~ "order_by([p, u]"))
+      assert {"order_by([u, p], asc: [u.name, p.title])",
+              "order_by([p, u], asc: [u.name, p.title])"} in ecto_diffs(src)
+
       assert_compiles(src)
     end
 
@@ -47,7 +51,10 @@ defmodule Mutare.Ecto.BindingReorderTest do
       end
       """
 
-      assert Enum.any?(mutated(src), &(&1 =~ "select(query, [p, u]"))
+      assert {"select(query, [u, p], {u.id, p.id})", "select(query, [p, u], {u.id, p.id})"} in ecto_diffs(
+               src
+             )
+
       assert_compiles(src)
     end
 
@@ -59,7 +66,10 @@ defmodule Mutare.Ecto.BindingReorderTest do
       end
       """
 
-      assert Enum.any?(mutated(src), &(&1 =~ "group_by(query, [p, u]"))
+      assert {"group_by(query, [u, p], [u.id, p.id])", "group_by(query, [p, u], [u.id, p.id])"} in ecto_diffs(
+               src
+             )
+
       assert_compiles(src)
     end
 
@@ -71,7 +81,10 @@ defmodule Mutare.Ecto.BindingReorderTest do
       end
       """
 
-      assert Enum.any?(mutated(src), &(&1 =~ "distinct(query, [p, u]"))
+      assert {"distinct(query, [u, p], [u.id, p.id])", "distinct(query, [p, u], [u.id, p.id])"} in ecto_diffs(
+               src
+             )
+
       assert_compiles(src)
     end
 
@@ -83,7 +96,9 @@ defmodule Mutare.Ecto.BindingReorderTest do
       end
       """
 
-      assert Enum.any?(mutated(src), &(&1 =~ "join(query, :inner, [p, u]"))
+      assert {~s|join(query, :inner, [u, p], f in "foo", on: u.id == p.id)|,
+              ~s|join(query, :inner, [p, u], f in "foo", on: u.id == p.id)|} in ecto_diffs(src)
+
       assert_compiles(src)
     end
   end
@@ -140,7 +155,10 @@ defmodule Mutare.Ecto.BindingReorderTest do
       """
 
       # Only `u` is used, so this is an equivalent mutant that exposes a redundant declaration.
-      assert Enum.any?(mutated(src), &(&1 =~ "order_by(query, [p, u]"))
+      assert {"order_by(query, [u, p], asc: u.name)", "order_by(query, [p, u], asc: u.name)"} in ecto_diffs(
+               src
+             )
+
       assert_compiles(src)
     end
 

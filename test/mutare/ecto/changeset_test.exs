@@ -44,8 +44,8 @@ defmodule Mutare.Ecto.ChangesetTest do
     end
     """
 
-    assert [{_original, mutated}] = ecto_diffs(src)
-    assert mutated =~ "identity"
+    # Pin the origin so the drop is verified to be the constraint stage, not some other node.
+    assert ecto_diffs(src) == [{~s|unique_constraint(:email)|, "Elixir.Function.identity()"}]
   end
 
   test "leaves content-producing calls (cast/change/put_change) untouched" do
@@ -102,9 +102,13 @@ defmodule Mutare.Ecto.ChangesetTest do
     end
     """
 
-    diffs = ecto_diffs(src)
-    assert length(diffs) == 3
-    assert Enum.all?(diffs, fn {_o, mutated} -> mutated =~ "identity" end)
+    # Exactly the three named transparent validators drop to identity — each origin pinned so a
+    # *different* set of three drops (same count, wrong stages) can't pass.
+    assert ecto_diffs(src) == [
+             {~s|validate_exclusion(:name, ~w(admin))|, "Elixir.Function.identity()"},
+             {~s|validate_acceptance(:terms)|, "Elixir.Function.identity()"},
+             {~s|unsafe_validate_unique(:email, MyApp.Repo)|, "Elixir.Function.identity()"}
+           ]
   end
 
   describe ":hook_drop (deferred Repo-time hooks, distinct from :validation_drop)" do

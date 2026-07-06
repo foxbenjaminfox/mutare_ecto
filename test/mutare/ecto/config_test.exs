@@ -255,23 +255,40 @@ defmodule Mutare.Ecto.ConfigTest do
     end
 
     test "the full family set is exposed" do
-      assert :comparison in Mutare.Ecto.families()
-      assert :arithmetic in Mutare.Ecto.families()
-      assert :validation_drop in Mutare.Ecto.families()
-      assert :persistence in Mutare.Ecto.families()
-      assert :on_conflict in Mutare.Ecto.families()
-      assert :query_terminal in Mutare.Ecto.families()
-      assert :hook_drop in Mutare.Ecto.families()
-      assert :ordering_nulls in Mutare.Ecto.families()
-      assert :combination in Mutare.Ecto.families()
-      assert :clause_drop in Mutare.Ecto.families()
+      # The exact set — *every* family named — so a renamed, dropped, or added family fails loudly.
+      # (The old check asserted only 15 of the 26 by `in` plus a count of 26, letting the other 11
+      # be silently renamed as long as the total held.)
+      assert MapSet.new(Mutare.Ecto.families()) ==
+               MapSet.new([
+                 :comparison,
+                 :connective,
+                 :null_predicate,
+                 :membership,
+                 :arithmetic,
+                 :coalesce,
+                 :temporal,
+                 :binding_reorder,
+                 :integer_literal,
+                 :float_literal,
+                 :atom_literal,
+                 :string_literal,
+                 :boolean_literal,
+                 :filter_drop,
+                 :ordering,
+                 :ordering_nulls,
+                 :bound,
+                 :join_type,
+                 :combination,
+                 :aggregate,
+                 :query_terminal,
+                 :clause_drop,
+                 :persistence,
+                 :on_conflict,
+                 :validation_drop,
+                 :hook_drop
+               ])
 
-      assert :integer_literal in Mutare.Ecto.families()
-      assert :float_literal in Mutare.Ecto.families()
-      assert :atom_literal in Mutare.Ecto.families()
-      assert :string_literal in Mutare.Ecto.families()
-      assert :boolean_literal in Mutare.Ecto.families()
-
+      # …and no accidental duplicates: the list length equals the deduped-set size.
       assert length(Mutare.Ecto.families()) == 26
     end
 

@@ -134,10 +134,10 @@ defmodule Mutare.Ecto.ClauseDropTest do
       end
       """
 
-      m = mutated(src)
       # Previously the static-`:skip` `limit` stamped its piped value `:skip`, dropping every
-      # mutation of the upstream `from`. Now the boundary swap on `u.age > 18` fires through it.
-      assert "u.age >= 18" in m
+      # mutation of the upstream `from`. Now the boundary swap on `u.age > 18` fires through it —
+      # pinned as an exact origin→target pair so a same-text swap sourced elsewhere can't stand in.
+      assert {"u.age > 18", "u.age >= 18"} in ecto_diffs(src)
       assert_compiles(src)
     end
 
@@ -149,7 +149,8 @@ defmodule Mutare.Ecto.ClauseDropTest do
       end
       """
 
-      assert "u.age >= 18" in mutated(src)
+      assert {"u.age > 18", "u.age >= 18"} in ecto_diffs(src)
+      assert_compiles(src)
     end
   end
 

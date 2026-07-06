@@ -21,7 +21,7 @@ defmodule Mutare.Ecto.ClauseTest do
       end
       """
 
-      assert Enum.any?(ecto_diffs(src), fn {_o, mutated} -> mutated =~ "desc: u.name" end)
+      assert {"order_by([u], asc: u.name)", "order_by([u], desc: u.name)"} in ecto_diffs(src)
       assert_compiles(src)
     end
 
@@ -33,7 +33,10 @@ defmodule Mutare.Ecto.ClauseTest do
       end
       """
 
-      assert Enum.any?(ecto_diffs(src), fn {_o, mutated} -> mutated =~ "asc: u.name" end)
+      assert {"order_by(query, [u], desc: u.name)", "order_by(query, [u], asc: u.name)"} in ecto_diffs(
+               src
+             )
+
       assert_compiles(src)
     end
 
@@ -45,9 +48,16 @@ defmodule Mutare.Ecto.ClauseTest do
       end
       """
 
-      mutated = Enum.map(ecto_diffs(src), fn {_o, m} -> m end)
-      assert Enum.any?(mutated, &(&1 =~ "desc: u.name" and &1 =~ "desc: u.id"))
-      assert Enum.any?(mutated, &(&1 =~ "asc: u.name" and &1 =~ "asc: u.id"))
+      diffs = ecto_diffs(src)
+      orig = "order_by(query, [u], asc: u.name, desc: u.id)"
+
+      # Each key flips independently — never both at once — alongside the orthogonal stage drop.
+      # Exact pairs + count pin that there is no combined flip and no over-mutation.
+      assert {orig, "order_by(query, [u], desc: u.name, desc: u.id)"} in diffs
+      assert {orig, "order_by(query, [u], asc: u.name, asc: u.id)"} in diffs
+      assert {orig, "query"} in diffs
+      assert length(diffs) == 3
+      assert_compiles(src)
     end
 
     test "an ordering without an explicit direction yields no flip (only the stage drop)" do

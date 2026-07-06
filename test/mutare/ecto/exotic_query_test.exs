@@ -53,9 +53,12 @@ defmodule Mutare.Ecto.ExoticQueryTest do
       end
       """
 
-      assert [{original, mutated}] = ecto_diffs(src, @all)
-      assert original =~ "over(sum(p.views), partition_by: p.user_id"
-      assert mutated =~ "over(avg(p.views), partition_by: p.user_id"
+      assert {"from(p in MyApp.Post,\n  select: %{total: over(sum(p.views), partition_by: p.user_id, order_by: p.views)}\n)",
+              "from(p in MyApp.Post,\n  select: %{total: over(avg(p.views), partition_by: p.user_id, order_by: p.views)}\n)"} in ecto_diffs(
+               src,
+               @all
+             )
+
       assert_compiles(src, @all)
     end
   end
@@ -79,11 +82,10 @@ defmodule Mutare.Ecto.ExoticQueryTest do
 
     test "the CTE's interior query is mutated where it is built, and each stage drops" do
       diffs = ecto_diffs(@cte_src, @all)
-      mutated = mutated(diffs)
 
       # The CTE interior is an ordinary query expression — full comparison/literal treatment.
-      assert "p.views >= 10" in mutated
-      assert "p.views > 11" in mutated
+      assert {"p.views > 10", "p.views >= 10"} in diffs
+      assert {"p.views > 10", "p.views > 11"} in diffs
 
       # Pipeline stages drop one at a time: the CTE attachment, the join, and the where.
       assert {"with_cte(\"popular\", as: ^popular)", "Elixir.Function.identity()"} in diffs
@@ -95,9 +97,9 @@ defmodule Mutare.Ecto.ExoticQueryTest do
 
       # The join's on: condition and the outer where are mutated as usual; the recursive_ctes
       # toggle is never touched (flipping the flag is a broken query, not a mutant).
-      assert "c.id != p.id" in mutated
-      assert "p.views >= 5" in mutated
-      refute Enum.any?(mutated, &(&1 =~ "recursive_ctes(false)"))
+      assert {"c.id == p.id", "c.id != p.id"} in diffs
+      assert {"p.views > 5", "p.views >= 5"} in diffs
+      refute Enum.any?(mutated(diffs), &(&1 =~ "recursive_ctes(false)"))
     end
 
     test "the CTE metamutant compiles (a dropped with_cte surfaces at runtime, not build time)" do
@@ -118,15 +120,20 @@ defmodule Mutare.Ecto.ExoticQueryTest do
       end
       """
 
-      mutated = mutated(ecto_diffs(src, @all))
+      diffs = ecto_diffs(src, @all)
 
       # `field(p, :mutare)` would be a wrong (usually nonexistent) column, not a live mutant.
-      refute Enum.any?(mutated, &(&1 =~ ":mutare"))
+      refute Enum.any?(mutated(diffs), &(&1 =~ ":mutare"))
 
       # Both comparisons still swap around the field accesses, static and pinned alike.
-      assert "field(p, :views) >= 10 and field(p, ^col) < 100" in mutated
-      assert "field(p, :views) > 10 and field(p, ^col) <= 100" in mutated
-      assert "field(p, :views) > 10 or field(p, ^col) < 100" in mutated
+      assert {"field(p, :views) > 10 and field(p, ^col) < 100",
+              "field(p, :views) >= 10 and field(p, ^col) < 100"} in diffs
+
+      assert {"field(p, :views) > 10 and field(p, ^col) < 100",
+              "field(p, :views) > 10 and field(p, ^col) <= 100"} in diffs
+
+      assert {"field(p, :views) > 10 and field(p, ^col) < 100",
+              "field(p, :views) > 10 or field(p, ^col) < 100"} in diffs
 
       assert_compiles(src, @all)
     end
@@ -148,16 +155,16 @@ defmodule Mutare.Ecto.ExoticQueryTest do
 
     test "the alias name is structural in both arities; the aggregate and comparison still swap" do
       diffs = ecto_diffs(@selected_as_src, @all)
-      mutated = mutated(diffs)
 
       # `selected_as(:mutare)` would reference an unknown alias — structural, never mutated.
-      refute Enum.any?(mutated, &(&1 =~ ":mutare"))
+      refute Enum.any?(mutated(diffs), &(&1 =~ ":mutare"))
 
       # The hosted having condition swaps around the alias reference…
-      assert "selected_as(:total) >= 2" in mutated
-      assert "selected_as(:total) > 3" in mutated
+      assert {"selected_as(:total) > 2", "selected_as(:total) >= 2"} in diffs
+      assert {"selected_as(:total) > 2", "selected_as(:total) > 3"} in diffs
       # …and the select-side aggregate swaps inside the alias definition.
-      assert Enum.any?(mutated, &(&1 =~ "selected_as(avg(p.views), :total)"))
+      assert {"from(p in MyApp.Post,\n  group_by: p.user_id,\n  select: %{user: p.user_id, total: selected_as(sum(p.views), :total)},\n  having: selected_as(:total) > 2\n)",
+              "from(p in MyApp.Post,\n  group_by: p.user_id,\n  select: %{user: p.user_id, total: selected_as(avg(p.views), :total)},\n  having: selected_as(:total) > 2\n)"} in diffs
 
       assert_compiles(@selected_as_src, @all)
     end
@@ -178,12 +185,16 @@ defmodule Mutare.Ecto.ExoticQueryTest do
       end
       """
 
-      mutated = mutated(ecto_diffs(src, @all))
+      diffs = ecto_diffs(src, @all)
 
       # `as(:mutare)`/`parent_as(:mutare)` are unknown-binding errors, not mutants.
-      refute Enum.any?(mutated, &(&1 =~ ":mutare"))
-      assert Enum.any?(mutated, &(&1 =~ "as(:u).age >= 21"))
-      assert Enum.any?(mutated, &(&1 =~ "not exists"))
+      refute Enum.any?(mutated(diffs), &(&1 =~ ":mutare"))
+
+      assert {"as(:u).age > 21 and\n  exists(from(p in MyApp.Post, where: p.user_id == parent_as(:u).id))",
+              "as(:u).age >= 21 and\n  exists(from(p in MyApp.Post, where: p.user_id == parent_as(:u).id))"} in diffs
+
+      assert {"as(:u).age > 21 and\n  exists(from(p in MyApp.Post, where: p.user_id == parent_as(:u).id))",
+              "as(:u).age > 21 and\n  not exists(from(p in MyApp.Post, where: p.user_id == parent_as(:u).id))"} in diffs
 
       assert_compiles(src, @all)
     end
@@ -205,16 +216,20 @@ defmodule Mutare.Ecto.ExoticQueryTest do
     test "path keys are data under the opt-in :string_literal arm (off by default)" do
       # Default configuration: the string arms are opt-in, so only the operator swap and the
       # clause drop fire — no path key (or comparison value) is touched.
-      default_mutated = mutated(ecto_diffs(@json_src))
-      assert "p.title[\"meta\"][\"kind\"] != \"news\"" in default_mutated
-      refute Enum.any?(default_mutated, &(&1 =~ "mutare"))
+      default_diffs = ecto_diffs(@json_src)
+
+      assert {~s|p.title["meta"]["kind"] == "news"|, ~s|p.title["meta"]["kind"] != "news"|} in default_diffs
+
+      refute Enum.any?(mutated(default_diffs), &(&1 =~ "mutare"))
 
       # With :string_literal enabled, a bracket key mutates like any in-fragment string — the
       # mutant selects a different JSON path, which differs exactly on rows carrying the
       # original key (killable, though noisy — why the arm is opt-in).
-      all_mutated = mutated(ecto_diffs(@json_src, @all))
-      assert "p.title[\"mutare\"][\"kind\"] == \"news\"" in all_mutated
-      assert "p.title[\"meta\"][\"kind\"] == \"mutare\"" in all_mutated
+      all_diffs = ecto_diffs(@json_src, @all)
+
+      assert {~s|p.title["meta"]["kind"] == "news"|, ~s|p.title["mutare"]["kind"] == "news"|} in all_diffs
+
+      assert {~s|p.title["meta"]["kind"] == "news"|, ~s|p.title["meta"]["kind"] == "mutare"|} in all_diffs
 
       assert_compiles(@json_src, @all)
     end
@@ -242,11 +257,13 @@ defmodule Mutare.Ecto.ExoticQueryTest do
       end
       """
 
-      mutated = mutated(ecto_diffs(src))
+      diffs = ecto_diffs(src)
 
-      assert "filter(count(p.id), p.views >= 10) > 5" in mutated
-      assert "filter(count(p.id), p.views > 10) >= 5" in mutated
-      assert "filter(count(p.id), p.views > 10) > 6" in mutated
+      assert {"filter(count(p.id), p.views > 10) > 5", "filter(count(p.id), p.views >= 10) > 5"} in diffs
+
+      assert {"filter(count(p.id), p.views > 10) > 5", "filter(count(p.id), p.views > 10) >= 5"} in diffs
+
+      assert {"filter(count(p.id), p.views > 10) > 5", "filter(count(p.id), p.views > 10) > 6"} in diffs
 
       assert_compiles(src, @all)
     end
@@ -267,10 +284,9 @@ defmodule Mutare.Ecto.ExoticQueryTest do
 
     test "the entries and types stay raw; the query around them mutates as usual" do
       diffs = ecto_diffs(@values_src, @all)
-      mutated = mutated(diffs)
 
-      assert "v.views > 6" in mutated
-      assert "v.views >= 5" in mutated
+      assert {"v.views > 5", "v.views > 6"} in diffs
+      assert {"v.views > 5", "v.views >= 5"} in diffs
 
       # Every recorded mutant keeps the VALUES data verbatim (the source position is skipped).
       values_call = "values([%{id: 1, views: 10}], %{id: :integer, views: :integer})"
@@ -314,10 +330,9 @@ defmodule Mutare.Ecto.ExoticQueryTest do
 
     test "the filters mutate; the update: instructions stay raw" do
       diffs = ecto_diffs(@update_src, @all)
-      mutated = mutated(diffs)
 
-      assert "p.views >= 10" in mutated
-      assert "p.views <= 1" in mutated
+      assert {"p.views > 10", "p.views >= 10"} in diffs
+      assert {"p.views < 1", "p.views <= 1"} in diffs
 
       # The update instructions are write *payload*, not a filter — every mutant keeps them
       # verbatim (an inc/set literal bump would mutate what gets written, a mutation family
@@ -370,7 +385,7 @@ defmodule Mutare.Ecto.ExoticQueryTest do
       refute Enum.any?(mutated, &(&1 =~ "left_lateral_join:"))
 
       # The ordinary where still mutates.
-      assert "p.views >= 1" in mutated
+      assert {"p.views > 1", "p.views >= 1"} in diffs
 
       assert_compiles(@lateral_src, @all)
     end
@@ -408,7 +423,7 @@ defmodule Mutare.Ecto.ExoticQueryTest do
         if m =~ "legacy", do: assert(m =~ "{\"legacy_posts\", MyApp.Post}")
       end
 
-      assert "p.views >= 1" in mutated
+      assert {"p.views > 1", "p.views >= 1"} in diffs
       assert_compiles(src, @all)
     end
   end
@@ -439,9 +454,14 @@ defmodule Mutare.Ecto.ExoticQueryTest do
       diffs = ecto_diffs(src, @all)
       mutated = mutated(diffs)
 
-      assert Enum.any?(mutated, &(&1 =~ "p.views > all("))
-      assert Enum.any?(mutated, &(&1 =~ "p.views <= any("))
-      assert Enum.any?(mutated, &(&1 =~ "p.views >= subquery("))
+      assert {"p.views >= all(from(p2 in MyApp.Post, select: max(p2.views)))",
+              "p.views > all(from(p2 in MyApp.Post, select: max(p2.views)))"} in diffs
+
+      assert {"p.views < any(from(p2 in MyApp.Post, select: p2.views))",
+              "p.views <= any(from(p2 in MyApp.Post, select: p2.views))"} in diffs
+
+      assert {"p.views > subquery(from(p2 in MyApp.Post, select: avg(p2.views)))",
+              "p.views >= subquery(from(p2 in MyApp.Post, select: avg(p2.views)))"} in diffs
 
       # The interior `from` sits behind the routing boundary — a nested registered macro's DSL
       # arguments are never descended, so its own select/aggregate stays verbatim in every
@@ -493,10 +513,11 @@ defmodule Mutare.Ecto.ExoticQueryTest do
       end
       """
 
-      mutated = mutated(ecto_diffs(src, @all))
+      diffs = ecto_diffs(src, @all)
+      mutated = mutated(diffs)
 
       # `base` is an ordinary from — fully mutated where it is built…
-      assert "p.views >= 10" in mutated
+      assert {"p.views > 10", "p.views >= 10"} in diffs
       # …while the inline subquery source sits inside the from's skipped source position, so
       # its interior is out of reach. (The from-source is routed :skip wholesale; the idiomatic
       # build-then-wrap form above is how a subquery's interior earns mutants.)
@@ -575,8 +596,8 @@ defmodule Mutare.Ecto.ExoticQueryTest do
       refute Enum.any?(mutated, &(&1 =~ "except"))
       refute Enum.any?(mutated, &(&1 =~ "intersect"))
 
-      assert "p.views >= 100" in mutated
-      assert "p.published != true" in mutated
+      assert {"p.views > 100", "p.views >= 100"} in diffs
+      assert {"p.published == true", "p.published != true"} in diffs
 
       assert_compiles(src, @all)
     end
@@ -640,7 +661,8 @@ defmodule Mutare.Ecto.ExoticQueryTest do
 
       # Connective swap between the fragments; the fragments themselves (template + helper
       # pins) are untouched — the template is structural and the pins are core's islands.
-      assert Enum.any?(mutated, &(&1 =~ "fragment(\"? > 10\", identifier(^col)) or"))
+      assert {~s|fragment("? > 10", identifier(^col)) and\n  fragment("? IN ?", p.views, splice(^vals))|,
+              ~s|fragment("? > 10", identifier(^col)) or\n  fragment("? IN ?", p.views, splice(^vals))|} in diffs
 
       for m <- mutated do
         if m =~ "identifier", do: assert(m =~ "identifier(^col)")
@@ -664,11 +686,14 @@ defmodule Mutare.Ecto.ExoticQueryTest do
       end
       """
 
-      mutated = mutated(ecto_diffs(src, @all))
+      diffs = ecto_diffs(src, @all)
+      mutated = mutated(diffs)
 
       # Only the surrounding condition mutates (the == swap and, under the opt-in arm, the
       # boolean flip) — never the "bar" inside the fragment's private keyword grammar.
-      assert Enum.any?(mutated, &(&1 =~ "fragment(title: [foo: \"bar\"]) != true"))
+      assert {~s|fragment(title: [foo: "bar"]) == true|,
+              ~s|fragment(title: [foo: "bar"]) != true|} in diffs
+
       refute Enum.any?(mutated, &(&1 =~ "foo: \"\""))
       refute Enum.any?(mutated, &(&1 =~ "foo: \"mutare\""))
 
@@ -690,11 +715,14 @@ defmodule Mutare.Ecto.ExoticQueryTest do
       """
 
       diffs = ecto_diffs(src, @all)
-      mutated = mutated(diffs)
 
-      assert Enum.any?(mutated, &(&1 =~ "p.id not in type(^ids, {:array, :integer})"))
-      assert Enum.any?(mutated, &(&1 =~ "p.views >= type(^min, :integer)"))
-      refute Enum.any?(mutated, &(&1 =~ ":mutare"))
+      assert {"p.id in type(^ids, {:array, :integer}) and p.views > type(^min, :integer)",
+              "p.id not in type(^ids, {:array, :integer}) and p.views > type(^min, :integer)"} in diffs
+
+      assert {"p.id in type(^ids, {:array, :integer}) and p.views > type(^min, :integer)",
+              "p.id in type(^ids, {:array, :integer}) and p.views >= type(^min, :integer)"} in diffs
+
+      refute Enum.any?(mutated(diffs), &(&1 =~ ":mutare"))
 
       assert_compiles(src, @all)
     end
@@ -746,10 +774,12 @@ defmodule Mutare.Ecto.ExoticQueryTest do
       mutated = mutated(diffs)
 
       # The standalone preload query gets full treatment where it is built…
-      assert "p.published != true" in mutated
+      assert {"p.published == true", "p.published != true"} in diffs
       # …the join-preload's join narrows kind, and its filter mutates…
-      assert Enum.any?(mutated, &(&1 =~ "inner_join: p in assoc(u, :posts)"))
-      assert "p.views >= 3" in mutated
+      assert {"from(u in MyApp.User,\n  left_join: p in assoc(u, :posts),\n  where: p.views > 3,\n  preload: [posts: p]\n)",
+              "from(u in MyApp.User,\n  inner_join: p in assoc(u, :posts),\n  where: p.views > 3,\n  preload: [posts: p]\n)"} in diffs
+
+      assert {"p.views > 3", "p.views >= 3"} in diffs
       # …while the preload declaration itself (which associations to load) stays raw: every
       # mutant that still carries a preload carries it verbatim.
       for m <- mutated, m =~ "preload" do
@@ -885,11 +915,11 @@ defmodule Mutare.Ecto.ExoticQueryTest do
       end
       """
 
-      mutated = mutated(ecto_diffs(src))
+      diffs = ecto_diffs(src)
 
-      assert "not (p.views >= 10)" in mutated
-      assert "not (p.views > 11)" in mutated
-      refute Enum.any?(mutated, &(&1 =~ "not not"))
+      assert {"not (p.views > 10)", "not (p.views >= 10)"} in diffs
+      assert {"not (p.views > 10)", "not (p.views > 11)"} in diffs
+      refute Enum.any?(mutated(diffs), &(&1 =~ "not not"))
 
       assert_compiles(src, @all)
     end

@@ -11,12 +11,15 @@ defmodule Mutare.Ecto.QueryTest do
     end
     """
 
-    drops = Enum.filter(ecto_diffs(src), fn {_original, mutated} -> mutated =~ "from" end)
-
-    # Two where clauses → two drop mutants; the surviving query keeps select and one where.
-    assert length(drops) >= 2
-    assert Enum.any?(drops, fn {_original, mutated} -> not (mutated =~ "active") end)
-    assert Enum.any?(drops, fn {_original, mutated} -> not (mutated =~ "deleted") end)
+    # Two where clauses → exactly two whole-`from` drop mutants, each removing one where and
+    # keeping the select and the surviving where. Pinned as exact origin→target pairs so a
+    # wrong-clause drop, a missing drop, or an over-mutation can't slip past.
+    assert ecto_diffs(src) == [
+             {~s|from(p in "posts", where: p.active, where: not p.deleted, select: p.id)|,
+              ~s|from(p in "posts", where: not p.deleted, select: p.id)|},
+             {~s|from(p in "posts", where: p.active, where: not p.deleted, select: p.id)|,
+              ~s|from(p in "posts", where: p.active, select: p.id)|}
+           ]
   end
 
   test "drops a where clause (bindingless keyword form)" do
@@ -27,7 +30,11 @@ defmodule Mutare.Ecto.QueryTest do
     end
     """
 
-    assert Enum.any?(ecto_diffs(src), fn {_original, mutated} -> not (mutated =~ "active") end)
+    # The lone where drops (whole-`from`), keeping the select — the exact and only mutant.
+    assert ecto_diffs(src) == [
+             {~s|from("posts", where: [active: true], select: [:id])|,
+              ~s|from("posts", select: [:id])|}
+           ]
   end
 
   test "flips an order_by direction" do
@@ -199,7 +206,10 @@ defmodule Mutare.Ecto.QueryTest do
       # Every flip table's keys, deduped — pins the three label strings against a
       # drifted/blanked/renamed constant. `join`/`inner_join` are never a flip source (widening is
       # deliberately not offered — see the moduledoc), so "inner" is not in this vocabulary.
-      assert Mutare.Ecto.Query.variant_labels() == ["left", "full", "right"]
+      # Compared order-insensitively: this is a *set* whose members are derived via `Map.keys`,
+      # and that order is not guaranteed stable across compiles — pinning a list order made this
+      # flaky (it flipped between `["left", "full", "right"]` and `["full", "left", "right"]`).
+      assert Enum.sort(Mutare.Ecto.Query.variant_labels()) == ["full", "left", "right"]
     end
 
     test "a default (inner) join has no join_type mutant — widening is not offered" do
@@ -364,7 +374,9 @@ defmodule Mutare.Ecto.QueryTest do
       end
       """
 
-      assert Enum.any?(ecto_diffs(src), fn {_o, mutated} -> mutated =~ "avg(p.views)" end)
+      assert {~s|from(p in "posts", select: sum(p.views))|,
+              ~s|from(p in "posts", select: avg(p.views))|} in ecto_diffs(src)
+
       assert_compiles(src)
     end
 
@@ -376,9 +388,14 @@ defmodule Mutare.Ecto.QueryTest do
       end
       """
 
-      mutated = Enum.map(ecto_diffs(src), fn {_o, m} -> m end)
-      assert Enum.any?(mutated, &(&1 =~ "avg(p.views)"))
-      assert Enum.any?(mutated, &(&1 =~ "min(p.views)"))
+      diffs = ecto_diffs(src)
+      orig = ~s|from(p in "posts", select: %{total: sum(p.views), peak: max(p.views)})|
+
+      # Each aggregate swaps in place as its own single-point mutant — origin→target pinned so a
+      # swap sourced from the wrong node (or an extra one) can't pass.
+      assert {orig, ~s|from(p in "posts", select: %{total: avg(p.views), peak: max(p.views)})|} in diffs
+
+      assert {orig, ~s|from(p in "posts", select: %{total: sum(p.views), peak: min(p.views)})|} in diffs
     end
 
     test "swaps an aggregate inside a from order_by clause" do
@@ -389,7 +406,11 @@ defmodule Mutare.Ecto.QueryTest do
       end
       """
 
-      assert Enum.any?(ecto_diffs(src), fn {_o, mutated} -> mutated =~ "desc: avg(p.views)" end)
+      assert {~s|from(p in "posts", group_by: p.user_id, order_by: [desc: sum(p.views)])|,
+              ~s|from(p in "posts", group_by: p.user_id, order_by: [desc: avg(p.views)])|} in ecto_diffs(
+               src
+             )
+
       assert_compiles(src)
     end
   end
@@ -403,7 +424,9 @@ defmodule Mutare.Ecto.QueryTest do
       end
       """
 
-      assert Enum.any?(ecto_diffs(src), fn {_o, mutated} -> mutated =~ "p.views / p.weight" end)
+      assert {~s|from(p in "posts", select: p.views * p.weight)|,
+              ~s|from(p in "posts", select: p.views / p.weight)|} in ecto_diffs(src)
+
       assert_compiles(src)
     end
 
@@ -415,9 +438,10 @@ defmodule Mutare.Ecto.QueryTest do
       end
       """
 
-      assert Enum.any?(ecto_diffs(src), fn {_o, mutated} ->
-               mutated =~ "sum(p.views - p.bonus)"
-             end)
+      assert {~s|from(p in "posts", group_by: p.user_id, select: %{total: sum(p.views + p.bonus)})|,
+              ~s|from(p in "posts", group_by: p.user_id, select: %{total: sum(p.views - p.bonus)})|} in ecto_diffs(
+               src
+             )
 
       assert_compiles(src)
     end
@@ -430,9 +454,8 @@ defmodule Mutare.Ecto.QueryTest do
       end
       """
 
-      assert Enum.any?(ecto_diffs(src), fn {_o, mutated} ->
-               mutated =~ "desc: p.views + p.penalty"
-             end)
+      assert {~s|from(p in "posts", order_by: [desc: p.views - p.penalty])|,
+              ~s|from(p in "posts", order_by: [desc: p.views + p.penalty])|} in ecto_diffs(src)
 
       assert_compiles(src)
     end
