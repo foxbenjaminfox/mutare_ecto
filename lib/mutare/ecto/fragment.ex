@@ -36,8 +36,11 @@ defmodule Mutare.Ecto.Fragment do
       swap is **dialect-gated** — emitted only when `dialects:` includes `:postgres` (the
       `in`/`exists` polarities and the element drop are portable and always emitted). Unlike
       `is_nil`, the `in` predicate's operands **are** descended — an arithmetic swap on the left
-      or a literal inside the written list changes which rows match — while `exists`'s argument
-      is not (a subquery's internals are their own routed query, not this condition's syntax).
+      or a literal inside the written list changes which rows match. An `exists`/`all`/`any`/`in`
+      subquery argument is not descended *as a condition* (a subquery is a query, not this
+      condition's syntax), but its **interior is recursed** by `Mutare.Ecto.Subquery` — the inner
+      `where`/`having` swaps, filter-drops, and join-type flips (and, under a value-wrapper, its
+      `select` projection) — each rebuilt into this condition and delivered through the same weave.
     * **Arithmetic** — `+`↔`-`, `*`↔`/`, owned by the shared scalar catalog (`Mutare.Ecto.Scalar`,
       which also delivers it in `select`/`order_by` values): NULL propagates through every arm
       alike (the swap changes a row's computed value, never its NULL-ness), and `/` is the
@@ -105,7 +108,7 @@ defmodule Mutare.Ecto.Fragment do
   """
 
   alias Mutare.Calls
-  alias Mutare.Ecto.{Config, Scalar}
+  alias Mutare.Ecto.{Config, Scalar, Subquery}
 
   # The finer `# mutare:ignore` label(s) a mutant carries beyond its family — the operator a swap
   # mutates (`<`), or a literal's kind (`zero`) — or a *list* when one mutant collapses several kinds
@@ -156,38 +159,56 @@ defmodule Mutare.Ecto.Fragment do
   (the host's weave, or the whole-call in-place rewrite).
 
   The walk honors exactly the catalog's own descent rules, so a caller cannot reach an island the
-  catalog would not have walked past: an `is_nil`/`exists` argument is never entered (value
-  mutants of a parameter preserve its NULL-ness, so they are provably equivalent inside the one
-  predicate that observes only NULL-ness — and a subquery's internals are their own routed
-  query), a nested author macro's argument is entered only when routed `:expression` (or not a
-  macro at all), and the pin itself is a boundary — core owns everything beneath it, including
-  any nested pin (`^` does not nest in Ecto).
+  catalog would not have walked past: an `is_nil` argument is never entered (value mutants of a
+  parameter preserve its NULL-ness, so they are provably equivalent inside the one predicate that
+  observes only NULL-ness); an `exists`/`all`/`any`/`in` subquery argument surfaces the pins inside
+  its **own** `where`/`having` conditions (via `Mutare.Ecto.Subquery`, each rebuilt back into this
+  condition) — those interiors are ordinary Elixir, core's to mutate, exactly like a top-level pin;
+  a nested author macro's argument is entered only when routed `:expression` (or not a macro at
+  all); and the pin itself is a boundary — core owns everything beneath it, including any nested pin
+  (`^` does not nest in Ecto).
   """
   @spec islands(Macro.t()) :: [{Macro.t(), (Macro.t() -> Macro.t())}]
   def islands(condition), do: island_walk(condition)
 
   defp island_walk({:^, meta, [interior]}), do: [{interior, &{:^, meta, [&1]}}]
 
-  # The catalog's no-descent predicates (`do_mutants/3` flips them as units): no islands inside.
-  defp island_walk({predicate, _meta, [_arg]}) when predicate in [:is_nil, :exists], do: []
+  # `is_nil`'s argument is never entered: the value families preserve an expression's NULL-ness, so
+  # a pin's value mutants are provably equivalent inside a predicate that observes only NULL-ness.
+  defp island_walk({:is_nil, _meta, [_arg]}), do: []
+
+  # `exists`'s argument is a subquery whose own condition pins **are** ordinary Elixir, core's to
+  # mutate — so descend into its interior islands (via `Mutare.Ecto.Subquery`) and re-wrap each
+  # rebuild inside the `exists`. (A bare inline `from` argument only; a `subquery(var)`/scalar
+  # `from` yields nothing.)
+  defp island_walk({:exists, ex_meta, [arg]}) do
+    for {interior, rebuild} <- Subquery.interior_islands(arg),
+        do: {interior, fn m -> {:exists, ex_meta, [rebuild.(m)]} end}
+  end
 
   # Any other call/operator node: descend per argument under the same author-macro rule as
   # `lift/4` — only plainly standard syntax (`descend_arg?/2`). Each found island's rebuild is
-  # composed outward so it reconstructs the whole condition.
-  defp island_walk({form, meta, args}) when is_list(args) do
+  # composed outward so it reconstructs the whole condition. A bare inline subquery `from(...)`
+  # (a value-wrapper's argument, reached by this descent) also surfaces its interior condition
+  # pins through `Subquery`; every other node's `interior_islands` is `[]`.
+  defp island_walk({form, meta, args} = node) when is_list(args) do
     routing = Calls.macro_treatment({form, meta, args})
 
-    args
-    |> Enum.with_index()
-    |> Enum.flat_map(fn {arg, index} ->
-      if descend_arg?(routing, index) do
-        for {interior, rebuild} <- island_walk(arg) do
-          {interior, fn m -> {form, meta, List.replace_at(args, index, rebuild.(m))} end}
+    descended =
+      args
+      |> Enum.with_index()
+      |> Enum.flat_map(fn {arg, index} ->
+        if descend_arg?(routing, index) do
+          for {interior, rebuild} <- island_walk(arg) do
+            {interior, fn m -> {form, meta, List.replace_at(args, index, rebuild.(m))} end}
+          end
+        else
+          []
         end
-      else
-        []
-      end
-    end)
+      end)
+
+    # mutare:ignore[operand_swap] equivalent — the per-argument islands and the subquery interior islands are independent, consumed as a set
+    descended ++ Subquery.interior_islands(node)
   end
 
   # A plain list (a written in-list): an island may sit among the elements (`x in [1, ^two]`).
@@ -262,16 +283,30 @@ defmodule Mutare.Ecto.Fragment do
   end
 
   # Existence polarity, as a unit (the subquery cousin of the `in` flip — SQL's other membership
-  # predicate). `not exists(subquery)` → `exists(subquery)`: flip the whole predicate, no descent
-  # (the argument is a subquery whose internals are their own routed query, not this condition's
-  # syntax). Both directions are tagged `"exists"` (`not exists` has a space — not a wire-safe
-  # label), so `# mutare:ignore[ecto:exists]` names the flip whichever way it points.
-  defp do_mutants({:not, _meta, [{:exists, _, [_arg]} = inner]}, _opts, _position),
-    do: [{:membership, inner, "exists"}]
+  # predicate), **plus** the subquery's own interior mutants. `not exists(subquery)` →
+  # `exists(subquery)` flips the whole predicate (`"exists"` — `not exists` has a space, not a
+  # wire-safe label — so `# mutare:ignore[ecto:exists]` names the flip whichever way it points);
+  # the interior mutants come from `Mutare.Ecto.Subquery` in `:existence` mode (its `select` is
+  # unobserved by EXISTS, so it is suppressed there), each re-wrapped inside the `not exists`.
+  defp do_mutants({:not, not_meta, [{:exists, ex_meta, [arg]} = inner]}, opts, _position) do
+    interior =
+      for {family, mutated, label} <- Subquery.interior_mutants(arg, opts, :existence),
+          do: {family, {:not, not_meta, [{:exists, ex_meta, [mutated]}]}, label}
 
-  # `exists(subquery)` → `not exists(subquery)`. Clean meta on the fresh `not`.
-  defp do_mutants({:exists, _meta, [_arg]} = node, _opts, _position),
-    do: [{:membership, {:not, [], [node]}, "exists"}]
+    # mutare:ignore[operand_swap] equivalent — the polarity flip and the interior set are independent, consumed as a set
+    [{:membership, inner, "exists"} | interior]
+  end
+
+  # `exists(subquery)` → `not exists(subquery)` (clean meta on the fresh `not`), plus the subquery's
+  # interior mutants in `:existence` mode, each re-wrapped inside the `exists`.
+  defp do_mutants({:exists, ex_meta, [arg]} = node, opts, _position) do
+    interior =
+      for {family, mutated, label} <- Subquery.interior_mutants(arg, opts, :existence),
+          do: {family, {:exists, ex_meta, [mutated]}, label}
+
+    # mutare:ignore[operand_swap] equivalent — the polarity flip and the interior set are independent, consumed as a set
+    [{:membership, {:not, [], [node]}, "exists"} | interior]
+  end
 
   # An interpolation island (`^expr`): ordinary Elixir evaluated at runtime and bound as a query
   # parameter — never SQL for this catalog to reason about (a swap here changes the *parameter's*
@@ -306,18 +341,25 @@ defmodule Mutare.Ecto.Fragment do
   end
 
   # An operator/connective (atom form): offer its own swap (if any), then descend into its
-  # operands so a nested comparison/connective is mutated too (`is_nil(u.x) and u.y > 1`).
-  defp do_mutants({form, meta, args}, opts, _position) when is_atom(form) and is_list(args) do
-    # mutare:ignore[operand_swap] local/lift order is irrelevant — mutants are consumed as a set
-    local(form, meta, args, opts) ++ lift(form, meta, args, opts)
+  # operands so a nested comparison/connective is mutated too (`is_nil(u.x) and u.y > 1`). A bare
+  # inline subquery `from(...)` (the argument of a value-wrapper — `all`/`any`/`subquery`/`in` —
+  # reached here by the operand descent above) has no swap of its own, but `Subquery` recurses its
+  # interior in `:value` mode; every other node's `interior_mutants` is `[]`.
+  defp do_mutants({form, meta, args} = node, opts, _position)
+       when is_atom(form) and is_list(args) do
+    # mutare:ignore[operand_swap] local/lift/subquery order is irrelevant — mutants are consumed as a set
+    local(form, meta, args, opts) ++
+      lift(form, meta, args, opts) ++
+      Subquery.interior_mutants(node, opts, :value)
   end
 
-  # A non-atom-form node (e.g. a `u.age` field access, whose form is the `{:., …}` dot tuple):
-  # descend into its arguments only, never its form — exactly as core's analyzer recurses, so a
-  # field/qualifier reference is a leaf.
+  # A non-atom-form node (e.g. a `u.age` field access, whose form is the `{:., …}` dot tuple, or a
+  # qualified `Ecto.Query.from(...)` subquery): descend into its arguments only, never its form —
+  # exactly as core's analyzer recurses — and offer a qualified subquery's interior in `:value` mode.
   # mutare:ignore[pattern_swap, clause_drop] equivalent — the only non-atom-form node a condition yields is a field/dot access whose args are `[]`, and lift/4 over no args is a no-op, so reordering the head's bindings or dropping the clause both produce the same empty result
-  defp do_mutants({form, meta, args}, opts, _position) when is_list(args),
-    do: lift(form, meta, args, opts)
+  defp do_mutants({form, meta, args} = node, opts, _position) when is_list(args),
+    # mutare:ignore[operand_swap] lift/subquery order is irrelevant — mutants are consumed as a set
+    do: lift(form, meta, args, opts) ++ Subquery.interior_mutants(node, opts, :value)
 
   # A plain list — the written right-hand side of an `in`, or a `json_extract_path` path
   # (Sourceror wraps it as `{:__block__, …, [[…]]}`, whose block the transparent clause above

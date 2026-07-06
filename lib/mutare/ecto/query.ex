@@ -97,9 +97,16 @@ defmodule Mutare.Ecto.Query do
   # `Mutare.Ecto.Dispatcher` normalizes the call (`Mutare.Ecto.AST.QueryCall.parse/1`) before
   # calling here, so a qualified `Ecto.Query.from(…)` or aliased `Q.from(…)` is rewritten exactly
   # like the bare/imported `from(…)`; `rebuild` re-emits each mutant in the source's written form.
-  def mutations(%QueryCall{} = call, context) do
-    config = Config.from_context(context)
+  def mutations(%QueryCall{} = call, context),
+    do: mutations_for(call, Config.from_context(context))
 
+  @doc """
+  The whole-`from` mutations for `call` under an already-resolved `%Config{}` — the config-taking
+  body `mutations/2` delegates to, exposed so `Mutare.Ecto.Subquery` can recurse it into a
+  subquery's inner `from` (where it holds the parsed config, not a full callback context).
+  """
+  @spec mutations_for(QueryCall.t(), Config.t()) :: [Mutare.Ecto.SubMutator.tagged()]
+  def mutations_for(%QueryCall{} = call, %Config{} = config) do
     case call do
       %QueryCall{name: :from, args: [source]} ->
         binding_reorders(call, source)
@@ -272,5 +279,14 @@ defmodule Mutare.Ecto.Query do
 
   # Rebuild the `from` with the chosen clause replaced/removed via the node's own `rebuild`, so the
   # mutant keeps the source's written form (bare/qualified/aliased) — a minimal, shape-correct diff.
+  # A drop that removes the *last* clause collapses to the single-argument `from(source)` rather than
+  # a `from(source, [])`: the two are semantically identical, but the empty keyword-args list is both
+  # noisier and — nested inside a subquery expression (`exists(from(c, []))`) — unrenderable by the
+  # Elixir formatter, so the clean single-arg form is the only safe shape. Only a drop can empty the
+  # list; every swap family replaces a clause, keeping it non-empty.
+  defp rebuild_from(call, source, {:__block__, _meta, [[]]}),
+    do: QueryCall.rebuild(call, [source])
+
+  defp rebuild_from(call, source, []), do: QueryCall.rebuild(call, [source])
   defp rebuild_from(call, source, clauses), do: QueryCall.rebuild(call, [source, clauses])
 end

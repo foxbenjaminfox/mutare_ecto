@@ -494,6 +494,41 @@ defmodule Mutare.Ecto.SemanticCases do
         end
       end
 
+      describe "Subquery interior — an inner `where` mutation is woven and live" do
+        # The inner condition of a correlated `exists` subquery is mutated in place and delivered through
+        # the same host weave as the polarity flip. `p.views > 10` vs `>= 10` differ only on the boundary
+        # post (P1, views == 10, user 1): the `>` baseline excludes user 1 (their only post sits exactly on
+        # the bound), the `>=` mutant admits them. If the injected inner mutant were inert, both would agree.
+        test "flipping the subquery's inner comparison changes which users the exists keeps" do
+          {mod, sites} =
+            build("""
+            defmodule Q do
+              import Ecto.Query
+              alias MyApp.{Post, User}
+
+              def q do
+                from u in User,
+                  as: :user,
+                  where:
+                    exists(
+                      from(p in Post,
+                        where: parent_as(:user).id == p.user_id and p.views > 10
+                      )
+                    ),
+                  select: u.id
+              end
+            end
+            """)
+
+          {baseline, mutant} = observe_ids(mod, sites, {~r/p\.views > 10/, ~r/p\.views >= 10/})
+
+          # Baseline: only Bob (user 2 — P2, views 20 > 10). User 1's only post (P1) sits on the bound.
+          assert baseline == [2]
+          # The `>=` mutant additionally admits user 1 (P1's views == 10, the bound).
+          assert mutant == [1, 2]
+        end
+      end
+
       describe "Arithmetic — `+` ↔ `-` (dynamic-injected)" do
         # `u.age + u.score > 100` vs `u.age - u.score > 100` differ on any row whose score is nonzero;
         # the NULL-score rows (Bob, Dave) drop out of both — the swap changes the computed value, never

@@ -154,9 +154,11 @@ defmodule Mutare.Ecto.FragmentTest do
     end
 
     test "exists polarity flips both ways as a unit" do
-      # The subquery cousin of the `in` flip. The argument (a whole subquery) is left raw — its
-      # internals are their own routed query, not this condition's syntax — so no double negation
-      # and no descent-produced mutants.
+      # The subquery cousin of the `in` flip. The argument here is `subquery(sq)` — a *variable*
+      # query, not an inline `from`, so there is no interior for `Mutare.Ecto.Subquery` to recurse
+      # (it is mutated where `sq` is built); only the whole-predicate polarity flip fires, both ways,
+      # with no double negation. (An inline `exists(from …)` additionally mutates its interior — see
+      # the subquery-interior tests in `exotic_query_test.exs`.)
       assert mutants("exists(subquery(sq))") == MapSet.new(["not exists(subquery(sq))"])
       assert mutants("not exists(subquery(sq))") == MapSet.new(["exists(subquery(sq))"])
     end
@@ -498,11 +500,14 @@ defmodule Mutare.Ecto.FragmentTest do
                "u.age in [18, ^(base - 1)]"
     end
 
-    test "islands honor the catalog's no-descent predicates (is_nil/exists)" do
-      # Value mutants of a parameter preserve its NULL-ness — provably equivalent inside the one
-      # predicate that observes only NULL-ness; a subquery's internals are their own routed query.
+    test "islands honor the catalog's no-descent predicates (is_nil) and a pinned subquery" do
+      # `is_nil`: value mutants of a parameter preserve its NULL-ness — provably equivalent inside the
+      # one predicate that observes only NULL-ness, so its argument is never entered.
       assert islands("is_nil(coalesce(u.age, ^default))") == []
       assert islands("not is_nil(coalesce(u.age, ^default))") == []
+
+      # `exists(^sub)`: the argument is a pinned query built elsewhere (mutated where bound), not an
+      # inline `from` — so there is no interior for `Mutare.Ecto.Subquery` to surface pins from.
       assert islands("exists(^sub)") == []
     end
 

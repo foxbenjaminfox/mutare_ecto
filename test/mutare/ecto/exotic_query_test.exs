@@ -429,7 +429,7 @@ defmodule Mutare.Ecto.ExoticQueryTest do
   end
 
   describe "subqueries in expression position" do
-    test "all/any/subquery comparisons swap the outer operator; the interior stays raw" do
+    test "value-wrapper subqueries (all/any/subquery) mutate the outer operator AND the interior" do
       src = """
       defmodule Q do
         import Ecto.Query
@@ -441,7 +441,7 @@ defmodule Mutare.Ecto.ExoticQueryTest do
 
         def q2 do
           from p in MyApp.Post,
-            where: p.views < any(from p2 in MyApp.Post, select: p2.views)
+            where: p.views < any(from p2 in MyApp.Post, where: p2.views > 5, select: p2.views)
         end
 
         def q3 do
@@ -454,26 +454,23 @@ defmodule Mutare.Ecto.ExoticQueryTest do
       diffs = ecto_diffs(src, @all)
       mutated = mutated(diffs)
 
-      assert {"p.views >= all(from(p2 in MyApp.Post, select: max(p2.views)))",
-              "p.views > all(from(p2 in MyApp.Post, select: max(p2.views)))"} in diffs
+      # The outer operator still swaps (unchanged).
+      assert Enum.any?(mutated, &(&1 =~ "p.views > all("))
+      assert Enum.any?(mutated, &(&1 =~ "p.views <= any("))
+      assert Enum.any?(mutated, &(&1 =~ "p.views >= subquery("))
 
-      assert {"p.views < any(from(p2 in MyApp.Post, select: p2.views))",
-              "p.views <= any(from(p2 in MyApp.Post, select: p2.views))"} in diffs
+      # Under a value-wrapper the projected `select` IS the observed value, so its aggregate swaps
+      # now surface — `max`→`min` under `all`, `avg`→`sum` under `subquery`.
+      assert Enum.any?(mutated, &(&1 =~ "min(p2.views)"))
+      assert Enum.any?(mutated, &(&1 =~ "sum(p2.views)"))
 
-      assert {"p.views > subquery(from(p2 in MyApp.Post, select: avg(p2.views)))",
-              "p.views >= subquery(from(p2 in MyApp.Post, select: avg(p2.views)))"} in diffs
-
-      # The interior `from` sits behind the routing boundary — a nested registered macro's DSL
-      # arguments are never descended, so its own select/aggregate stays verbatim in every
-      # mutant. (Mutating a subquery's interior is reachable by building it as a standalone
-      # query first — where it is an ordinary from with full treatment.)
-      refute Enum.any?(mutated, &(&1 =~ "min(p2.views)"))
-      refute Enum.any?(mutated, &(&1 =~ "sum(p2.views)"))
+      # …and the interior `where` condition mutates too — a row-set change every wrapper observes.
+      assert Enum.any?(mutated, &(&1 =~ "p2.views >= 5"))
 
       assert_compiles(src, @all)
     end
 
-    test "an exists interior is one unit: polarity flips, nothing inside is touched" do
+    test "an exists interior mutates its condition/filter, but not its (unobserved) select" do
       src = """
       defmodule Q do
         import Ecto.Query
@@ -481,20 +478,101 @@ defmodule Mutare.Ecto.ExoticQueryTest do
         def q do
           from u in MyApp.User,
             as: :u,
-            where: exists(from p in MyApp.Post, where: p.views > 10)
+            where: exists(from p in MyApp.Post, where: p.views > 10, select: max(p.views))
         end
       end
       """
 
       diffs = ecto_diffs(src, @all)
+      mutated = mutated(diffs)
 
-      assert {"exists(from(p in MyApp.Post, where: p.views > 10))",
-              "not exists(from(p in MyApp.Post, where: p.views > 10))"} in diffs
+      # The whole-predicate polarity flip (unchanged).
+      assert Enum.any?(mutated, &(&1 =~ ~r/\Anot exists\(from/))
 
-      # No interior mutants: the subquery is its own query, not this condition's syntax.
-      refute Enum.any?(mutated(diffs), &(&1 =~ "p.views >= 10"))
+      # The inner `where` condition mutates — a row-set change EXISTS observes…
+      assert Enum.any?(mutated, &(&1 =~ "p.views >= 10"))
+      assert Enum.any?(mutated, &(&1 =~ "p.views > 11"))
+      # …as does dropping the inner filter entirely (the `where` gone, the rest kept).
+      assert Enum.any?(mutated, &(&1 =~ ~r/exists\(from\(p in MyApp\.Post, select: max/))
+
+      # But SQL never evaluates an EXISTS subquery's select list, so mutating it there is
+      # unconditionally equivalent — suppressed, exactly like an `is_nil` interior. No `min`.
+      refute Enum.any?(mutated, &(&1 =~ "min(p.views)"))
 
       assert_compiles(src, @all)
+    end
+
+    test "an inner join-type swaps under a subquery wrapper" do
+      src = """
+      defmodule Q do
+        import Ecto.Query
+
+        def q do
+          from u in MyApp.User,
+            where:
+              exists(
+                from p in MyApp.Post,
+                  join: c in MyApp.Post,
+                  on: c.user_id == p.user_id,
+                  where: p.views > 0
+              )
+        end
+      end
+      """
+
+      mutated = mutated(ecto_diffs(src, @all))
+
+      # The subquery's own join is a row-set knob EXISTS observes — inner↔left surfaces.
+      assert Enum.any?(mutated, &(&1 =~ "left_join:"))
+
+      assert_compiles(src, @all)
+    end
+
+    test "subquery interiors nest — an exists inside a subquery's own where still mutates" do
+      src = """
+      defmodule Q do
+        import Ecto.Query
+
+        def q do
+          from u in MyApp.User,
+            as: :u,
+            where:
+              exists(
+                from p in MyApp.Post,
+                  where: exists(from c in MyApp.Post, where: c.views > 3)
+              )
+        end
+      end
+      """
+
+      mutated = mutated(ecto_diffs(src, @all))
+
+      # The doubly-nested condition mutates — the recursion re-enters Fragment at each level.
+      assert Enum.any?(mutated, &(&1 =~ "c.views >= 3"))
+
+      assert_compiles(src, @all)
+    end
+
+    test "a pin inside a subquery's condition is sub-contracted to core (not the SQL catalog)" do
+      src = """
+      defmodule Q do
+        import Ecto.Query
+
+        def q(threshold) do
+          from u in MyApp.User,
+            as: :u,
+            where: exists(from p in MyApp.Post, where: p.views > ^(threshold + 1))
+        end
+      end
+      """
+
+      # With core's own families in play, the pin's *interior* Elixir (`threshold + 1`) is mutated
+      # by core (arithmetic), delivered through the host's weave — while the SQL `>` stays ours.
+      opts = [mutators: [:all, {Mutare.Ecto, repo: MyApp.Repo, families: :all}]]
+      all_mutated = for {_mutator, _original, m} <- diffs(src, opts), do: m
+
+      assert Enum.any?(all_mutated, &(&1 =~ "threshold - 1"))
+      assert_compiles(src, opts)
     end
 
     test "a subquery source is mutated where the query is built, not inline" do

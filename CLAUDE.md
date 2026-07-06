@@ -165,7 +165,17 @@ The surface divides by **how a mutation is delivered**, not by what it mutates:
    generation**: `Fragment.islands/1` finds each pin under the catalog's own descent rules,
    `Host.Catalog` runs `Mutare.Analyze.expression_mutations/3` over `context.mutators` (the
    run's enabled non-host specs) and relays each rebuild as a `Mutation` with `producer:` set —
-   so the Site belongs to the producing core family while delivery rides the host's weave.
+   so the Site belongs to the producing core family while delivery rides the host's weave. A hosted
+   condition can also contain a **subquery** (`where: exists(from …)`, `p.x >= all(from …)`,
+   `p.x > subquery(from …)`, `p.id in subquery(from …)`): `Mutare.Ecto.Subquery` recurses the
+   plugin's own catalogs into the inline `from`'s interior — its `where`/`having` swaps + pins,
+   filter-drops, and join-type flips under **every** wrapper, and its `select` projection under a
+   **value-wrapper only** (`all`/`any`/`subquery`/`in`; suppressed under `exists`, whose select SQL
+   never evaluates — the same unconditional-equivalence class as an `is_nil` interior). Each inner
+   mutant is the whole outer condition rebuilt, so it rides the identical weave with no new
+   machinery. Inner `order_by`/`limit`/`distinct` (inert or flaky through the wrappers we host) and
+   a *from-source* subquery (`from s in subquery(…)`, routed `:skip`) stay out of reach — the latter
+   earns its interior mutants by being built as a standalone query first.
 
 ### Module map (`lib/mutare/ecto/`)
 
@@ -181,7 +191,8 @@ The surface divides by **how a mutation is delivered**, not by what it mutates:
 | `host/catalog.ex` | The tagged logical mutants for one hosted condition (Fragment + Aggregate, filtered/noted later by `finalize/2`), plus the core-produced island mutants sub-contracted per `^` pin (`Mutare.Analyze.expression_mutations/3`, relayed with `producer:`) — `subcontracted/3` is the shared seam, parameterized by delivery (`deliver`), so `dynamic.ex` relays through it too — and the `:bound` ±1 bumps of a literal `limit`/`offset` value (`bounds/1`) |
 | `host/join_on.ex` | Which join `on:` conditions are safe to host: only a join's **sole, top-level** on-expression (not a multi-`on:` or `assoc` join, whose conditions Ecto folds into one `and` where a `^dynamic` operand is illegal) |
 | `host/target.ex` | The `dynamic`-wrap + `^`-pin + splice transforms consumed by core, plus the pin-only bound targets (no wrap — each branch is a bare integer) |
-| `fragment.ex` | The **SQL-semantics catalog** for `where`/`having` conditions (Comparison, Connective, NullPredicate, Membership, Arithmetic, Coalesce, Temporal, the literal arms IntegerLiteral/FloatLiteral/StringLiteral/AtomLiteral/BooleanLiteral) — stops at every `^` pin, whose interiors `islands/1` collects for the host's core sub-contract |
+| `fragment.ex` | The **SQL-semantics catalog** for `where`/`having` conditions (Comparison, Connective, NullPredicate, Membership, Arithmetic, Coalesce, Temporal, the literal arms IntegerLiteral/FloatLiteral/StringLiteral/AtomLiteral/BooleanLiteral) — stops at every `^` pin, whose interiors `islands/1` collects for the host's core sub-contract; recognizes an `exists`/`all`/`any`/`subquery`/`in` subquery wrapper and hands its inline `from` interior to `subquery.ex` |
+| `subquery.ex` | Recurse the plugin's own catalogs into a subquery's **interior** — inner `where`/`having` swaps + pins (`fragment.ex`), filter-drops/join-type/combination/source-reorder (`query.ex`, filtered to the row-set families) under **every** wrapper, and `select` projection (`aggregate.ex`/`scalar.ex`) under **value-wrappers only** (suppressed under `exists`, where SQL never evaluates the select — the same category as an `is_nil` interior). Each mutant is the whole inner `from` rebuilt, which `fragment.ex` wraps back into the condition and delivers through the same `Fragment.mutants`/`islands` seam the host and `dynamic.ex` already consume. Inner `order_by`/`limit`/`distinct` and *from-source* subqueries stay out of reach |
 | `ast/query_call.ex` / `ast/binding_list.ex` / `ast/keyword_list.ex` | Normalized query-call, binding-list, and keyword/clause-list values; preserve written form while centralizing validation and reconstruction |
 | `binding.ex` | Primitive binding-entry vocabulary (`variable?`/`ellipsis?`/`entry?`) used by the normalized binding list |
 | `binding_reorder.ex` | Positional binding-reorder (`[a, b]`→`[b, a]`) for **every** standalone/pipe binding-list macro — `where`/`having` included — delivered **in-place** by swapping the written list (never the condition body). A `from` binding-list *source* (`[a, b] in q`) reorders at the whole-`from` level (`query.ex`) instead. Reorders only eligible positional entries in the list the **author wrote** — never a synthesized list, a named binding, or an `_`-prefixed binding |
