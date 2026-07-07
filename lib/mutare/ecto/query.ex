@@ -207,10 +207,13 @@ defmodule Mutare.Ecto.Query do
   # vocabulary by `Mutare.Ecto.variants/0`.
   @spec variant_labels() :: [String.t()]
   def variant_labels do
+    # Sort for determinism: `Map.keys` iteration order over atom keys is unspecified and varies
+    # with runtime atom-table state, so an unsorted vocabulary flips order run to run.
     [@portable_join_flips, @right_join_flips]
     |> Enum.flat_map(&Map.keys/1)
     |> Enum.map(&join_label/1)
     |> Enum.uniq()
+    |> Enum.sort()
   end
 
   # The portable (narrowing) flips, plus the RIGHT-capable map when `config` enables a dialect

@@ -38,7 +38,9 @@ defmodule Mutare.Ecto.Aggregate do
   # derived from the swap table so the vocabulary can't drift from what's produced. Folded into the
   # plugin's variant vocabulary by `Mutare.Ecto.variants/0`.
   @spec variant_labels() :: [String.t()]
-  def variant_labels, do: @agg_swaps |> Map.keys() |> Enum.map(&to_string/1)
+  # `Enum.sort` canonicalises the order: `Map.keys` iteration order over atom keys is unspecified
+  # and varies with runtime atom-table state, so an unsorted vocabulary is non-deterministic.
+  def variant_labels, do: @agg_swaps |> Map.keys() |> Enum.map(&to_string/1) |> Enum.sort()
 
   @doc """
   The SQL-meaningful swap of a single aggregate function name (`:sum`↔`:avg`, `:min`↔`:max`), or

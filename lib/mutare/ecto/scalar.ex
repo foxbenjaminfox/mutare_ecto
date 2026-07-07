@@ -62,6 +62,8 @@ defmodule Mutare.Ecto.Scalar do
   # (derived from the swap table so the vocabulary can't drift from what's produced) plus the
   # coalesce drop. Folded into the plugin's variant vocabulary by `Mutare.Ecto.variants/0`.
   @spec variant_labels() :: [String.t()]
+  # `Enum.sort` canonicalises the order: `Map.keys` iteration order over atom keys is unspecified
+  # and varies with runtime atom-table state, so an unsorted vocabulary is non-deterministic.
   def variant_labels,
-    do: (@arithmetic_swaps |> Map.keys() |> Enum.map(&to_string/1)) ++ ["coalesce"]
+    do: Enum.sort((@arithmetic_swaps |> Map.keys() |> Enum.map(&to_string/1)) ++ ["coalesce"])
 end

@@ -39,5 +39,7 @@ defmodule Mutare.Ecto.Combination do
   # The finer labels the `:combination` family can emit — derived from the flip table's keys so the
   # vocabulary can't drift. Folded into the plugin's variant vocabulary by `Mutare.Ecto.variants/0`.
   @spec variant_labels() :: [String.t()]
-  def variant_labels, do: @flips |> Map.keys() |> Enum.map(&label/1)
+  # `Enum.sort` canonicalises the order: `Map.keys` iteration order over atom keys is unspecified
+  # and varies with runtime atom-table state, so an unsorted vocabulary is non-deterministic.
+  def variant_labels, do: @flips |> Map.keys() |> Enum.map(&label/1) |> Enum.sort()
 end

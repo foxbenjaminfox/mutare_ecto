@@ -238,8 +238,10 @@ defmodule Mutare.Ecto.Fragment do
       |> Enum.flat_map(&Map.keys/1)
       |> Enum.map(&to_string/1)
 
-    # mutare:ignore[operand_swap] equivalent — the result is consumed as a set of known labels, never order-sensitive
-    swap_ops ++ ~w(in element exists is_nil succ pred zero empty sentinel negate)
+    # Sort for determinism: `Map.keys` iteration order over atom keys is unspecified and varies
+    # with runtime atom-table state. The result is consumed as a set of known labels, so a
+    # canonical order changes nothing but makes the vocabulary stable run to run.
+    Enum.sort(swap_ops ++ ~w(in element exists is_nil succ pred zero empty sentinel negate))
   end
 
   # NullPredicate, as a unit. `not is_nil(x)` → `is_nil(x)`: flip the whole predicate, never
