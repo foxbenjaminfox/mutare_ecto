@@ -492,6 +492,32 @@ defmodule Mutare.Ecto.ExoticQueryTest do
                   having: sum(p.views) > 10
               )
         end
+
+        def q3 do
+          from u in MyApp.User,
+            as: :u,
+            where:
+              exists(
+                subquery(
+                  from p2 in MyApp.Post,
+                    where: p2.views > 7,
+                    select: max(p2.views)
+                )
+              )
+        end
+
+        def q4 do
+          from u in MyApp.User,
+            as: :u,
+            where:
+              not exists(
+                subquery(
+                  from p3 in MyApp.Post,
+                    where: p3.views < 4,
+                    select: max(p3.views)
+                )
+              )
+        end
       end
       """
 
@@ -504,6 +530,15 @@ defmodule Mutare.Ecto.ExoticQueryTest do
       # The inner `where` condition mutates — a row-set change EXISTS observes…
       assert Enum.any?(mutated, &(&1 =~ "p.views >= 10"))
       assert Enum.any?(mutated, &(&1 =~ "p.views > 11"))
+      assert Enum.any?(mutated, &(&1 =~ "subquery(" and &1 =~ "p2.views >= 7"))
+
+      # …including through a `not exists` wrapper: the interior still mutates, each mutant
+      # re-wrapped in the whole `not exists(subquery(…))` predicate.
+      assert Enum.any?(
+               mutated,
+               &(&1 =~ "not exists" and &1 =~ "subquery(" and &1 =~ "p3.views <= 4")
+             )
+
       # …and an inner `having` condition uses the full hosted condition catalog, including
       # aggregate swaps, not just `Fragment`'s operator/literal swaps.
       assert Enum.any?(mutated, &(&1 =~ "avg(p.views) > 10"))
@@ -513,6 +548,8 @@ defmodule Mutare.Ecto.ExoticQueryTest do
       # But SQL never evaluates an EXISTS subquery's select list, so mutating it there is
       # unconditionally equivalent — suppressed, exactly like an `is_nil` interior. No `min`.
       refute Enum.any?(mutated, &(&1 =~ "min(p.views)"))
+      refute Enum.any?(mutated, &(&1 =~ "min(p2.views)"))
+      refute Enum.any?(mutated, &(&1 =~ "min(p3.views)"))
 
       assert_compiles(src, @all)
     end
@@ -578,6 +615,12 @@ defmodule Mutare.Ecto.ExoticQueryTest do
             as: :u,
             where: exists(from p in MyApp.Post, where: p.views > ^(threshold + 1))
         end
+
+        def q2(wrapped) do
+          from u in MyApp.User,
+            as: :u,
+            where: exists(subquery(from p in MyApp.Post, where: p.views > ^(wrapped + 1)))
+        end
       end
       """
 
@@ -587,6 +630,7 @@ defmodule Mutare.Ecto.ExoticQueryTest do
       all_mutated = for {_mutator, _original, m} <- diffs(src, opts), do: m
 
       assert Enum.any?(all_mutated, &(&1 =~ "threshold - 1"))
+      assert Enum.any?(all_mutated, &(&1 =~ "subquery(" and &1 =~ "wrapped - 1"))
       assert_compiles(src, opts)
     end
 

@@ -39,10 +39,13 @@ defmodule Mutare.Ecto.Subquery do
   # conditions under every mode, and from the `select` projection under a value-wrapper (never under
   # `exists`, whose select is unobserved — a pin mutant there would be equivalent).
   #
-  # Only an inline `from(source, clauses)` is recursed. A `subquery(var)`, a scalar `from(Post)`, a
-  # piped subquery (`exists(q |> where(…))`), and a *from-source* subquery (`from s in subquery(…)`,
-  # routed `:skip` and never walked) all yield nothing.
+  # Only an inline `from(source, clauses)` is recursed. In `exists` position, the equivalent
+  # `exists(subquery(from …))` spelling is normalized too, with the `subquery/1` wrapper preserved
+  # around each rebuilt mutant. A `subquery(var)`, a scalar `from(Post)`, a piped subquery
+  # (`exists(q |> where(…))`), and a *from-source* subquery (`from s in subquery(…)`, routed
+  # `:skip` and never walked) all yield nothing.
 
+  alias Mutare.Calls
   alias Mutare.Ecto.{Aggregate, Config, Fragment, Query, Scalar, Surface}
   alias Mutare.Ecto.AST.{KeywordList, QueryCall}
   alias Mutare.Ecto.AST.KeywordList.Entry
@@ -60,17 +63,22 @@ defmodule Mutare.Ecto.Subquery do
   @doc """
   Every single-point interior mutant of an inline subquery `from`, each the **whole inner `from`**
   rebuilt (which the caller wraps back into the wrapper). `[]` unless `node` is an inline
-  `from(source, clauses)`. Returned as `{family, node, label}` triples — `Fragment`'s internal
+  `from(source, clauses)` (or, in `:existence` mode, `subquery(from(source, clauses))`).
+  Returned as `{family, node, label}` triples — `Fragment`'s internal
   contract — carrying each family's **normal** tag (`:comparison`, `:filter_drop`, `:join_type`, …)
   so `Config.tagged/1`, the `families:` filter, and the equivalence notes apply unchanged.
   """
   @spec interior_mutants(Macro.t(), Config.t() | keyword(), mode()) ::
           [{Config.family(), Macro.t(), Fragment.label() | []}]
   def interior_mutants(node, opts, mode) do
-    case QueryCall.parse(node) do
-      %QueryCall{name: :from, args: args} = call ->
+    case inline_from(node, mode) do
+      {%QueryCall{args: args} = call, wrap} ->
         config = to_config(opts)
-        structural(call, config) ++ clause_mutants(call, args, config, mode)
+
+        for {family, mutated, label} <-
+              structural(call, config) ++ clause_mutants(call, args, config, mode) do
+          {family, wrap.(mutated), label}
+        end
 
       _other ->
         []
@@ -80,7 +88,8 @@ defmodule Mutare.Ecto.Subquery do
   @doc """
   Every interpolation **island** (`^expr`) inside the subquery's own mutated clauses, as
   `{interior, rebuild}` pairs whose `rebuild` reconstructs the whole inner `from` — composed outward
-  by the caller. `[]` unless `node` is an inline `from(source, clauses)`. Which clauses' pins are
+  by the caller. `[]` unless `node` is an inline `from(source, clauses)` (or, in `:existence`
+  mode, `subquery(from(source, clauses))`). Which clauses' pins are
   surfaced tracks exactly what each `mode` mutates: the `where`/`having` conditions under every
   mode, plus the `select`/`select_merge` projection under `:value` (its pins are ordinary Elixir the
   outer comparison evaluates). An EXISTS select is unobserved, so its pins — like its swaps — are
@@ -88,15 +97,46 @@ defmodule Mutare.Ecto.Subquery do
   """
   @spec interior_islands(Macro.t(), mode()) :: [{Macro.t(), (Macro.t() -> Macro.t())}]
   def interior_islands(node, mode) do
-    with %QueryCall{name: :from, args: [source, clauses_node]} = call <- QueryCall.parse(node),
+    with {%QueryCall{args: [source, clauses_node]} = call, wrap} <- inline_from(node, mode),
          %KeywordList{entries: entries} = clauses <- KeywordList.parse(clauses_node) do
       for {%Entry{key: key, value: value}, index} <- Enum.with_index(entries),
           island_clause?(key, mode),
           {interior, rebuild} <- Fragment.islands(value) do
-        {interior, &rebuild_clause(call, source, clauses, index, rebuild.(&1))}
+        {interior, &wrap.(rebuild_clause(call, source, clauses, index, rebuild.(&1)))}
       end
     else
       _ -> []
+    end
+  end
+
+  # The caller normally reaches value-wrapper `subquery(from …)` interiors by ordinary descent:
+  # `Fragment.lift/4` mutates the `from` argument, then rebuilds the written `subquery/1` call.
+  # EXISTS is different: its argument is a unit predicate, so `Fragment` delegates the direct
+  # argument here instead of descending as a condition. Accept the `subquery(from …)` spelling only
+  # in that existence-mode path to avoid double-producing the value-wrapper mutants.
+  defp inline_from(node, :existence) do
+    case from_call(node) do
+      {%QueryCall{}, _wrap} = found -> found
+      nil -> subquery_wrapped_from(node)
+    end
+  end
+
+  defp inline_from(node, :value), do: from_call(node)
+
+  defp from_call(node) do
+    case QueryCall.parse(node) do
+      %QueryCall{name: :from} = call -> {call, fn mutated -> mutated end}
+      _other -> nil
+    end
+  end
+
+  defp subquery_wrapped_from(node) do
+    with {:ok, :subquery, [inner | _rest] = args, rebuild} <-
+           Calls.resolved_call_to(node, Ecto.Query, :subquery),
+         {%QueryCall{} = call, _identity} <- from_call(inner) do
+      {call, &rebuild.(:subquery, List.replace_at(args, 0, &1))}
+    else
+      _ -> nil
     end
   end
 
