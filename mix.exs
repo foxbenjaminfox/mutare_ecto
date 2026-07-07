@@ -75,21 +75,30 @@ defmodule Mutare.Ecto.MixProject do
   # CI compatibility matrix can sweep every supported Ecto minor line (see ci.yml); local
   # and the default test/check jobs fall back to the locked stack.
   #
-  # ecto_sql + ecto_sqlite3 back the semantic-layer tests, which run actual mutated queries
+  # ecto_sql + the driver back the semantic-layer tests, which run actual mutated queries
   # against a real SQL engine. SQLite (via ecto_sqlite3 → ecto_sql + the exqlite NIF) is
   # self-contained — no server to stand up — so the "does the injected `dynamic` actually
-  # run" tests work anywhere.
+  # run" tests work anywhere, and is the default. Postgres (via postgrex) is available too:
+  # setting `MUTARE_TEST_POSTGRES` makes the semantic suite generate a second test module that runs
+  # the same fixtures against `MyApp.PgRepo` and a running server (see `Mutare.Ecto.SemanticHarness`).
+  # Both drivers are compiled in test env regardless — only the enabled engines run — so nothing
+  # about the dep set changes; the choice is purely a runtime one.
   #
   # Setting ECTO_GIT_BRANCH builds against the development tip of Ecto/Ecto SQL instead of a
   # published release: `override: true` lets the git checkouts win over the Hex requirement
   # ecto_sqlite3 declares transitively. That job is allowed to fail in CI.
   defp ecto_deps do
+    # postgrex is an *optional* dep of ecto_sql (no version tracking to Ecto's minor line the way
+    # ecto_sqlite3 does), so it stays unpinned and out of the ECTO_GIT_BRANCH branching.
+    postgrex = {:postgrex, System.get_env("POSTGREX_REQUIREMENT", ">= 0.0.0"), only: :test}
+
     case System.get_env("ECTO_GIT_BRANCH") do
       branch when branch in [nil, ""] ->
         [
           {:ecto, System.get_env("ECTO_REQUIREMENT", "~> 3.12")},
           {:ecto_sql, System.get_env("ECTO_SQL_REQUIREMENT", "~> 3.14"), only: :test},
-          {:ecto_sqlite3, System.get_env("ECTO_SQLITE3_REQUIREMENT", "~> 0.24"), only: :test}
+          {:ecto_sqlite3, System.get_env("ECTO_SQLITE3_REQUIREMENT", "~> 0.24"), only: :test},
+          postgrex
         ]
 
       branch ->
@@ -97,7 +106,8 @@ defmodule Mutare.Ecto.MixProject do
           {:ecto, github: "elixir-ecto/ecto", branch: branch, override: true},
           {:ecto_sql,
            github: "elixir-ecto/ecto_sql", branch: branch, override: true, only: :test},
-          {:ecto_sqlite3, System.get_env("ECTO_SQLITE3_REQUIREMENT", "~> 0.24"), only: :test}
+          {:ecto_sqlite3, System.get_env("ECTO_SQLITE3_REQUIREMENT", "~> 0.24"), only: :test},
+          postgrex
         ]
     end
   end

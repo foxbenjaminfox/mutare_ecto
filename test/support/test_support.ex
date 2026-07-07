@@ -38,19 +38,23 @@ defmodule Mutare.Ecto.TestSupport do
   @doc """
   The `:mutators` list, expanding the `:all` shorthand and defaulting to the Ecto plugin alone.
 
-  Defaulting to `[{Mutare.Ecto, repo: MyApp.Repo}]` keeps recorded mutations exactly the plugin's,
-  with nothing from core's built-ins.
+  Defaulting to `[{Mutare.Ecto, repo: repo}]` — where `repo` is `opts[:repo]` or `MyApp.Repo` —
+  keeps recorded mutations exactly the plugin's, with nothing from core's built-ins. The semantic
+  suite passes `repo:` so a Postgres run points the plugin at `MyApp.PgRepo`; unit tests omit it and
+  get the default.
   """
   def mutators(opts) do
+    repo = Keyword.get(opts, :repo, @repo)
+
     opts
-    |> Keyword.get(:mutators, [{Mutare.Ecto, repo: @repo}])
+    |> Keyword.get(:mutators, [{Mutare.Ecto, repo: repo}])
     |> Enum.flat_map(fn
       :all -> Mutare.Mutators.all()
       other -> [other]
     end)
   end
 
-  # Everything except `:mutators` (consumed by `mutators/1` above) rides through to
+  # Everything except `:mutators`/`:repo` (consumed by `mutators/1` above) rides through to
   # `Mutare.transform_string/2` via the core helpers' trailing `opts`.
-  defp transform_opts(opts), do: Keyword.delete(opts, :mutators)
+  defp transform_opts(opts), do: Keyword.drop(opts, [:mutators, :repo])
 end

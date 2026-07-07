@@ -113,9 +113,30 @@ jobs:
     # dev-tip entry is advisory (allow-failure: true) so upstream breakage warns without
     # failing the run. ecto_sql/ecto_sqlite3 are pinned to the matching line because their
     # versions track Ecto's. Each entry resolves into its own generated lockfile.
+    #
+    # This job also carries the **Postgres** coverage: `MUTARE_TEST_POSTGRES` makes the semantic
+    # suite run its fixtures against the service container below as a second test module (alongside
+    # the always-on SQLite one), so a single `mix test` exercises both engines. Postgres runs across
+    # *every* Ecto line — not just the elixir/otp `test` sweep — so any change in Ecto's handling of
+    # Postgres-only behaviour is caught on the whole version matrix. (The elixir/otp `test` job stays
+    # SQLite-only: the non-semantic tests never touch a DB, so a second engine adds no signal there.)
     name: ${{ matrix.name }}
     runs-on: ubuntu-24.04
     continue-on-error: ${{ matrix.allow-failure || false }}
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: mutare_ecto_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     strategy:
       fail-fast: false
       matrix:
@@ -147,6 +168,12 @@ jobs:
       ECTO_SQL_REQUIREMENT: ${{ matrix.ecto_sql }}
       ECTO_SQLITE3_REQUIREMENT: ${{ matrix.ecto_sqlite3 }}
       ECTO_GIT_BRANCH: ${{ matrix.ecto_git_branch }}
+      MUTARE_TEST_POSTGRES: "1"
+      PGHOST: localhost
+      PGPORT: "5432"
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGDATABASE: mutare_ecto_test
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 

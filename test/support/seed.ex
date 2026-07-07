@@ -87,7 +87,24 @@ defmodule MyApp.Seed do
     :ok
   end
 
+  # The DDL is portable across the two supported engines (SQLite by default, Postgres under
+  # `MUTARE_TEST_DB=postgres`) with two per-adapter column-type differences that a shared string
+  # can't paper over:
+  #
+  #   * booleans (`active`, `published`) — Postgres needs a real `BOOLEAN`; SQLite has no boolean
+  #     affinity and stores 0/1 in an `INTEGER` (the adapter dumps `true`/`false` to those).
+  #   * `joined_at` (`:naive_datetime`) — Postgres needs a `TIMESTAMP`; SQLite keeps the ISO8601
+  #     text the adapter dumps, so `TEXT`.
+  #
+  # `users`/`posts` ids are supplied explicitly by `insert_all`, so a plain `INTEGER PRIMARY KEY`
+  # column serves both engines. `accounts` is the exception: `reset_accounts!/1` and the upserted
+  # `%Account{}` carry no id, so the column must **auto-generate** — `SERIAL` on Postgres,
+  # SQLite's rowid-backed `INTEGER PRIMARY KEY` otherwise.
   defp create_tables!(repo) do
+    bool = column_type(repo, :boolean)
+    datetime = column_type(repo, :naive_datetime)
+    serial_pk = column_type(repo, :serial_pk)
+
     Ecto.Adapters.SQL.query!(repo, "DROP TABLE IF EXISTS users", [])
     Ecto.Adapters.SQL.query!(repo, "DROP TABLE IF EXISTS posts", [])
     Ecto.Adapters.SQL.query!(repo, "DROP TABLE IF EXISTS accounts", [])
@@ -99,11 +116,11 @@ defmodule MyApp.Seed do
         id INTEGER PRIMARY KEY,
         name TEXT,
         age INTEGER,
-        active INTEGER,
+        active #{bool},
         role TEXT,
         score INTEGER,
         rating REAL,
-        joined_at TEXT
+        joined_at #{datetime}
       )
       """,
       []
@@ -116,7 +133,7 @@ defmodule MyApp.Seed do
         id INTEGER PRIMARY KEY,
         title TEXT,
         views INTEGER,
-        published INTEGER,
+        published #{bool},
         user_id INTEGER
       )
       """,
@@ -130,7 +147,7 @@ defmodule MyApp.Seed do
       repo,
       """
       CREATE TABLE accounts (
-        id INTEGER PRIMARY KEY,
+        id #{serial_pk},
         email TEXT,
         name TEXT
       )
@@ -143,5 +160,18 @@ defmodule MyApp.Seed do
       "CREATE UNIQUE INDEX accounts_email_index ON accounts (email)",
       []
     )
+  end
+
+  # The per-adapter SQL column type for a logical column role. Keyed on `repo.__adapter__()` so the
+  # DDL follows whichever engine `MUTARE_TEST_DB` selected — see `create_tables!/1` for the why.
+  defp column_type(repo, role) do
+    case {repo.__adapter__(), role} do
+      {Ecto.Adapters.Postgres, :boolean} -> "BOOLEAN"
+      {Ecto.Adapters.Postgres, :naive_datetime} -> "TIMESTAMP"
+      {Ecto.Adapters.Postgres, :serial_pk} -> "SERIAL PRIMARY KEY"
+      {_sqlite, :boolean} -> "INTEGER"
+      {_sqlite, :naive_datetime} -> "TEXT"
+      {_sqlite, :serial_pk} -> "INTEGER PRIMARY KEY"
+    end
   end
 end

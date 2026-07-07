@@ -18,15 +18,32 @@ selector/coverage/poison/Site machinery, and the delivery host).
 mix test                                   # full suite (compiles ../mutare + this app first)
 mix test test/mutare/ecto/query_test.exs   # one file
 mix test test/mutare/ecto/query_test.exs:42 # one test by line
-mix test test/mutare/ecto/semantic_test.exs # the only DB-backed file (boots SQLite)
+mix test test/mutare/ecto/semantic_test.exs # the only DB-backed file (SQLite by default)
+MUTARE_TEST_POSTGRES=1 mix test           # also run the semantic suite against Postgres
 mix format                                 # format (.formatter.exs)
 mix deps.get                               # fetch deps
 mix check                                  # quality gate: format-check + credo + dialyzer
 ```
 
-`mix test` compiles everything, so there is no separate build step. The semantic suite spins up
-its own SQLite-backed `MyApp.Repo` in `setup_all` (via `Mutare.Ecto.SemanticHarness.start_repo!/0`),
-so every **other** test run stays DB-free and the `exqlite` NIF cost is isolated to that one file.
+`mix test` compiles everything, so there is no separate build step. The semantic suite boots its
+Repo in `setup_all` (via `Mutare.Ecto.SemanticHarness.start_repo!/1`), so every **other** test run
+stays DB-free and the driver NIF cost is isolated to the semantic modules.
+
+**Running the semantic suite against Postgres too.** The DB-backed suite lives in a `use`-able
+template (`Mutare.Ecto.SemanticCases`) that the entry file (`semantic_test.exs`) instantiates **once
+per enabled engine** — one test module per engine, each with its own `@repo`. SQLite
+(`MyApp.Repo` / `ecto_sqlite3`, a self-contained temp file) is always on and is the default; setting
+`MUTARE_TEST_POSTGRES=1` generates a *second* module (`…SemanticTest.Postgres`) that runs the
+identical fixtures against `MyApp.PgRepo` (`postgrex`) and a running server — so a single `mix test`
+covers one engine or two. Two engines need two Repo **modules** because Ecto bakes a Repo's adapter
+in at compile time (`put_dynamic_repo` switches connections, not adapters); both modules compile
+unconditionally, and the Postgres one stays inert unless its test module is generated. The switch is
+read at the test file's compile time — and test `.exs` files recompile every run — so flipping the
+var takes effect immediately, no forced rebuild. Postgres connection config comes from the standard
+`PG*` env vars (`PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD`/`PGDATABASE`, with local defaults; the
+harness `storage_up`s the database if missing). CI runs Postgres on the whole **`ecto` version
+matrix** (every supported Ecto line), so any change in Ecto's Postgres-only handling is caught; the
+elixir/otp `test` sweep stays SQLite-only (the non-semantic tests never touch a DB).
 
 ### `mix check` — the static-analysis gate
 
@@ -266,13 +283,18 @@ tuples wrapped by `Config.tagged/1` into `Mutation.tagged(node, [family | finer]
   Helpers: `Mutare.Ecto.TestSupport` (`diffs`, `ecto_diffs`, `assert_compiles`, `metamutant`).
   Test mutators **default to the Ecto plugin alone** (`{Mutare.Ecto, repo: MyApp.Repo}`), so
   recorded mutations are exactly the plugin's — pass `mutators: [:all, …]` to include core's.
-- `semantic_test.exs` proves a recorded mutant is **live**: it compiles the metamutant, flips
-  `:persistent_term`'s `:mutare_active` to a chosen mutant id, runs the query against the seeded
-  SQLite `MyApp.Repo`, and asserts the result set changed the way the mutation predicts. The
-  standard shape is core's `observe_mutant/3` flip-and-compare (via the harness's `observe/3` —
-  the mutant resolved from a Site's logical diff, the baseline run first and pinned); `site_id/2`
-  /`site_by/3` + `under/2`/`activate/2` remain for multi-mutant builds, the token-absence drops,
-  and the write path. Fixtures: `test/support/myapp.ex` (schemas) and
-  `test/support/seed.ex` (boundary/NULL rows chosen so each family is distinguishable).
+- The semantic suite (`Mutare.Ecto.SemanticCases`, instantiated by `semantic_test.exs` per engine)
+  proves a recorded mutant is **live**: it compiles the metamutant, flips `:persistent_term`'s
+  `:mutare_active` to a chosen mutant id, runs the query against the seeded `@repo` (`MyApp.Repo` on
+  SQLite, `MyApp.PgRepo` on Postgres — the fixtures and assertions are engine-agnostic;
+  `H.full_join_supported?/1` runtime-gates the one FULL-JOIN fixture, and aggregate values route
+  through `to_number/1` since Postgres hands back `Decimal` where SQLite gives a float), and asserts
+  the result set changed the way the mutation predicts. The standard shape is core's
+  `observe_mutant/3` flip-and-compare (via the harness's `observe/4` — the mutant resolved from a
+  Site's logical diff, the baseline run first and pinned); `site_id/2`/`site_by/3` +
+  `under/3`/`activate/2` remain for multi-mutant builds, the token-absence drops, and the write path.
+  Every DB helper takes the Repo module first, so the same fixtures run against either engine.
+  Fixtures: `test/support/myapp.ex` (schemas + both Repos) and `test/support/seed.ex`
+  (adapter-typed DDL; boundary/NULL rows chosen so each family is distinguishable).
 - Because `Code.compile_string` is global, Mutare's public test helpers compile fixtures inside
   uniquely named wrapper modules so async tests defining the same module name do not race.
