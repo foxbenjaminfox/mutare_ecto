@@ -468,6 +468,11 @@ defmodule Mutare.Ecto.ExoticQueryTest do
       # …and the interior `where` condition mutates too — a row-set change every wrapper observes.
       assert Enum.any?(mutated, &(&1 =~ "p2.views >= 5"))
 
+      # A value-wrapper's `subquery(from …)` interior (q3) is reached by ordinary `Fragment.lift`
+      # descent into the inner `from` — and **only** that path, never also the `:existence` unwrap.
+      # So every interior mutant is recorded exactly once; a lifted confinement would double it.
+      assert Enum.count(mutated, &(&1 =~ "sum(p2.views)")) == 1
+
       assert_compiles(src, @all)
     end
 
@@ -538,6 +543,12 @@ defmodule Mutare.Ecto.ExoticQueryTest do
                mutated,
                &(&1 =~ "not exists" and &1 =~ "subquery(" and &1 =~ "p3.views <= 4")
              )
+
+      # …and each is produced **exactly once**: the `:existence` unwrap of `subquery(from …)` must
+      # not double up with the ordinary value-wrapper descent (the whole reason the unwrap is
+      # confined to existence mode). A double-produced interior would record the same mutant twice.
+      assert Enum.count(mutated, &(&1 =~ "p2.views >= 7")) == 1
+      assert Enum.count(mutated, &(&1 =~ "p3.views <= 4")) == 1
 
       # …and an inner `having` condition uses the full hosted condition catalog, including
       # aggregate swaps, not just `Fragment`'s operator/literal swaps.
@@ -631,6 +642,10 @@ defmodule Mutare.Ecto.ExoticQueryTest do
 
       assert Enum.any?(all_mutated, &(&1 =~ "threshold - 1"))
       assert Enum.any?(all_mutated, &(&1 =~ "subquery(" and &1 =~ "wrapped - 1"))
+
+      # The wrapped pin's island is sub-contracted exactly once — the `:existence` unwrap does not
+      # also re-surface it through the value-wrapper descent path.
+      assert Enum.count(all_mutated, &(&1 =~ "wrapped - 1")) == 1
       assert_compiles(src, opts)
     end
 
