@@ -480,6 +480,17 @@ defmodule Mutare.Ecto.ExoticQueryTest do
             as: :u,
             where: exists(from p in MyApp.Post, where: p.views > 10, select: max(p.views))
         end
+
+        def q2 do
+          from u in MyApp.User,
+            as: :u,
+            where:
+              exists(
+                from p in MyApp.Post,
+                  group_by: p.user_id,
+                  having: sum(p.views) > 10
+              )
+        end
       end
       """
 
@@ -492,6 +503,9 @@ defmodule Mutare.Ecto.ExoticQueryTest do
       # The inner `where` condition mutates — a row-set change EXISTS observes…
       assert Enum.any?(mutated, &(&1 =~ "p.views >= 10"))
       assert Enum.any?(mutated, &(&1 =~ "p.views > 11"))
+      # …and an inner `having` condition uses the full hosted condition catalog, including
+      # aggregate swaps, not just `Fragment`'s operator/literal swaps.
+      assert Enum.any?(mutated, &(&1 =~ "avg(p.views) > 10"))
       # …as does dropping the inner filter entirely (the `where` gone, the rest kept).
       assert Enum.any?(mutated, &(&1 =~ ~r/exists\(from\(p in MyApp\.Post, select: max/))
 
@@ -502,7 +516,7 @@ defmodule Mutare.Ecto.ExoticQueryTest do
       assert_compiles(src, @all)
     end
 
-    test "an inner join-type swaps under a subquery wrapper" do
+    test "an outer join-type swaps under a subquery wrapper" do
       src = """
       defmodule Q do
         import Ecto.Query
@@ -512,7 +526,7 @@ defmodule Mutare.Ecto.ExoticQueryTest do
             where:
               exists(
                 from p in MyApp.Post,
-                  join: c in MyApp.Post,
+                  left_join: c in MyApp.Post,
                   on: c.user_id == p.user_id,
                   where: p.views > 0
               )
@@ -522,8 +536,8 @@ defmodule Mutare.Ecto.ExoticQueryTest do
 
       mutated = mutated(ecto_diffs(src, @all))
 
-      # The subquery's own join is a row-set knob EXISTS observes — inner↔left surfaces.
-      assert Enum.any?(mutated, &(&1 =~ "left_join:"))
+      # The subquery's own join is a row-set knob EXISTS observes — outer→inner surfaces.
+      assert Enum.any?(mutated, &(&1 =~ "inner_join:"))
 
       assert_compiles(src, @all)
     end

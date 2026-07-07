@@ -11,11 +11,12 @@ defmodule Mutare.Ecto.Subquery do
   # **What is mutated is gated by what the wrapper can observe** (`mode`):
   #
   #   * **row-set-changing families — every wrapper (`mode`-agnostic):** the inner
-  #     `where`/`having` operator/literal swaps (`Mutare.Ecto.Fragment`) and the whole-`from`
-  #     structural rewrites that change which rows the subquery returns — filter-clause drops,
-  #     join-type swaps, combination-key swaps, and the source binding-reorder (reused from
-  #     `Mutare.Ecto.Query`, filtered to `@structural_families`). A changed row set is observable
-  #     through existence, a value set, a scalar, or membership alike.
+  #     `where`/`having` operator/literal swaps (`Mutare.Ecto.Fragment`), aggregate swaps
+  #     (`Mutare.Ecto.Aggregate`), and the whole-`from` structural rewrites that change which rows
+  #     the subquery returns — filter-clause drops, join-type swaps, combination-key swaps, and the
+  #     source binding-reorder (reused from `Mutare.Ecto.Query`, filtered to
+  #     `@structural_families`). A changed row set is observable through existence, a value set, a
+  #     scalar, or membership alike.
   #   * **`select` projection — `mode: :value` only** (`all`/`any`/`subquery`/`in`): the
   #     `select`/`select_merge` aggregate/scalar swaps (`Mutare.Ecto.Aggregate`/`Scalar`), where the
   #     projected column *is* the observed value. **Suppressed under `mode: :existence`**
@@ -133,14 +134,14 @@ defmodule Mutare.Ecto.Subquery do
 
   defp clause_mutants(_call, _args, _config, _mode), do: []
 
-  # Recurse `Fragment` into each `where`/`having`/`or_where`/`or_having` condition value (the
-  # hosted-clause keys), rebuilding the whole inner `from` around each single-point condition
-  # mutant. Nesting (`exists` inside the subquery's own `where`) re-enters `Fragment`, which
-  # re-recognizes the wrapper.
+  # Recurse the hosted condition catalogs into each `where`/`having`/`or_where`/`or_having`
+  # condition value (the hosted-clause keys), rebuilding the whole inner `from` around each
+  # single-point condition mutant. Nesting (`exists` inside the subquery's own `where`) re-enters
+  # `Fragment`, which re-recognizes the wrapper.
   defp conditions(call, source, %KeywordList{entries: entries} = clauses, config) do
     for {%Entry{key: key, value: value}, index} <- Enum.with_index(entries),
         Surface.from_clause?(key, :hosted),
-        {family, mutated, label} <- Fragment.mutants(value, config) do
+        {family, mutated, label} <- Fragment.mutants(value, config) ++ Aggregate.swaps(value) do
       {family, rebuild_clause(call, source, clauses, index, mutated), label}
     end
   end
