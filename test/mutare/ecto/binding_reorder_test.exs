@@ -293,7 +293,7 @@ defmodule Mutare.Ecto.BindingReorderTest do
       end
       """
 
-      assert Enum.any?(mutated(src), &(&1 =~ "from([b, a] in query)"))
+      assert Enum.any?(mutated(src), &(&1 =~ "[b, a] in query"))
       assert_compiles(src)
     end
 
@@ -308,8 +308,8 @@ defmodule Mutare.Ecto.BindingReorderTest do
       """
 
       muts = mutated(src)
-      # The source declaration swaps as a whole-`from` rewrite…
-      assert Enum.any?(muts, &(&1 =~ "from([b, a] in query"))
+      # The source declaration swaps as a whole-`from` rewrite (reported at the source clause)…
+      assert Enum.any?(muts, &(&1 =~ "[b, a] in query"))
       # …and no clause body is reference-swapped (the bodies ride along verbatim).
       refute Enum.any?(muts, &(&1 =~ "b.x == a.y"))
       assert_compiles(src)
@@ -330,7 +330,7 @@ defmodule Mutare.Ecto.BindingReorderTest do
       muts = mutated(src)
 
       # The positional `u`/`p` transpose at the whole-`from` level; the named `comments: c` stays put.
-      assert Enum.any?(muts, &(&1 =~ "from([p, u, comments: c] in query"))
+      assert Enum.any?(muts, &(&1 =~ "[p, u, comments: c] in query"))
       # Nothing ever moves `c` into a positional slot or reorders it.
       refute Enum.any?(muts, &(&1 =~ "[c," or &1 =~ "comments: c, "))
       assert_compiles(src)
@@ -360,7 +360,7 @@ defmodule Mutare.Ecto.BindingReorderTest do
       end
       """
 
-      assert Enum.any?(mutated(src), &(&1 =~ "from([b, a] in query"))
+      assert Enum.any?(mutated(src), &(&1 =~ "[b, a] in query"))
       assert_compiles(src)
     end
 
@@ -373,8 +373,8 @@ defmodule Mutare.Ecto.BindingReorderTest do
       """
 
       muts = mutated(src)
-      assert Enum.any?(muts, &(&1 =~ "from([_ignored, b, a] in query"))
-      refute Enum.any?(muts, &(&1 =~ "from([a, _ignored" or &1 =~ "from([b, a, _ignored"))
+      assert Enum.any?(muts, &(&1 =~ "[_ignored, b, a] in query"))
+      refute Enum.any?(muts, &(&1 =~ "[a, _ignored" or &1 =~ "[b, a, _ignored"))
       assert_compiles(src)
     end
   end

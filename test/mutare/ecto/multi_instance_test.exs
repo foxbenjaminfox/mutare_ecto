@@ -49,7 +49,7 @@ defmodule Mutare.Ecto.MultiInstanceTest do
       assert [bump] = Enum.filter(sites, &(&1.mutated_code == "11"))
       assert bump.mutator == :ecto
 
-      drops = Enum.filter(sites, &String.starts_with?(&1.mutated_code, "from("))
+      drops = Enum.filter(sites, &(&1.mutated_code == ""))
       assert drops != []
       assert Enum.all?(drops, &(&1.mutator == :ecto))
     end

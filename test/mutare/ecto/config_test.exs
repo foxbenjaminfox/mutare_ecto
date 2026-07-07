@@ -28,17 +28,18 @@ defmodule Mutare.Ecto.ConfigTest do
     end
 
     test "a single whole-from family keeps only its mutants" do
-      # :filter_drop → just the where-drop (a whole-`from` rewrite), no in-fragment swaps.
+      # :filter_drop → just the where-drop (a whole-`from` rewrite, now reported at the dropped
+      # clause as a clause-level DELETE), no in-fragment swaps.
       drops = ecto_diffs(@src, ecto(families: [:filter_drop]))
-      assert [{_original, mutated}] = drops
-      assert mutated =~ "from(" and not (mutated =~ "u.age")
+      assert drops == [{"u.age > 18", ""}]
     end
 
     test "the default selection yields every default-on family" do
       all = mutated(ecto_diffs(@src))
       assert "u.age >= 18" in all
       assert "u.age > 19" in all
-      assert Enum.any?(all, &(&1 =~ "from(" and not (&1 =~ "u.age")))
+      # the whole-`from` filter_drop, now a clause-level DELETE (empty mutated text)
+      assert "" in all
     end
   end
 
@@ -177,15 +178,16 @@ defmodule Mutare.Ecto.ConfigTest do
       end
       """
 
-      # Portable default: left_join → inner_join only.
+      # Portable default: left_join → inner_join only. (The join_type diff now reports the join
+      # KEY only, not the `c in assoc(...)` binding.)
       portable = mutated(ecto_diffs(src, ecto(families: [:join_type])))
-      assert Enum.any?(portable, &(&1 =~ "inner_join: c in assoc"))
+      assert Enum.any?(portable, &(&1 =~ "inner_join:"))
       refute Enum.any?(portable, &(&1 =~ "right_join"))
 
       # Postgres: adds left_join → right_join.
       pg = mutated(ecto_diffs(src, ecto(families: [:join_type], dialects: [:postgres])))
-      assert Enum.any?(pg, &(&1 =~ "inner_join: c in assoc"))
-      assert Enum.any?(pg, &(&1 =~ "right_join: c in assoc"))
+      assert Enum.any?(pg, &(&1 =~ "inner_join:"))
+      assert Enum.any?(pg, &(&1 =~ "right_join:"))
     end
 
     test "full_join → right_join only under a RIGHT-capable dialect; → left_join is always offered" do
@@ -198,16 +200,17 @@ defmodule Mutare.Ecto.ConfigTest do
       end
       """
 
-      # Portable default: full_join → left_join only (never introduces a right_join).
+      # Portable default: full_join → left_join only (never introduces a right_join). (The
+      # join_type diff now reports the join KEY only, not the `c in assoc(...)` binding.)
       portable = mutated(ecto_diffs(src, ecto(families: [:join_type])))
-      assert Enum.any?(portable, &(&1 =~ "left_join: c in assoc"))
+      assert Enum.any?(portable, &(&1 =~ "left_join:"))
       refute Enum.any?(portable, &(&1 =~ "right_join"))
 
       # Postgres and MySQL both support RIGHT JOIN: full_join → right_join is also offered.
       for dialect <- [:postgres, :mysql] do
         flips = mutated(ecto_diffs(src, ecto(families: [:join_type], dialects: [dialect])))
 
-        assert Enum.any?(flips, &(&1 =~ "right_join: c in assoc")),
+        assert Enum.any?(flips, &(&1 =~ "right_join:")),
                "expected a right_join mutant under #{dialect}"
       end
 
@@ -568,11 +571,12 @@ defmodule Mutare.Ecto.ConfigTest do
       hosted = Enum.find(sites, &(&1.mutated_code == "u.score > 10" and &1.mutator == :ecto))
       assert hosted.note =~ "NULL rows in the wrapped expression"
 
+      # The in-place `select` rewrite now reports at the clause value: coalesce(u.rank, ^d) → u.rank.
       in_place =
         Enum.find(
           sites,
-          &(&1.mutator == :ecto and &1.mutated_code =~ "select: u.rank" and
-              &1.mutated_code =~ "from(")
+          &(&1.mutator == :ecto and &1.original_code == "coalesce(u.rank, ^d)" and
+              &1.mutated_code == "u.rank")
         )
 
       assert in_place.note =~ "NULL rows in the wrapped expression"

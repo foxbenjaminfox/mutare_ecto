@@ -26,14 +26,16 @@ defmodule Mutare.Ecto.MacroSkipTest do
   @routing [RoutingExtension]
 
   # The set of *mutated* renderings the host delivers (the in-fragment `^`/`dynamic` mutations),
-  # dropping the whole-`from` query rewrites (which mention `from(`), exactly as `HostTest` does.
-  # `opts` rides through `Mutare.Ecto.TestSupport.diffs/2` to `Mutare.transform_string/2`, so the
-  # routed cases thread `extensions:` (and the config-channel test `:macro_routes`) alongside
-  # `:mutators`.
+  # dropping the whole-`from` query rewrites. Those rewrites now report at their inner clause: a
+  # filter_drop/bound-drop is a clause-level DELETE (`mutated == ""`), so we drop the empty-delete
+  # diffs (a hosted condition mutation always renders a non-empty replacement, so this hides a
+  # legitimate clause drop without masking a real hosted regression). `opts` rides through
+  # `Mutare.Ecto.TestSupport.diffs/2` to `Mutare.transform_string/2`, so the routed cases thread
+  # `extensions:` (and the config-channel test `:macro_routes`) alongside `:mutators`.
   defp hosted_mutateds(source, opts) do
-    for {mutator, original, mutated} <- diffs(source, opts),
+    for {mutator, _original, mutated} <- diffs(source, opts),
         mutator == :ecto,
-        not String.starts_with?(original, "from("),
+        mutated != "",
         into: MapSet.new(),
         do: mutated
   end

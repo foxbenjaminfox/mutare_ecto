@@ -44,11 +44,9 @@ defmodule Mutare.Ecto.InterpolationTest do
                mutated =~ "n - 1" or mutated =~ "n + 2" or mutated =~ "n + 0"
              end)
 
-      # The whole-`from` clause drop still fires around the raw pin.
-      assert {"from(u in User, limit: ^(n + 1), select: u.id)", "from(u in User, select: u.id)"} in ecto_diffs(
-               src,
-               @with_core
-             )
+      # The whole-`from` bound drop still fires around the raw pin — now reported clause-level as
+      # the delete of the limit value, which re-emits the pin verbatim as its `original`.
+      assert {"^(n + 1)", ""} in ecto_diffs(src, @with_core)
 
       assert_compiles(src, @with_core)
     end
@@ -119,9 +117,9 @@ defmodule Mutare.Ecto.InterpolationTest do
                "min - 1"
              )
 
-      # The whole-`from` clause drop re-emits the source byte-for-byte.
-      assert {"from(u in base, where: u.age > ^(min + 1), select: u.id)",
-              "from(u in base, select: u.id)"} in ecto_diffs(src, @with_core)
+      # The whole-`from` filter drop fires around the opaque source, now reported clause-level as
+      # the delete of the condition value.
+      assert {"u.age > ^(min + 1)", ""} in ecto_diffs(src, @with_core)
 
       assert_compiles(src, @with_core)
     end
@@ -175,11 +173,9 @@ defmodule Mutare.Ecto.InterpolationTest do
                "min - 1"
              )
 
-      # …while the whole-`from` join-type swap (narrowing `left_join`→`inner_join`) re-emits the
-      # pinned source verbatim.
-      assert Enum.any?(ecto, fn {_o, mutated} ->
-               mutated =~ "inner_join: p in ^sub" and mutated =~ "on: p.views > ^(min + 1)"
-             end)
+      # …while the whole-`from` join-type swap (narrowing `left_join`→`inner_join`) fires around
+      # the pinned source, now reported clause-level as the join key only.
+      assert {"left_join:", "inner_join:"} in ecto
 
       assert_compiles(src, @with_core)
     end
@@ -208,11 +204,11 @@ defmodule Mutare.Ecto.InterpolationTest do
                "n - 1"
              )
 
-      # Every condition-level mutant carries the flag pin verbatim (whole-`from` rewrites —
-      # the clause drop — legitimately remove the where along with it, so anchor on the
-      # condition's own diffs).
+      # Every condition-level mutant carries the flag pin verbatim — except the filter drop,
+      # which (now reported clause-level, its `original` the condition itself) legitimately
+      # deletes the whole where to `""`.
       assert Enum.all?(diffs(src, @with_core), fn {_m, o, mutated} ->
-               o != original or mutated =~ "^flag"
+               o != original or mutated == "" or mutated =~ "^flag"
              end)
 
       assert_compiles(src, @with_core)

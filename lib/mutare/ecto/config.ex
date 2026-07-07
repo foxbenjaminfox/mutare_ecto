@@ -246,12 +246,26 @@ defmodule Mutare.Ecto.Config do
   An already-final relayed `Mutation` — explicit `producer:`, a sub-contracted island mutant of a
   free-standing `dynamic` (`Mutare.Ecto.Dynamic`) — passes through untouched: it is a *core*
   family's mutant, carrying core's note and variant, and core's finalize pass bypasses it too.
+
+  A whole-`from` rewrite (`Mutare.Ecto.Query`) additionally carries an `attribution` — a
+  `Mutare.Mutator.Mutation.at/2`/`at_drop/1` value naming the inner clause it changed — so core
+  reports the site (line/column + diff) at that clause rather than at the whole `from`, making a
+  clause-level `# mutare:ignore` reachable. The mutated `node` still splices the whole rewrite;
+  attribution moves only the report. `finalize/2` reads the family off `variant` exactly as for the
+  bare tuples.
   """
-  @spec tagged({family(), Macro.t()} | {family(), Macro.t(), Mutation.variant()} | Mutation.t()) ::
-          Mutation.t()
+  @spec tagged(
+          {family(), Macro.t()}
+          | {family(), Macro.t(), Mutation.variant()}
+          | {family(), Macro.t(), Mutation.variant(), Mutation.Attribution.t()}
+          | Mutation.t()
+        ) :: Mutation.t()
   def tagged(%Mutation{producer: producer} = relayed) when not is_nil(producer), do: relayed
   def tagged({family, node}), do: Mutation.tagged(node, [family])
   def tagged({family, node, finer}), do: Mutation.tagged(node, [family | List.wrap(finer)])
+
+  def tagged({family, node, finer, %Mutation.Attribution{} = attribution}),
+    do: Mutation.new(node, variant: [family | List.wrap(finer)], attribution: attribution)
 
   @doc """
   The tag → filter → enrich funnel, defined once (`c:Mutare.Mutator.finalize/2` —

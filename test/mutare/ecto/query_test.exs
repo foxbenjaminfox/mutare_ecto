@@ -11,15 +11,11 @@ defmodule Mutare.Ecto.QueryTest do
     end
     """
 
-    # Two where clauses → exactly two whole-`from` drop mutants, each removing one where and
-    # keeping the select and the surviving where. Pinned as exact origin→target pairs so a
+    # Two where clauses → exactly two whole-`from` drop mutants, now each reported (as a
+    # deletion) at its own clause rather than at the whole `from`. Pinned as exact pairs so a
     # wrong-clause drop, a missing drop, or an over-mutation can't slip past.
-    assert ecto_diffs(src) == [
-             {~s|from(p in "posts", where: p.active, where: not p.deleted, select: p.id)|,
-              ~s|from(p in "posts", where: not p.deleted, select: p.id)|},
-             {~s|from(p in "posts", where: p.active, where: not p.deleted, select: p.id)|,
-              ~s|from(p in "posts", where: p.active, select: p.id)|}
-           ]
+    drops = Enum.filter(ecto_diffs(src), fn {_original, mutated} -> mutated == "" end)
+    assert drops == [{"p.active", ""}, {"not p.deleted", ""}]
   end
 
   test "drops a where clause (bindingless keyword form)" do
@@ -30,11 +26,9 @@ defmodule Mutare.Ecto.QueryTest do
     end
     """
 
-    # The lone where drops (whole-`from`), keeping the select — the exact and only mutant.
-    assert ecto_diffs(src) == [
-             {~s|from("posts", where: [active: true], select: [:id])|,
-              ~s|from("posts", select: [:id])|}
-           ]
+    # The lone where drops, keeping the select — now reported (as a deletion) at the where
+    # clause itself rather than at the whole `from`. The exact and only mutant.
+    assert ecto_diffs(src) == [{"[active: true]", ""}]
   end
 
   test "flips an order_by direction" do
@@ -120,10 +114,9 @@ defmodule Mutare.Ecto.QueryTest do
 
       diffs = ecto_diffs(src)
 
-      # The whole-`from` drop removes the limit (the surviving query keeps select)…
-      assert Enum.any?(diffs, fn {_o, mutated} ->
-               mutated =~ "from" and not (mutated =~ "limit")
-             end)
+      # The whole-`from` drop removes the limit — now reported (as a deletion) at the limit
+      # clause value itself, not at the whole `from`…
+      assert {"10", ""} in diffs
 
       # …while the literal bound bumps are hosted: the recorded diff is the logical pair alone,
       # with the literal's own range — never a rewritten copy of the whole query.
@@ -281,7 +274,8 @@ defmodule Mutare.Ecto.QueryTest do
 
       diffs = ecto_diffs(src)
 
-      assert Enum.any?(diffs, fn {_o, mutated} -> mutated =~ "inner_join: c in assoc" end)
+      # The swap is now reported at the join clause key itself (`left_join:` → `inner_join:`).
+      assert Enum.any?(diffs, fn {_o, mutated} -> mutated =~ "inner_join:" end)
       # Portable core: left↔inner only — no non-portable right without a dialect.
       refute Enum.any?(diffs, fn {_o, mutated} -> mutated =~ "right_join" end)
 
@@ -306,7 +300,7 @@ defmodule Mutare.Ecto.QueryTest do
           mutators: [{Mutare.Ecto, repo: MyApp.Repo, families: [:join_type]}]
         )
 
-      assert Enum.any?(full, fn {_o, mutated} -> mutated =~ "left_join: c in assoc" end)
+      assert Enum.any?(full, fn {_o, mutated} -> mutated =~ "left_join:" end)
       refute Enum.any?(full, fn {_o, mutated} -> mutated =~ "right_join" end)
 
       right =
@@ -341,7 +335,8 @@ defmodule Mutare.Ecto.QueryTest do
 
       diffs = ecto_diffs(src)
 
-      assert Enum.any?(diffs, fn {_o, mutated} -> mutated =~ "except: ^other" end)
+      # The swap is now reported at the set-op clause key itself (`intersect:` → `except:`).
+      assert Enum.any?(diffs, fn {_o, mutated} -> mutated =~ "except:" end)
       # The swap preserves duplicate-handling: plain never becomes an `_all` variant.
       refute Enum.any?(diffs, fn {_o, mutated} -> mutated =~ "except_all" end)
 
@@ -362,10 +357,10 @@ defmodule Mutare.Ecto.QueryTest do
 
       diffs = ecto_diffs(src)
 
-      assert Enum.any?(diffs, fn {_o, mutated} -> mutated =~ "intersect_all: ^other" end)
+      assert Enum.any?(diffs, fn {_o, mutated} -> mutated =~ "intersect_all:" end)
       # …and never the plain variant — `_all`-ness is preserved, so the set-op swap is not
       # conflated with a distinctness change.
-      refute Enum.any?(diffs, fn {_o, mutated} -> mutated =~ ~r/intersect: \^other/ end)
+      refute Enum.any?(diffs, fn {_o, mutated} -> mutated == "intersect:" end)
     end
 
     test "a union clause has no combination swap (only the orthogonal clause drop)" do
@@ -394,8 +389,7 @@ defmodule Mutare.Ecto.QueryTest do
       end
       """
 
-      assert {~s|from(p in "posts", select: sum(p.views))|,
-              ~s|from(p in "posts", select: avg(p.views))|} in ecto_diffs(src)
+      assert {"sum(p.views)", "avg(p.views)"} in ecto_diffs(src)
 
       assert_compiles(src)
     end
@@ -409,13 +403,14 @@ defmodule Mutare.Ecto.QueryTest do
       """
 
       diffs = ecto_diffs(src)
-      orig = ~s|from(p in "posts", select: %{total: sum(p.views), peak: max(p.views)})|
+      orig = ~s|%{total: sum(p.views), peak: max(p.views)}|
 
-      # Each aggregate swaps in place as its own single-point mutant — origin→target pinned so a
-      # swap sourced from the wrong node (or an extra one) can't pass.
-      assert {orig, ~s|from(p in "posts", select: %{total: avg(p.views), peak: max(p.views)})|} in diffs
+      # Each aggregate swaps in place as its own single-point mutant — reported at the enclosing
+      # select clause. origin→target pinned so a swap sourced from the wrong node (or an extra
+      # one) can't pass.
+      assert {orig, ~s|%{total: avg(p.views), peak: max(p.views)}|} in diffs
 
-      assert {orig, ~s|from(p in "posts", select: %{total: sum(p.views), peak: min(p.views)})|} in diffs
+      assert {orig, ~s|%{total: sum(p.views), peak: min(p.views)}|} in diffs
     end
 
     test "swaps an aggregate inside a from order_by clause" do
@@ -426,10 +421,7 @@ defmodule Mutare.Ecto.QueryTest do
       end
       """
 
-      assert {~s|from(p in "posts", group_by: p.user_id, order_by: [desc: sum(p.views)])|,
-              ~s|from(p in "posts", group_by: p.user_id, order_by: [desc: avg(p.views)])|} in ecto_diffs(
-               src
-             )
+      assert {"[desc: sum(p.views)]", "[desc: avg(p.views)]"} in ecto_diffs(src)
 
       assert_compiles(src)
     end
@@ -444,8 +436,7 @@ defmodule Mutare.Ecto.QueryTest do
       end
       """
 
-      assert {~s|from(p in "posts", select: p.views * p.weight)|,
-              ~s|from(p in "posts", select: p.views / p.weight)|} in ecto_diffs(src)
+      assert {"p.views * p.weight", "p.views / p.weight"} in ecto_diffs(src)
 
       assert_compiles(src)
     end
@@ -458,8 +449,7 @@ defmodule Mutare.Ecto.QueryTest do
       end
       """
 
-      assert {~s|from(p in "posts", group_by: p.user_id, select: %{total: sum(p.views + p.bonus)})|,
-              ~s|from(p in "posts", group_by: p.user_id, select: %{total: sum(p.views - p.bonus)})|} in ecto_diffs(
+      assert {"%{total: sum(p.views + p.bonus)}", "%{total: sum(p.views - p.bonus)}"} in ecto_diffs(
                src
              )
 
@@ -474,8 +464,7 @@ defmodule Mutare.Ecto.QueryTest do
       end
       """
 
-      assert {~s|from(p in "posts", order_by: [desc: p.views - p.penalty])|,
-              ~s|from(p in "posts", order_by: [desc: p.views + p.penalty])|} in ecto_diffs(src)
+      assert {"[desc: p.views - p.penalty]", "[desc: p.views + p.penalty]"} in ecto_diffs(src)
 
       assert_compiles(src)
     end
@@ -513,23 +502,16 @@ defmodule Mutare.Ecto.QueryTest do
           :aggregate
         )
 
-      aggs =
-        for {original, mutated} <- diffs,
-            String.starts_with?(original, "from("),
-            do: mutated
-
-      # The `select` and `order_by` aggregates each swap in place — one single-point mutant each…
-      assert "from(p in Post, having: sum(p.a) > 5, order_by: max(p.b), select: sum(p.c))" in aggs
-      assert "from(p in Post, having: sum(p.a) > 5, order_by: min(p.b), select: avg(p.c))" in aggs
-      assert length(aggs) == 2
-
-      # …but the `having` aggregate is delivered through the host (`^`/`dynamic`), never as a
-      # whole-`from` rewrite here, so Query leaves it untouched (no double-delivery).
-      refute Enum.any?(aggs, &(&1 =~ "having: avg"))
-
-      assert Enum.any?(diffs, fn {original, mutated} ->
-               original == "sum(p.a) > 5" and mutated == "avg(p.a) > 5"
-             end)
+      # Each aggregate swaps exactly once, now reported at its own clause: the `order_by` and
+      # `select` aggregates as whole-`from` rewrites (Query), the `having` aggregate through the
+      # host (`^`/`dynamic`). No aggregate is double-delivered — the diff set is exactly these
+      # three, and a Query rewrite of the hosted `having` would show up as a fourth (duplicate).
+      assert Enum.sort(diffs) ==
+               Enum.sort([
+                 {"max(p.b)", "min(p.b)"},
+                 {"avg(p.c)", "sum(p.c)"},
+                 {"sum(p.a) > 5", "avg(p.a) > 5"}
+               ])
     end
 
     test "arithmetic swaps fire on select/order_by, but leave a hosted where alone" do
@@ -539,19 +521,14 @@ defmodule Mutare.Ecto.QueryTest do
           :arithmetic
         )
 
-      arith =
-        for {original, mutated} <- diffs,
-            String.starts_with?(original, "from("),
-            do: mutated
-
-      # The `select` operator swaps in place as a whole-`from` rewrite…
-      assert arith == ["from(p in Post, where: p.a + p.b > 5, select: p.c / p.d)"]
-
-      # …while the `where` operator is delivered through the host (`^`/`dynamic`) — its diff is
-      # recorded at the condition, never as a whole-`from` rewrite here (no double-delivery).
-      assert Enum.any?(diffs, fn {original, mutated} ->
-               original == "p.a + p.b > 5" and mutated == "p.a - p.b > 5"
-             end)
+      # The `select` operator swaps as a whole-`from` rewrite (Query), reported at the select
+      # value; the `where` operator is delivered through the host (`^`/`dynamic`), reported at the
+      # condition — each exactly once (no double-delivery).
+      assert Enum.sort(diffs) ==
+               Enum.sort([
+                 {"p.c * p.d", "p.c / p.d"},
+                 {"p.a + p.b > 5", "p.a - p.b > 5"}
+               ])
     end
 
     test "order flips fire only on order_by, not a direction in another clause" do
@@ -562,10 +539,10 @@ defmodule Mutare.Ecto.QueryTest do
         )
         |> Enum.map(fn {_original, mutated} -> mutated end)
 
-      # The order_by direction flips; the `distinct: [desc: p.id]` direction is left alone — so no
-      # mutant flips it to `asc: p.id` (the flipped value renders bracket-less, like the order_by).
-      assert Enum.any?(flips, &(&1 =~ "order_by: desc: p.name"))
-      refute Enum.any?(flips, &(&1 =~ "asc: p.id"))
+      # The order_by direction flips (reported at the order_by value); the `distinct: [desc: p.id]`
+      # direction is left alone — so the only mutant is the order_by flip, never one touching
+      # `p.id`.
+      assert flips == ["[desc: p.name]"]
     end
   end
 end

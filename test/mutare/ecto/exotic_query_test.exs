@@ -53,8 +53,8 @@ defmodule Mutare.Ecto.ExoticQueryTest do
       end
       """
 
-      assert {"from(p in MyApp.Post,\n  select: %{total: over(sum(p.views), partition_by: p.user_id, order_by: p.views)}\n)",
-              "from(p in MyApp.Post,\n  select: %{total: over(avg(p.views), partition_by: p.user_id, order_by: p.views)}\n)"} in ecto_diffs(
+      assert {"%{total: over(sum(p.views), partition_by: p.user_id, order_by: p.views)}",
+              "%{total: over(avg(p.views), partition_by: p.user_id, order_by: p.views)}"} in ecto_diffs(
                src,
                @all
              )
@@ -162,9 +162,10 @@ defmodule Mutare.Ecto.ExoticQueryTest do
       # The hosted having condition swaps around the alias reference…
       assert {"selected_as(:total) > 2", "selected_as(:total) >= 2"} in diffs
       assert {"selected_as(:total) > 2", "selected_as(:total) > 3"} in diffs
-      # …and the select-side aggregate swaps inside the alias definition.
-      assert {"from(p in MyApp.Post,\n  group_by: p.user_id,\n  select: %{user: p.user_id, total: selected_as(sum(p.views), :total)},\n  having: selected_as(:total) > 2\n)",
-              "from(p in MyApp.Post,\n  group_by: p.user_id,\n  select: %{user: p.user_id, total: selected_as(avg(p.views), :total)},\n  having: selected_as(:total) > 2\n)"} in diffs
+      # …and the select-side aggregate swaps inside the alias definition (reported at the select
+      # clause).
+      assert {"%{user: p.user_id, total: selected_as(sum(p.views), :total)}",
+              "%{user: p.user_id, total: selected_as(avg(p.views), :total)}"} in diffs
 
       assert_compiles(@selected_as_src, @all)
     end
@@ -905,20 +906,16 @@ defmodule Mutare.Ecto.ExoticQueryTest do
       """
 
       diffs = ecto_diffs(src, @all)
-      mutated = mutated(diffs)
 
       # The standalone preload query gets full treatment where it is built…
       assert {"p.published == true", "p.published != true"} in diffs
-      # …the join-preload's join narrows kind, and its filter mutates…
-      assert {"from(u in MyApp.User,\n  left_join: p in assoc(u, :posts),\n  where: p.views > 3,\n  preload: [posts: p]\n)",
-              "from(u in MyApp.User,\n  inner_join: p in assoc(u, :posts),\n  where: p.views > 3,\n  preload: [posts: p]\n)"} in diffs
-
+      # …the join-preload's join narrows kind (now reported clause-level as the join key), and
+      # its filter mutates…
+      assert {"left_join:", "inner_join:"} in diffs
       assert {"p.views > 3", "p.views >= 3"} in diffs
-      # …while the preload declaration itself (which associations to load) stays raw: every
-      # mutant that still carries a preload carries it verbatim.
-      for m <- mutated, m =~ "preload" do
-        assert m =~ "preload: [posts: ^posts_query]" or m =~ "preload: [posts: p]"
-      end
+      # …while the preload declaration itself (which associations to load) stays raw: no diff
+      # touches the preload clause on either side.
+      refute Enum.any?(diffs, fn {o, m} -> o =~ "preload" or m =~ "preload" end)
 
       assert_compiles(src, @all)
     end
@@ -973,13 +970,12 @@ defmodule Mutare.Ecto.ExoticQueryTest do
       """
 
       diffs = ecto_diffs(src, @all)
-      mutated = mutated(diffs)
 
-      # The bound drop removes limit AND with_ties — a dangling `with_ties:` fails Ecto's
-      # expansion-time adjacency check and would poison the whole metamutant build.
-      drop = Enum.find(mutated, &(&1 =~ "from" and not (&1 =~ "limit")))
-      assert drop
-      refute drop =~ "with_ties"
+      # The bound drop removes the limit — now reported clause-level as the delete of its VALUE.
+      # In the metamutant it takes with_ties along (a dangling `with_ties:` fails Ecto's
+      # expansion-time adjacency check and would poison the whole build — proven by
+      # assert_compiles below).
+      assert {"3", ""} in diffs
 
       # The off-by-one bumps are hosted pin-only (bare-integer diffs), so the limit/with_ties
       # pair — and the whole query — stays intact around the woven selector.
@@ -1004,10 +1000,9 @@ defmodule Mutare.Ecto.ExoticQueryTest do
       end
       """
 
-      mutated = mutated(ecto_diffs(src, @all))
-      drop = Enum.find(mutated, &(&1 =~ "from" and not (&1 =~ "limit")))
-      assert drop
-      refute drop =~ "with_ties"
+      # The pinned bound drops as the clause-level delete of its VALUE (`^n`); the metamutant
+      # takes with_ties along so the build doesn't dangle a `with_ties:` (proven below).
+      assert {"^n", ""} in ecto_diffs(src, @all)
 
       assert_compiles(src, @all)
     end

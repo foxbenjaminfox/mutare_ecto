@@ -11,11 +11,13 @@ defmodule Mutare.Ecto.HostTest do
   # here we only confirm a catalog hit is *delivered* correctly.
 
   # The host's `{original, mutated}` diffs — recorded from the *logical* pair (the bare condition),
-  # so, unlike the whole-`from` query mutations, they never mention `from(`. That's the discriminator.
+  # always a logical *swap* or bound *bump*, never a deletion. The whole-`from` query mutations now
+  # also record clause-level diffs, but a clause *drop* is a DELETE (`mutated == ""`); a hosted
+  # mutant always rewrites to non-empty text. That empty-vs-non-empty split is the discriminator.
   defp hosted(source) do
     source
     |> ecto_diffs()
-    |> Enum.reject(fn {original, _mutated} -> String.starts_with?(original, "from(") end)
+    |> Enum.reject(fn {_original, mutated} -> mutated == "" end)
   end
 
   describe "binding extraction — the dynamic wrap" do

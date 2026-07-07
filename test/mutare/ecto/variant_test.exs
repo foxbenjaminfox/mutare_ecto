@@ -91,16 +91,18 @@ defmodule Mutare.Ecto.VariantTest do
       assert bump.variant == ["bound"]
     end
 
-    test "a mutate/2-delivered structural mutant carries only its family (no finer kind)" do
-      # Dropping the `where:` rewrites the whole `from`; delivered in place via `mutate/2`, not the
-      # host. A clause drop has no operator/kind to name, so it's family-only.
+    test "a mutate/2-delivered structural clause drop carries only its family (no finer kind)" do
+      # Dropping the `where:` is a whole-`from` rewrite, delivered via `mutate/2` (not the host) and
+      # now reported at the dropped clause as a DELETE (`operation: :delete`, empty mutated text). A
+      # clause drop has no operator/kind to name, so its Site is family-only — but it still carries
+      # that family label, so a `# mutare:ignore[ecto:filter_drop]` on the clause line suppresses it.
       drop =
         Enum.find(
           sites_for(@src),
-          &(&1.mutator == :ecto and &1.mutated_code =~ "from(" and
-              not (&1.mutated_code =~ "u.age"))
+          &(&1.mutator == :ecto and &1.operation == :delete and &1.original_code == "u.age > 18")
         )
 
+      assert drop.mutated_code == ""
       assert drop.variant == ["filter_drop"]
     end
 
@@ -210,8 +212,11 @@ defmodule Mutare.Ecto.VariantTest do
     # The bump used to be a whole-`from` rewrite recorded at the `from`'s start line; hosted
     # pin-only, its Site now carries the literal's own range. Directive matching is exact-line
     # (`Mutare.Ignore.directive_for/4` on `site.line`), so in a multi-line query the directive
-    # must sit on the *literal's* line — and one on the `from` opener no longer catches it.
-    test "[ecto:bound] on the literal's line suppresses the bumps, not the whole-from drop" do
+    # must sit on the *literal's* line — and one on the `from` opener no longer catches it. The bound
+    # DROP moved with it: it too now reports at the limit clause's line (as a deletion carrying its
+    # `bound` family label), so a directive on that clause line catches the drop as well, while one
+    # on the `from` opener catches neither.
+    test "[ecto:bound] on the limit clause line suppresses both the bumps and the drop" do
       src = """
       defmodule M do
         import Ecto.Query
@@ -232,14 +237,14 @@ defmodule Mutare.Ecto.VariantTest do
       drop =
         Enum.find(
           sites,
-          &(&1.mutator == :ecto and &1.mutated_code =~ "from(" and
-              not (&1.mutated_code =~ "limit"))
+          &(&1.mutator == :ecto and &1.operation == :delete and &1.original_code == "10")
         )
 
-      refute drop.ignored, "the drop's site still anchors at the from opener, a different line"
+      assert drop.ignored,
+             "the bound drop now reports at the limit clause line too and carries its `bound` label, so it is suppressed"
     end
 
-    test "[ecto:bound] on the from's opening line catches the drop but no longer the bump" do
+    test "[ecto:bound] on the from's opening line no longer catches the bound bump or drop" do
       src = """
       defmodule M do
         import Ecto.Query
@@ -257,12 +262,13 @@ defmodule Mutare.Ecto.VariantTest do
       drop =
         Enum.find(
           sites,
-          &(&1.mutator == :ecto and &1.mutated_code =~ "from(" and
-              not (&1.mutated_code =~ "limit"))
+          &(&1.mutator == :ecto and &1.operation == :delete and &1.original_code == "10")
         )
 
-      assert drop.ignored, "the whole-from drop is still recorded at the from's start line"
-      refute site(sites, "11").ignored, "the bump's site moved to the literal's line"
+      refute drop.ignored,
+             "the bound drop's site moved to the limit clause's line, off the from opener"
+
+      refute site(sites, "11").ignored, "the bump's site moved to the literal's line too"
       refute site(sites, "9").ignored
     end
   end
@@ -301,8 +307,8 @@ defmodule Mutare.Ecto.VariantTest do
     end
 
     test "[ecto:left] kills the left-join swap, leaving the full-join swap live (join_type)" do
-      # One line so the whole-`from` site (recorded at the `from`'s start line) sits on the same line
-      # as the trailing directive. `inner_join`/`join` are never a flip source (widening is not
+      # One line, so the join-type swap sites (now recorded at each join KEY clause) sit on the same
+      # line as the trailing directive. `inner_join`/`join` are never a flip source (widening is not
       # offered), so the second join here is `full_join` — narrows to `left_join`, portably.
       src = """
       defmodule M do
@@ -315,8 +321,8 @@ defmodule Mutare.Ecto.VariantTest do
 
       sites = sites_for(src)
 
-      assert site(sites, "inner_join: u").ignored, "the left → inner swap is suppressed"
-      refute site(sites, "left_join: a").ignored, "the full → left swap keeps running"
+      assert site(sites, "inner_join:").ignored, "the left → inner swap is suppressed"
+      refute site(sites, "left_join:").ignored, "the full → left swap keeps running"
     end
   end
 end

@@ -53,11 +53,16 @@ defmodule Mutare.Ecto.SubcontractTest do
       assert {:literal, "u.age > ^(min * 2)", "u.age > ^(min * 3)"} in islands
 
       # No island mutant is ever the host's: the plugin's `:ecto` sites on that condition are
-      # exactly its own SQL catalog (the comparison swap), nothing inside the pin.
-      assert [{"u.age > ^(min * 2)", "u.age >= ^(min * 2)"}] =
+      # exactly its own SQL catalog (the comparison swap and the clause-level filter drop),
+      # nothing inside the pin.
+      assert MapSet.new([
+               {"u.age > ^(min * 2)", "u.age >= ^(min * 2)"},
+               {"u.age > ^(min * 2)", ""}
+             ]) ==
                src
                |> ecto_diffs(@with_core)
                |> Enum.filter(fn {original, _} -> original == "u.age > ^(min * 2)" end)
+               |> MapSet.new()
 
       assert_compiles(src, @with_core)
     end
@@ -208,8 +213,7 @@ defmodule Mutare.Ecto.SubcontractTest do
       assert MapSet.new(ecto_diffs(src)) ==
                MapSet.new([
                  {"u.age > ^(min * 2)", "u.age >= ^(min * 2)"},
-                 {"from(u in User, where: u.age > ^(min * 2), select: u.id)",
-                  "from(u in User, select: u.id)"}
+                 {"u.age > ^(min * 2)", ""}
                ])
 
       assert_compiles(src)

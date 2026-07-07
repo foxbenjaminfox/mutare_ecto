@@ -107,14 +107,18 @@ defmodule Mutare.Ecto.Subquery do
 
   # The row-set structural families: `Query.mutations_for/2` (the config-taking entry) over the
   # inner `from`, filtered to the families every wrapper observes, normalized to `Fragment`'s
-  # 3-tuple contract (`Query` returns a bare `{family, node}` for the label-less families).
+  # 3-tuple contract. `Query` returns `{family, node, label, attribution}` (the attribution names
+  # the inner clause the whole-`from` site is reported at); here the mutant is instead wrapped back
+  # into the wrapper and delivered through the host's weave, so the attribution is dropped and only
+  # the `Fragment` 3-tuple (`label` normalized to `[]` when absent) is kept.
   defp structural(call, config) do
     call
     |> Query.mutations_for(config)
     |> Enum.filter(fn tuple -> elem(tuple, 0) in @structural_families end)
     |> Enum.map(fn
       {family, node} -> {family, node, []}
-      {family, node, label} -> {family, node, label}
+      {family, node, label} -> {family, node, label || []}
+      {family, node, label, _attribution} -> {family, node, label || []}
     end)
   end
 

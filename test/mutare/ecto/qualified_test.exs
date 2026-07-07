@@ -108,10 +108,11 @@ defmodule Mutare.Ecto.QualifiedTest do
       qual = wrap(~S/Ecto.Query.from(s in "t", where: s.id > 1, limit: 10)/, "require Ecto.Query")
 
       norm = normalized_ecto_diffs(qual)
-      # filter drop and bound drop both fire on the qualified opener.
-      assert {~S/from(s in "t", where: s.id > 1, limit: 10)/, ~S/from(s in "t", limit: 10)/} in norm
+      # filter drop and bound drop both fire on the qualified opener — each now reported at its
+      # inner clause as a DELETE (`{clause value, ""}`), not as a whole-`from` rewrite.
+      assert {"s.id > 1", ""} in norm
 
-      assert {~S/from(s in "t", where: s.id > 1, limit: 10)/, ~S/from(s in "t", where: s.id > 1)/} in norm
+      assert {"10", ""} in norm
 
       # The bound bump is asserted by membership, not only by qual ≡ bare set equality — the
       # equality alone would still pass if the bump silently vanished from *both* forms.

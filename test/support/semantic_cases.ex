@@ -642,7 +642,7 @@ defmodule Mutare.Ecto.SemanticCases do
             """)
 
           {baseline, drop} =
-            observe_rows(mod, sites, {~r/select: coalesce\(u\.score, 0\)/, ~r/select: u\.score/})
+            observe_rows(mod, sites, {~r/coalesce\(u\.score, 0\)/, ~r/\Au\.score\z/})
 
           # Bob's score is NULL, so the baseline selects the default…
           assert baseline == [0]
@@ -682,9 +682,9 @@ defmodule Mutare.Ecto.SemanticCases do
 
       describe "filter-drop — remove a `where` clause (whole-`from`)" do
         # "Is this filter tested?" Dropping the whole `where: u.age > 18` clause widens the result to the
-        # entire table. Like the limit/offset drops, the mutant carries no replacement token to match on,
-        # so it's located by the *absence* of `where` in its rendered output — with the same
-        # one-and-only-one `site_by` guard, so a stray sibling can't be mistaken for it.
+        # entire table. The drop is now reported (as a deletion) at the condition itself, so it's the
+        # lone site whose mutated half is empty — located with the same one-and-only-one `site_by`
+        # guard, so a sibling comparison/boundary mutant of the same condition can't be mistaken for it.
         test "dropping the where clause returns the whole table" do
           {mod, sites} =
             build("""
@@ -702,7 +702,7 @@ defmodule Mutare.Ecto.SemanticCases do
             site_by(
               sites,
               "filter-drop",
-              &(&1.original_code =~ "where: u.age > 18" and not (&1.mutated_code =~ "where"))
+              &(&1.original_code =~ "u.age > 18" and &1.mutated_code == "")
             )
 
           # With the filter gone, every row survives.
@@ -748,7 +748,7 @@ defmodule Mutare.Ecto.SemanticCases do
             end
             """)
 
-          {baseline, flipped} = observe_rows(mod, sites, {~r/order_by/, ~r/desc: u.age/})
+          {baseline, flipped} = observe_rows(mod, sites, {~r/asc: u.age/, ~r/desc: u.age/})
 
           # Ascending, the youngest (Carol, 17) tops; descending, the oldest (Eve, 40).
           assert baseline == [3]
@@ -806,13 +806,14 @@ defmodule Mutare.Ecto.SemanticCases do
           # The −1 bump is a distinct live branch of the same weave, under its own id.
           assert ids(mod, site_id(sites, {"2", "1"})) == [1]
 
-          # The drop has no `limit` left in its rendered mutant — locate it by that absence. `site_by`
-          # gives this the same one-and-only-one guard as `site_id`, so a stray sibling can't slip past.
+          # The drop is now reported (as a deletion) at the bound value, so it's the lone site whose
+          # original is exactly "2" and whose mutated half is empty — distinct from the ±1 bumps of the
+          # same value. `site_by` gives this the same one-and-only-one guard as `site_id`.
           drop =
             site_by(
               sites,
               "limit-drop",
-              &(&1.original_code =~ "limit: 2" and not (&1.mutated_code =~ "limit"))
+              &(&1.original_code == "2" and &1.mutated_code == "")
             )
 
           assert ids(mod, drop.id) == [1, 2, 3, 4, 5, 6]
@@ -843,14 +844,15 @@ defmodule Mutare.Ecto.SemanticCases do
 
           assert ids(mod, bump) == [4, 5, 6]
 
-          # The drop has no `offset` left in its rendered mutant — locate it by that absence (the `limit`
-          # is still there, so the limit-drop site, whose mutant keeps `offset: 2`, can't match). Same
-          # one-and-only-one `site_by` guard as the limit-drop case.
+          # The drop is now reported (as a deletion) at the bound value: the lone site whose original is
+          # exactly "2" (the offset — the limit's bumps/drop anchor on "10") and whose mutated half is
+          # empty, distinct from the offset's own ±1 bumps. Same one-and-only-one `site_by` guard as the
+          # limit-drop case.
           drop =
             site_by(
               sites,
               "offset-drop",
-              &(&1.original_code =~ "offset: 2" and not (&1.mutated_code =~ "offset"))
+              &(&1.original_code == "2" and &1.mutated_code == "")
             )
 
           assert ids(mod, drop.id) == [1, 2, 3, 4, 5, 6]
@@ -900,7 +902,7 @@ defmodule Mutare.Ecto.SemanticCases do
             """)
 
           {baseline, mutant} =
-            observe_ids(mod, sites, {~r/left_join: u in User/, ~r/inner_join: u in User/})
+            observe_ids(mod, sites, {~r/left_join:/, ~r/inner_join:/})
 
           # Left join: the matched posts plus the orphan P3 (user_id 99).
           assert baseline == [1, 2, 3]
@@ -932,7 +934,7 @@ defmodule Mutare.Ecto.SemanticCases do
               """)
 
             {baseline, mutant} =
-              observe_ids(mod, sites, {~r/full_join: u in User/, ~r/left_join: u in User/})
+              observe_ids(mod, sites, {~r/full_join:/, ~r/left_join:/})
 
             # Full join: the matched pairs, the orphan post (P3 → no user), and the four post-less users.
             assert baseline == [{1, 1}, {2, 2}, {3, nil}, {nil, 3}, {nil, 4}, {nil, 5}, {nil, 6}]
@@ -961,7 +963,7 @@ defmodule Mutare.Ecto.SemanticCases do
             """)
 
           {baseline, mutant} =
-            observe_ids(mod, sites, {~r/intersect: \^adults/, ~r/except: \^adults/})
+            observe_ids(mod, sites, {~r/intersect:/, ~r/except:/})
 
           # active ∩ adults: Bob, Eve, Frank.
           assert baseline == [2, 5, 6]
@@ -1134,7 +1136,7 @@ defmodule Mutare.Ecto.SemanticCases do
             observe_rows(
               mod,
               sites,
-              {~r/select: u\.age \+ u\.score/, ~r/select: u\.age - u\.score/}
+              {~r/u\.age \+ u\.score/, ~r/u\.age - u\.score/}
             )
 
           # Alice: 18 + 100.
@@ -1950,7 +1952,7 @@ defmodule Mutare.Ecto.SemanticCases do
             end
             """)
 
-          {baseline, flipped} = observe_rows(mod, sites, {~r/order_by/, ~r/asc: u.age/})
+          {baseline, flipped} = observe_rows(mod, sites, {~r/desc: u.age/, ~r/asc: u.age/})
 
           # Descending, the oldest (Eve, 40) tops; ascending, the youngest (Carol, 17).
           assert baseline == [5]

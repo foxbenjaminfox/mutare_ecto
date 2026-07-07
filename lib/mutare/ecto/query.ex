@@ -53,10 +53,14 @@ defmodule Mutare.Ecto.Query do
       *argument* binding lists reorder in place (`Mutare.Ecto.BindingReorder`); a scalar source and
       synthesized join bindings never reorder.
 
-  Each mutation is returned as `{family, node}` (or `{family, node, label}` for a swap family that
-  also names the operator/kind it mutated — order/join/aggregate) so the caller can filter by
-  `families:` and a `# mutare:ignore` qualifier; `opts`
-  carries `dialects:` for the join gate. A `from` node is `{:from, meta, [source, clauses]}`
+  Each mutation is returned as `{family, node, label, attribution}`: `label` is the finer
+  operator/kind a swap family names (order/join/aggregate — `nil` for a structural drop), and
+  `attribution` (`Mutare.Mutator.Mutation.at/2`/`at_drop/1`) names the **inner clause** the rewrite
+  changed, so core reports the site — line/column and diff — at that clause rather than at the
+  whole `from`, making a clause-level `# mutare:ignore` reachable even though `node` still splices
+  the whole rewritten query. The caller (`Mutare.Ecto.Config.tagged/1`) turns this into a tagged
+  `Mutation`, then filters by `families:`/a `# mutare:ignore` qualifier; `opts` carries `dialects:`
+  for the join gate. A `from` node is `{:from, meta, [source, clauses]}`
   where `clauses` is a keyword list (in Sourceror form, each key wrapped as
   `{:__block__, [format: :keyword], [atom]}`). A scalar `from/1` (`from(Post)`, no clauses) yields
   nothing, while a source binding list (`from([a, b] in query)`) can still reorder.
@@ -65,6 +69,7 @@ defmodule Mutare.Ecto.Query do
   alias Mutare.Ecto.{Aggregate, Combination, Config, Ordering, Scalar, Surface}
   alias Mutare.Ecto.AST.{BindingList, KeywordList, QueryCall}
   alias Mutare.Ecto.AST.KeywordList.Entry
+  alias Mutare.Mutator.Mutation
 
   @behaviour Mutare.Ecto.SubMutator
 
@@ -88,9 +93,9 @@ defmodule Mutare.Ecto.Query do
   @right_join_dialects [:postgres, :mysql]
 
   @doc """
-  Whole-`from` mutations for a `from(...)` node as self-tagging `{family, node}` /
-  `{family, node, label}` entries (a swap family — order/join/aggregate — appends the finer
-  operator/kind label), or `[]`.
+  Whole-`from` mutations for a `from(...)` node as self-tagging
+  `{family, node, label, attribution}` entries (`label` the finer operator/kind for a swap family,
+  `nil` for a structural drop; `attribution` the inner clause the site is reported at), or `[]`.
   """
   @spec mutations(QueryCall.t(), Mutare.Mutator.context()) :: [Mutare.Ecto.SubMutator.tagged()]
   @impl Mutare.Ecto.SubMutator
@@ -147,7 +152,9 @@ defmodule Mutare.Ecto.Query do
          %BindingList{} = list <- BindingList.parse(lhs) do
       for swapped <- BindingList.transpositions(list) do
         swapped_source = {:in, meta, [swapped, rhs]}
-        {:binding_reorder, QueryCall.replace_arg(call, 0, swapped_source)}
+
+        {:binding_reorder, QueryCall.replace_arg(call, 0, swapped_source), nil,
+         Mutation.at(source, swapped_source)}
       end
     else
       _ -> []
@@ -160,7 +167,8 @@ defmodule Mutare.Ecto.Query do
   defp drops(call, source, %KeywordList{entries: entries} = clauses, family) do
     for {%Entry{} = entry, index} <- Enum.with_index(entries),
         Surface.from_drop_family(entry.key) == family do
-      {family, rebuild_from(call, source, drop_clause(clauses, entry, index))}
+      {family, rebuild_from(call, source, drop_clause(clauses, entry, index)), nil,
+       Mutation.at_drop(entry.value)}
     end
   end
 
@@ -185,11 +193,11 @@ defmodule Mutare.Ecto.Query do
   defp join_swaps(call, source, %KeywordList{entries: entries} = clauses, config) do
     flips = join_flips(config)
 
-    for {%Entry{key: key}, index} <- Enum.with_index(entries),
+    for {%Entry{key: key, key_node: key_node}, index} <- Enum.with_index(entries),
         Surface.from_clause?(key, :join_type),
         to <- Map.get(flips, key, []) do
       {:join_type, rebuild_from(call, source, KeywordList.replace_key(clauses, index, to)),
-       join_label(key)}
+       join_label(key), Mutation.at(key_node, Mutare.AST.keyword_key(to))}
     end
   end
 
@@ -232,13 +240,13 @@ defmodule Mutare.Ecto.Query do
   # the join-swap delivery, over the shared `Mutare.Ecto.Combination` catalog. The `:combination`
   # capability is only registered on the flip-table names, so `swap/1` is total here.
   defp combination_swaps(call, source, %KeywordList{entries: entries} = clauses) do
-    for {%Entry{key: key}, index} <- Enum.with_index(entries),
+    for {%Entry{key: key, key_node: key_node}, index} <- Enum.with_index(entries),
         Surface.from_clause?(key, :combination),
         to = Combination.swap(key),
         # mutare:ignore[conditional] equivalent — Surface only registers :combination on the 4 names Combination.swap/1's flip table covers, so swap/1 is total here and `to` is never nil
         not is_nil(to) do
       {:combination, rebuild_from(call, source, KeywordList.replace_key(clauses, index, to)),
-       Combination.label(key)}
+       Combination.label(key), Mutation.at(key_node, Mutare.AST.keyword_key(to))}
     end
   end
 
@@ -251,7 +259,7 @@ defmodule Mutare.Ecto.Query do
         Surface.from_clause?(key, :aggregate),
         {family, swapped, label} <- Aggregate.swaps(value) do
       {family, rebuild_from(call, source, KeywordList.replace_value(clauses, index, swapped)),
-       label}
+       label, Mutation.at(value, swapped)}
     end
   end
 
@@ -264,7 +272,7 @@ defmodule Mutare.Ecto.Query do
         Surface.from_clause?(key, :scalar),
         {family, swapped, label} <- Scalar.swaps(value) do
       {family, rebuild_from(call, source, KeywordList.replace_value(clauses, index, swapped)),
-       label}
+       label, Mutation.at(value, swapped)}
     end
   end
 
@@ -276,7 +284,7 @@ defmodule Mutare.Ecto.Query do
         Surface.from_clause?(key, :ordering),
         {family, flipped, label} <- Ordering.flips(value) do
       {family, rebuild_from(call, source, KeywordList.replace_value(clauses, index, flipped)),
-       label}
+       label, Mutation.at(value, flipped)}
     end
   end
 
