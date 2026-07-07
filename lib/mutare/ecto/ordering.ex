@@ -126,17 +126,31 @@ defmodule Mutare.Ecto.Ordering do
   end
 
   # The descending keyword pair for a bare, implicitly-ascending ordering term, or `nil` when the
-  # term isn't a plain field: a `^`-pinned runtime ordering, a `fragment`, or any computed
-  # expression is left untouched (flipping it would mutate a value, not a direction). A written
-  # `:name` (block-wrapped atom), `u.name` (field access), or bare binding var is `asc` by
-  # definition, so `desc: term` is a reliable, behaviourally-distinct ordering mutant.
+  # term isn't a plain field: a `^`-pinned runtime ordering, a `fragment`, an opaque qualified
+  # helper call, or any computed expression is left untouched (flipping it would mutate a value, not
+  # a direction). A written `:name` (block-wrapped atom), `u.name` / `as(:u).name` (field access),
+  # or bare binding var is `asc` by definition, so `desc: term` is a reliable,
+  # behaviourally-distinct ordering mutant.
   defp implicit_desc({:__block__, _meta, [atom]} = term) when is_atom(atom), do: desc_pair(term)
-  defp implicit_desc({{:., _meta, _}, _outer, _args} = term), do: desc_pair(term)
+
+  defp implicit_desc({{:., _meta, [receiver, field]}, _outer, []} = term)
+       when is_atom(field) do
+    if field_receiver?(receiver), do: desc_pair(term)
+  end
 
   defp implicit_desc({name, _meta, ctx} = term) when is_atom(name) and is_atom(ctx),
     do: desc_pair(term)
 
   defp implicit_desc(_term), do: nil
+
+  defp field_receiver?({name, _meta, ctx})
+       when is_atom(name) and is_atom(ctx) and name != :__MODULE__,
+       do: true
+
+  defp field_receiver?({name, _meta, args}) when name in [:as, :parent_as] and is_list(args),
+    do: true
+
+  defp field_receiver?(_receiver), do: false
 
   defp desc_pair(term), do: {Mutare.AST.keyword_key(:desc), term}
 

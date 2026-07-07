@@ -77,6 +77,28 @@ defmodule Mutare.Ecto.QueryTest do
     assert length(only.([:ordering, :ordering_nulls])) == 2
   end
 
+  test "does not treat a module-qualified order helper call as an implicit field ordering" do
+    src = """
+    defmodule Posts.OrderHelpers do
+      defmacro runtime_order(_field) do
+        quote do
+          ^[asc: :name]
+        end
+      end
+    end
+
+    defmodule Posts do
+      import Ecto.Query
+      require Posts.OrderHelpers
+
+      def q(field), do: from(p in "posts", order_by: Posts.OrderHelpers.runtime_order(field))
+    end
+    """
+
+    assert ecto_diffs(src) == []
+    assert_compiles(src)
+  end
+
   test "does not fire on a plain (non-from) call" do
     src = """
     defmodule M do

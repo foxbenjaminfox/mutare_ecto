@@ -52,6 +52,8 @@ defmodule Mutare.Ecto.OrderingTest do
   test "a bare single field re-tags to an explicit descending keyword list" do
     assert flips(":name") == [{:ordering, "[desc: :name]"}]
     assert flips("u.name") == [{:ordering, "[desc: u.name]"}]
+    assert flips("as(:post).name") == [{:ordering, "[desc: as(:post).name]"}]
+    assert flips("parent_as(:post).name") == [{:ordering, "[desc: parent_as(:post).name]"}]
   end
 
   test "a bare list of fields re-tags each field independently" do
@@ -71,5 +73,13 @@ defmodule Mutare.Ecto.OrderingTest do
     assert flips("^order") == []
     assert flips(~s|fragment("lower(?)", u.name)|) == []
     assert flips("u.a + u.b") == []
+  end
+
+  test "opaque module-qualified calls are not re-tagged as implicit field orderings" do
+    # A helper macro/function can expand to a complete runtime ordering spec; wrapping that call as
+    # `desc: Helper.order(...)` produces an invalid Ecto order expression.
+    assert flips("Helper.order(:name)") == []
+    assert flips("Helper.order()") == []
+    assert flips("Helper.order") == []
   end
 end
