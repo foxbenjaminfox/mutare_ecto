@@ -130,8 +130,12 @@ defmodule Mutare.Ecto.Ordering do
   # helper call, or any computed expression is left untouched (flipping it would mutate a value, not
   # a direction). A written `:name` (block-wrapped atom), `u.name` / `as(:u).name` (field access),
   # or bare binding var is `asc` by definition, so `desc: term` is a reliable,
-  # behaviourally-distinct ordering mutant.
-  defp implicit_desc({:__block__, _meta, [atom]} = term) when is_atom(atom), do: desc_pair(term)
+  # behaviourally-distinct ordering mutant. `nil`/`true`/`false` are atoms too, but a literal
+  # `order_by: nil` / `order_by(q, nil)` is Ecto's "no ordering" — re-tagging it to `[desc: nil]`
+  # would order by a bogus column, so those atoms are excluded.
+  defp implicit_desc({:__block__, _meta, [atom]} = term)
+       when is_atom(atom) and atom not in [nil, true, false],
+       do: desc_pair(term)
 
   defp implicit_desc({{:., _meta, [receiver, field]}, _outer, []} = term)
        when is_atom(field) do

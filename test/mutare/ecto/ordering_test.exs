@@ -75,6 +75,14 @@ defmodule Mutare.Ecto.OrderingTest do
     assert flips("u.a + u.b") == []
   end
 
+  test "a literal nil/true/false is not treated as an implicit field ordering" do
+    # `order_by: nil` / `order_by(q, nil)` is Ecto's "no ordering" — `nil`/`true`/`false` are atoms
+    # but re-tagging them to `[desc: nil]` would order by a bogus column, so they are excluded.
+    assert flips("nil") == []
+    assert flips("true") == []
+    assert flips("false") == []
+  end
+
   test "opaque module-qualified calls are not re-tagged as implicit field orderings" do
     # A helper macro/function can expand to a complete runtime ordering spec; wrapping that call as
     # `desc: Helper.order(...)` produces an invalid Ecto order expression.
