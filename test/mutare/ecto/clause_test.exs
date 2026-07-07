@@ -51,12 +51,12 @@ defmodule Mutare.Ecto.ClauseTest do
       diffs = ecto_diffs(src)
       orig = "order_by(query, [u], asc: u.name, desc: u.id)"
 
-      # Each key flips independently — never both at once — alongside the orthogonal stage drop.
-      # Exact pairs + count pin that there is no combined flip and no over-mutation.
+      # Each key flips independently — never both at once. `order_by` is deliberately not
+      # stage-droppable: an unordered query has SQL-unspecified row order, so that old drop was an
+      # unreliable mutant.
       assert {orig, "order_by(query, [u], desc: u.name, desc: u.id)"} in diffs
       assert {orig, "order_by(query, [u], asc: u.name, asc: u.id)"} in diffs
-      assert {orig, "query"} in diffs
-      assert length(diffs) == 3
+      assert length(diffs) == 2
       assert_compiles(src)
     end
 
