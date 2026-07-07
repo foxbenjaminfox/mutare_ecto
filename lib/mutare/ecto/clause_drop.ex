@@ -7,7 +7,7 @@ defmodule Mutare.Ecto.ClauseDrop do
 
       q |> where([u], u.active)   →  q          "is this filter tested?"
       q |> limit(10)              →  q          "is the page size pinned?"
-      q |> order_by(asc: :name)   →  q          "does any test pin the ordering?"
+      q |> group_by([u], u.role)  →  q          "is this grouping tested?"
 
   A surviving mutant means **no test exercises** what that clause contributes. This is the
   primary motivating mutation for a query builder, yet it was previously only reachable in the
@@ -32,8 +32,13 @@ defmodule Mutare.Ecto.ClauseDrop do
 
     * `where`/`or_where`/`having`/`or_having` → **`:filter_drop`**;
     * `limit`/`offset` → **`:bound`** (the bound family also covers the `n`→`n±1` bumps);
-    * every other clause builder (`order_by`, `group_by`, `distinct`, `select`/`select_merge`,
-      `join`, `preload`, `lock`, `with_cte`, `windows`, the set-operation macros) → **`:clause_drop`**.
+    * every other clause builder (`group_by`, `distinct`, `select`/`select_merge`, `join`,
+      `preload`, `lock`, `with_cte`, `windows`, the set-operation macros) → **`:clause_drop`**.
+
+  `order_by`/`prepend_order_by` are deliberately **not** droppable: dropping an `ORDER BY` yields
+  an unordered query whose row order SQL leaves unspecified, so the mutant's survival tracked
+  engine nondeterminism rather than a test gap. Its reliable cousin — re-tagging the implicit
+  `asc` of a bare ordering to `desc` — lives in `Mutare.Ecto.Ordering` instead.
 
   A dropped stage can leave a later stage referencing a binding/CTE/window the query no longer
   has — but these macros build the query at *runtime*, so that surfaces as a runtime error when

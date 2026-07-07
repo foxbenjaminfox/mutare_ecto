@@ -24,9 +24,11 @@ defmodule Mutare.Ecto.ClauseDropTest do
       assert_compiles(src)
     end
 
-    test "drops a piped order_by / limit / select / join / distinct stage" do
+    test "drops a piped select / limit / join / distinct / group_by stage" do
+      # `order_by` is deliberately absent — it is not stage-droppable (an unordered query has an
+      # unspecified row order, so the drop was an unreliable mutant); its ordering flip lives in
+      # `Mutare.Ecto.Ordering` instead.
       for stage <- [
-            "order_by([u], asc: u.name)",
             "limit(10)",
             "offset(5)",
             "select([u], u.name)",
@@ -87,7 +89,7 @@ defmodule Mutare.Ecto.ClauseDropTest do
         query
         |> where([u], u.active)
         |> limit(10)
-        |> order_by([u], asc: u.name)
+        |> group_by([u], u.role)
       end
     end
     """
@@ -105,9 +107,9 @@ defmodule Mutare.Ecto.ClauseDropTest do
       assert "9" in m
     end
 
-    test ":clause_drop drops the order_by stage (not where/limit, which have their own families)" do
+    test ":clause_drop drops the group_by stage (not where/limit, which have their own families)" do
       m = mutated(@src, mutators: [{Mutare.Ecto, repo: MyApp.Repo, families: [:clause_drop]}])
-      # order_by has no other family here, so its only mutation is the drop.
+      # group_by has no other family here, so its only mutation is the drop.
       assert m == ["Elixir.Function.identity()"]
     end
   end

@@ -33,7 +33,7 @@ defmodule Mutare.Ecto.DispatcherTest do
       assert {"Ecto.Query.where(query, [u], u.x == u.y)", "query"} in diffs
     end
 
-    test "a fully-qualified clause macro (order_by) still gets its ordering/drop mutations" do
+    test "a fully-qualified clause macro (order_by) still gets its ordering mutations" do
       src = """
       defmodule M do
         def q(query), do: Ecto.Query.order_by(query, [u], asc: u.name)
@@ -45,7 +45,9 @@ defmodule Mutare.Ecto.DispatcherTest do
       assert {"Ecto.Query.order_by(query, [u], asc: u.name)",
               "Ecto.Query.order_by(query, [u], desc: u.name)"} in diffs
 
-      assert {"Ecto.Query.order_by(query, [u], asc: u.name)", "query"} in diffs
+      # `order_by` is not stage-droppable (an unordered query has an unspecified row order), so it
+      # collapses to no `"query"` drop — the direction flip above is its reliable ordering mutant.
+      refute {"Ecto.Query.order_by(query, [u], asc: u.name)", "query"} in diffs
     end
 
     test "a fully-qualified join macro still gets its on-condition and drop mutations" do

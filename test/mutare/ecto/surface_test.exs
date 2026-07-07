@@ -49,13 +49,15 @@ defmodule Mutare.Ecto.SurfaceTest do
              name: :order_by,
              macro: :clause,
              mutations: [:ordering, :aggregate, :scalar],
-             stage_drop: :clause_drop,
              from: [:ordering, :aggregate, :scalar]
            }
 
     assert Surface.macro_kind(:order_by) == :clause
     assert Surface.mutations(:order_by) == [:ordering, :aggregate, :scalar]
-    assert Surface.stage_drop_family(:order_by) == :clause_drop
+    # `order_by` is deliberately not stage-droppable — an unordered query's row order is
+    # unspecified, so the drop tracked engine nondeterminism, not the tests (the implicit-direction
+    # flip in `Mutare.Ecto.Ordering` is the reliable ordering mutant instead).
+    assert Surface.stage_drop_family(:order_by) == nil
     assert Surface.from_clause?(:order_by, :ordering)
     assert Surface.from_drop_family(:order_by) == nil
   end

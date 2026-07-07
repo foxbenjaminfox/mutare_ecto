@@ -63,18 +63,20 @@ defmodule Mutare.Ecto.Surface do
       stage_drop: :clause_drop,
       from: [:aggregate, :scalar]
     },
+    # `order_by`/`prepend_order_by` are deliberately **not** stage-droppable: dropping an `ORDER BY`
+    # yields an unordered query whose row order SQL leaves unspecified, so the mutant's survival
+    # tracked engine nondeterminism, not the tests. The implicit-direction flip in
+    # `Mutare.Ecto.Ordering` is the reliable ordering mutant instead.
     %{
       name: :order_by,
       macro: :clause,
       mutations: [:ordering, :aggregate, :scalar],
-      stage_drop: :clause_drop,
       from: [:ordering, :aggregate, :scalar]
     },
     %{
       name: :prepend_order_by,
       macro: :clause,
-      mutations: [:ordering, :aggregate, :scalar],
-      stage_drop: :clause_drop
+      mutations: [:ordering, :aggregate, :scalar]
     },
     %{name: :group_by, macro: :clause, stage_drop: :clause_drop},
     %{name: :distinct, macro: :clause, stage_drop: :clause_drop},

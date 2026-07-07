@@ -20,6 +20,20 @@ defmodule Mutare.Ecto.Ordering do
   # and placement), each flipping exactly one axis. Flipping both at once — the earlier
   # behaviour — was a *weaker* mutant: any order-pinning test killed it, so a missing
   # NULL-placement assertion never surfaced.
+  #
+  # ## Implicit-direction flip
+  #
+  # A bare ordering term — `order_by(q, :name)`, `order_by(q, [u], u.name)`, or a bare field in a
+  # list (`[u.name, desc: u.age]`) — carries **no written key**, but Ecto sorts it ascending, so
+  # the author's implicit assertion is `asc`. We flip it to an explicit `desc` re-tag (`:name` →
+  # `desc: :name`), a `:ordering` mutant with a behaviourally-distinct, *deterministic* baseline.
+  # This deliberately replaces the old `order_by` **clause drop**, whose "kill" depended on the
+  # database returning rows in an order that happened to differ from the sorted one — result order
+  # without `ORDER BY` is unspecified by SQL, so that mutant's survival was a function of engine
+  # nondeterminism, not the test suite. The flip is the reliable question ("is this ordering
+  # exercised?") the drop was pretending to ask. Only a plain field is re-tagged: a `^`-pinned
+  # runtime ordering, a `fragment`, or a computed expression is left untouched (flipping it would
+  # mutate a value, not a direction).
 
   alias Mutare.Ecto.AST
 
@@ -42,28 +56,39 @@ defmodule Mutare.Ecto.Ordering do
     desc_nulls_last: :desc_nulls_first
   }
 
+  # A bare ordering term is implicitly ascending, so its implicit-direction flip is labelled `asc`
+  # — the same finer label an explicit `asc: field` flip carries.
+  @implicit_label "asc"
+
   @doc """
-  Mutated ordering values for `value` as `{family, mutated_value}` pairs — one per axis per
-  flippable `direction: field` pair in the keyword list, each flipping just that one axis (the
-  direction under `:ordering`, the nulls placement under `:ordering_nulls`). `[]` for a
-  non-keyword ordering (a bare field or list of fields, which carry no explicit direction).
-  Sourceror wraps a list literal in a value position in a single-element `__block__`, so that
-  is unwrapped first.
+  Mutated ordering values for `value` as `{family, mutated_value}` pairs — one per mutated axis
+  per entry: an explicitly-keyed `direction: field` pair flips its direction (`:ordering`) and, if
+  nulls-qualified, its placement (`:ordering_nulls`); a bare, implicitly-ascending term (`:name`,
+  `u.name`) gets its implicit `asc` re-tagged `desc` (`:ordering`). `[]` for a term we don't
+  re-tag (a `^`-pinned ordering, a `fragment`, a computed expression). Sourceror wraps a list
+  literal in a value position in a single-element `__block__`, so that is unwrapped first.
   """
   @spec flips(Macro.t()) :: [{:ordering | :ordering_nulls, Macro.t(), String.t()}]
-  def flips({:__block__, _meta, [inner]}), do: flips(inner)
+  def flips({:__block__, _meta, [inner]}) when is_list(inner), do: flips(inner)
 
   def flips(value) when is_list(value) do
     value
     |> Enum.with_index()
-    |> Enum.flat_map(fn {pair, index} ->
-      for {family, flipped, label} <- axis_flips(pair) do
+    |> Enum.flat_map(fn {entry, index} ->
+      for {family, flipped, label} <- axis_flips(entry) do
         {family, List.replace_at(value, index, flipped), label}
       end
     end)
   end
 
-  def flips(_value), do: []
+  # A lone ordering term (not a list): re-tag its implicit `asc` to an explicit `desc` keyword
+  # list, or nothing when it isn't a plain field we re-tag.
+  def flips(value) do
+    case implicit_desc(value) do
+      nil -> []
+      pair -> [{:ordering, [pair], @implicit_label}]
+    end
+  end
 
   @doc false
   # The finer `# mutare:ignore` labels the ordering families emit — the direction axis (`asc`/`desc`)
@@ -89,7 +114,29 @@ defmodule Mutare.Ecto.Ordering do
       tag(:ordering_nulls, @nulls_flips[direction], field, direction)
   end
 
-  defp axis_flips(_pair), do: []
+  # A bare list element — an implicitly-ascending field — re-tagged descending in place, or `[]`
+  # when it isn't a plain field we re-tag.
+  defp axis_flips(element) do
+    case implicit_desc(element) do
+      nil -> []
+      pair -> [{:ordering, pair, @implicit_label}]
+    end
+  end
+
+  # The descending keyword pair for a bare, implicitly-ascending ordering term, or `nil` when the
+  # term isn't a plain field: a `^`-pinned runtime ordering, a `fragment`, or any computed
+  # expression is left untouched (flipping it would mutate a value, not a direction). A written
+  # `:name` (block-wrapped atom), `u.name` (field access), or bare binding var is `asc` by
+  # definition, so `desc: term` is a reliable, behaviourally-distinct ordering mutant.
+  defp implicit_desc({:__block__, _meta, [atom]} = term) when is_atom(atom), do: desc_pair(term)
+  defp implicit_desc({{:., _meta, _}, _outer, _args} = term), do: desc_pair(term)
+
+  defp implicit_desc({name, _meta, ctx} = term) when is_atom(name) and is_atom(ctx),
+    do: desc_pair(term)
+
+  defp implicit_desc(_term), do: nil
+
+  defp desc_pair(term), do: {Mutare.AST.keyword_key(:desc), term}
 
   defp tag(_family, nil, _field, _direction), do: []
 

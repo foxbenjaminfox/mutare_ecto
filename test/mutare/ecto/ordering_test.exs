@@ -39,14 +39,37 @@ defmodule Mutare.Ecto.OrderingTest do
            ]
   end
 
-  test "a bare field (implicit ascending) is not a flippable axis and doesn't crash the walk" do
-    # `order_by: [p.id, asc: p.name]` — the bare `p.id` carries no direction key, so axis_flips
-    # falls through to []; only the keyed `asc: p.name` flips. (Without that fallback the walk would
-    # raise on the bare field rather than skip it.)
-    assert flips("[p.id, asc: p.name]") == [{:ordering, "[p.id, desc: p.name]"}]
+  test "a bare field (implicit ascending) re-tags its implicit asc to desc" do
+    # `order_by: [p.id, asc: p.name]` — the bare `p.id` is `asc` by definition, so it re-tags to
+    # `desc: p.id` (a non-trailing keyword pair renders as an explicit `{:desc, …}` tuple); the
+    # keyed `asc: p.name` flips independently. One `:ordering` mutant per field.
+    assert flips("[p.id, asc: p.name]") == [
+             {:ordering, "[desc: p.id, asc: p.name]"},
+             {:ordering, "[p.id, desc: p.name]"}
+           ]
   end
 
-  test "a non-list ordering value yields nothing" do
-    assert flips("u.name") == []
+  test "a bare single field re-tags to an explicit descending keyword list" do
+    assert flips(":name") == [{:ordering, "[desc: :name]"}]
+    assert flips("u.name") == [{:ordering, "[desc: u.name]"}]
+  end
+
+  test "a bare list of fields re-tags each field independently" do
+    assert flips("[u.name, u.age]") == [
+             {:ordering, "[{:desc, u.name}, u.age]"},
+             {:ordering, "[u.name, desc: u.age]"}
+           ]
+  end
+
+  test "the implicit-direction flip is labelled asc (matching an explicit asc flip)" do
+    assert labelled_flips("u.name") == [{:ordering, "[desc: u.name]", "asc"}]
+  end
+
+  test "a term that isn't a plain field is left untouched (pin, fragment, computed expression)" do
+    # A `^`-pinned runtime ordering is already a full ordering spec, and a fragment/computed value
+    # is a value not a direction — re-tagging either would be wrong, so neither is a flippable axis.
+    assert flips("^order") == []
+    assert flips(~s|fragment("lower(?)", u.name)|) == []
+    assert flips("u.a + u.b") == []
   end
 end

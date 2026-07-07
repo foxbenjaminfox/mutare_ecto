@@ -34,7 +34,8 @@ defmodule Mutare.Ecto.Config do
   #     standalone/pipe macro name — `Mutare.Ecto.Combination`),
   #     aggregate (`sum`↔`avg`/`min`↔`max` in `select`/`order_by`/`Repo.aggregate` delivered in
   #     place, and in a hosted `having` condition via `Mutare.Ecto.Host`), query_terminal (`first`↔`last`),
-  #     clause_drop (drop a standalone/pipe order_by/select/join/… stage — `Mutare.Ecto.ClauseDrop`);
+  #     clause_drop (drop a standalone/pipe select/group_by/join/… stage — `Mutare.Ecto.ClauseDrop`;
+  #     `order_by` is deliberately *not* droppable — an unordered query's row order is unspecified);
   #   * repo write: persistence (insert/update/delete → apply_action), on_conflict (swap an explicit
   #     `on_conflict:` atom on insert/insert!/insert_all — `:nothing`→`:raise`, `:raise`→`:nothing`,
   #     `:replace_all`→`:nothing`);

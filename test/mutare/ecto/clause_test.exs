@@ -60,7 +60,7 @@ defmodule Mutare.Ecto.ClauseTest do
       assert_compiles(src)
     end
 
-    test "an ordering without an explicit direction yields no flip (only the stage drop)" do
+    test "an ordering without an explicit direction re-tags its implicit asc to desc" do
       src = """
       defmodule M do
         import Ecto.Query
@@ -68,11 +68,11 @@ defmodule Mutare.Ecto.ClauseTest do
       end
       """
 
-      # No explicit direction → no ordering flip. The stage drop still fires: the directly-written
-      # `order_by(query, …)` collapses to its query argument (`Mutare.Ecto.ClauseDrop`).
+      # A bare `u.name` is ascending by definition, so the only mutation is the implicit-direction
+      # flip (`order_by(query, [u], desc: u.name)`). `order_by` is deliberately not stage-droppable
+      # — dropping an ORDER BY leaves an unspecified row order, an unreliable mutant.
       mutated = Enum.map(ecto_diffs(src), fn {_o, m} -> m end)
-      refute Enum.any?(mutated, &(&1 =~ "order_by"))
-      assert mutated == ["query"]
+      assert mutated == ["order_by(query, [u], desc: u.name)"]
     end
 
     test "a nulls-qualified direction splits into direction and placement axes" do
@@ -89,8 +89,8 @@ defmodule Mutare.Ecto.ClauseTest do
       assert "order_by([u], asc_nulls_last: u.name)" in orderings
       assert "order_by([u], desc_nulls_first: u.name)" in orderings
       assert length(orderings) == 2
-      # …alongside the orthogonal stage drop (clause_drop → identity in the pipe form).
-      assert Enum.any?(mutated, &(&1 =~ "identity"))
+      # `order_by` is not stage-droppable, so there is no identity/drop mutant to accompany them.
+      refute Enum.any?(mutated, &(&1 =~ "identity"))
       assert_compiles(src)
     end
   end

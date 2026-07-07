@@ -83,7 +83,10 @@ defmodule Mutare.EctoTest do
                mutator in [:list, :atom] and original in ["[u]", "asc:"]
              end)
 
-      assert {"prepend_order_by(query, [u], asc: u.id)", "query"} in ecto_diffs(src)
+      # `prepend_order_by` is routed and mutated (its direction flip fires); it is not
+      # stage-droppable, so there is no `"query"` collapse.
+      assert {"prepend_order_by(query, [u], asc: u.id)",
+              "prepend_order_by(query, [u], desc: u.id)"} in ecto_diffs(src)
 
       assert_compiles(src, mutators: all)
     end
