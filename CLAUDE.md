@@ -201,6 +201,7 @@ The surface divides by **how a mutation is delivered**, not by what it mutates:
 | `clause_drop.ex` | Drop a standalone/pipe clause stage (`q \|> where(…)` → `q`), via `stage_drop.ex` |
 | `ordering.ex` / `aggregate.ex` / `scalar.ex` | Shared `{family, node}` catalogs used by `query.ex`, `clause.ex`, and the condition host — `scalar.ex` owns the Arithmetic swaps and the Coalesce fallback drop, applied per node by `fragment.ex` in hosted conditions and walked over `select`/`order_by` values. `ordering.ex` flips a sort direction (`:asc`↔`:desc`) / nulls placement, **and** re-tags the implicit `asc` of a bare ordering term (`:name`, `u.name`) to `desc` — the reliable replacement for the removed `order_by` clause-drop (dropping an `ORDER BY` left an SQL-unspecified row order, so its survival tracked engine nondeterminism, not the tests) |
 | `expression_walk.ex` | The generic single-point structural walker under the expression catalogs (`aggregate.ex`, `scalar.ex`) |
+| `descent.ex` | The author-macro descent rule, shared by `fragment.ex`'s two walks (`mutants`/`islands`) and `expression_walk.ex`: `each_arg/2` visits a call's arguments, entering only the ones the macro routed `:expression` (or a non-macro node) per `Mutare.Calls.macro_treatment/1`. Homing it once keeps the catalog's mutation walk and its island walk provably in agreement about which arguments they enter (`fragment_walk_parity_test.exs` guards the structural half) |
 | `combination.ex` | Shared set-operation swap catalog (`intersect`↔`except`, `intersect_all`↔`except_all`; `union` deliberately unswapped) used by `query.ex` (clause-key swap) and `clause.ex` (macro-name swap) |
 | `dynamic.ex` | In-fragment mutations of a **free-standing** `dynamic/1,2` (`d = dynamic([p], p.x > ^v)`): the shared `Fragment`/`Aggregate` catalogs over its condition **plus** the island sub-contract per `^` pin (via `Host.Catalog.subcontracted/3` over `context.mutators`), each mutant the whole call rebuilt and delivered in place (the `dynamic` registers `:skip` so core keeps its DSL args raw, but core still offers the whole call to `mutate/2` — with the run's specs threaded in) |
 | `repo_aggregate.ex` / `repo_write.ex` / `query_terminal.ex` | Bucket-1 Repo/query-function families |
@@ -258,9 +259,10 @@ tuples wrapped by `Config.tagged/1` into `Mutation.tagged(node, [family | finer]
   user can define a macro and use it inside a `where`/`having` condition; its arguments are valid
   Elixir *tokens* but their meaning is the macro's own (it can make up a DSL, exactly as Ecto does).
   Mutare mutates **source**, not expansions, so there's nothing "downstream" to protect — the thing
-  `:skip` protects is the **argument source**. As they walk the condition, `fragment.ex` and
-  `aggregate.ex` read each nested call's per-argument routing via
-  `Mutare.Calls.macro_treatment/1` (stamped by the resolve pre-pass) and descend into an
+  `:skip` protects is the **argument source**. Every structural walk (`fragment.ex`'s `mutants` and
+  `islands`, `expression_walk.ex`) routes its per-argument descent through the shared
+  `descent.ex` (`Mutare.Ecto.Descent.each_arg/2`), which reads each nested call's per-argument
+  routing via `Mutare.Calls.macro_treatment/1` (stamped by the resolve pre-pass) and descends into an
   argument **only** when it's plainly standard syntax — a non-macro node, or an argument the macro
   routed `:expression`. Every other routing (`:skip`, `:pattern`, `:hosted`, …) is left raw.
 - **Binding-reorder is always in-place, never a body rewrite.** Transposing `[a, b]` → `[b, a]` swaps

@@ -107,8 +107,7 @@ defmodule Mutare.Ecto.Fragment do
   macro's own, so it is left raw. We mutate only what the author wrote in a form we understand.
   """
 
-  alias Mutare.Calls
-  alias Mutare.Ecto.{Config, Scalar, Subquery}
+  alias Mutare.Ecto.{Config, Descent, Scalar, Subquery}
 
   # The finer `# mutare:ignore` label(s) a mutant carries beyond its family — the operator a swap
   # mutates (`<`), or a literal's kind (`zero`) — or a *list* when one mutant collapses several kinds
@@ -188,23 +187,15 @@ defmodule Mutare.Ecto.Fragment do
   end
 
   # Any other call/operator node: descend per argument under the same author-macro rule as
-  # `lift/4` — only plainly standard syntax (`descend_arg?/2`). Each found island's rebuild is
+  # `lift/4` — only plainly standard syntax (`Mutare.Ecto.Descent`). Each found island's rebuild is
   # composed outward so it reconstructs the whole condition. A bare inline subquery `from(...)`
   # (a value-wrapper's argument, reached by this descent) also surfaces its interior condition
   # pins through `Subquery`; every other node's `interior_islands` is `[]`.
   defp island_walk({form, meta, args} = node) when is_list(args) do
-    routing = Calls.macro_treatment({form, meta, args})
-
     descended =
-      args
-      |> Enum.with_index()
-      |> Enum.flat_map(fn {arg, index} ->
-        if descend_arg?(routing, index) do
-          for {interior, rebuild} <- island_walk(arg) do
-            {interior, fn m -> {form, meta, List.replace_at(args, index, rebuild.(m))} end}
-          end
-        else
-          []
+      Descent.each_arg(node, fn arg, index ->
+        for {interior, rebuild} <- island_walk(arg) do
+          {interior, fn m -> {form, meta, List.replace_at(args, index, rebuild.(m))} end}
         end
       end)
 
@@ -527,34 +518,17 @@ defmodule Mutare.Ecto.Fragment do
   #
   # A nested macro the **author** wrote in the fragment (a query helper of their own) may not accept
   # standard Ecto syntax in its arguments — it can define its own DSL out of valid tokens, so we
-  # cannot assume an argument parses to anything we know how to mutate. Core left the whole hosted
-  # fragment raw and stamped each recognised nested call's per-argument routing on the node, so read
-  # it with `Calls.macro_treatment/1` and descend into an argument **only** when it is plainly a
-  # standard expression — `descend_arg?/2` below.
+  # cannot assume an argument parses to anything we know how to mutate. `Mutare.Ecto.Descent` reads
+  # the resolve-pass routing stamp and visits an argument **only** when it is plainly a standard
+  # expression; every child is descended with its `{parent_form, arity, index}` position.
   defp lift(form, meta, args, opts) do
     arity = length(args)
-    routing = Calls.macro_treatment({form, meta, args})
 
-    args
-    |> Enum.with_index()
-    |> Enum.flat_map(fn {arg, index} ->
-      if descend_arg?(routing, index) do
-        for {family, mutated, label} <- do_mutants(arg, opts, {form, arity, index}),
-            do: {family, {form, meta, List.replace_at(args, index, mutated)}, label}
-      else
-        []
-      end
+    Descent.each_arg({form, meta, args}, fn arg, index ->
+      for {family, mutated, label} <- do_mutants(arg, opts, {form, arity, index}),
+          do: {family, {form, meta, List.replace_at(args, index, mutated)}, label}
     end)
   end
-
-  # Descend into an argument only when its syntax is the standard DSL we know how to mutate: either
-  # the node is not a known macro (`nil` routing — an ordinary operator/call/field we own) or the
-  # macro routed this argument `:expression` (the one treatment that asserts "a standard expression
-  # here, mutate it"). Every other treatment — `:skip`, `:pattern`, `:binding_pattern`, `:hosted`,
-  # `:interpolated`, `{:keyword, …}` — marks an argument whose grammar is the macro's own, so it is left
-  # raw. We mutate only what the author wrote in a form we understand.
-  defp descend_arg?(nil, _index), do: true
-  defp descend_arg?(routing, index), do: Enum.at(routing, index) == :expression
 
   # Build `{family, literal_node, labels}` for each distinct mutated value: drop any candidate equal
   # to the original, then dedup by value while **merging** the kind labels of colliding candidates —

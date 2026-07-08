@@ -7,13 +7,12 @@ defmodule Mutare.Ecto.ExpressionWalk do
   # exactly one position replaced by one of `local`'s alternatives, threading each mutant's
   # `{family, node, label}` tag up unchanged.
   #
-  # Descent follows the same author-macro rule as `Mutare.Ecto.Fragment`: a nested macro the
-  # author wrote may invent its own argument grammar (Mutare mutates source, not expansions), so
-  # a call's argument is descended **only** when it is plainly standard syntax — a non-macro node
-  # (`nil` routing) or an argument the macro routed `:expression` — read from the resolve-pass
-  # stamp via `Mutare.Calls.macro_treatment/1`.
+  # Descent follows the same author-macro rule as `Mutare.Ecto.Fragment`, shared through
+  # `Mutare.Ecto.Descent`: a nested macro the author wrote may invent its own argument grammar
+  # (Mutare mutates source, not expansions), so a call's argument is descended **only** when it is
+  # plainly standard syntax — a non-macro node or an argument the macro routed `:expression`.
 
-  alias Mutare.Calls
+  alias Mutare.Ecto.Descent
 
   @typedoc "One tagged single-point mutant: `{family, node, finer_label}`."
   @type tagged :: {atom(), Macro.t(), String.t()}
@@ -56,26 +55,12 @@ defmodule Mutare.Ecto.ExpressionWalk do
   def walk(_node, _local), do: []
 
   # Descend into a call/operator's arguments, but only where the argument is plainly standard
-  # syntax we can mutate (`descend_arg?/2` below) — e.g. a `select: clamp(sum(p.x), 10)` whose
+  # syntax we can mutate (`Mutare.Ecto.Descent`) — e.g. a `select: clamp(sum(p.x), 10)` whose
   # `clamp/2` is registered `:skip` never has its `sum` swapped, because we don't know that
   # `sum(p.x)` even means an aggregate to `clamp`.
   defp lift_args(form, meta, args, local) do
-    routing = Calls.macro_treatment({form, meta, args})
-
-    args
-    |> Enum.with_index()
-    |> Enum.flat_map(fn {arg, i} ->
-      if descend_arg?(routing, i) do
-        for {f, m, l} <- walk(arg, local), do: {f, {form, meta, List.replace_at(args, i, m)}, l}
-      else
-        []
-      end
+    Descent.each_arg({form, meta, args}, fn arg, i ->
+      for {f, m, l} <- walk(arg, local), do: {f, {form, meta, List.replace_at(args, i, m)}, l}
     end)
   end
-
-  # Descend into an argument only when it is plainly standard syntax: a non-macro node (`nil`
-  # routing) or a macro argument routed `:expression`. Every other treatment marks syntax whose
-  # meaning is the macro's own, left raw — mirrors `Mutare.Ecto.Fragment.descend_arg?/2`.
-  defp descend_arg?(nil, _index), do: true
-  defp descend_arg?(routing, index), do: Enum.at(routing, index) == :expression
 end
