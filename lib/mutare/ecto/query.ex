@@ -131,11 +131,11 @@ defmodule Mutare.Ecto.Query do
     Enum.concat([
       drops(call, source, clauses, :filter_drop),
       drops(call, source, clauses, :bound),
-      order_flips(call, source, clauses),
+      value_swaps(call, source, clauses, :ordering, &Ordering.flips/1),
       join_swaps(call, source, clauses, config),
       combination_swaps(call, source, clauses),
-      aggregate_swaps(call, source, clauses),
-      scalar_swaps(call, source, clauses),
+      value_swaps(call, source, clauses, :aggregate, &Aggregate.swaps/1),
+      value_swaps(call, source, clauses, :scalar, &Scalar.swaps/1),
       binding_reorders(call, source)
     ])
   end
@@ -190,15 +190,10 @@ defmodule Mutare.Ecto.Query do
   # `full_join`→`left_join`/`right_join`, and `left_join`↔`right_join` under a `RIGHT`-capable
   # dialect), keeping the join's value (`c in assoc(p, :x)`). `join`/`inner_join` are never a
   # flip source, so they never match here. One mutant per enabled target.
-  defp join_swaps(call, source, %KeywordList{entries: entries} = clauses, config) do
+  defp join_swaps(call, source, clauses, config) do
     flips = join_flips(config)
 
-    for {%Entry{key: key, key_node: key_node}, index} <- Enum.with_index(entries),
-        Surface.from_clause?(key, :join_type),
-        to <- Map.get(flips, key, []) do
-      {:join_type, rebuild_from(call, source, KeywordList.replace_key(clauses, index, to)),
-       join_label(key), Mutation.at(key_node, Mutare.AST.keyword_key(to))}
-    end
+    key_swaps(call, source, clauses, :join_type, &Map.get(flips, &1, []), &join_label/1)
   end
 
   # The `# mutare:ignore` label for a join swap: the **source** join kind, so
@@ -237,54 +232,50 @@ defmodule Mutare.Ecto.Query do
 
   # Swap each set-operation clause's *kind* by rewriting its key (`intersect:`↔`except:`,
   # `intersect_all:`↔`except_all:`), keeping the clause's value (the `^combined` query) — exactly
-  # the join-swap delivery, over the shared `Mutare.Ecto.Combination` catalog. The `:combination`
-  # capability is only registered on the flip-table names, so `swap/1` is total here.
-  defp combination_swaps(call, source, %KeywordList{entries: entries} = clauses) do
+  # the join-swap delivery, over the shared `Mutare.Ecto.Combination` catalog. `Combination.swap/1`
+  # returns `nil` off its flip table (`List.wrap` then yields no target), so a non-swappable key is
+  # simply skipped — though `Surface` only registers `:combination` on the flip-table names anyway.
+  defp combination_swaps(call, source, clauses) do
+    key_swaps(
+      call,
+      source,
+      clauses,
+      :combination,
+      &List.wrap(Combination.swap(&1)),
+      &Combination.label/1
+    )
+  end
+
+  # Swap a clause's *key* to each target `targets.(key)` yields, keeping its value — the shared
+  # delivery for JoinType and Combination. Both filter on and tag with the same `family` atom; each
+  # names its own `label.(key)` and attributes the change at the key node. One mutant per target.
+  defp key_swaps(call, source, %KeywordList{entries: entries} = clauses, family, targets, label) do
     for {%Entry{key: key, key_node: key_node}, index} <- Enum.with_index(entries),
-        Surface.from_clause?(key, :combination),
-        to = Combination.swap(key),
-        # mutare:ignore[conditional] equivalent — Surface only registers :combination on the 4 names Combination.swap/1's flip table covers, so swap/1 is total here and `to` is never nil
-        not is_nil(to) do
-      {:combination, rebuild_from(call, source, KeywordList.replace_key(clauses, index, to)),
-       Combination.label(key), Mutation.at(key_node, Mutare.AST.keyword_key(to))}
+        Surface.from_clause?(key, family),
+        to <- targets.(key) do
+      {family, rebuild_from(call, source, KeywordList.replace_key(clauses, index, to)),
+       label.(key), Mutation.at(key_node, Mutare.AST.keyword_key(to))}
     end
   end
 
-  # Swap each aggregate inside a `select`/`select_merge`/`order_by` clause value — one mutant per
-  # aggregate position (`Mutare.Ecto.Aggregate`). A `having` aggregate is deliberately *not* here:
-  # its condition is hosted (`^`/`dynamic`), so the swap rides the host alongside the operator swaps
-  # (`Mutare.Ecto.Host.catalog/3`) rather than being delivered as a whole-`from` rewrite.
-  defp aggregate_swaps(call, source, %KeywordList{entries: entries} = clauses) do
+  # Mutate each clause value the `capability` selects through the shared `catalog` — one mutant per
+  # `{family, node, label}` the catalog yields for that value, rebuilt into the whole `from` and
+  # attributed at the value. Covers the three value-position families delivered as whole-`from`
+  # rewrites, each over a `select`/`select_merge`/`order_by` clause value:
+  #
+  #   * `:ordering` (`Mutare.Ecto.Ordering.flips/1`) — an `order_by` direction/nulls flip.
+  #   * `:aggregate` (`Mutare.Ecto.Aggregate.swaps/1`) — a `sum`↔`avg`/`min`↔`max` swap.
+  #   * `:scalar` (`Mutare.Ecto.Scalar.swaps/1`) — an arithmetic swap or coalesce drop.
+  #
+  # A `where`/`having` value with any of these is deliberately *not* here: its condition is hosted
+  # (`^`/`dynamic`), so those mutants ride the host (`Mutare.Ecto.Fragment`/`Host.catalog/3`)
+  # alongside the operator swaps rather than duplicating the whole `from`.
+  defp value_swaps(call, source, %KeywordList{entries: entries} = clauses, capability, catalog) do
     for {%Entry{key: key, value: value}, index} <- Enum.with_index(entries),
-        Surface.from_clause?(key, :aggregate),
-        {family, swapped, label} <- Aggregate.swaps(value) do
-      {family, rebuild_from(call, source, KeywordList.replace_value(clauses, index, swapped)),
-       label, Mutation.at(value, swapped)}
-    end
-  end
-
-  # Mutate each scalar form inside a `select`/`select_merge`/`order_by` clause value — one mutant
-  # per position, arithmetic swap or coalesce drop (`Mutare.Ecto.Scalar`). Like the aggregate
-  # swap, a `where`/`having` scalar is deliberately *not* here: the condition is hosted, so its
-  # mutants ride the host via `Mutare.Ecto.Fragment` (no double-delivery).
-  defp scalar_swaps(call, source, %KeywordList{entries: entries} = clauses) do
-    for {%Entry{key: key, value: value}, index} <- Enum.with_index(entries),
-        Surface.from_clause?(key, :scalar),
-        {family, swapped, label} <- Scalar.swaps(value) do
-      {family, rebuild_from(call, source, KeywordList.replace_value(clauses, index, swapped)),
-       label, Mutation.at(value, swapped)}
-    end
-  end
-
-  # Flip each `order_by` clause's directions, reusing the shared ordering catalog — one mutant
-  # per axis per direction key, tagged with its family (`:ordering` direction / `:ordering_nulls`
-  # placement; see `Mutare.Ecto.Ordering`).
-  defp order_flips(call, source, %KeywordList{entries: entries} = clauses) do
-    for {%Entry{key: key, value: value}, index} <- Enum.with_index(entries),
-        Surface.from_clause?(key, :ordering),
-        {family, flipped, label} <- Ordering.flips(value) do
-      {family, rebuild_from(call, source, KeywordList.replace_value(clauses, index, flipped)),
-       label, Mutation.at(value, flipped)}
+        Surface.from_clause?(key, capability),
+        {family, mutated, label} <- catalog.(value) do
+      {family, rebuild_from(call, source, KeywordList.replace_value(clauses, index, mutated)),
+       label, Mutation.at(value, mutated)}
     end
   end
 

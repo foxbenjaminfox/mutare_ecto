@@ -98,12 +98,12 @@ defmodule Mutare.Ecto.Subquery do
   @spec interior_islands(Macro.t(), mode()) :: [{Macro.t(), (Macro.t() -> Macro.t())}]
   def interior_islands(node, mode) do
     with {%QueryCall{args: [source, clauses_node]} = call, wrap} <- inline_from(node, mode),
-         %KeywordList{entries: entries} = clauses <- KeywordList.parse(clauses_node) do
-      for {%Entry{key: key, value: value}, index} <- Enum.with_index(entries),
-          island_clause?(key, mode),
-          {interior, rebuild} <- Fragment.islands(value) do
-        {interior, &wrap.(rebuild_clause(call, source, clauses, index, rebuild.(&1)))}
-      end
+         %KeywordList{} = clauses <- KeywordList.parse(clauses_node) do
+      each_clause(clauses, &island_clause?(&1, mode), fn value, index ->
+        for {interior, rebuild} <- Fragment.islands(value) do
+          {interior, &wrap.(rebuild_clause(call, source, clauses, index, rebuild.(&1)))}
+        end
+      end)
     else
       _ -> []
     end
@@ -182,26 +182,37 @@ defmodule Mutare.Ecto.Subquery do
   # condition value (the hosted-clause keys), rebuilding the whole inner `from` around each
   # single-point condition mutant. Nesting (`exists` inside the subquery's own `where`) re-enters
   # `Fragment`, which re-recognizes the wrapper.
-  defp conditions(call, source, %KeywordList{entries: entries} = clauses, config) do
-    for {%Entry{key: key, value: value}, index} <- Enum.with_index(entries),
-        Surface.from_clause?(key, :hosted),
-        {family, mutated, label} <- Fragment.mutants(value, config) ++ Aggregate.swaps(value) do
-      {family, rebuild_clause(call, source, clauses, index, mutated), label}
-    end
+  defp conditions(call, source, clauses, config) do
+    each_clause(clauses, &Surface.from_clause?(&1, :hosted), fn value, index ->
+      for {family, mutated, label} <- Fragment.mutants(value, config) ++ Aggregate.swaps(value) do
+        {family, rebuild_clause(call, source, clauses, index, mutated), label}
+      end
+    end)
   end
 
   # The `select`/`select_merge` aggregate/scalar swaps — only under a value-wrapper, where the
   # projected column is the observed value. `order_by` is deliberately excluded (its ordering is
   # inert through every wrapper we host).
-  defp select_projection(call, source, %KeywordList{entries: entries} = clauses, :value) do
-    for {%Entry{key: key, value: value}, index} <- Enum.with_index(entries),
-        key in [:select, :select_merge],
-        {family, swapped, label} <- Aggregate.swaps(value) ++ Scalar.swaps(value) do
-      {family, rebuild_clause(call, source, clauses, index, swapped), label}
-    end
+  defp select_projection(call, source, clauses, :value) do
+    each_clause(clauses, &(&1 in [:select, :select_merge]), fn value, index ->
+      for {family, swapped, label} <- Aggregate.swaps(value) ++ Scalar.swaps(value) do
+        {family, rebuild_clause(call, source, clauses, index, swapped), label}
+      end
+    end)
   end
 
   defp select_projection(_call, _source, _clauses, :existence), do: []
+
+  # Flat-map `generator.(value, index)` over each clause entry whose key `filter.(key)` admits, in
+  # written order — the shared "for each qualifying clause, mutate its value and rebuild the inner
+  # `from`" skeleton behind `conditions/4`, `select_projection/4`, and `interior_islands/2`.
+  defp each_clause(%KeywordList{entries: entries}, filter, generator) do
+    entries
+    |> Enum.with_index()
+    |> Enum.flat_map(fn {%Entry{key: key, value: value}, index} ->
+      if filter.(key), do: generator.(value, index), else: []
+    end)
+  end
 
   # Rebuild the whole inner `from` with the clause at `index` carrying `value`, preserving the
   # source's written form (`QueryCall.rebuild/2`) and the clause list's Sourceror wrapper
