@@ -798,6 +798,30 @@ defmodule Mutare.Ecto.SubcontractTest do
         assert_compiles(wrap.(body), @with_core)
       end
     end
+
+    test "a pinned keyword filter's field-name keys are protected; only its values mutate" do
+      # `^[field: value]` (and a computed `^(if …, do: [field: value], else: []))`) is Ecto's
+      # interpolated shorthand filter — the key names a column. Core, handed the bare keyword list,
+      # would rename the key (`:views` → `:mutare`, an unknown-field query error) or drop the pair;
+      # `Host.Catalog.subcontracted/3` drops any mutant that changes the interior's keyword-key set,
+      # exactly as the non-pinned shorthand routing skips keys — while the *value* mutation survives.
+      for body <- [
+            ~s{where(q, ^[views: 5])},
+            ~s|from(u in "posts", where: ^[views: 5])|,
+            ~s{where(q, ^(if f, do: [views: 5], else: []))}
+          ] do
+        src = "defmodule M do\n  import Ecto.Query\n  def q(q, f), do: #{body}\nend\n"
+        pairs = for {m, _o, mutated} <- diffs(src, @with_core), m != :return_value, do: mutated
+
+        refute Enum.any?(pairs, &(&1 =~ "mutare")),
+               "a pinned keyword filter's field key must not be renamed in `#{body}`"
+
+        assert Enum.any?(pairs, &(&1 =~ ~r/views: [046]\b/)),
+               "expected the pinned keyword *value* to still mutate in `#{body}`"
+
+        assert_compiles(src, @with_core)
+      end
+    end
   end
 
   describe "totality — subcontracted/2,3 tolerates a context with no :mutators key" do

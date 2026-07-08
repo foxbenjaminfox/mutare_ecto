@@ -94,6 +94,15 @@ defmodule Mutare.Ecto.Host.Catalog do
   relays the condition itself (its weave carries it — the default identity), while
   `Mutare.Ecto.Dynamic` rebuilds the whole free-standing `dynamic` call around it (its mutants
   are whole-call rewrites through the ordinary in-place selector).
+
+  A **keyword-list key** in the interior is a *field name*, not data — a pinned keyword filter
+  (`where(q, ^[active: true])`, or a computed `^(if …, do: [active: true], else: []))`) is Ecto's
+  interpolated shorthand, where the key names a column. Core, seeing a bare keyword list, would
+  mutate the key (`:active` → `:mutare`, an unknown-field query error) or drop the pair, exactly the
+  mutants the non-pinned shorthand routing already skips. So a core mutant that changes the
+  interior's **set of keyword keys** is dropped here; a value mutation (which keeps the key-set,
+  `[active: false]`) survives, matching the shorthand's "keys raw, values mutated" contract. For a
+  non-keyword interior the key-set is empty on both sides, so the guard is a no-op.
   """
   @spec subcontracted(Macro.t(), Mutare.Mutator.context(), (Macro.t() -> Macro.t())) ::
           [Mutation.t()]
@@ -101,9 +110,25 @@ defmodule Mutare.Ecto.Host.Catalog do
     specs = Map.get(context, :mutators, [])
 
     for {interior, rebuild} <- Fragment.islands(condition),
+        keys = keyword_keys(interior),
         {spec, mutated, note, variant} <-
-          Mutare.Analyze.expression_mutations(interior, specs, context) do
+          Mutare.Analyze.expression_mutations(interior, specs, context),
+        keyword_keys(mutated) == keys do
       Mutation.new(deliver.(rebuild.(mutated)), producer: spec, note: note, variant: variant)
     end
+  end
+
+  # The set of keyword-list keys anywhere in `ast`. In a query condition a keyword key names a
+  # column (`^[field: value]` filter syntax), so a mutant that changes this set has renamed or
+  # dropped a field — a broken query, not a live mutant (see `subcontracted/3`).
+  defp keyword_keys(ast) do
+    {_ast, keys} =
+      Macro.prewalk(ast, [], fn node, acc ->
+        if Mutare.AST.keyword_label?(node),
+          do: {node, [Mutare.AST.key_atom(node) | acc]},
+          else: {node, acc}
+      end)
+
+    MapSet.new(keys)
   end
 end
