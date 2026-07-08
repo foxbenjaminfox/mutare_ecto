@@ -87,11 +87,10 @@ defmodule Mutare.Ecto.Host.Bindings do
   # The trailing argument as a host-owned condition with no binding declarations, or `nil` when it is
   # not a condition to host. The shapes that are *not* a binding-less condition: a list (a binding
   # list like `[u]`, a keyword shorthand like `[active: true]`, or an empty `[]` — none a predicate
-  # body), a `^dynamic` operand (Ecto's own composition primitive, mutated where it is built —
-  # `Mutare.Ecto.Dynamic` rewrites the free-standing `dynamic/1,2` call whole), and a
-  # bare variable (a degenerate non-condition call). Everything else — a comparison/connective/null/
-  # membership expression, possibly referencing only named bindings — is hosted; the catalog then
-  # decides whether there is anything to mutate.
+  # body) and a bare variable (a degenerate non-condition call). Everything else — a
+  # comparison/connective/null/membership expression, or a top-level `^cond` pin (whose interior the
+  # host sub-contracts to core), possibly referencing only named bindings — is hosted; the catalog
+  # then decides whether there is anything to mutate.
   @spec bindingless_condition([Macro.t()]) :: {[], Macro.t(), non_neg_integer()} | nil
   # mutare:ignore[clause_drop] equivalent — dropping this leaves `Enum.at([], -1)` (nil) as the "condition", and Host.Catalog.mutants/3 (via Fragment.mutants's total catch-all clause) already returns [] for `nil`, so `Host.condition_target/3`'s own `[_ | _] = mutants` guard rejects it downstream regardless
   defp bindingless_condition([]), do: nil
@@ -102,18 +101,17 @@ defmodule Mutare.Ecto.Host.Bindings do
     if hostable_bare_condition?(condition), do: {[], condition, index}, else: nil
   end
 
-  # Every excluded shape here (a top-level `^` pin, a bare variable) also reaches
-  # `Mutare.Ecto.Fragment.mutants/2`'s own total catch-all clause and yields no catalog mutants
-  # there, so `Mutare.Ecto.Host`'s `[_ | _] = mutants` guard rejects it downstream regardless of
-  # what this predicate answers — hence the ignores below.
+  # Every excluded shape here (a list, a bare variable) also reaches `Mutare.Ecto.Fragment.mutants/2`'s
+  # own total catch-all clause and yields no catalog mutants there, so `Mutare.Ecto.Host`'s
+  # `[_ | _] = mutants` guard rejects it downstream regardless of what this predicate answers —
+  # hence the ignore below. A top-level `^cond` pin *is* hosted (its interior is sub-contracted to
+  # core), so it is deliberately not excluded.
   defp hostable_bare_condition?(node) do
     # Sourceror wraps a bare list/literal in a single-element `__block__`; unwrap one level so the
-    # list and pin checks below see the real shape.
+    # list check below sees the real shape.
     case Mutare.AST.unwrap_literal(node) do
       list when is_list(list) -> false
-      # mutare:ignore[literal, atom] equivalent — see the moduledoc comment above
-      {:^, _meta, _args} -> false
-      # mutare:ignore[conditional] equivalent — see the moduledoc comment above
+      # mutare:ignore[conditional] equivalent — see the comment above
       other -> not Binding.variable?(other)
     end
   end

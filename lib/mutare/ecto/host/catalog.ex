@@ -25,7 +25,18 @@ defmodule Mutare.Ecto.Host.Catalog do
   alias Mutare.Ecto.{Aggregate, AST, Config, Fragment}
   alias Mutare.Mutator.Mutation
 
-  @doc "The tagged logical mutants for a hosted condition (own catalogs + island sub-contract)."
+  @doc """
+  The tagged logical mutants for a hosted condition (own catalogs + island sub-contract).
+
+  A **top-level-pin** condition (`where(q, [u], ^cond)`, a join `on: ^cond`) is handled no
+  differently: `own` is empty for a pin (the SQL catalogs never mutate a `^`), and `subcontracted`
+  surfaces the pin's whole interior as one island and hands it to core — so a pinned *Elixir*
+  condition (`^(if params.sort, do: a, else: b)`, `^(rem(n, 2) == 0 and flag)`) has its Elixir
+  logic mutated by core, exactly as a nested pin's parameter is. The interior's own nested
+  `dynamic(...)`/query fragments stay untouched — core honors their `:skip` routing — so the
+  SQL/Elixir boundary is enforced by routing, not by refusing to look at the pin. A bare `^d`
+  interior is a variable, which core mutates nowhere, so it contributes nothing of its own.
+  """
   @spec mutants(Macro.t(), Config.t(), Mutare.Mutator.context()) :: [Mutare.Mutator.mutation()]
   def mutants(condition, config, context) do
     # The two halves are independent mutant sets (own SQL-catalog swaps vs. sub-contracted pin

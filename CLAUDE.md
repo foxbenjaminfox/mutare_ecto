@@ -209,7 +209,7 @@ The surface divides by **how a mutation is delivered**, not by what it mutates:
 | `stage_drop.ex` | Shared pipe-aware stage-drop delivery for `clause_drop.ex` and `changeset.ex` |
 | `changeset.ex` | Changeset pipeline drops (`:validation_drop`, `:hook_drop`) |
 | `config.ex` | `families:`/`dialects:`/`repo:` parsing + validation (`parse!/1`, run once by `init/1`; the family catalog via core's `use Mutare.Mutator.Families`); equivalence-sensitive set + note; the `tagged/1` wrapper and the `finalize/2` funnel body |
-| `ast.ex` | Small Sourceror AST helpers the plugin genuinely owns: typed literal *readers* (`atom_value`/`int_value`), the top-level-pin check, the bound bumps — everything *emitted* comes from core's `Mutare.AST` constructors |
+| `ast.ex` | Small Sourceror AST helpers the plugin genuinely owns: typed literal *readers* (`atom_value`/`int_value`), the list unwrap/rewrap pair (`unwrap_list`/`rewrap_list`, over core's `unwrap_literal`), the bound bumps — everything *emitted* comes from core's `Mutare.AST` constructors |
 
 ### Families and configuration
 

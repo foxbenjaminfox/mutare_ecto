@@ -23,20 +23,20 @@ defmodule Mutare.Ecto.Dynamic do
   branch invokes the `dynamic` macro independently, and exactly one `DynamicExpr` builds per run.
 
   The written binding list is re-emitted byte-for-byte (its positional *reorder* is
-  `Mutare.Ecto.BindingReorder`'s, exactly as for `where`/`having`). A top-level-pin body
-  (`dynamic([p], ^other)`) is left raw: the pin's value is ordinary Elixir bound upstream, core's
-  families' to mutate where it is bound — exactly as the hosted path routes a top-level-pin
-  `where:` condition raw. A *nested* pin's interior (`dynamic([p], p.x > ^(min + 1))`) is
-  likewise never this catalog's — it is **sub-contracted to core's generation**, exactly as the
-  host sub-contracts a hosted condition's islands: `dynamic` is a registered macro, so core
-  threads the run's enabled non-host specs into the whole-call offer as `context.mutators`, and
-  the shared seam (`Mutare.Ecto.Host.Catalog.subcontracted/3`) relays each interior rebuild as a
+  `Mutare.Ecto.BindingReorder`'s, exactly as for `where`/`having`). A pin's interior — whether
+  *nested* (`dynamic([p], p.x > ^(min + 1))`) or the *whole* body
+  (`dynamic([p], ^(if params.sort, do: a, else: b))`) — is never this catalog's: it is ordinary
+  Elixir, **sub-contracted to core's generation**, exactly as the host sub-contracts a hosted
+  condition's islands. `dynamic` is a registered macro, so core threads the run's enabled non-host
+  specs into the whole-call offer as `context.mutators`, and the shared seam
+  (`Mutare.Ecto.Host.Catalog.subcontracted/3`) relays each interior rebuild as a
   `Mutare.Mutator.Mutation` with `producer:` set — the Site (and `# mutare:ignore` vocabulary)
   belongs to the producing core family, while delivery stays this module's whole-call rewrite
-  through the ordinary in-place selector.
+  through the ordinary in-place selector. (A bare `^other` body contributes nothing of its own —
+  a variable is mutated nowhere by core — so it degrades to no mutants without a special case.)
   """
 
-  alias Mutare.Ecto.{AST, Config}
+  alias Mutare.Ecto.Config
   alias Mutare.Ecto.AST.QueryCall
   alias Mutare.Ecto.Host.{Bindings, Catalog}
 
@@ -64,20 +64,22 @@ defmodule Mutare.Ecto.Dynamic do
   def mutations(%QueryCall{name: :dynamic, args: args} = call, context) do
     config = Config.from_context(context)
 
-    with {_bindings, condition, index} <- Bindings.hosted_condition(args),
-         false <- AST.top_level_pin?(condition) do
-      # The shared in-fragment catalogs, exactly the pair the hosted path composes
-      # (`Mutare.Ecto.Host.Catalog.own_catalog/2`) — returned as raw tags: `Mutare.Ecto.mutate/2`
-      # wraps every dispatched tag (`Config.tagged/1`) and core's finalize pass applies the
-      # `families:` filter and the equivalence note.
-      own =
-        for {family, mutated, label} <- Catalog.own_catalog(condition, config),
-            do: {family, QueryCall.replace_arg(call, index, mutated), label}
+    case Bindings.hosted_condition(args) do
+      {_bindings, condition, index} ->
+        # The shared in-fragment catalogs, exactly the pair the hosted path composes
+        # (`Mutare.Ecto.Host.Catalog.own_catalog/2`) — returned as raw tags: `Mutare.Ecto.mutate/2`
+        # wraps every dispatched tag (`Config.tagged/1`) and core's finalize pass applies the
+        # `families:` filter and the equivalence note. For a top-level-pin body the catalog is empty
+        # (a `^` has no SQL swap); the sub-contract below carries its interior to core.
+        own =
+          for {family, mutated, label} <- Catalog.own_catalog(condition, config),
+              do: {family, QueryCall.replace_arg(call, index, mutated), label}
 
-      # mutare:ignore[operand_swap] equivalent — two independent mutant lists, consumed as a set
-      own ++ subcontracted(condition, call, index, context)
-    else
-      _ -> []
+        # mutare:ignore[operand_swap] equivalent — two independent mutant lists, consumed as a set
+        own ++ subcontracted(condition, call, index, context)
+
+      nil ->
+        []
     end
   end
 

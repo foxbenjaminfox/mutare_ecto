@@ -753,20 +753,50 @@ defmodule Mutare.Ecto.SubcontractTest do
       assert logical.(where_src) == logical.(dynamic_src)
     end
 
-    test "a top-level-pin dynamic body stays raw — no catalog, no sub-contract" do
-      # `dynamic([p], ^other)`'s body is already-evaluated Elixir bound upstream ("mutated where
-      # it is built") — exactly as a hosted `where: ^cond` stays raw, the whole-call seam leaves
-      # a top-level pin alone.
-      src = """
-      defmodule M do
-        import Ecto.Query
-        def d(c), do: dynamic([p], ^(c and true))
-      end
-      """
+    test "a top-level-pin condition sub-contracts its interior in every hosted form" do
+      # A pinned *Elixir* condition — where the whole `^cond` is the pin — has an interior that is
+      # ordinary Elixir (a runtime boolean, or logic choosing which dynamic to splice), exactly
+      # core's to mutate, just like a nested pin's parameter. Every hosted form must sub-contract
+      # it: a free-standing `dynamic`, the `from` keyword `where:`, the standalone/pipe binding-form
+      # `where`, the binding-less `where`, and a standalone `join`'s sole `on:`. The SQL/Elixir
+      # boundary is kept by *routing* — a nested `dynamic(...)` inside the pin stays raw — not by
+      # refusing to look at the pin. (`c and true` renders with a `^(` island prefix, so
+      # `island_diffs/2` observes its interior mutants.)
+      wrap = fn body ->
+        """
+        defmodule M do
+          import Ecto.Query
 
-      assert island_diffs(src, @with_core) == []
-      assert ecto_diffs(src, @with_core) == []
-      assert_compiles(src, @with_core)
+          def run(q, c, d) do
+            _ = [q, c, d]
+            #{body}
+          end
+        end
+        """
+      end
+
+      pinned = [
+        ~s{dynamic([p], ^(c and true))},
+        ~s|from(u in "t", where: ^(c and true))|,
+        ~s{where(q, [u], ^(c and true))},
+        ~s{q |> where([u], ^(c and true))},
+        ~s{where(q, ^(c and true))},
+        ~s|join(q, :inner, [c], p in "p", on: ^(c and true))|
+      ]
+
+      for body <- pinned do
+        assert island_diffs(wrap.(body), @with_core) != [],
+               "expected top-level pin in `#{body}` to sub-contract its Elixir interior"
+
+        assert_compiles(wrap.(body), @with_core)
+      end
+
+      # A bare-variable pin (`^d`) has no interior to mutate — a variable is core's to mutate
+      # nowhere — so it contributes nothing of its own and must not break.
+      for body <- [~s{dynamic([p], ^d)}, ~s{where(q, [u], ^d)}] do
+        assert island_diffs(wrap.(body), @with_core) == []
+        assert_compiles(wrap.(body), @with_core)
+      end
     end
   end
 

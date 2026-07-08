@@ -16,7 +16,7 @@ defmodule Mutare.Ecto.Host do
   whole-`from` rewrite would.
   """
 
-  alias Mutare.Ecto.{AST, Config, Surface}
+  alias Mutare.Ecto.{Config, Surface}
   alias Mutare.Ecto.AST.{KeywordList, QueryCall}
   alias Mutare.Ecto.AST.KeywordList.Entry
   alias Mutare.Ecto.Host.{Bindings, Catalog, JoinOn, Target}
@@ -94,9 +94,11 @@ defmodule Mutare.Ecto.Host do
     # as(:t).x > 1)`) declares no positional binding, so `Bindings.from/2` returns `[]` and the woven
     # `dynamic([], …)` re-declares none — valid, since such a condition can only reference a *named*
     # binding. Hostability is decided by the clause key and a non-empty catalog, not the binding count.
+    # A top-level-pin condition (`where: ^cond`) hosts too: its own catalog is empty, but the host
+    # sub-contracts the pin's interior to core (`Mutare.Ecto.Host.Catalog.mutants/3`), so the
+    # `[_ | _]` guard passes whenever core has something to mutate in that interior.
     with true <- hostable_clause?(key, index, hostable_on),
          true <- Surface.from_clause?(key, :hosted),
-         false <- AST.top_level_pin?(condition),
          [_ | _] = mutants <- Catalog.mutants(condition, opts, context) do
       [Target.from_clause(condition, mutants, bindings, index)]
     else

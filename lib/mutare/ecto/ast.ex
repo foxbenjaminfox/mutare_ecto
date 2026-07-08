@@ -48,10 +48,6 @@ defmodule Mutare.Ecto.AST do
   def rewrap_list({:__block__, meta, [_old]}, list), do: {:__block__, meta, [list]}
   def rewrap_list(_node, list), do: list
 
-  @doc "Whether `node` is a top-level pin, allowing for Sourceror's block wrapper."
-  @spec top_level_pin?(Macro.t()) :: boolean()
-  def top_level_pin?(node), do: match?({:^, _meta, _args}, Mutare.AST.unwrap_literal(node))
-
   @doc """
   The off-by-one boundary bumps for an integer `limit`/`offset` bound: `n+1` always, and `n-1`
   only when it stays non-negative (a negative bound is invalid SQL). Consumed by the host's

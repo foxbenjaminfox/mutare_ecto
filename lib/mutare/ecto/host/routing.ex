@@ -227,20 +227,17 @@ defmodule Mutare.Ecto.Host.Routing do
   end
 
   # The treatment for one `where`/`having` condition value. A keyword-shorthand value
-  # (`where: [active: true]`) routes its pairs individually; a non-shorthand value (an expression
-  # `where: u.x == v` or `where: as(:post).x == v`) is `:hosted` — the woven `dynamic/2` re-declares
-  # the source/join bindings, or an empty list when the source is a bare queryable whose condition
-  # references only a named binding (`Mutare.Ecto.Host.Bindings.from/2` builds that list). A
-  # top-level interpolation (`where: ^condition`) is already evaluated in Elixir and stays raw,
-  # matching the standalone binding-less condition path in `Bindings`.
+  # (`where: [active: true]`) routes its pairs individually; every other value is `:hosted` — the
+  # woven `dynamic/2` re-declares the source/join bindings, or an empty list when the source is a
+  # bare queryable whose condition references only a named binding
+  # (`Mutare.Ecto.Host.Bindings.from/2` builds that list). A top-level interpolation
+  # (`where: ^cond`) is `:hosted` too: its own SQL catalog is empty, but the host sub-contracts the
+  # pin's interior to core (a pinned Elixir condition's logic is core's to mutate), matching the
+  # standalone binding-form and free-standing `dynamic` paths.
   defp condition_treatment(value) do
-    if AST.top_level_pin?(value) do
-      :skip
-    else
-      case KeywordList.nonempty(value) do
-        nil -> :hosted
-        pairs -> {:keyword, pair_treatments(pairs)}
-      end
+    case KeywordList.nonempty(value) do
+      nil -> :hosted
+      pairs -> {:keyword, pair_treatments(pairs)}
     end
   end
 

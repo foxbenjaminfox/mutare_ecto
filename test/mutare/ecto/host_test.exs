@@ -1120,9 +1120,12 @@ defmodule Mutare.Ecto.HostTest do
                [:skip, {:keyword, [:skip, {:keyword, [:interpolated]}, :skip]}]
     end
 
-    test "from keyword form leaves a top-level interpolation raw" do
+    test "from keyword form hosts a top-level interpolation (its interior is sub-contracted)" do
+      # A top-level `where: ^cond` routes `:hosted` — its own SQL catalog is empty, but the host
+      # hands the pin's Elixir interior to core (a pinned Elixir condition's logic is core's to
+      # mutate), matching the standalone binding-form and free-standing `dynamic` paths.
       assert routing(~s|from(User, where: ^(x > 1))|) ==
-               [:skip, {:keyword, [:skip]}]
+               [:skip, {:keyword, [:hosted]}]
     end
 
     test "shorthand pair values: scalars pin, nil/interpolation/compound stay raw" do
