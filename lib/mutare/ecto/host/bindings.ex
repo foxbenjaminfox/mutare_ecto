@@ -107,7 +107,9 @@ defmodule Mutare.Ecto.Host.Bindings do
   # there, so `Mutare.Ecto.Host`'s `[_ | _] = mutants` guard rejects it downstream regardless of
   # what this predicate answers — hence the ignores below.
   defp hostable_bare_condition?(node) do
-    case unwrap_block(node) do
+    # Sourceror wraps a bare list/literal in a single-element `__block__`; unwrap one level so the
+    # list and pin checks below see the real shape.
+    case Mutare.AST.unwrap_literal(node) do
       list when is_list(list) -> false
       # mutare:ignore[literal, atom] equivalent — see the moduledoc comment above
       {:^, _meta, _args} -> false
@@ -115,12 +117,6 @@ defmodule Mutare.Ecto.Host.Bindings do
       other -> not Binding.variable?(other)
     end
   end
-
-  # Sourceror wraps a bare list/literal in a single-element `__block__`; unwrap it so the list and
-  # pin checks above see the real shape. A genuine multi-statement block (more than one child) is not
-  # a condition argument and is left as-is.
-  defp unwrap_block({:__block__, _meta, [inner]}), do: inner
-  defp unwrap_block(node), do: node
 
   # The binding-list index and the condition index one slot past it, or `nil` when the args carry no
   # binding list (or nothing follows it). `hosted_condition/1` (and, through it, `condition_index/1`)

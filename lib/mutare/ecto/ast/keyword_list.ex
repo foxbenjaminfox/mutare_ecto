@@ -20,7 +20,7 @@ defmodule Mutare.Ecto.AST.KeywordList do
   @doc "The normalized list for `node`, or `nil` unless it is a keyword list keyed entirely by atoms."
   @spec parse(Macro.t()) :: t() | nil
   def parse(node) do
-    with list when is_list(list) <- unwrap(node),
+    with list when is_list(list) <- AST.unwrap_list(node),
          {:ok, entries} <- parse_entries(list) do
       %__MODULE__{node: node, entries: entries}
     else
@@ -39,10 +39,8 @@ defmodule Mutare.Ecto.AST.KeywordList do
 
   @doc "Render the list back to AST, preserving its Sourceror wrapper."
   @spec to_ast(t()) :: Macro.t()
-  def to_ast(%__MODULE__{node: {:__block__, meta, [_old]}, entries: entries}),
-    do: {:__block__, meta, [Enum.map(entries, &entry_ast/1)]}
-
-  def to_ast(%__MODULE__{entries: entries}), do: Enum.map(entries, &entry_ast/1)
+  def to_ast(%__MODULE__{node: node, entries: entries}),
+    do: AST.rewrap_list(node, Enum.map(entries, &entry_ast/1))
 
   @doc "Render the list with a new `value` for the entry at `index`."
   @spec replace_value(t(), non_neg_integer(), Macro.t()) :: Macro.t()
@@ -76,10 +74,6 @@ defmodule Mutare.Ecto.AST.KeywordList do
 
   def delete(%__MODULE__{entries: entries} = list, index),
     do: to_ast(%__MODULE__{list | entries: List.delete_at(entries, index)})
-
-  defp unwrap({:__block__, _meta, [list]}) when is_list(list), do: list
-  defp unwrap(list) when is_list(list), do: list
-  defp unwrap(_node), do: nil
 
   defp parse_entries(list) do
     Enum.reduce_while(list, {:ok, []}, fn

@@ -2,7 +2,7 @@ defmodule Mutare.Ecto.AST.BindingList do
   @moduledoc false
   # A validated, non-empty Ecto binding list with enough wrapper information to rebuild it exactly.
 
-  alias Mutare.Ecto.Binding
+  alias Mutare.Ecto.{AST, Binding}
 
   @enforce_keys [:node, :entries]
   defstruct [:node, :entries]
@@ -12,7 +12,7 @@ defmodule Mutare.Ecto.AST.BindingList do
   @doc "The validated binding list for `node` (a non-empty list of binding entries), or `nil`."
   @spec parse(Macro.t()) :: t() | nil
   def parse(node) do
-    case unwrap(node) do
+    case AST.unwrap_list(node) do
       [_ | _] = entries ->
         if Enum.all?(entries, &Binding.entry?/1),
           do: %__MODULE__{node: node, entries: entries},
@@ -55,18 +55,11 @@ defmodule Mutare.Ecto.AST.BindingList do
         do: swap(list, left, right)
   end
 
-  defp replace_entries(%__MODULE__{node: {:__block__, meta, [_old]}}, entries),
-    do: {:__block__, meta, [entries]}
-
-  defp replace_entries(%__MODULE__{}, entries), do: entries
+  defp replace_entries(%__MODULE__{node: node}, entries), do: AST.rewrap_list(node, entries)
 
   defp swap(%__MODULE__{entries: entries} = list, left, right) do
     a = Enum.at(entries, left)
     b = Enum.at(entries, right)
     replace_entries(list, entries |> List.replace_at(left, b) |> List.replace_at(right, a))
   end
-
-  defp unwrap({:__block__, _meta, [list]}) when is_list(list), do: list
-  defp unwrap(list) when is_list(list), do: list
-  defp unwrap(_node), do: nil
 end

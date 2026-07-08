@@ -26,11 +26,31 @@ defmodule Mutare.Ecto.AST do
     end
   end
 
+  @doc """
+  The inner list of a list node written bare (`[a, b]`) or inside Sourceror's single-element
+  `{:__block__, _, [list]}` wrapper, or `nil` for anything that is not a list. The
+  wrapper-preserving inverse is `rewrap_list/2`.
+  """
+  @spec unwrap_list(Macro.t()) :: [Macro.t()] | nil
+  def unwrap_list(node) do
+    case Mutare.AST.unwrap_literal(node) do
+      list when is_list(list) -> list
+      _other -> nil
+    end
+  end
+
+  @doc """
+  Re-wrap `list` in the same Sourceror wrapper `node` carried: a `{:__block__, meta, [_]}` keeps its
+  meta, a bare list stays bare. The inverse of `unwrap_list/1`, used to rebuild a normalized list
+  without disturbing its written form.
+  """
+  @spec rewrap_list(Macro.t(), [Macro.t()]) :: Macro.t()
+  def rewrap_list({:__block__, meta, [_old]}, list), do: {:__block__, meta, [list]}
+  def rewrap_list(_node, list), do: list
+
   @doc "Whether `node` is a top-level pin, allowing for Sourceror's block wrapper."
   @spec top_level_pin?(Macro.t()) :: boolean()
-  def top_level_pin?({:^, _meta, _args}), do: true
-  def top_level_pin?({:__block__, _meta, [inner]}), do: top_level_pin?(inner)
-  def top_level_pin?(_node), do: false
+  def top_level_pin?(node), do: match?({:^, _meta, _args}, Mutare.AST.unwrap_literal(node))
 
   @doc """
   The off-by-one boundary bumps for an integer `limit`/`offset` bound: `n+1` always, and `n-1`

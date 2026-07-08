@@ -257,11 +257,14 @@ defmodule Mutare.Ecto.Host.Routing do
     if scalar_literal?(value), do: :interpolated, else: :skip
   end
 
-  # A Sourceror-wrapped scalar literal, excluding `nil` — an atom, but an `IS NULL`, not core's to
-  # pin. `true`/`false` are atoms too and *are* pinnable; the `not is_nil/1` guard keeps only `nil`
-  # out, so the ordering trap of a separate nil check disappears.
-  defp scalar_literal?({:__block__, _meta, [v]}),
-    do: is_binary(v) or is_number(v) or (is_atom(v) and not is_nil(v))
-
-  defp scalar_literal?(_value), do: false
+  # A scalar literal, excluding `nil` — an atom, but an `IS NULL`, not core's to pin. `true`/`false`
+  # are atoms too and *are* pinnable; the `not is_nil/1` guard keeps only `nil` out, so the ordering
+  # trap of a separate nil check disappears. `literal_value/1` reads the value through Sourceror's
+  # wrapper (and a bare scalar), so this owns the nil/kind decision, not the unwrapping.
+  defp scalar_literal?(value) do
+    case Mutare.AST.literal_value(value) do
+      {:ok, v} -> is_binary(v) or is_number(v) or (is_atom(v) and not is_nil(v))
+      :error -> false
+    end
+  end
 end
