@@ -40,9 +40,4 @@ defmodule Mutare.Ecto.AST.QueryCall do
   @spec replace_arg(t(), non_neg_integer(), Macro.t()) :: Macro.t()
   def replace_arg(%__MODULE__{args: args} = call, index, value),
     do: rebuild(call, List.replace_at(args, index, value))
-
-  @doc "Rebuild the call with `fun` applied to the argument at `index`."
-  @spec update_arg(t(), non_neg_integer(), (Macro.t() -> Macro.t())) :: Macro.t()
-  def update_arg(%__MODULE__{args: args} = call, index, fun),
-    do: rebuild(call, List.update_at(args, index, fun))
 end

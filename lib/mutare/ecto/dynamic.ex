@@ -36,7 +36,7 @@ defmodule Mutare.Ecto.Dynamic do
   through the ordinary in-place selector.
   """
 
-  alias Mutare.Ecto.{Aggregate, AST, Config, Fragment}
+  alias Mutare.Ecto.{AST, Config}
   alias Mutare.Ecto.AST.QueryCall
   alias Mutare.Ecto.Host.{Bindings, Catalog}
 
@@ -66,8 +66,12 @@ defmodule Mutare.Ecto.Dynamic do
 
     with {_bindings, condition, index} <- Bindings.hosted_condition(args),
          false <- AST.top_level_pin?(condition) do
+      # The shared in-fragment catalogs, exactly the pair the hosted path composes
+      # (`Mutare.Ecto.Host.Catalog.own_catalog/2`) — returned as raw tags: `Mutare.Ecto.mutate/2`
+      # wraps every dispatched tag (`Config.tagged/1`) and core's finalize pass applies the
+      # `families:` filter and the equivalence note.
       own =
-        for {family, mutated, label} <- catalog(condition, config),
+        for {family, mutated, label} <- Catalog.own_catalog(condition, config),
             do: {family, QueryCall.replace_arg(call, index, mutated), label}
 
       # mutare:ignore[operand_swap] equivalent — two independent mutant lists, consumed as a set
@@ -76,14 +80,6 @@ defmodule Mutare.Ecto.Dynamic do
       _ -> []
     end
   end
-
-  # The shared in-fragment catalogs, exactly the pair the hosted path composes
-  # (`Mutare.Ecto.Host.Catalog`) — returned as raw tags: `Mutare.Ecto.mutate/2` wraps every
-  # dispatched tag (`Config.tagged/1`) and core's finalize pass (`Mutare.Ecto.finalize/2`)
-  # applies the `families:` filter and the equivalence note.
-  defp catalog(condition, config),
-    # mutare:ignore[operand_swap] equivalent — two independent mutant catalogs, consumed as a set
-    do: Fragment.mutants(condition, config) ++ Aggregate.swaps(condition)
 
   # The island sub-contract, through the same seam the host uses
   # (`Mutare.Ecto.Host.Catalog.subcontracted/3`) — only delivery differs: each interior rebuild

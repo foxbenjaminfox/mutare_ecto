@@ -19,22 +19,13 @@ defmodule Mutare.Ecto.Host.Target do
           non_neg_integer()
         ) ::
           t()
-  def from_clause(original, mutants, bindings, index) do
-    new(original, mutants, bindings, fn node, case_node ->
-      %QueryCall{name: :from, args: [source, clauses]} = call = QueryCall.parse(node)
-      clauses = KeywordList.parse(clauses)
-      QueryCall.rebuild(call, [source, KeywordList.replace_value(clauses, index, pin(case_node))])
-    end)
-  end
+  def from_clause(original, mutants, bindings, index),
+    do: new(original, mutants, bindings, from_clause_splice(index))
 
   @doc "A target for a standalone or piped condition macro argument."
   @spec condition(Macro.t(), [Mutare.Mutator.mutation()], [Macro.t()], non_neg_integer()) :: t()
-  def condition(original, mutants, bindings, index) do
-    new(original, mutants, bindings, fn node, case_node ->
-      %QueryCall{} = call = QueryCall.parse(node)
-      QueryCall.replace_arg(call, index, pin(case_node))
-    end)
-  end
+  def condition(original, mutants, bindings, index),
+    do: new(original, mutants, bindings, argument_splice(index))
 
   @doc "A target nested under one keyword option in a standalone query macro."
   @spec keyword_condition(
@@ -63,21 +54,32 @@ defmodule Mutare.Ecto.Host.Target do
   `limit: ^(case …)` — and each branch is the bare bumped integer.
   """
   @spec bound_from_clause(Macro.t(), [Mutare.Mutator.mutation()], non_neg_integer()) :: t()
-  def bound_from_clause(original, mutants, index) do
-    MacroHost.Target.new(original, mutants, fn node, case_node ->
-      %QueryCall{name: :from, args: [source, clauses]} = call = QueryCall.parse(node)
-      clauses = KeywordList.parse(clauses)
-      QueryCall.rebuild(call, [source, KeywordList.replace_value(clauses, index, pin(case_node))])
-    end)
-  end
+  def bound_from_clause(original, mutants, index),
+    do: MacroHost.Target.new(original, mutants, from_clause_splice(index))
 
   @doc "The pin-only sibling for a standalone/pipe bound argument (`limit(q, 10)` / `q |> offset(5)`)."
   @spec bound_argument(Macro.t(), [Mutare.Mutator.mutation()], non_neg_integer()) :: t()
-  def bound_argument(original, mutants, index) do
-    MacroHost.Target.new(original, mutants, fn node, case_node ->
+  def bound_argument(original, mutants, index),
+    do: MacroHost.Target.new(original, mutants, argument_splice(index))
+
+  # The splice that pins the selector into a `from` keyword clause's value at `index` — shared by
+  # the `dynamic/2`-wrapped condition target (`from_clause/4`) and the pin-only bound target
+  # (`bound_from_clause/3`); only the `:wrap` differs between them.
+  defp from_clause_splice(index) do
+    fn node, case_node ->
+      %QueryCall{name: :from, args: [source, clauses]} = call = QueryCall.parse(node)
+      clauses = KeywordList.parse(clauses)
+      QueryCall.rebuild(call, [source, KeywordList.replace_value(clauses, index, pin(case_node))])
+    end
+  end
+
+  # The splice that pins the selector into a positional call argument at `index` — shared by the
+  # wrapped condition target (`condition/4`) and the pin-only bound target (`bound_argument/3`).
+  defp argument_splice(index) do
+    fn node, case_node ->
       %QueryCall{} = call = QueryCall.parse(node)
       QueryCall.replace_arg(call, index, pin(case_node))
-    end)
+    end
   end
 
   defp new(original, mutants, bindings, splice) do

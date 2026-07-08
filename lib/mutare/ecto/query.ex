@@ -196,13 +196,12 @@ defmodule Mutare.Ecto.Query do
     key_swaps(call, source, clauses, :join_type, &Map.get(flips, &1, []), &join_label/1)
   end
 
-  # The `# mutare:ignore` label for a join swap: the **source** join kind, so
-  # `# mutare:ignore[ecto:left]` leaves a left join's kind alone. Derived alongside
-  # `variant_labels/0` from the flip tables' keys — only ever `left_join`/`right_join`/`full_join`,
-  # since `join`/`inner_join` are never a flip source.
-  defp join_label(:left_join), do: "left"
-  defp join_label(:right_join), do: "right"
-  defp join_label(:full_join), do: "full"
+  # The `# mutare:ignore` label for a join swap: the **source** join kind without its `_join`
+  # suffix, so `# mutare:ignore[ecto:left]` leaves a left join's kind alone. Derived structurally
+  # (like `Mutare.Ecto.Combination.label/1`) rather than hand-listed, so a new flip source can't
+  # go unmapped — in practice only ever `left_join`/`right_join`/`full_join`, since `join`/
+  # `inner_join` are never a flip source.
+  defp join_label(key), do: String.replace_suffix(Atom.to_string(key), "_join", "")
 
   @doc false
   # The finer `# mutare:ignore` labels the `:join_type` family can emit — each source join kind,

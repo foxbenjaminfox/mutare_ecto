@@ -51,13 +51,23 @@ defmodule Mutare.Ecto.Host.Catalog do
     end
   end
 
-  # Pure production: each catalog tag becomes `Mutation.tagged(node, [family | finer])` — the
-  # `config` threads to `Fragment` only for its `dialects:` gate.
-  defp own(condition, config) do
+  @doc """
+  The plugin's own in-fragment catalogs for a condition — the SQL operator/literal swaps
+  (`Mutare.Ecto.Fragment`) and the aggregate swap (`Mutare.Ecto.Aggregate`) — as raw
+  `{family, node, label}` tags. The single source of truth for "what the plugin itself mutates in a
+  hosted condition", shared by the host (`own/2`, which tags them via `Config.tagged/1`) and
+  `Mutare.Ecto.Dynamic` (which rebuilds each into the whole free-standing `dynamic` call). `config`
+  threads to `Fragment` only for its `dialects:` gate.
+  """
+  @spec own_catalog(Macro.t(), Config.t()) :: [{Config.family(), Macro.t(), Fragment.label()}]
+  def own_catalog(condition, config) do
     # Same equivalence as `mutants/3` above: two independent catalogs, order not observable.
     # mutare:ignore[operand_swap] equivalent: concatenation order of two independent mutant catalogs is not observable
-    Enum.map(Fragment.mutants(condition, config) ++ Aggregate.swaps(condition), &Config.tagged/1)
+    Fragment.mutants(condition, config) ++ Aggregate.swaps(condition)
   end
+
+  # Pure production: each catalog tag becomes `Mutation.tagged(node, [family | finer])`.
+  defp own(condition, config), do: Enum.map(own_catalog(condition, config), &Config.tagged/1)
 
   @doc """
   The island sub-contract: `Fragment.islands/1` finds each pin interior under the catalog's own

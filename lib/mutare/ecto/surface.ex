@@ -19,50 +19,36 @@ defmodule Mutare.Ecto.Surface do
   @drop_families [:filter_drop, :bound, :clause_drop]
   @descriptor_keys [:name, :macro, :mutations, :stage_drop, :from, :from_drop]
 
+  # Shared descriptor shapes for the families of near-identical clause keys, so "what a condition
+  # (set-operation / projection) clause looks like" lives in one place; each `@surface` entry below
+  # sets only its own `:name` on the shared base via `Map.put/3`.
+  @condition %{
+    macro: :condition,
+    stage_drop: :filter_drop,
+    from: [:hosted],
+    from_drop: :filter_drop
+  }
+  @projection %{
+    macro: :clause,
+    mutations: [:aggregate, :scalar],
+    stage_drop: :clause_drop,
+    from: [:aggregate, :scalar]
+  }
+  @combination %{
+    macro: :clause,
+    mutations: [:combination],
+    stage_drop: :clause_drop,
+    from: [:combination]
+  }
+
   @surface [
     %{name: :from, macro: :from},
-    %{
-      name: :where,
-      macro: :condition,
-      stage_drop: :filter_drop,
-      from: [:hosted],
-      from_drop: :filter_drop
-    },
-    %{
-      name: :or_where,
-      macro: :condition,
-      stage_drop: :filter_drop,
-      from: [:hosted],
-      from_drop: :filter_drop
-    },
-    %{
-      name: :having,
-      macro: :condition,
-      stage_drop: :filter_drop,
-      from: [:hosted],
-      from_drop: :filter_drop
-    },
-    %{
-      name: :or_having,
-      macro: :condition,
-      stage_drop: :filter_drop,
-      from: [:hosted],
-      from_drop: :filter_drop
-    },
-    %{
-      name: :select,
-      macro: :clause,
-      mutations: [:aggregate, :scalar],
-      stage_drop: :clause_drop,
-      from: [:aggregate, :scalar]
-    },
-    %{
-      name: :select_merge,
-      macro: :clause,
-      mutations: [:aggregate, :scalar],
-      stage_drop: :clause_drop,
-      from: [:aggregate, :scalar]
-    },
+    Map.put(@condition, :name, :where),
+    Map.put(@condition, :name, :or_where),
+    Map.put(@condition, :name, :having),
+    Map.put(@condition, :name, :or_having),
+    Map.put(@projection, :name, :select),
+    Map.put(@projection, :name, :select_merge),
     # `order_by`/`prepend_order_by` are deliberately **not** stage-droppable: dropping an `ORDER BY`
     # yields an unordered query whose row order SQL leaves unspecified, so the mutant's survival
     # tracked engine nondeterminism, not the tests. The implicit-direction flip in
@@ -108,34 +94,10 @@ defmodule Mutare.Ecto.Surface do
     %{name: :windows, macro: :clause, stage_drop: :clause_drop},
     %{name: :union, macro: :clause, stage_drop: :clause_drop},
     %{name: :union_all, macro: :clause, stage_drop: :clause_drop},
-    %{
-      name: :except,
-      macro: :clause,
-      mutations: [:combination],
-      stage_drop: :clause_drop,
-      from: [:combination]
-    },
-    %{
-      name: :except_all,
-      macro: :clause,
-      mutations: [:combination],
-      stage_drop: :clause_drop,
-      from: [:combination]
-    },
-    %{
-      name: :intersect,
-      macro: :clause,
-      mutations: [:combination],
-      stage_drop: :clause_drop,
-      from: [:combination]
-    },
-    %{
-      name: :intersect_all,
-      macro: :clause,
-      mutations: [:combination],
-      stage_drop: :clause_drop,
-      from: [:combination]
-    },
+    Map.put(@combination, :name, :except),
+    Map.put(@combination, :name, :except_all),
+    Map.put(@combination, :name, :intersect),
+    Map.put(@combination, :name, :intersect_all),
     %{name: :dynamic, macro: :dynamic},
     %{name: :is_named_binding, macro: :skip},
     %{name: :on, from: [:hosted]},
@@ -156,6 +118,7 @@ defmodule Mutare.Ecto.Surface do
   end
 
   Enum.each(@surface, fn descriptor ->
+    name = Map.get(descriptor, :name)
     unknown_keys = Map.keys(descriptor) -- @descriptor_keys
     macro_kind = Map.get(descriptor, :macro)
     mutations = Map.get(descriptor, :mutations, [])
@@ -163,21 +126,35 @@ defmodule Mutare.Ecto.Surface do
     stage_drop = Map.get(descriptor, :stage_drop)
     from_drop = Map.get(descriptor, :from_drop)
 
-    relationships_valid? =
-      (mutations == [] or macro_kind == :clause) and
-        (is_nil(stage_drop) or macro_kind in [:condition, :join, :clause]) and
-        (is_nil(from_drop) or from != []) and
-        (macro_kind != :condition or
-           (:hosted in from and stage_drop == :filter_drop and from_drop == :filter_drop)) and
-        (macro_kind != :join or :join_binding in from)
+    # Each rule is `{ok?, why}`; the first violated one raises, naming the specific invariant rather
+    # than dumping the whole descriptor. Compile-time only, and every condition is a plain boolean,
+    # so evaluating them all eagerly costs nothing.
+    rules = [
+      {is_atom(name), "name must be an atom"},
+      {unknown_keys == [], "unknown keys #{inspect(unknown_keys)}"},
+      {is_nil(macro_kind) or macro_kind in @macro_kinds,
+       "unknown macro kind #{inspect(macro_kind)}"},
+      {mutations -- @mutation_capabilities == [],
+       "unknown :mutations #{inspect(mutations -- @mutation_capabilities)}"},
+      {from -- @from_capabilities == [], "unknown :from #{inspect(from -- @from_capabilities)}"},
+      {is_nil(stage_drop) or stage_drop in @drop_families,
+       "unknown :stage_drop #{inspect(stage_drop)}"},
+      {is_nil(from_drop) or from_drop in @drop_families,
+       "unknown :from_drop #{inspect(from_drop)}"},
+      {mutations == [] or macro_kind == :clause, ":mutations require macro :clause"},
+      {is_nil(stage_drop) or macro_kind in [:condition, :join, :clause],
+       ":stage_drop requires a composable macro (:condition/:join/:clause)"},
+      {is_nil(from_drop) or from != [], ":from_drop requires a non-empty :from"},
+      {macro_kind != :condition or
+         (:hosted in from and stage_drop == :filter_drop and from_drop == :filter_drop),
+       ":condition must be :hosted with :filter_drop stage_drop and from_drop"},
+      {macro_kind != :join or :join_binding in from,
+       ":join must declare a :join_binding capability"}
+    ]
 
-    unless is_atom(descriptor.name) and unknown_keys == [] and
-             (is_nil(macro_kind) or macro_kind in @macro_kinds) and
-             mutations -- @mutation_capabilities == [] and from -- @from_capabilities == [] and
-             (is_nil(stage_drop) or stage_drop in @drop_families) and
-             (is_nil(from_drop) or from_drop in @drop_families) and relationships_valid? do
-      raise "invalid Mutare.Ecto.Surface descriptor: #{inspect(descriptor)}"
-    end
+    Enum.each(rules, fn {ok?, why} ->
+      unless ok?, do: raise("invalid Mutare.Ecto.Surface descriptor #{inspect(name)}: #{why}")
+    end)
   end)
 
   @type macro_kind :: :from | :condition | :join | :clause | :dynamic | :skip
