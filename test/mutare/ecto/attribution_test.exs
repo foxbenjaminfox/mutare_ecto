@@ -63,11 +63,10 @@ defmodule Mutare.Ecto.AttributionTest do
       drop1 = one(sites, &(&1.operation == :delete and &1.original_code == "p.views > 1"))
       drop2 = one(sites, &(&1.operation == :delete and &1.original_code == "p.likes > 2"))
 
+      # Each lands on its own clause line (5 and 6), not collapsed onto the `from(` opener (line 4)
+      # as they were before attribution — the exact-line asserts subsume any `!= 4` check.
       assert drop1.line == 5
       assert drop2.line == 6
-      # Not collapsed onto the `from(` opener (line 4) as they were before attribution.
-      refute drop1.line == 4
-      refute drop2.line == 4
     end
 
     test "the order flip, join-kind swap, bound drop, and set-op swap each land on their clause" do

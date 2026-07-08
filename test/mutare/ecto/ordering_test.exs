@@ -41,8 +41,10 @@ defmodule Mutare.Ecto.OrderingTest do
 
   test "a bare field (implicit ascending) re-tags its implicit asc to desc" do
     # `order_by: [p.id, asc: p.name]` — the bare `p.id` is `asc` by definition, so it re-tags to
-    # `desc: p.id` (a non-trailing keyword pair renders as an explicit `{:desc, …}` tuple); the
-    # keyed `asc: p.name` flips independently. One `:ordering` mutant per field.
+    # `desc: p.id`. Here the retagged pair renders as keyword sugar (`[desc: p.id, asc: p.name]`)
+    # because every element is a keyword pair; the explicit `{:desc, …}` tuple form only appears
+    # when a *bare* element follows it (the `[u.name, u.age]` case below). The keyed `asc: p.name`
+    # flips independently. One `:ordering` mutant per field.
     assert flips("[p.id, asc: p.name]") == [
              {:ordering, "[desc: p.id, asc: p.name]"},
              {:ordering, "[p.id, desc: p.name]"}

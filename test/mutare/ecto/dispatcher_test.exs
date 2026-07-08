@@ -89,4 +89,24 @@ defmodule Mutare.Ecto.DispatcherTest do
       assert ecto_diffs(src) == []
     end
   end
+
+  describe "the genuinely-reachable fallback — a non-macro Ecto.Query function" do
+    test "a fully-qualified first/2 reaches QueryTerminal via the call_mutations fallback" do
+      # Unlike the registered macros above (which route through the primary `QueryCall.parse/1`
+      # path regardless of spelling), `first`/`last` are *plain* `Ecto.Query` functions the plugin
+      # never registers as macros — so `QueryCall.parse/1` returns nil and dispatch falls through
+      # to `call_mutations({@query_key, :first, …}) -> QueryTerminal`. This is the one fallback
+      # branch that actually produces a mutation (the inert `is_named_binding` case above is its
+      # empty twin), so it exercises the fallback classification this file exists to cover.
+      src = """
+      defmodule M do
+        def q(query), do: Ecto.Query.first(query, :id)
+      end
+      """
+
+      assert [{original, mutated}] = ecto_diffs(src)
+      assert original =~ "Ecto.Query.first(query, :id)"
+      assert mutated =~ "Ecto.Query.last(query, :id)"
+    end
+  end
 end

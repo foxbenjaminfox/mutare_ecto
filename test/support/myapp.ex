@@ -46,6 +46,11 @@ defmodule MyApp.User do
     field(:score, :integer)
     field(:rating, :float)
     field(:joined_at, :naive_datetime)
+    # `status` is an `Ecto.Enum` — the one place a bare atom literal (`u.status == :active`) is
+    # valid, result-affecting Ecto (a string column rejects an atom outright), so it is what lets
+    # the AtomLiteral arm's `:active` → `:mutare` swap be proven live: `:mutare` is not a member of
+    # the enum, so the mutant query raises when it runs.
+    field(:status, Ecto.Enum, values: [:active, :inactive])
 
     has_many(:posts, MyApp.Post)
   end

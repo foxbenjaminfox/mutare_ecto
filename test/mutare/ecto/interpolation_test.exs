@@ -59,15 +59,20 @@ defmodule Mutare.Ecto.InterpolationTest do
       end
       """
 
-      # No family rewrites either interior: no `--`/list mutants of the appends, no literal
-      # mutants of the atoms inside them.
-      refute Enum.any?(diffs(src, @with_core), fn {_m, _o, mutated} ->
-               (mutated =~ "cols" or mutated =~ "ord") and
-                 mutated not in ["nil", ":mutare"] and
-                 mutated !=
-                   "from(u in User, group_by: ^(cols ++ [:x]), order_by: ^(ord ++ [:y]), select: u.id)" and
-                 not (mutated =~ "group_by: ^(cols ++ [:x])" and
-                        mutated =~ "order_by: ^(ord ++ [:y])")
+      diffs = diffs(src, @with_core)
+
+      whole_body =
+        "from(u in User, group_by: ^(cols ++ [:x]), order_by: ^(ord ++ [:y]), select: u.id)"
+
+      # The transform ran (positive control — without this the exhaustive check below would hold
+      # vacuously on an empty diff set, "nothing ran" masquerading as "left raw"), and its *only*
+      # output here is core wrapping the whole `def q` body in its return-value family. No family
+      # is sourced from inside the pins — no `--`/list mutant of the appends, no literal mutant of
+      # the atoms in them — and the plugin produces nothing at all: every diff is the whole body.
+      assert diffs != []
+
+      assert Enum.all?(diffs, fn {mutator, original, _mutated} ->
+               mutator == :return_value and original == whole_body
              end)
 
       assert_compiles(src, @with_core)

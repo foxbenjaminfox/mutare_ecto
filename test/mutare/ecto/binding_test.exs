@@ -54,7 +54,11 @@ defmodule Mutare.Ecto.BindingTest do
     test "accepts positional, named, and ellipsis entries" do
       assert Binding.entry?({:u, [], nil})
       assert Binding.entry?({{:__block__, [], [:post]}, {:p, [], nil}})
-      assert Binding.entry?({:..., [], nil})
+      # The real `...` node (`{:..., [], []}`, context `[]`) — must reach `entry?`'s `ellipsis?`
+      # disjunct, not its `variable?` one. A hand-built `{:..., [], nil}` (context `nil`) would slip
+      # through `variable?` (`:...` and `nil` are both atoms), never exercising the ellipsis branch.
+      assert Binding.entry?(Binding.ellipsis())
+      assert Binding.entry?(Sourceror.parse_string!("..."))
     end
 
     test "rejects shorthand-like pairs whose value is not a binding variable" do

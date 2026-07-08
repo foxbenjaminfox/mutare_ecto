@@ -183,7 +183,7 @@ defmodule Mutare.Ecto.ClauseTest do
       end
       """
 
-      assert Enum.any?(ecto_diffs(src), fn {_o, mutated} -> mutated =~ "avg(u.amount)" end)
+      assert {"select([u], sum(u.amount))", "select([u], avg(u.amount))"} in ecto_diffs(src)
       assert_compiles(src)
     end
 
@@ -195,7 +195,10 @@ defmodule Mutare.Ecto.ClauseTest do
       end
       """
 
-      assert Enum.any?(ecto_diffs(src), fn {_o, mutated} -> mutated =~ "min(u.x)" end)
+      assert {"select_merge([u], %{peak: max(u.x)})", "select_merge([u], %{peak: min(u.x)})"} in ecto_diffs(
+               src
+             )
+
       assert_compiles(src)
     end
 
@@ -211,14 +214,18 @@ defmodule Mutare.Ecto.ClauseTest do
       end
       """
 
-      assert Enum.any?(ecto_diffs(src), fn {_o, mutated} -> mutated =~ "avg(u.amount)" end)
+      assert {"select(query, [u], sum(u.amount))", "select(query, [u], avg(u.amount))"} in ecto_diffs(
+               src
+             )
+
       assert_compiles(src)
     end
 
     test "swaps an aggregate written into an order_by, alongside the direction flip" do
       # An `order_by` carries two independent mutation axes when its key is a sort direction *and*
       # its value is an aggregate: the direction flips (`:ordering`) and the aggregate swaps
-      # (`:aggregate`) — neither subsumes the other, so both must appear.
+      # (`:aggregate`) — neither subsumes the other, so both must appear. Pin each exact pair (not a
+      # loose substring), so a swap sourced from the wrong node or a stray extra mutant is caught.
       src = """
       defmodule M do
         import Ecto.Query
@@ -226,11 +233,11 @@ defmodule Mutare.Ecto.ClauseTest do
       end
       """
 
-      mutated = Enum.map(ecto_diffs(src), fn {_o, m} -> m end)
+      diffs = ecto_diffs(src)
       # the aggregate swap (keep the direction)…
-      assert Enum.any?(mutated, &(&1 =~ "desc: avg(u.amount)"))
+      assert {"order_by([u], desc: sum(u.amount))", "order_by([u], desc: avg(u.amount))"} in diffs
       # …and the orthogonal direction flip (keep the aggregate).
-      assert Enum.any?(mutated, &(&1 =~ "asc: sum(u.amount)"))
+      assert {"order_by([u], desc: sum(u.amount))", "order_by([u], asc: sum(u.amount))"} in diffs
       assert_compiles(src)
     end
   end
@@ -289,7 +296,7 @@ defmodule Mutare.Ecto.ClauseTest do
       end
       """
 
-      assert Enum.any?(ecto_diffs(src), fn {_o, mutated} -> mutated =~ "u.price / u.qty" end)
+      assert {"select([u], u.price * u.qty)", "select([u], u.price / u.qty)"} in ecto_diffs(src)
       assert_compiles(src)
     end
 
@@ -301,7 +308,9 @@ defmodule Mutare.Ecto.ClauseTest do
       end
       """
 
-      assert Enum.any?(ecto_diffs(src), fn {_o, mutated} -> mutated =~ "u.gross + u.tax" end)
+      assert {"select_merge([u], %{net: u.gross - u.tax})",
+              "select_merge([u], %{net: u.gross + u.tax})"} in ecto_diffs(src)
+
       assert_compiles(src)
     end
 
@@ -313,11 +322,48 @@ defmodule Mutare.Ecto.ClauseTest do
       end
       """
 
-      mutated = Enum.map(ecto_diffs(src), fn {_o, m} -> m end)
+      diffs = ecto_diffs(src)
       # the arithmetic swap (keep the direction)…
-      assert Enum.any?(mutated, &(&1 =~ "desc: u.a - u.b"))
+      assert {"order_by([u], desc: u.a + u.b)", "order_by([u], desc: u.a - u.b)"} in diffs
       # …and the orthogonal direction flip (keep the operator).
-      assert Enum.any?(mutated, &(&1 =~ "asc: u.a + u.b"))
+      assert {"order_by([u], desc: u.a + u.b)", "order_by([u], asc: u.a + u.b)"} in diffs
+      assert_compiles(src)
+    end
+  end
+
+  describe "Coalesce (standalone / pipe select / order_by)" do
+    test "drops the fallback of a coalesce written into a pipe select" do
+      # `scalar.ex` owns the Coalesce fallback drop *and* the Arithmetic swaps, walked over
+      # `select`/`order_by` values — so the drop must be delivered through a standalone clause, not
+      # merely catalogued in `scalar_test`.
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q(query), do: query |> select([u], coalesce(u.score, 0))
+      end
+      """
+
+      assert {"select([u], coalesce(u.score, 0))", "select([u], u.score)"} in ecto_diffs(src)
+      assert_compiles(src)
+    end
+
+    test "drops the fallback of a coalesce in an order_by value, alongside the direction flip" do
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q(query), do: order_by(query, [u], asc: coalesce(u.score, 0))
+      end
+      """
+
+      diffs = ecto_diffs(src)
+      # the coalesce fallback drop (keep the direction)…
+      assert {"order_by(query, [u], asc: coalesce(u.score, 0))",
+              "order_by(query, [u], asc: u.score)"} in diffs
+
+      # …and the orthogonal direction flip (keep the coalesce).
+      assert {"order_by(query, [u], asc: coalesce(u.score, 0))",
+              "order_by(query, [u], desc: coalesce(u.score, 0))"} in diffs
+
       assert_compiles(src)
     end
   end

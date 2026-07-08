@@ -140,6 +140,17 @@ defmodule Mutare.Ecto.SemanticHarness do
   end
 
   @doc """
+  Whether `repo`'s engine is Postgres — for gating the dialect-only liveness fixtures.
+
+  The `like`↔`ilike`, RIGHT-join, and `intersect_all`↔`except_all` arms are non-portable (Postgres
+  runs all three; SQLite runs none), so their liveness fixtures compile a `dialects: [:postgres]`
+  mutator and only build/run under this guard. Runtime-guarded (not tag-skipped) because the engine
+  is a property of the running module's `@repo`, not of the mutation being delivered.
+  """
+  @spec postgres?(module()) :: boolean()
+  def postgres?(repo), do: repo.__adapter__() == Ecto.Adapters.Postgres
+
+  @doc """
   Whether `repo`'s engine can execute a `FULL JOIN` — for gating the full-join liveness fixture.
 
   Postgres always can; SQLite only at 3.39+. Runtime-guarded (not tag-skipped) because the engine

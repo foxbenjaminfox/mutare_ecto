@@ -236,10 +236,17 @@ defmodule Mutare.Ecto.ExoticQueryTest do
     end
 
     test "a json_extract_path select value is left raw (select paths are not conditions)" do
-      # Every recorded mutant keeps the select path verbatim (only the where mutates).
-      for m <- mutated(ecto_diffs(@json_src, @all)), m =~ "json_extract_path" do
-        assert m =~ "json_extract_path(p.title, [\"a\", \"b\"])"
-      end
+      diffs = ecto_diffs(@json_src, @all)
+
+      # Positive control: the `where` condition mutates, so `diffs` is non-empty and the transform
+      # actually ran — otherwise the guard below would hold vacuously.
+      assert {~s|p.title["meta"]["kind"] == "news"|, ~s|p.title["meta"]["kind"] != "news"|} in diffs
+
+      # The `select` path is never a condition, so no recorded mutation is sourced from it: the
+      # `json_extract_path(...)` projection appears on neither side of any diff.
+      refute Enum.any?(diffs, fn {original, mutated} ->
+               original =~ "json_extract_path" or mutated =~ "json_extract_path"
+             end)
     end
   end
 
@@ -289,12 +296,13 @@ defmodule Mutare.Ecto.ExoticQueryTest do
       assert {"v.views > 5", "v.views > 6"} in diffs
       assert {"v.views > 5", "v.views >= 5"} in diffs
 
-      # Every recorded mutant keeps the VALUES data verbatim (the source position is skipped).
-      values_call = "values([%{id: 1, views: 10}], %{id: :integer, views: :integer})"
+      # The VALUES data is the skipped source position: no recorded mutation is sourced from inside
+      # it (a descent would surface `{"10", "11"}`, `{"1", "2"}`, or a `:integer` → `:mutare` swap)…
+      refute Enum.any?(diffs, fn {original, _m} -> original in ["1", "10", ":integer"] end)
 
-      for {_original, m} <- diffs, m =~ "values(" do
-        assert m =~ values_call
-      end
+      # …and the call survives verbatim in the rendered metamutant.
+      assert metamutant(@values_src, @all) =~
+               "values([%{id: 1, views: 10}], %{id: :integer, views: :integer})"
     end
 
     test "core mutators do not splice into the values/2 DSL arguments (no poisoned build)" do
@@ -304,6 +312,9 @@ defmodule Mutare.Ecto.ExoticQueryTest do
       # Core's only contribution is the whole-def return-value family; nothing reaches inside
       # the values(...) data, and the single build stays healthy.
       core = Enum.reject(diffs, fn {mutator, _o, _m} -> mutator == :ecto end)
+      # Core *does* contribute (the return-value family), so the "and nothing else" guarantee
+      # below isn't vacuously true on an empty list.
+      assert Enum.any?(core, fn {mutator, _o, _m} -> mutator == :return_value end)
       assert Enum.all?(core, fn {mutator, _o, _m} -> mutator == :return_value end)
 
       assert_compiles(@values_src, opts)

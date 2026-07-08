@@ -55,6 +55,11 @@ defmodule Mutare.Ecto.QualifiedTest do
 
       diffs = ecto_diffs(src)
 
+      # Positive control: the piped `select` stage *is* dropped (collapsed to identity), so `diffs`
+      # is non-empty — without this the `Enum.all?`/`refute` guarantees below pass vacuously (an
+      # empty list satisfies all three) even if the qualified select had escaped routing entirely.
+      assert Enum.any?(diffs, fn {_o, mutated} -> mutated =~ "Function.identity" end)
+
       # The whole stage drop is the only ecto mutation; count/:distinct are never rewritten.
       assert Enum.all?(diffs, fn {_o, mutated} -> mutated =~ "Function.identity" end)
       refute Enum.any?(diffs, fn {_o, mutated} -> mutated =~ "avg" or mutated =~ "sum" end)

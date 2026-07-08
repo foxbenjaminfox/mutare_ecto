@@ -11,6 +11,15 @@ defmodule Mutare.Ecto.SemanticCases do
   # Ecto repo bakes its adapter in at compile time), and separate modules also mean the describe/test
   # names never collide, with no per-test disambiguation. See `Mutare.Ecto.SemanticHarness` for the
   # flip-and-compare mechanics each helper composes.
+  #
+  # **Dialect-only arms proven at the unit/config layer, not here.** Three catalog arms are
+  # non-portable, so they have no liveness test on the always-on SQLite engine — and since the
+  # Postgres module runs these *same* fixtures, it adds none either: `like`↔`ilike` (Postgres-only),
+  # the RIGHT-join arm of `:join_type` (`left`↔`right`, `full`→`right`; Postgres/MySQL), and
+  # `intersect_all`↔`except_all` (Postgres/MySQL). Each is covered at the source/routing layer by
+  # `fragment_test`/`host_test`/`query_test`/`config_test`; a Postgres-gated liveness fixture for
+  # them is a known future extension (it would need a `dialects:`-configured mutator run under a
+  # `@repo.__adapter__() == Ecto.Adapters.Postgres` runtime guard).
   defmacro __using__(opts) do
     # The quote is deliberately the whole suite — this module exists to inject it verbatim into each
     # per-engine test module — so the long-block heuristic doesn't apply.
@@ -529,6 +538,37 @@ defmodule Mutare.Ecto.SemanticCases do
         end
       end
 
+      describe "Membership — `like` ↔ `ilike` (dialect-only, Postgres)" do
+        # `like` is case-sensitive, `ilike` case-insensitive — a Postgres-only swap gated by
+        # `dialects: [:postgres]`. `like(u.name, "a%")` (lowercase pattern) matches no name (all are
+        # capitalized), while the `ilike` mutant matches Alice — a clean complement that proves the
+        # swap live. SQLite can't run ILIKE and never offers the swap, so this is guarded off there.
+        test "flipping like to ilike matches the capitalized name the case-sensitive form missed" do
+          if H.postgres?(@repo) do
+            {mod, sites} =
+              H.compile(
+                """
+                defmodule Q do
+                  import Ecto.Query
+                  alias MyApp.User
+                  def q, do: from(u in User, where: like(u.name, "a%"), select: u.id)
+                end
+                """,
+                repo: @repo,
+                mutators: [{Mutare.Ecto, repo: @repo, dialects: [:postgres]}]
+              )
+
+            {baseline, mutant} =
+              observe_ids(mod, sites, {~s|like(u.name, "a%")|, ~s|ilike(u.name, "a%")|})
+
+            # Case-sensitive `like` against a lowercase pattern: no capitalized name matches.
+            assert baseline == []
+            # Case-insensitive `ilike` admits Alice.
+            assert mutant == [1]
+          end
+        end
+      end
+
       describe "Arithmetic — `+` ↔ `-` (dynamic-injected)" do
         # `u.age + u.score > 100` vs `u.age - u.score > 100` differ on any row whose score is nonzero;
         # the NULL-score rows (Bob, Dave) drop out of both — the swap changes the computed value, never
@@ -944,6 +984,43 @@ defmodule Mutare.Ecto.SemanticCases do
         end
       end
 
+      describe "JoinType — left → right (dialect-only, Postgres/MySQL)" do
+        # The RIGHT-join arm the `full → left` test notes is covered only at the config layer on
+        # SQLite: `left_join`→`right_join` swaps which side is preserved. Gated by `dialects:
+        # [:postgres]` (the plugin never offers it otherwise) and by the Postgres runtime (SQLite
+        # below 3.39 can't run RIGHT JOIN at all). LEFT preserves the posts (keeping orphan P3);
+        # RIGHT preserves the users (keeping the four post-less users, dropping the orphan post).
+        test "the right-join mutant preserves the users instead of the posts" do
+          if H.postgres?(@repo) do
+            {mod, sites} =
+              H.compile(
+                """
+                defmodule Q do
+                  import Ecto.Query
+                  alias MyApp.{Post, User}
+                  def q do
+                    from p in Post, left_join: u in User, on: u.id == p.user_id, select: {p.id, u.id}
+                  end
+                end
+                """,
+                repo: @repo,
+                mutators: [
+                  {Mutare.Ecto, repo: @repo, families: [:join_type], dialects: [:postgres]}
+                ]
+              )
+
+            {baseline, mutant} =
+              observe_ids(mod, sites, {~r/left_join:/, ~r/right_join:/})
+
+            # Left join: the matched pairs plus the orphan post P3 (user_id 99 → no user).
+            assert baseline == [{1, 1}, {2, 2}, {3, nil}]
+            # Right join preserves the users: the matched pairs plus the four post-less users, and
+            # the orphan post is dropped (its side is no longer preserved).
+            assert mutant == [{1, 1}, {2, 2}, {nil, 3}, {nil, 4}, {nil, 5}, {nil, 6}]
+          end
+        end
+      end
+
       describe "Combination — `intersect` ↔ `except` (whole-`from` clause key)" do
         # `A INTERSECT B` and `A EXCEPT B` partition the left query's rows (A∩B vs A∖B are disjoint), so
         # the swap flips the result to the *other* side of the partition — impossible to confuse with an
@@ -997,6 +1074,42 @@ defmodule Mutare.Ecto.SemanticCases do
 
           assert baseline == [2, 5, 6]
           assert mutant == [1]
+        end
+      end
+
+      describe "Combination — `intersect_all` ↔ `except_all` (dialect-only, Postgres/MySQL)" do
+        # The duplicate-preserving `_all` set-ops SQLite can't execute (covered only at the config
+        # layer there). The plugin emits the swap on any dialect, so no `dialects:` gate is needed —
+        # only the Postgres runtime guard. With no duplicate ids across the two sides, `INTERSECT
+        # ALL`/`EXCEPT ALL` partition exactly like their plain twins: active ∩ adults vs active ∖
+        # adults, so the swap flips to the other side of the partition.
+        test "swapping intersect_all for except_all returns the left-only rows instead of the shared" do
+          if H.postgres?(@repo) do
+            {mod, sites} =
+              H.compile(
+                """
+                defmodule Q do
+                  import Ecto.Query
+                  alias MyApp.User
+
+                  def q do
+                    adults = from(u in User, where: u.age > 18, select: u.id)
+                    from(u in User, where: u.active, select: u.id, intersect_all: ^adults)
+                  end
+                end
+                """,
+                repo: @repo,
+                mutators: [{Mutare.Ecto, repo: @repo, families: [:combination]}]
+              )
+
+            {baseline, mutant} =
+              observe_ids(mod, sites, {~r/intersect_all:/, ~r/except_all:/})
+
+            # active ∩ adults: Bob, Eve, Frank.
+            assert baseline == [2, 5, 6]
+            # active ∖ adults: only Alice (active but sitting on the age-18 boundary).
+            assert mutant == [1]
+          end
         end
       end
 
@@ -1941,6 +2054,56 @@ defmodule Mutare.Ecto.SemanticCases do
         end
       end
 
+      describe "NullPredicate — `not is_nil` → `is_nil` (reverse arm of the null flip)" do
+        # A catalog bug that broke only the reverse arm would pass the forward `is_nil` → `not is_nil`
+        # test — so pin the reverse selector branch directly, as the section does for the others.
+        test "flipping not-null back to is_nil returns exactly the null-score rows" do
+          {mod, sites} =
+            build("""
+            defmodule Q do
+              import Ecto.Query
+              alias MyApp.User
+              def q, do: from(u in User, where: not is_nil(u.score), select: u.id)
+            end
+            """)
+
+          {baseline, mutant} =
+            observe_ids(mod, sites, {"not is_nil(u.score)", "is_nil(u.score)"})
+
+          # not-null scores: everyone but Bob/Dave.
+          assert baseline == [1, 3, 5, 6]
+          # the reverse arm keeps exactly the null-score rows — the complement.
+          assert mutant == [2, 4]
+        end
+      end
+
+      describe "Temporal — `from_now` → `ago` (reverse arm of the direction flip)" do
+        # The mirror of the forward `ago` → `from_now` test: written the other way round, a
+        # reverse-only catalog break would slip past the forward arm.
+        test "flipping the future window back to the past re-admits the recent row" do
+          {mod, sites} =
+            build("""
+            defmodule Q do
+              import Ecto.Query
+              alias MyApp.User
+              def q, do: from(u in User, where: u.joined_at > from_now(1, "day"), select: u.id)
+            end
+            """)
+
+          {baseline, mutant} =
+            observe_ids(
+              mod,
+              sites,
+              {~s|u.joined_at > from_now(1, "day")|, ~s|u.joined_at > ago(1, "day")|}
+            )
+
+          # Nothing is timestamped in the future, so the from_now window is empty.
+          assert baseline == []
+          # Flipping to ago re-admits Frank (joined a minute ago).
+          assert mutant == [6]
+        end
+      end
+
       describe "Ordering — `desc` → `asc` (reverse arm of the direction flip)" do
         test "flipping descending back to ascending changes which row sorts to the top" do
           {mod, sites} =
@@ -2056,6 +2219,39 @@ defmodule Mutare.Ecto.SemanticCases do
           assert baseline == [1, 5]
           # role == "": no user has an empty role, so the mutant matches nothing.
           assert mutant == []
+        end
+      end
+
+      describe "AtomLiteral — an enum atom collapses to the invalid `:mutare` sentinel (opt-in arm)" do
+        # `u.status == :active` compares an `Ecto.Enum` field to a bare atom literal — the one place
+        # a literal atom is valid, result-affecting Ecto (a string column rejects an atom outright).
+        # The AtomLiteral arm rewrites `:active` to the `:mutare` sentinel, which is not a member of
+        # the enum, so the woven query *raises* when it runs — proving the atom reached SQL (an inert
+        # delivery would return the baseline rows, not raise). The raise-observed twin of the
+        # on_conflict `:nothing → :raise` test, and the only liveness proof for an atom that (unlike
+        # a string/int/bool literal) can never flip a row set — every non-member value raises.
+        test "the mutated atom is delivered — the invalid enum member makes the query raise" do
+          {mod, sites} =
+            H.compile(
+              """
+              defmodule Q do
+                import Ecto.Query
+                alias MyApp.User
+                def q, do: from(u in User, where: u.status == :active, select: u.id)
+              end
+              """,
+              mutators: [{Mutare.Ecto, repo: @repo, families: [:atom_literal]}]
+            )
+
+          id = site_id(sites, {"u.status == :active", "u.status == :mutare"})
+
+          # Baseline: the active-status users — a non-empty, correct row set, so the mutant's raise
+          # is a genuine behavior change, not an already-broken query.
+          assert ids(mod, 0) == [1, 2, 5, 6]
+
+          # Mutant: `:mutare` is not a valid `status`, so the injected `dynamic` raises when the
+          # query is built and run. An inert delivery would instead return the baseline ids.
+          assert raises?(fn -> q_under(mod, id) end)
         end
       end
 

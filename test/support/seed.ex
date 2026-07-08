@@ -19,6 +19,11 @@ defmodule MyApp.Seed do
   #   * FloatLiteral (rating)          — `rating > 2.5`→`> 3.5` drops Bob (3.0), the boundary row;
   #                                      a float column, since Ecto rejects a float literal on the
   #                                      integer `score`/`age` columns.
+  #   * AtomLiteral (status)           — `status == :active`→`== :mutare` (the sentinel): an
+  #                                      `Ecto.Enum` column, the one place a bare atom literal is
+  #                                      valid Ecto. `:mutare` is not a member, so the mutant raises
+  #                                      (proven live via the raise, as the atom can't flip a row set).
+  #                                      Active: Alice, Bob, Eve, Frank.
   #   * Temporal ago↔from_now (joined_at) — Frank joined *now* (between the two instants); everyone
   #                                      else ten days back (outside the window either way). Seeded
   #                                      at runtime in `populate!/1`, since the helpers are
@@ -37,12 +42,66 @@ defmodule MyApp.Seed do
   # query fixtures.
 
   @users [
-    %{id: 1, name: "Alice", age: 18, active: true, role: "admin", score: 100, rating: 4.5},
-    %{id: 2, name: "Bob", age: 25, active: true, role: "user", score: nil, rating: 3.0},
-    %{id: 3, name: "Carol", age: 17, active: false, role: "mod", score: 50, rating: 2.5},
-    %{id: 4, name: "Dave", age: 18, active: false, role: "user", score: nil, rating: nil},
-    %{id: 5, name: "Eve", age: 40, active: true, role: "admin", score: 0, rating: 5.0},
-    %{id: 6, name: "Frank", age: 19, active: true, role: "user", score: 70, rating: 1.5}
+    %{
+      id: 1,
+      name: "Alice",
+      age: 18,
+      active: true,
+      role: "admin",
+      score: 100,
+      rating: 4.5,
+      status: :active
+    },
+    %{
+      id: 2,
+      name: "Bob",
+      age: 25,
+      active: true,
+      role: "user",
+      score: nil,
+      rating: 3.0,
+      status: :active
+    },
+    %{
+      id: 3,
+      name: "Carol",
+      age: 17,
+      active: false,
+      role: "mod",
+      score: 50,
+      rating: 2.5,
+      status: :inactive
+    },
+    %{
+      id: 4,
+      name: "Dave",
+      age: 18,
+      active: false,
+      role: "user",
+      score: nil,
+      rating: nil,
+      status: :inactive
+    },
+    %{
+      id: 5,
+      name: "Eve",
+      age: 40,
+      active: true,
+      role: "admin",
+      score: 0,
+      rating: 5.0,
+      status: :active
+    },
+    %{
+      id: 6,
+      name: "Frank",
+      age: 19,
+      active: true,
+      role: "user",
+      score: 70,
+      rating: 1.5,
+      status: :active
+    }
   ]
 
   @posts [
@@ -120,7 +179,8 @@ defmodule MyApp.Seed do
         role TEXT,
         score INTEGER,
         rating REAL,
-        joined_at #{datetime}
+        joined_at #{datetime},
+        status TEXT
       )
       """,
       []

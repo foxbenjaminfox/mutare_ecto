@@ -637,6 +637,48 @@ defmodule Mutare.Ecto.ConfigTest do
                "kill may require an orphan row — a preserved-side row with no match (join kinds coincide when every row matches)"
     end
 
+    test "the connective, null_predicate, and temporal notes each ride onto their own mutant" do
+      # The remaining equivalence-sensitive families the other note tests don't pin: `:connective`
+      # (`and`↔`or`), `:null_predicate` (`is_nil`↔`not is_nil`), and `:temporal` (`ago`↔`from_now`).
+      # Each reads a *distinct* note, so a wrong family→note wiring would surface the wrong string —
+      # pin a phrase unique to each.
+      src = """
+      defmodule M do
+        import Ecto.Query
+
+        def q do
+          from(u in User,
+            where: u.active and is_nil(u.score) and u.joined_at > ago(1, "day"),
+            select: u.id
+          )
+        end
+      end
+      """
+
+      %Mutare.Transform.Result{mutants: sites} =
+        Mutare.transform_string(src,
+          mutators: [{Mutare.Ecto, repo: MyApp.Repo}],
+          expand_uses: true
+        )
+
+      connective = Enum.find(sites, &(&1.mutator == :ecto and &1.mutated_code =~ ~r/\bor\b/))
+      assert connective.note =~ "the operands disagree"
+
+      null_predicate =
+        Enum.find(sites, &(&1.mutator == :ecto and &1.mutated_code =~ "not is_nil(u.score)"))
+
+      assert null_predicate.note =~ "complementary row sets"
+
+      temporal = Enum.find(sites, &(&1.mutator == :ecto and &1.mutated_code =~ "from_now"))
+      assert temporal.note =~ "opposite sides of now"
+
+      # …and a family that is *not* equivalence-sensitive (the `>` boundary swap here is, but the
+      # membership-free condition carries no non-sensitive counterexample) — sanity-check that the
+      # three notes are genuinely different from one another.
+      assert connective.note != null_predicate.note
+      assert null_predicate.note != temporal.note
+    end
+
     test "tagged/1 only relays an already-final Mutation when it actually carries a producer" do
       # `tagged/1`'s `%Mutation{producer: producer} = relayed when not is_nil(producer)` clause is
       # the *only* clause that can ever match a bare `%Mutation{}` struct (the other two clauses

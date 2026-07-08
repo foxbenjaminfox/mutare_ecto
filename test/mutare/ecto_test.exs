@@ -69,7 +69,11 @@ defmodule Mutare.EctoTest do
              "unclassified Ecto.Query macros: #{inspect(MapSet.difference(exported, registered))}"
     end
 
-    test "an omitted query macro cannot leak core mutations into its binding list" do
+    test "a registered clause macro shields its binding/keyword list from core's list/atom families" do
+      # `prepend_order_by` *is* a registered `:routing` clause macro (see the exhaustive
+      # registration check above) — so its binding list `[u]` and keyword key `asc:` are DSL data
+      # kept raw, never reachable by core's `:list`/`:atom` mutators, while the plugin's own
+      # ordering flip still fires on it.
       src = """
       defmodule M do
         import Ecto.Query
