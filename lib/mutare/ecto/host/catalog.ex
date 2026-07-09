@@ -49,8 +49,7 @@ defmodule Mutare.Ecto.Host.Catalog do
 
   @doc """
   The tagged ±1 bumps for a hosted bound value (`limit:`/`offset:`): the off-by-one boundary,
-  non-negative only (`Mutare.Ecto.AST.bumps/1`). `[]` unless the value is a literal integer — the
-  same guard the routing classifier applies, so routing and host stay trivially in agreement (a
+  non-negative only (`Mutare.Ecto.AST.bumps/1`). `[]` unless the value is a literal integer (a
   `^pinned`/expression bound is left raw; its value is mutated where it is bound, in ordinary
   Elixir).
   """
@@ -61,6 +60,17 @@ defmodule Mutare.Ecto.Host.Catalog do
       n -> for bumped <- AST.bumps(n), do: Config.tagged({:bound, Mutare.AST.literal(bumped)})
     end
   end
+
+  @doc """
+  The literal-only bound guard: whether `bounds/1` produces any bump for this value. The routing
+  classifier (`Mutare.Ecto.Host.Routing`) routes a bound `:hosted` through this predicate, so
+  routing and host are in agreement **by definition** — a value routes `:hosted` exactly when the
+  host will weave a bump for it, and there is no second encoding of "literal integer" to drift.
+  (`Mutare.Ecto.AST.bumps/1` always yields at least `n + 1`, so non-emptiness is precisely
+  literal-integer-ness.)
+  """
+  @spec bound_literal?(Macro.t()) :: boolean()
+  def bound_literal?(value), do: bounds(value) != []
 
   @doc """
   The plugin's own in-fragment catalogs for a condition — the SQL operator/literal swaps

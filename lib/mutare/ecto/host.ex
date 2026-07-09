@@ -123,9 +123,10 @@ defmodule Mutare.Ecto.Host do
 
   # A plain clause macro is subscribed only for its bound value (`limit`/`offset` —
   # `Surface.bound?/1`); the bound is the **last argument** in both the direct and pipe forms
-  # (the same last-arg convention the clause mutators use). Pin-only: `Catalog.bounds/1` guards
-  # on a literal integer exactly like the routing classifier, so a `^pinned`/expression bound
-  # (or a degenerate `limit()`) yields no target and the call degrades safely to raw.
+  # (the same last-arg convention the clause mutators use). Pin-only: `Catalog.bounds/1` is the
+  # single literal-integer guard (the routing classifier consumes it as
+  # `Catalog.bound_literal?/1`), so a `^pinned`/expression bound (or a degenerate `limit()`)
+  # yields no target and the call degrades safely to raw.
   defp bound_target(macro, [_ | _] = args) do
     with true <- Surface.bound?(macro),
          [_ | _] = mutants <- Catalog.bounds(List.last(args)) do
@@ -145,7 +146,7 @@ defmodule Mutare.Ecto.Host do
   # Unreachable through `host/2`'s real calling contract: `Host.host/2` is only invoked once
   # `Mutare.Transform.Analyze.Macros.attach_hosted_candidates/5` (core) already found a `:hosted`
   # position via routing — and for a `:clause` macro, routing marks `:hosted` only when
-  # `Surface.bound?(macro) and bound_literal?(List.last(args))`, which itself requires a
+  # `Surface.bound?(macro) and Catalog.bound_literal?(List.last(args))`, which itself requires a
   # non-empty `args`. So by the time core calls `bound_target/2`, `args` always matches the
   # `[_ | _]` clause above; this fallback is a defensive totality guard against args ever being
   # `[]` (a degenerate `limit()`), not a reachable branch — kept for safety if that calling
