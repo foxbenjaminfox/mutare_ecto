@@ -62,16 +62,11 @@ defmodule Mutare.Ecto.Host do
       if Surface.bound?(entry.key) do
         bound_from_target(entry, index)
       else
-        # `index + 1` includes the current entry itself in the truncated list handed to
-        # `Bindings.from/2` — harmless because a *hostable* key (`where`/`having`/`on`,
-        # `Surface.from_clause?(_, :hosted)`) never also carries `:join_binding`, so the current
-        # entry never itself contributes a binding; only the join entries *before* it (already
-        # included at `index - 1` and below) matter. Dropping to `index + 0` is therefore
-        # equivalent given every current descriptor — hence the ignore below — while going the
-        # other way (`index + 2`, pulling in a *future* join) is a real bug (see "each join
-        # condition sees bindings introduced up to that join, not future joins" in host_test.exs).
-        # mutare:ignore[literal:pred] equivalent: the current entry never contributes a binding
-        bindings = Bindings.from(source, %{clauses | entries: Enum.take(entries, index + 1)})
+        # `Bindings.visible_to/2` owns the truncation offset (and why it includes the current
+        # entry itself); each clause sees only the join bindings introduced up to it.
+        bindings =
+          Bindings.from(source, %{clauses | entries: Bindings.visible_to(entries, index)})
+
         from_target({entry, index}, bindings, {opts, context}, hostable_on)
       end
     end)

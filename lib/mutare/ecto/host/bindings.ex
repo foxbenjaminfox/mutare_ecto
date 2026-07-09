@@ -33,6 +33,22 @@ defmodule Mutare.Ecto.Host.Bindings do
     append_positionals(source_decls, join_positional, composed?)
   end
 
+  @doc """
+  The `from` keyword entries whose join bindings are visible to the clause at `index` — every
+  entry up to and **including** it (the truncated list `from/2` then interprets).
+
+  Including the entry itself (`index + 1`, not `index`) is harmless: a *hostable* key
+  (`where`/`having`/`on` — `Surface.from_clause?(_, :hosted)`) never also carries
+  `:join_binding`, so the entry at `index` never itself contributes a binding; only the join
+  entries *before* it (already included at `index - 1` and below) matter. Truncating one earlier
+  (`index + 0`) is therefore equivalent given every current descriptor — hence the ignore below —
+  while going the other way (`index + 2`, pulling in a *future* join) is a real bug (see "each
+  join condition sees bindings introduced up to that join, not future joins" in host_test.exs).
+  """
+  @spec visible_to([Entry.t()], non_neg_integer()) :: [Entry.t()]
+  # mutare:ignore[literal:pred] equivalent: the entry at `index` never contributes a binding
+  def visible_to(entries, index), do: Enum.take(entries, index + 1)
+
   @doc "The dynamic binding list visible to a standalone `join` on-condition."
   @spec join([Macro.t()]) :: [Macro.t()]
   def join(args) do
@@ -205,15 +221,22 @@ defmodule Mutare.Ecto.Host.Bindings do
       else: join_anchor(source_positional, source_named, join_positional, composed?)
   end
 
-  # Anchor the appended joins to the tail with a leading `...` when their slot isn't contiguous with
-  # the declared source bindings: the source composes an external query (`composed?` — hidden
-  # bindings may sit between), declares no positional binding to count from (`source_positional == []`
-  # — an opaque/bindingless source), or rebinds by name (`source_named != []` — names leave the
-  # positions past them opaque). A literal source with leading positionals and no anchor keeps the
-  # joins contiguous.
+  # Anchor the appended joins to the tail with a leading `...` when their slot isn't contiguous
+  # with the declared source bindings. A literal source with leading positionals and no named
+  # rebind keeps the joins contiguous.
   defp join_anchor(source_positional, source_named, join_positional, composed?) do
-    if join_positional != [] and
-         (composed? or source_positional == [] or source_named != []) do
+    # The source composes an external query, so hidden bindings may sit between its declarations
+    # and the appended joins.
+    hidden_source_bindings? = composed?
+    # An opaque/bindingless source declares no positional binding to count from.
+    no_positional_to_count_from? = source_positional == []
+    # A named rebind leaves the positions past it opaque.
+    rebinds_by_name? = source_named != []
+
+    needs_tail_anchor? =
+      hidden_source_bindings? or no_positional_to_count_from? or rebinds_by_name?
+
+    if join_positional != [] and needs_tail_anchor? do
       [Binding.ellipsis() | join_positional]
     else
       join_positional
