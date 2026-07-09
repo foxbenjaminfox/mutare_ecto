@@ -26,14 +26,17 @@ defmodule Mutare.Ecto.Dynamic do
   `Mutare.Ecto.BindingReorder`'s, exactly as for `where`/`having`). A pin's interior — whether
   *nested* (`dynamic([p], p.x > ^(min + 1))`) or the *whole* body
   (`dynamic([p], ^(if params.sort, do: a, else: b))`) — is never this catalog's: it is ordinary
-  Elixir, **sub-contracted to core's generation**, exactly as the host sub-contracts a hosted
-  condition's islands. `dynamic` is a registered macro, so core threads the run's enabled non-host
-  specs into the whole-call offer as `context.mutators`, and the shared seam
+  Elixir, **sub-contracted to generation over the run's full spec set**, exactly as the host
+  sub-contracts a hosted condition's islands. `dynamic` is a registered macro, so core threads
+  the run's enabled specs into the whole-call offer as `context.mutators`, and the shared seam
   (`Mutare.Ecto.Host.Catalog.subcontracted/3`) relays each interior rebuild as a
   `Mutare.Mutator.Mutation` with `producer:` set — the Site (and `# mutare:ignore` vocabulary)
-  belongs to the producing core family, while delivery stays this module's whole-call rewrite
-  through the ordinary in-place selector. (A bare `^other` body contributes nothing of its own —
-  a variable is mutated nowhere by core — so it degrades to no mutants without a special case.)
+  belongs to the producing family, while delivery stays this module's whole-call rewrite
+  through the ordinary in-place selector. The full set includes this plugin itself, so a
+  further `dynamic(...)` literal buried inside the pin is offered back to **this module** —
+  its SQL mutates once, under SQL semantics, recursing one pin level at a time. (A bare
+  `^other` body contributes nothing of its own — a variable is mutated nowhere by core — so it
+  degrades to no mutants without a special case.)
   """
 
   alias Mutare.Ecto.{Config, Tag}

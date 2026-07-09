@@ -109,10 +109,11 @@ defmodule Mutare.Ecto do
       `is_named_binding` guard helper also register `:skip` (neither is a query-threading stage,
       so core must not descend into their DSL/guard arguments) — but a free-standing `dynamic/1,2`
       is still mutated: core offers the whole call to `mutate/2` (with `context.mutators`, the
-      run's enabled non-host specs), where `Mutare.Ecto.Dynamic` rewrites its condition through
+      run's enabled specs), where `Mutare.Ecto.Dynamic` rewrites its condition through
       the same SQL catalog a hosted `where`/`having` uses **and** sub-contracts each `^` pin's
-      interior to core's generation, all delivered in place (the call sits in ordinary expression
-      position, so no host is needed).
+      interior to generation over that full set — core's families for the Elixir, this plugin's
+      own surface for any Ecto inside it — all delivered in place (the call sits in ordinary
+      expression position, so no host is needed).
 
   Resolution of these macros relies on Mutare's `use`-expansion (so the
   `use Ecto.Schema`-injected `import Ecto.Schema`, and a `use MyAppWeb, :live_view`-bundled

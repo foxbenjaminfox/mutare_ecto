@@ -81,7 +81,9 @@ adding anything to core** (the alternatives: a plugin-side approach, or narrowin
 Features that have gone that route after such a decision: the selector host, `:routing`/`:hosted` macro routing, `{:keyword, …}` per-pair
 routing, `:interpolated` in-place delivery, the `Site` `note` channel, the plugin-config toolkit
 (`c:Mutare.Mutator.init/1` + `use Mutare.Mutator.Families`), `:mutators` threaded into the
-whole-call `mutate/2` offer of a registered macro (the free-standing-`dynamic` sub-contract seam),
+whole-call `mutate/2` offer of a registered macro (the free-standing-`dynamic` sub-contract seam;
+later widened to the **full** spec set with `host/2` masked in collect, so a pin interior is
+analyzed like top-level Elixir and an inner `dynamic(...)` reaches its owner),
 the `c:Mutare.Mutator.finalize/2` enrichment seam core runs on both delivery paths, and the
 `c:Mutare.Mutator.required_modules/0` environment guard.
 
@@ -142,7 +144,8 @@ hosting):
   drops a disabled family (`families:`), attaches the equivalence note. Core applies it to every
   produced mutation on **both** delivery paths (a `mutate/2` return and a host target's
   `:mutants`), so no delivery site can forget the filter or the note. A relayed island mutant
-  (explicit `producer:`) bypasses it — the producing core family's own funnel already ran.
+  (explicit `producer:`) bypasses it — the producer's own funnel (a core family's, or this
+  plugin's for an interior Ecto mutant) already ran at generation, inside the sub-contract seam.
 
 ### The three delivery buckets (the spine of the design)
 
@@ -156,9 +159,8 @@ standalone/pipe rewrites in `Clause`, and the free-standing `dynamic/1,2` rewrit
 a `dynamic` call sits in ordinary expression position (its value is a runtime `DynamicExpr`), so
 its in-fragment mutants (the same `Fragment`/`Aggregate` catalogs the host uses) are whole-call
 rewrites, not woven. That includes its **island sub-contract**: core threads `context.mutators`
-into the whole-call offer of a registered macro, so `Dynamic` relays each pin interior's core
-mutants through the same seam as the host (`Host.Catalog.subcontracted/3`), delivered as rebuilt
-calls.
+into the whole-call offer of a registered macro, so `Dynamic` relays each pin interior's mutants
+through the same seam as the host (`Host.Catalog.subcontracted/3`), delivered as rebuilt calls.
 
 **2. Skipped** — `schema`/`embedded_schema` bodies. A mutated field name/type is a broken schema,
 not a mutant.
@@ -177,11 +179,18 @@ selector because a query clause can't host a runtime `case`:
   identical baseline, and the bump never duplicates the whole query the way a whole-`from` rewrite
   would. (The bound *drop* stays a whole-`from`/stage rewrite in `Query`/`ClauseDrop`.)
 - **Interpolation islands.** A hosted condition's `^expr` interiors — ordinary Elixir evaluated at
-  runtime — are **sub-contracted to core's generation**: `Fragment.islands/1` finds each pin under
-  the catalog's own descent rules, `Host.Catalog` runs `Mutare.Analyze.expression_mutations/3`
-  over `context.mutators` (the run's enabled non-host specs) and relays each rebuild as a
-  `Mutation` with `producer:` set — so the Site belongs to the producing core family while
-  delivery rides the host's weave.
+  runtime — are **sub-contracted to generation over the run's full spec set**, i.e. analyzed
+  exactly like top-level Elixir: `Fragment.islands/1` finds each pin under the catalog's own
+  descent rules, `Host.Catalog` runs `Mutare.Analyze.expression_mutations/3` over
+  `context.mutators` (the run's enabled specs — this plugin included through its ordinary
+  `mutate/2` surface, so an inline `dynamic(...)` literal inside the pin mutates once, under SQL
+  semantics, by `Dynamic`; core's `expression_mutations` masks only `host/2`, so hosted delivery
+  never nests) and relays each rebuild as a `Mutation` with `producer:` set — so the Site belongs
+  to the producing family while delivery rides the host's weave. One positional rule guards the
+  seam: a **keyword key in a condition position names a column**, so a relayed mutant that changes
+  the interior's keyword-key set is dropped (`subcontracted/3` — the pin-side application of the
+  same rule the shorthand routing applies to written `where(q, col: v)` pairs; a bare/computed
+  keyword list has no call shape for dispatch to recognize, so only this seam can apply it).
 - **Subqueries.** A hosted condition can contain a subquery (`where: exists(from …)`,
   `p.x >= all(from …)`, `p.x > subquery(from …)`, `p.id in subquery(from …)`):
   `Mutare.Ecto.Subquery` recurses the plugin's own catalogs into the inline `from`'s interior —
@@ -206,7 +215,7 @@ selector because a query clause can't host a runtime `case`:
 | `host.ex` | Selector-host **coordinator** (bucket 3): turns a hosted call into `Target`s — condition weaves plus the pin-only bound-bump targets — delegating to the `host/*` parts below |
 | `host/routing.ex` | `route_arguments/2` — the per-argument routing classifier (`:hosted`/`:expression`/`:skip`/`:interpolated`/`{:keyword,…}`), over `treatments/1` |
 | `host/bindings.ex` | Interprets Ecto binding declarations and renders the binding list re-declared by a woven `dynamic/2` |
-| `host/catalog.ex` | The tagged logical mutants for one hosted condition (Fragment + Aggregate, filtered/noted later by `finalize/2`); the core-produced island mutants sub-contracted per `^` pin — `subcontracted/3` is the shared seam, parameterized by delivery (`deliver`), so `dynamic.ex` relays through it too; and the `:bound` ±1 bumps of a literal `limit`/`offset` value (`bounds/1`) |
+| `host/catalog.ex` | The tagged logical mutants for one hosted condition (Fragment + Aggregate, filtered/noted later by `finalize/2`); the island mutants sub-contracted per `^` pin to the run's full spec set — `subcontracted/3` is the shared seam, parameterized by delivery (`deliver`), so `dynamic.ex` relays through it too, and its keyword-key-set guard is the pin-side application of the "keys name columns" rule; and the `:bound` ±1 bumps of a literal `limit`/`offset` value (`bounds/1`) |
 | `host/join_on.ex` | Which join `on:` conditions are safe to host: only a join's **sole, top-level** on-expression (not a multi-`on:` or `assoc` join, whose conditions Ecto folds into one `and` where a `^dynamic` operand is illegal) |
 | `host/target.ex` | The `dynamic`-wrap + `^`-pin + splice transforms consumed by core, plus the pin-only bound targets (no wrap — each branch is a bare integer) |
 | `fragment.ex` | The **SQL-semantics catalog** for `where`/`having` conditions (Comparison, Connective, NullPredicate, Membership, Arithmetic, Coalesce, Temporal, the literal arms IntegerLiteral/FloatLiteral/StringLiteral/AtomLiteral/BooleanLiteral) — stops at every `^` pin, whose interiors `islands/1` collects for the host's core sub-contract; recognizes an `exists`/`all`/`any`/`subquery`/`in` subquery wrapper and hands its inline `from` interior to `subquery.ex` |
@@ -270,14 +279,17 @@ Every mutation is tagged with an SQL **family**; `config.ex` holds the canonical
   Elixir.** This is the one rule the whole design exists to enforce, and it cuts both ways along
   the `^` pin boundary. The SQL **structure/operators** are the plugin's, owned end to end in
   `fragment.ex` (core would reason in Elixir's semantics). A pin's **interior** is ordinary
-  Elixir evaluated at runtime — exactly core's, never the SQL catalog's (an SQL-rationale
+  Elixir evaluated at runtime — never the SQL catalog's (an SQL-rationale
   `^(min * 2)` → `^(min / 2)` mutates the parameter's Elixir value/type): the catalogs stop at
-  every pin, and each island is **sub-contracted** to core's generation
-  (`Mutare.Analyze.expression_mutations/3` over `context.mutators`, relayed with `producer:` so
-  the Site and ignore vocabulary belong to the producing core family — delivery stays the
-  relayer's: the host's weave for a hosted `where`/`having`, the whole-call in-place rewrite
-  for a free-standing `dynamic`). A `^value` referencing an upstream binding is mutated by core
-  where it is bound, as always.
+  every pin, and each island is **sub-contracted** to generation over the run's **full** spec
+  set (`Mutare.Analyze.expression_mutations/3` over `context.mutators`), i.e. analyzed exactly
+  like top-level Elixir-that-includes-Ecto — core's families own the Elixir, and any Ecto
+  surface *inside* the interior is the plugin's own again (an inline `dynamic(...)` literal is
+  offered whole-call to `Dynamic` and mutates once, under SQL semantics; ownership recurses one
+  pin level at a time). Each rebuild is relayed with `producer:` so the Site and ignore
+  vocabulary belong to the producing family — delivery stays the relayer's: the host's weave for
+  a hosted `where`/`having`, the whole-call in-place rewrite for a free-standing `dynamic`. A
+  `^value` referencing an upstream binding is mutated by core where it is bound, as always.
 - **A nested author macro may invent its own argument syntax — only descend into `:expression`.** A
   user can define a macro and use it inside a `where`/`having` condition; its arguments are valid
   Elixir *tokens* but their meaning is the macro's own (it can make up a DSL, exactly as Ecto does).

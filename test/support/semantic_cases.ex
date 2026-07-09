@@ -189,6 +189,44 @@ defmodule Mutare.Ecto.SemanticCases do
           # hosted twin above.
           assert mutant == [2, 5]
         end
+
+        # The full-set twin: the island's *Ecto*. A pin interior is analyzed with the run's
+        # complete spec set, so an inline `dynamic(...)` literal chosen by pinned Elixir logic
+        # is offered whole-call back to the plugin itself (`Mutare.Ecto.Dynamic`) — its SQL
+        # mutates under SQL semantics and the rebuild rides the same weave. Plugin-only run:
+        # the producer *is* the plugin, no core family needed. Proves the woven branch carrying
+        # an inner-dynamic mutant builds a valid query and moves the result set exactly as the
+        # comparison swap predicts.
+        test "an inner dynamic's comparison mutant is live through the woven pin" do
+          {mod, sites} =
+            H.compile(
+              """
+              defmodule Q do
+                import Ecto.Query
+                alias MyApp.User
+                def q do
+                  flag = true
+                  from(u in User,
+                    where: ^(if flag, do: dynamic([u], u.age > 18), else: dynamic([u], u.age < 0)),
+                    select: u.id
+                  )
+                end
+              end
+              """,
+              mutators: [{Mutare.Ecto, repo: @repo}]
+            )
+
+          {baseline, mutant} =
+            observe_ids(mod, sites, {~r/u\.age > 18/, ~r/u\.age >= 18/})
+
+          # Baseline takes the `flag` branch — ages strictly over 18: Bob(25), Eve(40), Frank(19).
+          assert baseline == [2, 5, 6]
+
+          # The inner-dynamic mutant admits the two age-18 boundary rows (Alice, Dave): the
+          # mutated branch really is the one the pinned `if` selected and spliced.
+          assert mutant == [1, 2, 4, 5, 6]
+          assert mutant -- baseline == [1, 4]
+        end
       end
 
       describe "Shorthand interpolation — a core literal mutant of a `where: [col: v]` value" do

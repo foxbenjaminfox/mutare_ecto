@@ -4,19 +4,22 @@ defmodule Mutare.Ecto.SubcontractTest do
   import Mutare.Ecto.TestSupport
 
   # The **island sub-contract** end to end: a hosted `where`/`having` condition may contain
-  # interpolation islands (`^expr`) — ordinary Elixir evaluated at runtime, exactly core's
-  # business. The host hands each interior to core's generation
-  # (`Mutare.Analyze.expression_mutations/3` over `context.mutators`, the run's enabled non-host
-  # specs) and relays the rebuilds through its own weave with `producer:` attribution
-  # (`Mutare.Ecto.Host.Catalog`), so:
+  # interpolation islands (`^expr`) — ordinary Elixir evaluated at runtime, analyzed exactly
+  # like top-level Elixir. The host hands each interior to generation over the run's **full**
+  # spec set (`Mutare.Analyze.expression_mutations/3` over `context.mutators`) and relays the
+  # rebuilds through its own weave with `producer:` attribution (`Mutare.Ecto.Host.Catalog`),
+  # so:
   #
-  #   * the recorded Site belongs to the producing *core* family (`:arithmetic`, `:literal`, …) —
-  #     its name, its conventions, its `# mutare:ignore` vocabulary — never to `:ecto`;
+  #   * the recorded Site belongs to the producing family — a *core* family (`:arithmetic`,
+  #     `:literal`, …) for the interior's Elixir, with its name, its conventions, its
+  #     `# mutare:ignore` vocabulary; and the plugin's own (`:ecto`) for any Ecto surface
+  #     *inside* the interior (an inner `dynamic(...)` literal, offered whole-call to
+  #     `Mutare.Ecto.Dynamic` — SQL semantics, never core's);
   #   * delivery stays 100% host-owned — the island mutants are just more branches of the same
   #     woven `^`/`dynamic` selector (SemanticTest proves one is live at runtime);
-  #   * the plugin's own SQL catalog never reasons about the interior (an SQL-rationale
+  #   * the plugin's SQL *catalog* never reasons about the interior's Elixir (an SQL-rationale
   #     `^(min * 2)` → `^(min / 2)` would mutate the *parameter's* Elixir value/type) — with no
-  #     core families in the run, the interior simply produces nothing.
+  #     core families in the run, a plain-Elixir interior simply produces nothing.
 
   # The plugin plus core's builtins — the sub-contract needs core families to contract *to*.
   @with_core [mutators: [:all, {Mutare.Ecto, repo: MyApp.Repo}]]
@@ -197,10 +200,11 @@ defmodule Mutare.Ecto.SubcontractTest do
   end
 
   describe "configuration — the interior follows the run's actual mutators" do
-    test "with no core families in the run, a pin interior produces nothing" do
-      # Plugin-only (the TestSupport default): there is nobody to sub-contract to, and the SQL
-      # catalog never reasons about the interior itself — so the pin contributes no mutants at
-      # all (rather than the old SQL-rationale `^(min / 2)` crash-mutant).
+    test "with no core families in the run, a plain-Elixir pin interior produces nothing" do
+      # Plugin-only (the TestSupport default): the full-set sub-contract still runs, but the
+      # plugin's own surface finds no Ecto inside `min * 2` and the SQL catalog never reasons
+      # about the interior's Elixir — so the pin contributes no mutants at all (rather than
+      # the old SQL-rationale `^(min / 2)` crash-mutant).
       src = """
       defmodule M do
         import Ecto.Query
@@ -321,7 +325,7 @@ defmodule Mutare.Ecto.SubcontractTest do
              "a sibling island producer keeps running"
     end
 
-    test "[ecto] suppresses the host's own catalog but no producer-attributed island mutant" do
+    test "[ecto] suppresses the host's own catalog but no core-attributed island mutant" do
       src = """
       defmodule M do
         import Ecto.Query
@@ -821,6 +825,136 @@ defmodule Mutare.Ecto.SubcontractTest do
 
         assert_compiles(src, @with_core)
       end
+    end
+  end
+
+  describe "full set — an inner dynamic inside a pin mutates under SQL semantics, once" do
+    # The interior is analyzed with the run's complete spec set, this plugin included through
+    # its ordinary `mutate/2` surface. So a `dynamic(...)` *literal* buried in a pinned Elixir
+    # expression — previously mutated by nobody — is offered whole-call to
+    # `Mutare.Ecto.Dynamic`: its SQL mutates under SQL semantics (the plugin's catalog), the
+    # surrounding Elixir stays core's, and neither reasons across the boundary.
+
+    @inner_dynamic """
+    defmodule M do
+      import Ecto.Query
+
+      def q(q, c) do
+        where(q, [u], ^(if c > 0, do: dynamic([p], p.x > 1), else: dynamic([p], p.y < 2)))
+      end
+    end
+    """
+
+    test "each inner dynamic's SQL mutates exactly once, under :ecto" do
+      ecto = ecto_diffs(@inner_dynamic, @with_core)
+
+      # The comparison swaps of both branches' conditions, each a rebuild of the whole pinned
+      # condition relayed through the host's weave.
+      swaps =
+        Enum.filter(ecto, fn {_original, mutated} ->
+          mutated =~ "p.x >= 1" or mutated =~ "p.y <= 2"
+        end)
+
+      assert Enum.count(swaps, fn {_o, m} -> m =~ "p.x >= 1" end) == 1
+      assert Enum.count(swaps, fn {_o, m} -> m =~ "p.y <= 2" end) == 1
+
+      # Both are single-point: the sibling branch rides along verbatim.
+      assert Enum.all?(swaps, fn
+               {_o, m} ->
+                 (m =~ "p.x >= 1" and m =~ "p.y < 2") or (m =~ "p.y <= 2" and m =~ "p.x > 1")
+             end)
+
+      assert_compiles(@inner_dynamic, @with_core)
+    end
+
+    test "the outer Elixir stays core's; core never reasons inside the dynamics" do
+      # The pin's own Elixir (`c > 0`) mutates under core's :relational… (matched via `diffs`
+      # directly: a top-level `^(if …)` renders as `^if(…)`, which the `island_diffs` helper's
+      # `"^("` prefix filter would miss.)
+      assert Enum.any?(
+               diffs(@inner_dynamic, @with_core),
+               fn {mutator, original, mutated} ->
+                 mutator == :relational and original =~ "^if c > 0" and mutated =~ "c >= 0"
+               end
+             )
+
+      # …and no non-:ecto family produced a mutant inside either dynamic's SQL body.
+      refute Enum.any?(diffs(@inner_dynamic, @with_core), fn {mutator, _o, mutated} ->
+               mutator != :ecto and (mutated =~ "p.x >= 1" or mutated =~ "p.y <= 2")
+             end)
+    end
+
+    test "the plugin's families: filter applies to the inner-dynamic mutants (producer funnel)" do
+      # The interior mutants are this plugin's own, so — unlike a core family's relays — the
+      # `families:` filter runs on them at generation, inside the seam.
+      opts = [mutators: [{Mutare.Ecto, repo: MyApp.Repo, families: [:null_predicate]}]]
+
+      refute Enum.any?(ecto_diffs(@inner_dynamic, opts), fn {_o, m} ->
+               m =~ "p.x >= 1" or m =~ "p.y <= 2"
+             end)
+    end
+
+    test "the equivalence note rides the inner-dynamic mutant, exactly as at top level" do
+      %Mutare.Transform.Result{mutants: sites} =
+        Mutare.transform_string(@inner_dynamic,
+          file: "inner_dynamic_note_fixture.ex",
+          mutators: Mutare.Ecto.TestSupport.mutators(@with_core),
+          expand_uses: true
+        )
+
+      site = Enum.find(sites, &(&1.mutator == :ecto and &1.mutated_code =~ "p.x >= 1"))
+      assert site, "no :ecto site for the inner-dynamic comparison swap"
+      assert site.note =~ "kill may require"
+    end
+
+    test "mutare:ignore[ecto] suppresses the inner-dynamic mutants; core's islands keep running" do
+      src = """
+      defmodule M do
+        import Ecto.Query
+
+        def q(q, c) do
+          where(q, [u], ^(if c > 0, do: dynamic([p], p.x > 1), else: dynamic([p], p.y < 2))) # mutare:ignore[ecto]
+        end
+      end
+      """
+
+      %Mutare.Transform.Result{mutants: sites} =
+        Mutare.transform_string(src,
+          file: "inner_dynamic_ignore_fixture.ex",
+          mutators: Mutare.Ecto.TestSupport.mutators(@with_core),
+          expand_uses: true
+        )
+
+      inner = Enum.find(sites, &(&1.mutator == :ecto and &1.mutated_code =~ "p.x >= 1"))
+      assert inner, "no :ecto site for the inner-dynamic comparison swap"
+      assert inner.ignored, "the inner-dynamic mutant answers to the plugin's own family name"
+
+      outer = Enum.find(sites, &(&1.mutator == :relational and &1.mutated_code =~ "c >= 0"))
+      assert outer, "no :relational site for the pin's own Elixir"
+      refute outer.ignored, "a core-produced island mutant is not [ecto]'s to suppress"
+    end
+
+    test "a free-standing dynamic's pinned interior reaches an inner dynamic the same way" do
+      # The second consumer of the shared seam: the whole-call offer recurses one pin level,
+      # so the inner dynamic's SQL mutates once and the rebuild is the *outer* call.
+      src = """
+      defmodule M do
+        import Ecto.Query
+
+        def d(c, other) do
+          dynamic([p], ^(if c > 0, do: dynamic([q], q.x > 1), else: other))
+        end
+      end
+      """
+
+      ecto = ecto_diffs(src, @with_core)
+
+      inner_swaps = Enum.filter(ecto, fn {_o, m} -> m =~ "q.x >= 1" end)
+      assert [{original, mutated}] = inner_swaps
+      assert original =~ "dynamic([p], ^if(c > 0"
+      assert mutated =~ "dynamic([q], q.x >= 1)"
+
+      assert_compiles(src, @with_core)
     end
   end
 

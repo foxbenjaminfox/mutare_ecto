@@ -144,11 +144,13 @@ defmodule Mutare.Ecto.Fragment do
   `interior` is the pin's Elixir expression and `rebuild.(mutated_interior)` is the full condition
   with exactly that pin's interior replaced (the pin itself kept). The condition's owner — the
   selector host for a hosted `where`/`having`, `Mutare.Ecto.Dynamic` for a free-standing
-  `dynamic` — feeds each interior to core's generation (`Mutare.Analyze.expression_mutations/3`)
-  and relays the rebuilds through its own delivery with `producer:` attribution
-  (`Mutare.Ecto.Host.Catalog.subcontracted/3`), so a pin interior is mutated by the reasoner that
-  owns Elixir — under the user's configured core families — while delivery stays the caller's
-  (the host's weave, or the whole-call in-place rewrite).
+  `dynamic` — feeds each interior to generation over the run's full spec set
+  (`Mutare.Analyze.expression_mutations/3`) and relays the rebuilds through its own delivery
+  with `producer:` attribution (`Mutare.Ecto.Host.Catalog.subcontracted/3`), so a pin interior
+  is analyzed exactly like top-level Elixir — core's families reason about the Elixir, and the
+  plugin's own `mutate/2` surface reasons about any Ecto inside it (an inner `dynamic(...)`
+  literal mutates once, under SQL semantics) — while delivery stays the caller's (the host's
+  weave, or the whole-call in-place rewrite).
 
   The walk honors exactly the catalog's own descent rules, so a caller cannot reach an island the
   catalog would not have walked past: an `is_nil` argument is never entered (value mutants of a
@@ -158,8 +160,8 @@ defmodule Mutare.Ecto.Fragment do
   condition) — its `where`/`having` conditions, plus a value-wrapper's observed `select` (never an
   EXISTS select, unobserved) — those interiors are ordinary Elixir, core's to mutate, exactly like a
   top-level pin; a nested author macro's argument is entered only when routed `:expression` (or not a
-  macro at all); and the pin itself is a boundary — core owns everything beneath it, including any
-  nested pin (`^` does not nest in Ecto).
+  macro at all); and the pin itself is a boundary — the sub-contract owns everything beneath it,
+  including any nested pin (`^` does not nest in Ecto).
   """
   @spec islands(Macro.t()) :: [{Macro.t(), (Macro.t() -> Macro.t())}]
   def islands(condition), do: island_walk(condition)
