@@ -867,6 +867,27 @@ defmodule Mutare.Ecto.SubcontractTest do
       assert_compiles(@inner_dynamic, @with_core)
     end
 
+    test "plugin-produced inner subquery drops survive the pinned keyword-key guard" do
+      # The pinned interior contains nested Ecto syntax with keyword clause keys. Dropping the
+      # inner subquery's where: clause is a valid plugin-produced filter_drop mutant; it must not be
+      # mistaken for core renaming/dropping a pinned keyword-filter field key.
+      src = """
+      defmodule M do
+        import Ecto.Query
+
+        def q(q) do
+          where(q, [u], ^(dynamic([u], exists(from(p in Post, where: p.id > 0, select: p.id)))))
+        end
+      end
+      """
+
+      original = "^dynamic([u], exists(from(p in Post, where: p.id > 0, select: p.id)))"
+      mutated = "^dynamic([u], exists(from(p in Post, select: p.id)))"
+
+      assert {original, mutated} in ecto_diffs(src, @with_core)
+      assert_compiles(src, @with_core)
+    end
+
     test "the outer Elixir stays core's; core never reasons inside the dynamics" do
       # The pin's own Elixir (`c > 0`) mutates under core's :relational… (matched via `diffs`
       # directly: a top-level `^(if …)` renders as `^if(…)`, which the `island_diffs` helper's

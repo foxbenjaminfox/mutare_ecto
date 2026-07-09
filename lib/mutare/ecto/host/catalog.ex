@@ -133,8 +133,13 @@ defmodule Mutare.Ecto.Host.Catalog do
   unknown-field query error, exactly the mutants the shorthand routing skips) and is dropped;
   a value mutation (which keeps the key-set, `[active: false]`) survives, matching the
   shorthand's "keys raw, values mutated" contract. For a non-keyword interior the key-set is
-  empty on both sides, so the guard is a no-op. Known cost of the over-approximation: a
-  keyword key that *is* plain data (an option list built inside the pin) is protected too.
+  empty on both sides, so the guard is a no-op.
+
+  The guard is a protection against core treating a condition-position keyword filter as plain
+  Elixir data. It must not reject mutants produced by this plugin while analyzing the island's
+  nested Ecto surface: an inner `dynamic(... exists(from(..., where: ..., select: ...)))`
+  legitimately drops a subquery filter by removing the `where:` clause key from the inner
+  `from`, and that is a valid SQL mutant rather than a renamed pinned filter field.
   """
   @spec subcontracted(Macro.t(), Mutare.Mutator.context(), (Macro.t() -> Macro.t())) ::
           [Mutation.t()]
@@ -142,17 +147,30 @@ defmodule Mutare.Ecto.Host.Catalog do
     specs = Map.get(context, :mutators, [])
 
     for {interior, rebuild} <- Fragment.islands(condition),
-        keys = keyword_keys(interior),
         {spec, mutated, note, variant} <-
           Mutare.Analyze.expression_mutations(interior, specs, context),
-        keyword_keys(mutated) == keys do
+        keyword_filter_keys_preserved?(spec, interior, mutated) do
       Mutation.new(deliver.(rebuild.(mutated)), producer: spec, note: note, variant: variant)
     end
   end
 
-  # The set of keyword-list keys anywhere in `ast`. In a query condition a keyword key names a
-  # column (`^[field: value]` filter syntax), so a mutant that changes this set has renamed or
-  # dropped a field — a broken query, not a live mutant (see `subcontracted/3`).
+  # The plugin's own relayed mutants have already been produced under Ecto's SQL catalog. Their
+  # keyword key changes are Ecto query-shape mutations (for example an inner `where:` clause
+  # drop), not core's view of a pinned keyword filter as ordinary Elixir data.
+  defp keyword_filter_keys_preserved?(
+         %Mutare.Mutator.Spec{module: Mutare.Ecto},
+         _original,
+         _mutated
+       ),
+       do: true
+
+  defp keyword_filter_keys_preserved?(_spec, original, mutated),
+    do: keyword_keys(mutated) == keyword_keys(original)
+
+  # The set of keyword-list keys anywhere in `ast`. For core-produced island mutants in a query
+  # condition, a keyword key may name a column (`^[field: value]` filter syntax), so a mutant that
+  # changes this set can have renamed or dropped a field — a broken query, not a live mutant (see
+  # `subcontracted/3`).
   defp keyword_keys(ast) do
     {_ast, keys} =
       Macro.prewalk(ast, [], fn node, acc ->
