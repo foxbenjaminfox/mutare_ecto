@@ -6,59 +6,67 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `mutare_ecto` is a mutation-testing plugin for [Ecto](https://hexdocs.pm/ecto), implemented as a
 custom [Mutare](../mutare) mutator. It mutates the Ecto surface an app writes — `Repo` calls,
-changeset pipelines, and the `from`/query DSL — and its load-bearing design rule is that it
-**reuses none of Mutare's built-in mutation logic inside a query fragment** (core would reason in
-Elixir's semantics, not SQL's — three-valued boolean logic, NULL handling, boundary behaviour —
-silently manufacturing false negatives), while reusing **all** of Mutare's plumbing (identity resolution,
-selector/coverage/poison/Site machinery, and the delivery host).
+changeset pipelines, and the `from`/query DSL.
+
+Its load-bearing design rule: **reuse none of Mutare's built-in mutation logic inside a query
+fragment** — core reasons in Elixir's semantics, not SQL's (three-valued boolean logic, NULL
+handling, boundary behaviour), and would silently manufacture false negatives — while reusing
+**all** of Mutare's plumbing (identity resolution, selector/coverage/poison/Site machinery, and
+the delivery host). The full statement of that rule, and where it cuts, is the first entry of
+[Conventions and gotchas](#conventions-and-gotchas).
 
 ## Commands
 
 ```bash
-mix test                                   # full suite (compiles ../mutare + this app first)
-mix test test/mutare/ecto/query_test.exs   # one file
-mix test test/mutare/ecto/query_test.exs:42 # one test by line
-mix test test/mutare/ecto/semantic_test.exs # the only DB-backed file (SQLite by default)
-MUTARE_TEST_POSTGRES=1 mix test           # also run the semantic suite against Postgres
-mix format                                 # format (.formatter.exs)
-mix deps.get                               # fetch deps
-mix check                                  # quality gate: format-check + credo + dialyzer
+mix test                                     # full suite (compiles ../mutare + this app first)
+mix test test/mutare/ecto/query_test.exs     # one file
+mix test test/mutare/ecto/query_test.exs:42  # one test by line
+mix test test/mutare/ecto/semantic_test.exs  # the only DB-backed file (SQLite by default)
+MUTARE_TEST_POSTGRES=1 mix test              # also run the semantic suite against Postgres
+mix format                                   # format (.formatter.exs)
+mix check                                    # quality gate: format-check + credo + dialyzer
+mix docs                                     # ExDoc → doc/ (gitignored)
+mix deps.get                                 # fetch deps
 ```
 
-`mix test` compiles everything, so there is no separate build step. The semantic suite boots its
-Repo in `setup_all` (via `Mutare.Ecto.SemanticHarness.start_repo!/1`), so every **other** test run
-stays DB-free and the driver NIF cost is isolated to the semantic modules.
+`mix test` compiles everything, so there is no separate build step. Only the semantic suite
+touches a DB — it boots its Repo in `setup_all` (via `Mutare.Ecto.SemanticHarness.start_repo!/1`),
+so every **other** test run stays DB-free and the driver NIF cost is isolated to the semantic
+modules.
 
-**Running the semantic suite against Postgres too.** The DB-backed suite lives in a `use`-able
-template (`Mutare.Ecto.SemanticCases`) that the entry file (`semantic_test.exs`) instantiates **once
-per enabled engine** — one test module per engine, each with its own `@repo`. SQLite
-(`MyApp.Repo` / `ecto_sqlite3`, a self-contained temp file) is always on and is the default; setting
-`MUTARE_TEST_POSTGRES=1` generates a *second* module (`…SemanticTest.Postgres`) that runs the
-identical fixtures against `MyApp.PgRepo` (`postgrex`) and a running server — so a single `mix test`
-covers one engine or two. Two engines need two Repo **modules** because Ecto bakes a Repo's adapter
-in at compile time (`put_dynamic_repo` switches connections, not adapters); both modules compile
-unconditionally, and the Postgres one stays inert unless its test module is generated. The switch is
-read at the test file's compile time — and test `.exs` files recompile every run — so flipping the
-var takes effect immediately, no forced rebuild. Postgres connection config comes from the standard
-`PG*` env vars (`PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD`/`PGDATABASE`, with local defaults; the
-harness `storage_up`s the database if missing). CI runs Postgres on the whole **`ecto` version
-matrix** (every supported Ecto line), so any change in Ecto's Postgres-only handling is caught; the
-elixir/otp `test` sweep stays SQLite-only (the non-semantic tests never touch a DB).
+### The semantic suite's engines (SQLite always, Postgres opt-in)
+
+- The DB-backed suite lives in a `use`-able template (`Mutare.Ecto.SemanticCases`) that the entry
+  file (`semantic_test.exs`) instantiates **once per enabled engine** — one test module per
+  engine, each with its own `@repo` — so a single `mix test` covers one engine or two.
+- SQLite (`MyApp.Repo` / `ecto_sqlite3`, a self-contained temp file) is always on and is the
+  default. `MUTARE_TEST_POSTGRES=1` generates a *second* module (`…SemanticTest.Postgres`) that
+  runs the identical fixtures against `MyApp.PgRepo` (`postgrex`) and a running server.
+- Two engines need two Repo **modules** because Ecto bakes a Repo's adapter in at compile time
+  (`put_dynamic_repo` switches connections, not adapters). Both modules compile unconditionally;
+  the Postgres one stays inert unless its test module is generated.
+- The switch is read at the test file's compile time — and test `.exs` files recompile every run —
+  so flipping the var takes effect immediately, no forced rebuild.
+- Postgres connection config comes from the standard `PG*` env vars
+  (`PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD`/`PGDATABASE`, with local defaults; the harness
+  `storage_up`s the database if missing).
+- CI runs Postgres on the whole **`ecto` version matrix** (every supported Ecto line), so any
+  change in Ecto's Postgres-only handling is caught; the elixir/otp `test` sweep stays
+  SQLite-only (the non-semantic tests never touch a DB).
 
 ### `mix check` — the static-analysis gate
 
-`mix check` is an alias (`aliases/0` in `mix.exs`) that runs three steps in order, aborting on the
-first failure:
+An alias (`aliases/0` in `mix.exs`) that runs three steps in order, aborting on the first failure:
 
 1. `mix format --check-formatted` — fails if any file isn't formatted (does not rewrite).
 2. `mix credo` — lint via [Credo]; config in `.credo.exs` (`mix credo.gen.config` default).
 3. `mix dialyzer` — discrepancy/type analysis via [Dialyxir] (the Mix wrapper over Erlang's
    Dialyzer).
 
-Both tools are `only: :dev, runtime: false` deps and are never shipped or fetched by test jobs.
-Dialyzer's PLTs live in `priv/plts/` (gitignored, set via the `dialyzer:` key in `mix.exs`) so they
-can be cached rather than rebuilt every run — the **first** `mix dialyzer` builds the PLT and takes
-a few minutes; subsequent runs are fast. `mix check` runs in the default (`:dev`) env, so it
+Both tools are `only: :dev, runtime: false` deps, never shipped or fetched by test jobs.
+Dialyzer's PLTs live in `priv/plts/` (gitignored, set via the `dialyzer:` key in `mix.exs`) so
+they can be cached rather than rebuilt every run — the **first** `mix dialyzer` builds the PLT and
+takes a few minutes; subsequent runs are fast. `mix check` runs in the default (`:dev`) env, so it
 analyzes `lib/`, not the test-only fixtures.
 
 [Credo]: https://github.com/rrrene/credo
@@ -67,37 +75,40 @@ analyzes `lib/`, not the test-only fixtures.
 ## The `../mutare` path dependency
 
 `mix.exs` uses `{:mutare, path: "../mutare"}`, so both local development and CI use the sibling
-checkout (until Mutare is published to Hex). Several features here required **new Mutare-core
-extensions** (the selector host, `:routing`/`:hosted` macro routing, `{:keyword, …}` per-pair
-routing, `:interpolated` in-place delivery, the `Site` `note` channel, the plugin-config toolkit —
-`c:Mutare.Mutator.init/1` + `use Mutare.Mutator.Families` — `:mutators` threaded into the
+checkout (until Mutare is published to Hex). When a task seems to need core machinery that doesn't
+exist yet, extending `../mutare` is an **option**, not the default — **consult the user before
+adding anything to core** (the alternatives: a plugin-side approach, or narrowing the task).
+Features that have gone that route after such a decision: the selector host, `:routing`/`:hosted` macro routing, `{:keyword, …}` per-pair
+routing, `:interpolated` in-place delivery, the `Site` `note` channel, the plugin-config toolkit
+(`c:Mutare.Mutator.init/1` + `use Mutare.Mutator.Families`), `:mutators` threaded into the
 whole-call `mutate/2` offer of a registered macro (the free-standing-`dynamic` sub-contract seam),
 the `c:Mutare.Mutator.finalize/2` enrichment seam core runs on both delivery paths, and the
-`c:Mutare.Mutator.required_modules/0` environment guard). When a task needs core
-machinery that doesn't exist yet, it is added to `../mutare`. Core's public test 
-surface for plugins is `Mutare.Test` (wrapped here by `Mutare.Ecto.TestSupport`, which threads
-the plugin's default mutators and forwards every other option — the suites also use core's
-`observe_mutant/3` flip-and-compare and the shipped `Mutare.Test.Fixtures.RoutingExtension`
-for foreign-routing composition).
+`c:Mutare.Mutator.required_modules/0` environment guard.
 
-Deployment requirement: Mutare must run **as a dependency of the app under test** so Ecto and the
-app's schemas are on the BEAM code path. This is what lets `use`-expansion expand `use Ecto.Schema`
-(so `schema do … end` resolves and the `:skip` routing fires) and lets the host build valid
-`dynamic` calls. External-source operation is unsupported and guarded declaratively:
+Core's public test surface for plugins is `Mutare.Test`, wrapped here by
+`Mutare.Ecto.TestSupport` (threads the plugin's default mutators, forwards every other option).
+The suites also use core's `observe_mutant/3` flip-and-compare and the shipped
+`Mutare.Test.Fixtures.RoutingExtension` for foreign-routing composition.
+
+**Deployment requirement:** Mutare must run **as a dependency of the app under test** so Ecto and
+the app's schemas are on the BEAM code path. This is what lets `use`-expansion expand
+`use Ecto.Schema` (so `schema do … end` resolves and the `:skip` routing fires) and lets the host
+build valid `dynamic` calls. External-source operation is unsupported and guarded declaratively:
 `required_modules/0` (`c:Mutare.Mutator.required_modules/0`) declares the Ecto surface
 (`Ecto.Schema`/`Ecto.Query`), and core checks it once at startup — a missing module aborts with a
 `Mutare.EnvironmentError` before any source is read. Beyond that guard, unresolved target-app
 modules can still make routing incomplete or invalid.
 
-CI's `ecto` job is a compatibility matrix that runs the complete suite against **every supported
-Ecto minor line** — from the declared minimum (`3.12`, floor-pinned) through each line up to the
-latest published release — by overriding `ECTO_REQUIREMENT`, `ECTO_SQL_REQUIREMENT`, and
-`ECTO_SQLITE3_REQUIREMENT` per matrix entry (the SQL/SQLite drivers are pinned to the matching line
-because their versions track Ecto's). A final entry builds against the **development tip** of Ecto
-via `ECTO_GIT_BRANCH` (which makes `mix.exs` swap to git checkouts of `ecto`/`ecto_sql`); it is
-`continue-on-error: true`, so upstream breakage warns without failing the run. `MIX_LOCKFILE` gives
-each entry its own isolated generated lockfile; normal local commands continue to use `mix.lock`.
-When a new Ecto minor is published, add a matrix entry in `.github/workflows/ci.yml`.
+**CI's `ecto` job** is a compatibility matrix that runs the complete suite against **every
+supported Ecto minor line** — from the declared minimum (`3.12`, floor-pinned) through each line
+up to the latest published release — by overriding `ECTO_REQUIREMENT`, `ECTO_SQL_REQUIREMENT`, and
+`ECTO_SQLITE3_REQUIREMENT` per matrix entry (the SQL/SQLite drivers are pinned to the matching
+line because their versions track Ecto's). A final entry builds against the **development tip** of
+Ecto via `ECTO_GIT_BRANCH` (which makes `mix.exs` swap to git checkouts of `ecto`/`ecto_sql`); it
+is `continue-on-error: true`, so upstream breakage warns without failing the run. `MIX_LOCKFILE`
+gives each entry its own isolated generated lockfile; normal local commands continue to use
+`mix.lock`. When a new Ecto minor is published, add a matrix entry in
+`.github/workflows/ci.yml`.
 
 ## Architecture
 
@@ -126,56 +137,62 @@ hosting):
   (`Config.tagged/1` — pure production, no filtering; a `Dynamic`-relayed producer-set `Mutation`
   passes through as-is). Everything runs through `mutate/2` because all mutations read
   `context.config`.
-- `finalize/2` (`Mutare.Mutator`, delegated to `Config.finalize/2`) — the one tag → filter →
-  enrich funnel: reads the mutation's leading variant label back as its SQL family, drops a
-  disabled family (`families:`), attaches the equivalence note. Core applies it to every produced
-  mutation on **both** delivery paths (a `mutate/2` return and a host target's `:mutants`), so no
-  delivery site can forget the filter or the note; a relayed island mutant (explicit `producer:`)
-  bypasses it — the producing core family's own funnel already ran.
+- `finalize/2` (`Mutare.Mutator`, delegated to `Config.finalize/2`) — the one
+  tag → filter → enrich funnel: reads the mutation's leading variant label back as its SQL family,
+  drops a disabled family (`families:`), attaches the equivalence note. Core applies it to every
+  produced mutation on **both** delivery paths (a `mutate/2` return and a host target's
+  `:mutants`), so no delivery site can forget the filter or the note. A relayed island mutant
+  (explicit `producer:`) bypasses it — the producing core family's own funnel already ran.
 
 ### The three delivery buckets (the spine of the design)
 
 The surface divides by **how a mutation is delivered**, not by what it mutates:
 
-1. **Plain calls** (`Bucket 1`) — `Repo.aggregate`, changeset validators, `Repo.insert`,
-   `first`/`last`. Not DSL; resolved through `Mutare.Calls` (so direct/aliased/imported
-   forms all match) and delivered by Mutare's ordinary in-place selector. Needs no new core
-   machinery. Modules: `RepoAggregate`, `RepoWrite`, `Changeset`, `QueryTerminal`, plus the
-   whole-`from` rewrites in `Query`, the standalone/pipe rewrites in `Clause`, and the
-   free-standing `dynamic/1,2` rewrites in `Dynamic` — a `dynamic` call sits in ordinary
-   expression position (its value is a runtime `DynamicExpr`), so its in-fragment mutants (the
-   same `Fragment`/`Aggregate` catalogs the host uses) are whole-call rewrites, not woven —
-   including its **island sub-contract**: core threads `context.mutators` into the whole-call
-   offer of a registered macro, so `Dynamic` relays each pin interior's core mutants through
-   the same seam as the host (`Host.Catalog.subcontracted/3`), delivered as rebuilt calls.
-2. **Skipped** (`Bucket 2`) — `schema`/`embedded_schema` bodies. A mutated field name/type is a
-   broken schema, not a mutant.
-3. **Hosted DSL** (`Bucket 3`, the heart) — in-fragment `where`/`having` operator swaps (and the
-   `sum`↔`avg`/`min`↔`max` aggregate swap inside a `having: sum(p.x) > n`). A query clause can't
-   host a runtime `case`, so the host weaves each mutant behind Ecto's `^` + `dynamic` injection
-   (`Mutare.Ecto.Host` + the SQL catalog in `Mutare.Ecto.Fragment`, plus `Mutare.Ecto.Aggregate`
-   for the aggregate). Exactly one branch bakes into the compiled query per run, selected by
-   `:persistent_term.get(:mutare_active, 0)`. The `:bound` ±1 bump of a literal `limit`/`offset`
-   is hosted too, as a **pin-only** target (`limit: ^(case …)` — no `dynamic/2` wrap, no
-   bindings): a bound is an integer parameter, so the pinned selector is plain Ecto
-   interpolation with a behaviorally identical baseline, and the bump never duplicates the whole
-   query the way a whole-`from` rewrite would (the bound *drop* stays a whole-`from`/stage
-   rewrite in `Query`/`ClauseDrop`). A hosted condition's **interpolation islands**
-   (`^expr` interiors — ordinary Elixir evaluated at runtime) are **sub-contracted to core's
-   generation**: `Fragment.islands/1` finds each pin under the catalog's own descent rules,
-   `Host.Catalog` runs `Mutare.Analyze.expression_mutations/3` over `context.mutators` (the
-   run's enabled non-host specs) and relays each rebuild as a `Mutation` with `producer:` set —
-   so the Site belongs to the producing core family while delivery rides the host's weave. A hosted
-   condition can also contain a **subquery** (`where: exists(from …)`, `p.x >= all(from …)`,
-   `p.x > subquery(from …)`, `p.id in subquery(from …)`): `Mutare.Ecto.Subquery` recurses the
-   plugin's own catalogs into the inline `from`'s interior — its `where`/`having` swaps + pins,
-   filter-drops, and join-type flips under **every** wrapper, and its `select` projection under a
-   **value-wrapper only** (`all`/`any`/`subquery`/`in`; suppressed under `exists`, whose select SQL
-   never evaluates — the same unconditional-equivalence class as an `is_nil` interior). Each inner
-   mutant is the whole outer condition rebuilt, so it rides the identical weave with no new
-   machinery. Inner `order_by`/`limit`/`distinct` (inert or flaky through the wrappers we host) and
-   a *from-source* subquery (`from s in subquery(…)`, routed `:skip`) stay out of reach — the latter
-   earns its interior mutants by being built as a standalone query first.
+**1. Plain calls** — `Repo.aggregate`, changeset validators, `Repo.insert`, `first`/`last`. Not
+DSL; resolved through `Mutare.Calls` (so direct/aliased/imported forms all match) and delivered by
+Mutare's ordinary in-place selector. Needs no new core machinery. Modules: `RepoAggregate`,
+`RepoWrite`, `Changeset`, `QueryTerminal`, plus the whole-`from` rewrites in `Query`, the
+standalone/pipe rewrites in `Clause`, and the free-standing `dynamic/1,2` rewrites in `Dynamic` —
+a `dynamic` call sits in ordinary expression position (its value is a runtime `DynamicExpr`), so
+its in-fragment mutants (the same `Fragment`/`Aggregate` catalogs the host uses) are whole-call
+rewrites, not woven. That includes its **island sub-contract**: core threads `context.mutators`
+into the whole-call offer of a registered macro, so `Dynamic` relays each pin interior's core
+mutants through the same seam as the host (`Host.Catalog.subcontracted/3`), delivered as rebuilt
+calls.
+
+**2. Skipped** — `schema`/`embedded_schema` bodies. A mutated field name/type is a broken schema,
+not a mutant.
+
+**3. Hosted DSL** (the heart) — in-fragment `where`/`having` mutations, delivered woven behind a
+selector because a query clause can't host a runtime `case`:
+
+- **The weave.** Operator swaps (and the `sum`↔`avg`/`min`↔`max` aggregate swap inside a
+  `having: sum(p.x) > n`) are woven behind Ecto's `^` + `dynamic` injection (`Mutare.Ecto.Host` +
+  the SQL catalog in `Mutare.Ecto.Fragment`, plus `Mutare.Ecto.Aggregate` for the aggregate).
+  Exactly one branch bakes into the compiled query per run, selected by
+  `:persistent_term.get(:mutare_active, 0)`.
+- **Bound bumps.** The `:bound` ±1 bump of a literal `limit`/`offset` is hosted too, as a
+  **pin-only** target (`limit: ^(case …)` — no `dynamic/2` wrap, no bindings): a bound is an
+  integer parameter, so the pinned selector is plain Ecto interpolation with a behaviorally
+  identical baseline, and the bump never duplicates the whole query the way a whole-`from` rewrite
+  would. (The bound *drop* stays a whole-`from`/stage rewrite in `Query`/`ClauseDrop`.)
+- **Interpolation islands.** A hosted condition's `^expr` interiors — ordinary Elixir evaluated at
+  runtime — are **sub-contracted to core's generation**: `Fragment.islands/1` finds each pin under
+  the catalog's own descent rules, `Host.Catalog` runs `Mutare.Analyze.expression_mutations/3`
+  over `context.mutators` (the run's enabled non-host specs) and relays each rebuild as a
+  `Mutation` with `producer:` set — so the Site belongs to the producing core family while
+  delivery rides the host's weave.
+- **Subqueries.** A hosted condition can contain a subquery (`where: exists(from …)`,
+  `p.x >= all(from …)`, `p.x > subquery(from …)`, `p.id in subquery(from …)`):
+  `Mutare.Ecto.Subquery` recurses the plugin's own catalogs into the inline `from`'s interior —
+  its `where`/`having` swaps + pins, filter-drops, and join-type flips under **every** wrapper,
+  and its `select` projection under a **value-wrapper only** (`all`/`any`/`subquery`/`in`;
+  suppressed under `exists`, whose select SQL never evaluates — the same
+  unconditional-equivalence class as an `is_nil` interior). Each inner mutant is the whole outer
+  condition rebuilt, so it rides the identical weave with no new machinery.
+- **Out of reach, deliberately.** Inner `order_by`/`limit`/`distinct` (inert or flaky through the
+  wrappers we host) and a *from-source* subquery (`from s in subquery(…)`, routed `:skip`) — the
+  latter earns its interior mutants by being built as a standalone query first.
 
 ### Module map (`lib/mutare/ecto/`)
 
@@ -185,21 +202,21 @@ The surface divides by **how a mutation is delivered**, not by what it mutates:
 | `dispatcher.ex` | Classifies each node once and invokes only the sub-mutators relevant to that query macro, Ecto call, or configured Repo call |
 | `surface.ex` | Single descriptor table for every owned query macro and `from` key: routing kind, standalone mutation capabilities, stage/whole-`from` drop families, and hosted/binding/join capabilities |
 | `sub_mutator.ex` | The uniform `mutations(node, context)` behaviour implemented by each mutation producer |
-| `host.ex` | Selector-host **coordinator** (#3): turns a hosted call into `Target`s — condition weaves plus the pin-only bound-bump targets — delegating to the `host/*` parts below |
+| `host.ex` | Selector-host **coordinator** (bucket 3): turns a hosted call into `Target`s — condition weaves plus the pin-only bound-bump targets — delegating to the `host/*` parts below |
 | `host/routing.ex` | `route_arguments/2` — the per-argument routing classifier (`:hosted`/`:expression`/`:skip`/`:interpolated`/`{:keyword,…}`), over `treatments/1` |
 | `host/bindings.ex` | Interprets Ecto binding declarations and renders the binding list re-declared by a woven `dynamic/2` |
-| `host/catalog.ex` | The tagged logical mutants for one hosted condition (Fragment + Aggregate, filtered/noted later by `finalize/2`), plus the core-produced island mutants sub-contracted per `^` pin (`Mutare.Analyze.expression_mutations/3`, relayed with `producer:`) — `subcontracted/3` is the shared seam, parameterized by delivery (`deliver`), so `dynamic.ex` relays through it too — and the `:bound` ±1 bumps of a literal `limit`/`offset` value (`bounds/1`) |
+| `host/catalog.ex` | The tagged logical mutants for one hosted condition (Fragment + Aggregate, filtered/noted later by `finalize/2`); the core-produced island mutants sub-contracted per `^` pin — `subcontracted/3` is the shared seam, parameterized by delivery (`deliver`), so `dynamic.ex` relays through it too; and the `:bound` ±1 bumps of a literal `limit`/`offset` value (`bounds/1`) |
 | `host/join_on.ex` | Which join `on:` conditions are safe to host: only a join's **sole, top-level** on-expression (not a multi-`on:` or `assoc` join, whose conditions Ecto folds into one `and` where a `^dynamic` operand is illegal) |
 | `host/target.ex` | The `dynamic`-wrap + `^`-pin + splice transforms consumed by core, plus the pin-only bound targets (no wrap — each branch is a bare integer) |
 | `fragment.ex` | The **SQL-semantics catalog** for `where`/`having` conditions (Comparison, Connective, NullPredicate, Membership, Arithmetic, Coalesce, Temporal, the literal arms IntegerLiteral/FloatLiteral/StringLiteral/AtomLiteral/BooleanLiteral) — stops at every `^` pin, whose interiors `islands/1` collects for the host's core sub-contract; recognizes an `exists`/`all`/`any`/`subquery`/`in` subquery wrapper and hands its inline `from` interior to `subquery.ex` |
-| `subquery.ex` | Recurse the plugin's own catalogs into a subquery's **interior** — inner `where`/`having` swaps + pins (`fragment.ex`), filter-drops/join-type/combination/source-reorder (`query.ex`, filtered to the row-set families) under **every** wrapper, and `select` projection (`aggregate.ex`/`scalar.ex`) under **value-wrappers only** (suppressed under `exists`, where SQL never evaluates the select — the same category as an `is_nil` interior). Each mutant is the whole inner `from` rebuilt, which `fragment.ex` wraps back into the condition and delivers through the same `Fragment.mutants`/`islands` seam the host and `dynamic.ex` already consume. Inner `order_by`/`limit`/`distinct` and *from-source* subqueries stay out of reach |
+| `subquery.ex` | Recurses the plugin's own catalogs into a subquery's **interior** (see bucket 3 above for what's reachable under which wrapper). Each mutant is the whole inner `from` rebuilt, which `fragment.ex` wraps back into the condition and delivers through the same `Fragment.mutants`/`islands` seam the host and `dynamic.ex` already consume |
 | `ast/query_call.ex` / `ast/binding_list.ex` / `ast/keyword_list.ex` | Normalized query-call, binding-list, and keyword/clause-list values; preserve written form while centralizing validation and reconstruction |
 | `binding.ex` | Primitive binding-entry vocabulary (`variable?`/`ellipsis?`/`entry?`) used by the normalized binding list |
-| `binding_reorder.ex` | Positional binding-reorder (`[a, b]`→`[b, a]`) for **every** standalone/pipe binding-list macro — `where`/`having` included — delivered **in-place** by swapping the written list (never the condition body). A `from` binding-list *source* (`[a, b] in q`) reorders at the whole-`from` level (`query.ex`) instead. Reorders only eligible positional entries in the list the **author wrote** — never a synthesized list, a named binding, or an `_`-prefixed binding |
+| `binding_reorder.ex` | Positional binding-reorder (`[a, b]`→`[b, a]`) for **every** standalone/pipe binding-list macro — `where`/`having` included — delivered **in-place** by swapping the written list, never the condition body. A `from` binding-list *source* (`[a, b] in q`) reorders at the whole-`from` level (`query.ex`) instead |
 | `query.ex` | Whole-`from` rewrites (clause drop, order flip, bound **drop**, join-type, `select`/`order_by` aggregate, source binding-reorder for a `[a, b] in q` source) — the bound *bump* is hosted instead |
 | `clause.ex` | Standalone/pipe cousins of `query.ex` (`order_by`/`select`/set-operation macros; the `limit`/`offset` bump is hosted) |
 | `clause_drop.ex` | Drop a standalone/pipe clause stage (`q \|> where(…)` → `q`), via `stage_drop.ex` |
-| `ordering.ex` / `aggregate.ex` / `scalar.ex` | Shared `{family, node}` catalogs used by `query.ex`, `clause.ex`, and the condition host — `scalar.ex` owns the Arithmetic swaps and the Coalesce fallback drop, applied per node by `fragment.ex` in hosted conditions and walked over `select`/`order_by` values. `ordering.ex` flips a sort direction (`:asc`↔`:desc`) / nulls placement, **and** re-tags the implicit `asc` of a bare ordering term (`:name`, `u.name`) to `desc` — the reliable replacement for the removed `order_by` clause-drop (dropping an `ORDER BY` left an SQL-unspecified row order, so its survival tracked engine nondeterminism, not the tests) |
+| `ordering.ex` / `aggregate.ex` / `scalar.ex` | Shared `{family, node}` catalogs used by `query.ex`, `clause.ex`, and the condition host. `scalar.ex` owns the Arithmetic swaps and the Coalesce fallback drop, applied per node by `fragment.ex` in hosted conditions and walked over `select`/`order_by` values. `ordering.ex` flips a sort direction (`:asc`↔`:desc`) / nulls placement, **and** re-tags the implicit `asc` of a bare ordering term (`:name`, `u.name`) to `desc` — the reliable replacement for the removed `order_by` clause-drop (dropping an `ORDER BY` left an SQL-unspecified row order, so its survival tracked engine nondeterminism, not the tests) |
 | `expression_walk.ex` | The generic single-point structural walker under the expression catalogs (`aggregate.ex`, `scalar.ex`) |
 | `descent.ex` | The author-macro descent rule, shared by `fragment.ex`'s two walks (`mutants`/`islands`) and `expression_walk.ex`: `each_arg/2` visits a call's arguments, entering only the ones the macro routed `:expression` (or a non-macro node) per `Mutare.Calls.macro_treatment/1`. Homing it once keeps the catalog's mutation walk and its island walk provably in agreement about which arguments they enter (`fragment_walk_parity_test.exs` guards the structural half) |
 | `combination.ex` | Shared set-operation swap catalog (`intersect`↔`except`, `intersect_all`↔`except_all`; `union` deliberately unswapped) used by `query.ex` (clause-key swap) and `clause.ex` (macro-name swap) |
@@ -213,33 +230,38 @@ The surface divides by **how a mutation is delivered**, not by what it mutates:
 
 ### Families and configuration
 
-Every mutation is tagged with an SQL **family** (`config.ex` holds the canonical `:all` list).
-`families:` selects the catalog (unknown name fails loudly) and accepts `:default` (the unset
-default — every family **except** the opt-in `:string_literal`/`:atom_literal`/`:boolean_literal`
-arms, which are off for safety: a string/atom value space is large and a direct boolean literal
-rarely idiomatic, making their mutants the noisiest), `:all` (every family), an explicit list, or
-`{:default | :all, except: […]}` (base-minus-exclusions, the easy way to drop a default-on arm).
-Even when the opt-in arms are enabled, `fragment.ex`'s structural-position guard still suppresses a
-literal at a known DSL form's structural argument. `dialects:` gates non-portable
-mutations (`like`↔`ilike` under `:postgres`; `LEFT`↔`RIGHT` join under `:postgres`/`:mysql` —
-SQLite lacks `RIGHT JOIN`). Multi-repo and per-family report naming fall out of Mutare's `:as`
-convention (list the plugin twice). The **equivalence-sensitive** families (`:comparison`,
-`:connective`, `:null_predicate`, `:arithmetic`, `:coalesce`, `:temporal`, `:ordering_nulls`,
-`:join_type`) carry a report
-`note` — a survivor reads
-`… kill may require …` — because their unkillability can be honest signal (a data gap, not a test
-gap). Each family's note names the **specific** data a kill needs, because the reasons differ: a
-boundary row (`:comparison` ordering swaps), a non-NULL row (`:comparison` `==`/`!=`), a disagreeing
-row under three-valued logic (`:connective`), NULL rows in the column (`:null_predicate`,
-`:ordering_nulls`) or in the coalesced expression (`:coalesce`), or an operand off the operation's
-identity (`:arithmetic` — 0 for `+`/`-`, ±1
-for `*`/`/`). `Config.equivalence_note/2` resolves the note (refining `:comparison` and
-`:arithmetic` by the swapped operator). The note rides onto the `Site` via
-`c:Mutare.Mutator.finalize/2` (the `families:` filter + note funnel, defined once in
-`Config.finalize/2`), which core runs on **both** delivery paths just before recording — so the
-in-fragment families surface it through the host and `:ordering_nulls`/`:join_type` through their
-`mutate/2` rewrites, and no delivery site can forget it. Producers stay pure: they return tag
-tuples wrapped by `Config.tagged/1` into `Mutation.tagged(node, [family | finer])`.
+Every mutation is tagged with an SQL **family**; `config.ex` holds the canonical `:all` list.
+
+- `families:` selects the catalog (an unknown name fails loudly). Accepted values:
+  - `:default` (the unset default) — every family **except** the opt-in
+    `:string_literal`/`:atom_literal`/`:boolean_literal` arms, which are off for safety: a
+    string/atom value space is large and a direct boolean literal rarely idiomatic, making their
+    mutants the noisiest.
+  - `:all` — every family.
+  - An explicit list.
+  - `{:default | :all, except: […]}` — base-minus-exclusions, the easy way to drop a default-on
+    arm.
+  - Even when the opt-in arms are enabled, `fragment.ex`'s structural-position guard still
+    suppresses a literal at a known DSL form's structural argument.
+- `dialects:` gates non-portable mutations: `like`↔`ilike` under `:postgres`; `LEFT`↔`RIGHT` join
+  under `:postgres`/`:mysql` (SQLite lacks `RIGHT JOIN`).
+- Multi-repo and per-family report naming fall out of Mutare's `:as` convention (list the plugin
+  twice).
+- The **equivalence-sensitive** families (`:comparison`, `:connective`, `:null_predicate`,
+  `:arithmetic`, `:coalesce`, `:temporal`, `:ordering_nulls`, `:join_type`) carry a report `note` —
+  a survivor reads `… kill may require …` — because their unkillability can be honest signal (a
+  data gap, not a test gap). Each family's note names the **specific** data a kill needs, because
+  the reasons differ: a boundary row (`:comparison` ordering swaps), a non-NULL row (`:comparison`
+  `==`/`!=`), a disagreeing row under three-valued logic (`:connective`), NULL rows in the column
+  (`:null_predicate`, `:ordering_nulls`) or in the coalesced expression (`:coalesce`), or an
+  operand off the operation's identity (`:arithmetic` — 0 for `+`/`-`, ±1 for `*`/`/`).
+  `Config.equivalence_note/2` resolves the note (refining `:comparison` and `:arithmetic` by the
+  swapped operator).
+- The note rides onto the `Site` via the `finalize/2` funnel (see Architecture), which core runs
+  on **both** delivery paths just before recording — so the in-fragment families surface it
+  through the host and `:ordering_nulls`/`:join_type` through their `mutate/2` rewrites, and no
+  delivery site can forget it. Producers stay pure: they return tag tuples wrapped by
+  `Config.tagged/1` into `Mutation.tagged(node, [family | finer])`.
 
 ## Conventions and gotchas
 
@@ -253,8 +275,8 @@ tuples wrapped by `Config.tagged/1` into `Mutation.tagged(node, [family | finer]
   (`Mutare.Analyze.expression_mutations/3` over `context.mutators`, relayed with `producer:` so
   the Site and ignore vocabulary belong to the producing core family — delivery stays the
   relayer's: the host's weave for a hosted `where`/`having`, the whole-call in-place rewrite
-  for a free-standing `dynamic`, whose registered-macro offer core threads the specs into). A
-  `^value` referencing an upstream binding is mutated by core where it is bound, as always.
+  for a free-standing `dynamic`). A `^value` referencing an upstream binding is mutated by core
+  where it is bound, as always.
 - **A nested author macro may invent its own argument syntax — only descend into `:expression`.** A
   user can define a macro and use it inside a `where`/`having` condition; its arguments are valid
   Elixir *tokens* but their meaning is the macro's own (it can make up a DSL, exactly as Ecto does).
@@ -262,16 +284,16 @@ tuples wrapped by `Config.tagged/1` into `Mutation.tagged(node, [family | finer]
   `:skip` protects is the **argument source**. Every structural walk (`fragment.ex`'s `mutants` and
   `islands`, `expression_walk.ex`) routes its per-argument descent through the shared
   `descent.ex` (`Mutare.Ecto.Descent.each_arg/2`), which reads each nested call's per-argument
-  routing via `Mutare.Calls.macro_treatment/1` (stamped by the resolve pre-pass) and descends into an
-  argument **only** when it's plainly standard syntax — a non-macro node, or an argument the macro
-  routed `:expression`. Every other routing (`:skip`, `:pattern`, `:hosted`, …) is left raw.
-- **Binding-reorder is always in-place, never a body rewrite.** Transposing `[a, b]` → `[b, a]` swaps
-  the *written binding list* — `binding_reorder.ex` for the standalone/pipe macros (`where`/`having`
-  included), `query.ex` for a `from` `[a, b] in q` source. It never rewrites the condition body, so it
-  is safe across an opaque author macro without having to understand the macro's arguments. (A scalar
-  `from` source and synthesized join bindings are not author-written lists, so they never reorder.)
-  Usage is deliberately irrelevant: unused declarations still produce swaps, while `_`-prefixed and
-  named bindings never participate.
+  routing via `Mutare.Calls.macro_treatment/1` (stamped by the resolve pre-pass) and descends into
+  an argument **only** when it's plainly standard syntax — a non-macro node, or an argument the
+  macro routed `:expression`. Every other routing (`:skip`, `:pattern`, `:hosted`, …) is left raw.
+- **Binding-reorder is always in-place, never a body rewrite.** Transposing `[a, b]` → `[b, a]`
+  swaps the *written binding list* — `binding_reorder.ex` for the standalone/pipe macros
+  (`where`/`having` included), `query.ex` for a `from` `[a, b] in q` source. It never rewrites the
+  condition body, so it is safe across an opaque author macro without having to understand the
+  macro's arguments. Usage is deliberately irrelevant: unused declarations still produce swaps,
+  while `_`-prefixed and named bindings never participate. (A scalar `from` source and synthesized
+  join bindings are not author-written lists, so they never reorder.)
 - **Stay inside the single build.** Any in-query mutation must be delivered `^`-pinned behind the
   selector — a bare `case` in a query position poisons compilation. New query-position families go
   through the host, not the in-place selector.
@@ -296,18 +318,19 @@ tuples wrapped by `Config.tagged/1` into `Mutation.tagged(node, [family | finer]
   Helpers: `Mutare.Ecto.TestSupport` (`diffs`, `ecto_diffs`, `assert_compiles`, `metamutant`).
   Test mutators **default to the Ecto plugin alone** (`{Mutare.Ecto, repo: MyApp.Repo}`), so
   recorded mutations are exactly the plugin's — pass `mutators: [:all, …]` to include core's.
-- The semantic suite (`Mutare.Ecto.SemanticCases`, instantiated by `semantic_test.exs` per engine)
-  proves a recorded mutant is **live**: it compiles the metamutant, flips `:persistent_term`'s
-  `:mutare_active` to a chosen mutant id, runs the query against the seeded `@repo` (`MyApp.Repo` on
-  SQLite, `MyApp.PgRepo` on Postgres — the fixtures and assertions are engine-agnostic;
-  `H.full_join_supported?/1` runtime-gates the one FULL-JOIN fixture, and aggregate values route
-  through `to_number/1` since Postgres hands back `Decimal` where SQLite gives a float), and asserts
+- The semantic suite (`Mutare.Ecto.SemanticCases`, instantiated per engine — see
+  [the engines section](#the-semantic-suites-engines-sqlite-always-postgres-opt-in)) proves a
+  recorded mutant is **live**: it compiles the metamutant, flips `:persistent_term`'s
+  `:mutare_active` to a chosen mutant id, runs the query against the seeded `@repo`, and asserts
   the result set changed the way the mutation predicts. The standard shape is core's
   `observe_mutant/3` flip-and-compare (via the harness's `observe/4` — the mutant resolved from a
   Site's logical diff, the baseline run first and pinned); `site_id/2`/`site_by/3` +
-  `under/3`/`activate/2` remain for multi-mutant builds, the token-absence drops, and the write path.
-  Every DB helper takes the Repo module first, so the same fixtures run against either engine.
-  Fixtures: `test/support/myapp.ex` (schemas + both Repos) and `test/support/seed.ex`
-  (adapter-typed DDL; boundary/NULL rows chosen so each family is distinguishable).
+  `under/3`/`activate/2` remain for multi-mutant builds, the token-absence drops, and the write
+  path.
+- The fixtures and assertions are engine-agnostic: every DB helper takes the Repo module first,
+  `H.full_join_supported?/1` runtime-gates the one FULL-JOIN fixture, and aggregate values route
+  through `to_number/1` (Postgres hands back `Decimal` where SQLite gives a float). Fixtures:
+  `test/support/myapp.ex` (schemas + both Repos) and `test/support/seed.ex` (adapter-typed DDL;
+  boundary/NULL rows chosen so each family is distinguishable).
 - Because `Code.compile_string` is global, Mutare's public test helpers compile fixtures inside
   uniquely named wrapper modules so async tests defining the same module name do not race.
