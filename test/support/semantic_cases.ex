@@ -130,8 +130,8 @@ defmodule Mutare.Ecto.SemanticCases do
         # (`Mutare.Analyze.expression_mutations/3`), relaying each rebuild through its own weave with
         # `producer:` attribution. Compile-level attribution is SubcontractTest's; here we prove the
         # relayed mutant is **live**: flipping the active id changes the *parameter* the query binds,
-        # and the engine's result set moves exactly as core's literal bump predicts.
-        test "the literal-succ island mutant tightens the bound the baseline parameter set" do
+        # and the engine's result set moves exactly as core's integer bump predicts.
+        test "the integer-succ island mutant tightens the bound the baseline parameter set" do
           {mod, sites} =
             H.compile(
               """
@@ -141,7 +141,7 @@ defmodule Mutare.Ecto.SemanticCases do
                 def q, do: from(u in User, where: u.age > ^(8 + 10), select: u.id)
               end
               """,
-              mutators: [:literal, {Mutare.Ecto, repo: @repo}]
+              mutators: [:integer, {Mutare.Ecto, repo: @repo}]
             )
 
           {baseline, mutant} =
@@ -160,7 +160,7 @@ defmodule Mutare.Ecto.SemanticCases do
         # (`Mutare.Ecto.Dynamic` — no weave; the call sits in expression position and the mutated
         # `DynamicExpr` is spliced downstream by the raw `where(^d)`). Proves *that* delivery is
         # live too: the rebuilt call binds a different parameter and the result set moves.
-        test "the literal-succ island mutant of a spliced free-standing dynamic is live" do
+        test "the integer-succ island mutant of a spliced free-standing dynamic is live" do
           {mod, sites} =
             H.compile(
               """
@@ -173,7 +173,7 @@ defmodule Mutare.Ecto.SemanticCases do
                 end
               end
               """,
-              mutators: [:literal, {Mutare.Ecto, repo: @repo}]
+              mutators: [:integer, {Mutare.Ecto, repo: @repo}]
             )
 
           site =
@@ -229,12 +229,12 @@ defmodule Mutare.Ecto.SemanticCases do
         end
       end
 
-      describe "Shorthand interpolation — a core literal mutant of a `where: [col: v]` value" do
-        # The `{:keyword, …}`/`:interpolated` routing hands a shorthand scalar to *core's* literal
+      describe "Shorthand interpolation — a core integer mutant of a `where: [col: v]` value" do
+        # The `{:keyword, …}`/`:interpolated` routing hands a shorthand scalar to *core's* integer
         # family, delivered `^`-pinned by core. The routing is the plugin's, the delivery core's —
         # and neither unit suite proves the pinned parameter actually *binds*. Same closure as the
         # island sub-contract test: flip the core mutant and watch the bound value move the rows.
-        test "the literal-succ mutant of a shorthand value changes which rows match" do
+        test "the integer-succ mutant of a shorthand value changes which rows match" do
           {mod, sites} =
             H.compile(
               """
@@ -244,7 +244,7 @@ defmodule Mutare.Ecto.SemanticCases do
                 def q, do: from(u in User, where: [age: 18], select: u.id)
               end
               """,
-              mutators: [:literal, {Mutare.Ecto, repo: @repo}]
+              mutators: [:integer, {Mutare.Ecto, repo: @repo}]
             )
 
           {baseline, mutant} = observe_ids(mod, sites, {"18", "19"})

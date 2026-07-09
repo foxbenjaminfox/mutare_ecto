@@ -11,7 +11,7 @@ defmodule Mutare.Ecto.SubcontractTest do
   # so:
   #
   #   * the recorded Site belongs to the producing family — a *core* family (`:arithmetic`,
-  #     `:literal`, …) for the interior's Elixir, with its name, its conventions, its
+  #     `:integer`, …) for the interior's Elixir, with its name, its conventions, its
   #     `# mutare:ignore` vocabulary; and the plugin's own (`:ecto`) for any Ecto surface
   #     *inside* the interior (an inner `dynamic(...)` literal, offered whole-call to
   #     `Mutare.Ecto.Dynamic` — SQL semantics, never core's);
@@ -50,10 +50,10 @@ defmodule Mutare.Ecto.SubcontractTest do
 
       islands = island_diffs(src, @with_core)
 
-      # Core's arithmetic and literal families reason about the interior — with core's Elixir
+      # Core's arithmetic and integer families reason about the interior — with core's Elixir
       # conventions — while the recorded diff is the logical hosted condition.
       assert {:arithmetic, "u.age > ^(min * 2)", "u.age > ^(min / 2)"} in islands
-      assert {:literal, "u.age > ^(min * 2)", "u.age > ^(min * 3)"} in islands
+      assert {:integer, "u.age > ^(min * 2)", "u.age > ^(min * 3)"} in islands
 
       # No island mutant is ever the host's: the plugin's `:ecto` sites on that condition are
       # exactly its own SQL catalog (the comparison swap and the clause-level filter drop),
@@ -321,7 +321,7 @@ defmodule Mutare.Ecto.SubcontractTest do
       refute site(sites, :ecto, "u.age >= ^(min * 2)").ignored,
              "the host's own comparison swap is not [arithmetic]'s to suppress"
 
-      refute site(sites, :literal, "u.age > ^(min * 3)").ignored,
+      refute site(sites, :integer, "u.age > ^(min * 3)").ignored,
              "a sibling island producer keeps running"
     end
 
@@ -360,7 +360,7 @@ defmodule Mutare.Ecto.SubcontractTest do
 
       assert site(sites, :arithmetic, "p.views > ^(min / 2)").ignored
       refute site(sites, :ecto, "p.views >= ^(min * 2)").ignored
-      refute site(sites, :literal, "p.views > ^(min * 3)").ignored
+      refute site(sites, :integer, "p.views > ^(min * 3)").ignored
 
       ecto_src = """
       defmodule M do
@@ -598,7 +598,7 @@ defmodule Mutare.Ecto.SubcontractTest do
       original = "dynamic([p], p.views > ^(min * 2))"
 
       assert {:arithmetic, original, "dynamic([p], p.views > ^(min / 2))"} in islands
-      assert {:literal, original, "dynamic([p], p.views > ^(min * 3))"} in islands
+      assert {:integer, original, "dynamic([p], p.views > ^(min * 3))"} in islands
 
       # The island mutant is never `:ecto`'s: the plugin's own sites on the call are exactly its
       # SQL catalog (the comparison swap), nothing inside the pin.
