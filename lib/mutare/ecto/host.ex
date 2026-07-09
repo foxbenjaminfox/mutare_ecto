@@ -43,6 +43,11 @@ defmodule Mutare.Ecto.Host do
           :condition -> condition_target(args, config, context)
           :join -> join_target(args, config, context)
           :clause -> bound_target(macro, args)
+          # Defensively dead: `hosted_macro_names/0` subscribes only `:from` (matched by name
+          # above), `:condition`, `:join`, and the bound `:clause` macros, so no other kind is
+          # ever offered to `host/2`. `macro_kind_parity_test.exs` probes every
+          # `Surface.macro_kinds/0` value — a new kind must take a branch here or stay
+          # structurally unsubscribed, never silently weave nothing.
           _other -> []
         end
 

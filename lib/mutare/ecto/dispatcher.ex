@@ -66,6 +66,11 @@ defmodule Mutare.Ecto.Dispatcher do
     # mutare:ignore[operand_swap] equivalent — two independent sub-mutator result lists, consumed as a set
     do: Dynamic.mutations(call, context) ++ BindingReorder.mutations(call, context)
 
+  # Only the taxonomy's inert remainder lands here: a `:skip`-kind macro (its whole call is
+  # offered, but no sub-mutator claims it) and `nil` (an `Ecto.Query` macro the plugin doesn't
+  # own). Elixir can't exhaustiveness-check this dispatch, so `macro_kind_parity_test.exs` probes
+  # every `Surface.macro_kinds/0` value against it — a new or renamed kind must take a real
+  # branch above (or be probed inert there), never silently degrade to `[]` here.
   defp query_macro_mutations(_kind, _node, _context), do: []
 
   # A registered Ecto.Query macro (`:condition`/`:clause`/`:join`/`:dynamic` in `Surface`) always

@@ -182,6 +182,17 @@ defmodule Mutare.Ecto.Surface do
   @spec descriptors() :: [descriptor()]
   def descriptors, do: @surface
 
+  @doc """
+  The closed macro-kind taxonomy `macro_kind/1` answers from. Three consumers dispatch on it
+  independently — `Mutare.Ecto.Dispatcher.query_macro_mutations/3`, `Mutare.Ecto.Host.host/2`,
+  and `Mutare.Ecto.Host.Routing.route_macro/3` — each ending in a catch-all Elixir cannot
+  exhaustiveness-check, so `macro_kind_parity_test.exs` probes every kind listed here against
+  all three: adding or renaming a kind fails that test until each dispatch takes a real branch
+  for it (or is structurally excluded), instead of silently dropping the kind's mutations.
+  """
+  @spec macro_kinds() :: [macro_kind()]
+  def macro_kinds, do: @macro_kinds
+
   @doc "The descriptor for a macro/clause name, or `nil` when the plugin does not own it."
   @spec descriptor(atom()) :: descriptor() | nil
   def descriptor(name), do: Map.get(@by_name, name)

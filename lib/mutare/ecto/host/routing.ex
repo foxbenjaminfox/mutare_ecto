@@ -130,6 +130,12 @@ defmodule Mutare.Ecto.Host.Routing do
     end
   end
 
+  # Only `:dynamic`/`:skip` (registered `:skip`, so core never calls `route_arguments/2` for
+  # them — reachable here only through a direct `treatments/1` call) and `nil` (a name the
+  # plugin doesn't own) land here. A **new** Surface kind registers `:routing` by default
+  # (`Surface.macro_registrations/0`), so it must take a real branch above —
+  # `macro_kind_parity_test.exs` probes every `Surface.macro_kinds/0` value and fails until
+  # the routing decision for the kind is explicit.
   defp route_macro(_kind, _name, _args), do: []
 
   # The base routing for a query-threading macro: mark the first argument `:expression` **iff it is
