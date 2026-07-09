@@ -148,9 +148,10 @@ defmodule Mutare.Ecto.Fragment do
   (`Mutare.Analyze.expression_mutations/3`) and relays the rebuilds through its own delivery
   with `producer:` attribution (`Mutare.Ecto.Host.Catalog.subcontracted/3`), so a pin interior
   is analyzed exactly like top-level Elixir — core's families reason about the Elixir, and the
-  plugin's own `mutate/2` surface reasons about any Ecto inside it (an inner `dynamic(...)`
-  literal mutates once, under SQL semantics) — while delivery stays the caller's (the host's
-  weave, or the whole-call in-place rewrite).
+  plugin's whole surface reasons about any Ecto inside it: an inner `dynamic(...)` literal
+  mutates once, under SQL semantics, and an inner `from`'s hosted conditions are lowered by
+  core's collect to whole-call rebuilds — while delivery stays the caller's (the host's weave,
+  or the whole-call in-place rewrite).
 
   The walk honors exactly the catalog's own descent rules, so a caller cannot reach an island the
   catalog would not have walked past: an `is_nil` argument is never entered (value mutants of a

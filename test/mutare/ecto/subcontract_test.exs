@@ -979,6 +979,77 @@ defmodule Mutare.Ecto.SubcontractTest do
     end
   end
 
+  describe "full set — an inner from inside a pin: hosted conditions lowered to rebuilds" do
+    # The hosted half of the same contract. A standalone query built *inside* a pin interior
+    # (`^repo.all(from(...))`) is offered whole-call to the plugin (`Query`'s whole-`from`
+    # rewrites relay as before), and its `where:` condition's in-fragment swaps — deliverable
+    # only by hosting at top level — are **lowered** by core's collect: each hosted target
+    # mutant comes back as the whole inner `from` rebuilt with the mutated condition spliced
+    # `^dynamic(...)`-pinned (the woven selector degenerated to its selected branch), and rides
+    # the outer weave as an ordinary relayed branch. Hosted delivery never nests; hosted
+    # semantics are never lost.
+
+    @inner_from """
+    defmodule M do
+      import Ecto.Query
+
+      def q(q, repo) do
+        where(q, [u], u.id in ^repo.all(from(p in Post, where: p.views > 10, select: p.id)))
+      end
+    end
+    """
+
+    test "the inner from's condition swap surfaces exactly once, under :ecto, as a rebuild" do
+      ecto = ecto_diffs(@inner_from, @with_core)
+
+      swaps = Enum.filter(ecto, fn {_o, m} -> m =~ "p.views >= 10" end)
+      assert [{original, mutated}] = swaps
+
+      # The rebuild is the lowered form: the mutated condition spliced back `^dynamic`-pinned —
+      # by construction the value the top-level weave takes when this branch is active.
+      assert original =~ "p.views > 10"
+      assert mutated =~ "where: ^"
+      assert mutated =~ "dynamic(p, p.views >= 10)"
+
+      # The literal-bound bumps of the inner condition ride the same lowering.
+      assert Enum.any?(ecto, fn {_o, m} -> m =~ "p.views > 11" end)
+
+      # The inner from's whole-call rewrites (the clause drop) still relay alongside.
+      assert Enum.any?(ecto, fn {_o, m} ->
+               m =~ "u.id in ^repo.all(from(p in Post, select: p.id))"
+             end)
+
+      assert_compiles(@inner_from, @with_core)
+    end
+
+    test "core never reasons inside the inner from's condition" do
+      refute Enum.any?(diffs(@inner_from, @with_core), fn {mutator, _o, mutated} ->
+               mutator != :ecto and mutated =~ "p.views >= 10"
+             end)
+    end
+
+    test "the plugin's families: filter governs the lowered mutants (producer funnel)" do
+      opts = [mutators: [{Mutare.Ecto, repo: MyApp.Repo, families: [:null_predicate]}]]
+
+      refute Enum.any?(ecto_diffs(@inner_from, opts), fn {_o, m} ->
+               m =~ "p.views >= 10" or m =~ "p.views > 11"
+             end)
+    end
+
+    test "the equivalence note rides the lowered mutant, exactly as at top level" do
+      %Mutare.Transform.Result{mutants: sites} =
+        Mutare.transform_string(@inner_from,
+          file: "inner_from_note_fixture.ex",
+          mutators: Mutare.Ecto.TestSupport.mutators(@with_core),
+          expand_uses: true
+        )
+
+      site = Enum.find(sites, &(&1.mutator == :ecto and &1.mutated_code =~ "p.views >= 10"))
+      assert site, "no :ecto site for the inner-from comparison swap"
+      assert site.note =~ "kill may require"
+    end
+  end
+
   describe "totality — subcontracted/2,3 tolerates a context with no :mutators key" do
     # `Map.get(context, :mutators, [])` defaults to `[]` when the key is absent. Every real caller
     # (`host/2`, `Mutare.Ecto.Dynamic`) reaches this through core's `analyze_known_macro/5`, which

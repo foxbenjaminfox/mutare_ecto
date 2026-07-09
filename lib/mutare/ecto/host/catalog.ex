@@ -106,10 +106,13 @@ defmodule Mutare.Ecto.Host.Catalog do
   read from `context.mutators` — the run's **full** enabled spec set, which core threads into
   both seams this is called from (`host/2` and the whole-call `mutate/2` offer of a registered
   macro). The full set is what makes the interior *ordinary top-level Elixir* with no special
-  case: core's families own the Elixir, and this plugin's own `mutate/2` surface participates
-  too — an inner `dynamic(...)` literal is offered whole-call to `Mutare.Ecto.Dynamic`
-  (`Mutare.Analyze.expression_mutations/3` masks only `host/2`, so hosted delivery never
-  nests). No family tagging here — and the explicit `producer:` makes core skip the *relaying*
+  case: core's families own the Elixir, and this plugin's whole surface participates too — an
+  inner `dynamic(...)` literal is offered whole-call to `Mutare.Ecto.Dynamic`, and an inner
+  `from`/clause macro's hosted conditions are **lowered** by core's collect (each hosted target
+  mutant comes back as the inner call rebuilt with the mutated condition spliced
+  `^dynamic`-pinned — the woven selector degenerated to its selected branch — so hosted
+  delivery never nests while hosted semantics are never lost). No family tagging here — and
+  the explicit `producer:` makes core skip the *relaying*
   `finalize/2` on both paths: each mutant's own producer funnel (a core family's, or this
   plugin's `families:` filter + equivalence note) already ran at generation, inside the seam.
 
@@ -140,6 +143,11 @@ defmodule Mutare.Ecto.Host.Catalog do
   nested Ecto surface: an inner `dynamic(... exists(from(..., where: ..., select: ...)))`
   legitimately drops a subquery filter by removing the `where:` clause key from the inner
   `from`, and that is a valid SQL mutant rather than a renamed pinned filter field.
+
+  Known cost of the over-approximation, on the guarded (non-Ecto-producer) branch: a keyword
+  key that *is* plain data — an option list built inside the pin, say — is protected too, so a
+  core mutant that renames or deletes such a pair (e.g. `:keyword_delete`) is dropped along
+  with the field renames.
   """
   @spec subcontracted(Macro.t(), Mutare.Mutator.context(), (Macro.t() -> Macro.t())) ::
           [Mutation.t()]
@@ -156,7 +164,10 @@ defmodule Mutare.Ecto.Host.Catalog do
 
   # The plugin's own relayed mutants have already been produced under Ecto's SQL catalog. Their
   # keyword key changes are Ecto query-shape mutations (for example an inner `where:` clause
-  # drop), not core's view of a pinned keyword filter as ordinary Elixir data.
+  # drop), not core's view of a pinned keyword filter as ordinary Elixir data. The bypass is
+  # deliberately **self-only** (matched by this plugin's module, `:as` renames included): any
+  # other producer — a core family or a third-party mutator — reasons in Elixir's semantics,
+  # where the column-rename hazard is exactly the one being guarded.
   defp keyword_filter_keys_preserved?(
          %Mutare.Mutator.Spec{module: Mutare.Ecto},
          _original,

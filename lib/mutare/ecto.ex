@@ -112,8 +112,9 @@ defmodule Mutare.Ecto do
       run's enabled specs), where `Mutare.Ecto.Dynamic` rewrites its condition through
       the same SQL catalog a hosted `where`/`having` uses **and** sub-contracts each `^` pin's
       interior to generation over that full set — core's families for the Elixir, this plugin's
-      own surface for any Ecto inside it — all delivered in place (the call sits in ordinary
-      expression position, so no host is needed).
+      own surface for any Ecto inside it (whole-call offers directly; hosted conditions
+      lowered by core's collect to whole-call rebuilds) — all delivered in place (the call sits
+      in ordinary expression position, so no host is needed).
 
   Resolution of these macros relies on Mutare's `use`-expansion (so the
   `use Ecto.Schema`-injected `import Ecto.Schema`, and a `use MyAppWeb, :live_view`-bundled

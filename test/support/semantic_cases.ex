@@ -227,6 +227,45 @@ defmodule Mutare.Ecto.SemanticCases do
           assert mutant == [1, 2, 4, 5, 6]
           assert mutant -- baseline == [1, 4]
         end
+
+        # The lowered twin: the island's *hosted* Ecto. A standalone query built inside the pin
+        # (`^Repo.all(from ...)`) has its `where:` condition swap deliverable only by hosting —
+        # which cannot nest — so core's collect **lowers** the hosted target: the mutant is the
+        # whole inner `from` rebuilt with the mutated condition spliced `^dynamic(...)`-pinned,
+        # by construction the value the weave takes when that branch is active. Proves the
+        # lowered rebuild builds a valid query at runtime and the inner result set moves the
+        # outer rows exactly as the swap predicts.
+        test "an inner from's lowered condition mutant is live through the woven pin" do
+          {mod, sites} =
+            H.compile(
+              """
+              defmodule Q do
+                import Ecto.Query
+                alias MyApp.{Post, User}
+                def q do
+                  from(u in User,
+                    where:
+                      u.id in ^#{inspect(@repo)}.all(
+                        from(p in Post, where: p.views > 10, select: p.user_id)
+                      ),
+                    select: u.id
+                  )
+                end
+              end
+              """,
+              mutators: [{Mutare.Ecto, repo: @repo}]
+            )
+
+          {baseline, mutant} =
+            observe_ids(mod, sites, {~r/p\.views > 10/, ~r/p\.views >= 10/})
+
+          # Baseline: only P2 (views 20) clears the bound — its author, Bob.
+          assert baseline == [2]
+
+          # The lowered `>=` mutant admits P1 (views == 10, the boundary), adding Alice: the
+          # rebuilt inner query really is the one the pin evaluated and bound.
+          assert mutant == [1, 2]
+        end
       end
 
       describe "Shorthand interpolation — a core integer mutant of a `where: [col: v]` value" do

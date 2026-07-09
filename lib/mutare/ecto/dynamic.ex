@@ -34,9 +34,11 @@ defmodule Mutare.Ecto.Dynamic do
   belongs to the producing family, while delivery stays this module's whole-call rewrite
   through the ordinary in-place selector. The full set includes this plugin itself, so a
   further `dynamic(...)` literal buried inside the pin is offered back to **this module** —
-  its SQL mutates once, under SQL semantics, recursing one pin level at a time. (A bare
-  `^other` body contributes nothing of its own — a variable is mutated nowhere by core — so it
-  degrades to no mutants without a special case.)
+  its SQL mutates once, under SQL semantics, recursing one pin level at a time — and an inner
+  `from`/clause macro's hosted conditions come back **lowered** by core's collect (the inner
+  call rebuilt around the mutated condition, `^dynamic`-pinned, in place of a weave that
+  cannot nest). (A bare `^other` body contributes nothing of its own — a variable is mutated
+  nowhere by core — so it degrades to no mutants without a special case.)
   """
 
   alias Mutare.Ecto.{Config, Tag}

@@ -82,8 +82,9 @@ Features that have gone that route after such a decision: the selector host, `:r
 routing, `:interpolated` in-place delivery, the `Site` `note` channel, the plugin-config toolkit
 (`c:Mutare.Mutator.init/1` + `use Mutare.Mutator.Families`), `:mutators` threaded into the
 whole-call `mutate/2` offer of a registered macro (the free-standing-`dynamic` sub-contract seam;
-later widened to the **full** spec set with `host/2` masked in collect, so a pin interior is
-analyzed like top-level Elixir and an inner `dynamic(...)` reaches its owner),
+later widened to the **full** spec set — with a nested host's targets *lowered* to whole-call
+rebuilds in collect — so a pin interior is analyzed like top-level Elixir: an inner
+`dynamic(...)` reaches its owner and an inner `from`'s hosted conditions surface as rebuilds),
 the `c:Mutare.Mutator.finalize/2` enrichment seam core runs on both delivery paths, and the
 `c:Mutare.Mutator.required_modules/0` environment guard.
 
@@ -184,8 +185,11 @@ selector because a query clause can't host a runtime `case`:
   descent rules, `Host.Catalog` runs `Mutare.Analyze.expression_mutations/3` over
   `context.mutators` (the run's enabled specs — this plugin included through its ordinary
   `mutate/2` surface, so an inline `dynamic(...)` literal inside the pin mutates once, under SQL
-  semantics, by `Dynamic`; core's `expression_mutations` masks only `host/2`, so hosted delivery
-  never nests) and relays each rebuild as a `Mutation` with `producer:` set — so the Site belongs
+  semantics, by `Dynamic`, and an inner `from`'s hosted `where:` swaps come back **lowered** —
+  each hosted target mutant as the inner call rebuilt with the mutated condition spliced
+  `^dynamic`-pinned, the woven selector degenerated to its selected branch — so hosted delivery
+  never nests while hosted semantics are never lost) and relays each rebuild as a `Mutation`
+  with `producer:` set — so the Site belongs
   to the producing family while delivery rides the host's weave. One positional rule guards the
   seam: a **keyword key in a condition position names a column**, so a relayed mutant that changes
   the interior's keyword-key set is dropped (`subcontracted/3` — the pin-side application of the
@@ -285,8 +289,11 @@ Every mutation is tagged with an SQL **family**; `config.ex` holds the canonical
   set (`Mutare.Analyze.expression_mutations/3` over `context.mutators`), i.e. analyzed exactly
   like top-level Elixir-that-includes-Ecto — core's families own the Elixir, and any Ecto
   surface *inside* the interior is the plugin's own again (an inline `dynamic(...)` literal is
-  offered whole-call to `Dynamic` and mutates once, under SQL semantics; ownership recurses one
-  pin level at a time). Each rebuild is relayed with `producer:` so the Site and ignore
+  offered whole-call to `Dynamic` and mutates once, under SQL semantics; an inner `from`'s
+  hosted conditions are **lowered** by collect to whole-call rebuilds — hosting is a delivery
+  optimization, not a semantic category, so where the weave is unavailable the same mutant
+  ships as the rebuilt call; ownership recurses one pin level at a time). Each rebuild is
+  relayed with `producer:` so the Site and ignore
   vocabulary belong to the producing family — delivery stays the relayer's: the host's weave for
   a hosted `where`/`having`, the whole-call in-place rewrite for a free-standing `dynamic`. A
   `^value` referencing an upstream binding is mutated by core where it is bound, as always.
