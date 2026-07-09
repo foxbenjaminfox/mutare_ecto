@@ -34,8 +34,9 @@ defmodule Mutare.Ecto.Host.Bindings do
   end
 
   @doc """
-  The `from` keyword entries whose join bindings are visible to the clause at `index` — every
-  entry up to and **including** it (the truncated list `from/2` then interprets).
+  The `from` clause list truncated to the entries whose join bindings are visible to the clause at
+  `index` — every entry up to and **including** it (`KeywordList.take/2` owns the truncation
+  itself; this names the offset).
 
   Including the entry itself (`index + 1`, not `index`) is harmless: a *hostable* key
   (`where`/`having`/`on` — `Surface.from_clause?(_, :hosted)`) never also carries
@@ -45,9 +46,9 @@ defmodule Mutare.Ecto.Host.Bindings do
   while going the other way (`index + 2`, pulling in a *future* join) is a real bug (see "each
   join condition sees bindings introduced up to that join, not future joins" in host_test.exs).
   """
-  @spec visible_to([Entry.t()], non_neg_integer()) :: [Entry.t()]
+  @spec visible_to(KeywordList.t(), non_neg_integer()) :: KeywordList.t()
   # mutare:ignore[literal:pred] equivalent: the entry at `index` never contributes a binding
-  def visible_to(entries, index), do: Enum.take(entries, index + 1)
+  def visible_to(%KeywordList{} = clauses, index), do: KeywordList.take(clauses, index + 1)
 
   @doc "The dynamic binding list visible to a standalone `join` on-condition."
   @spec join([Macro.t()]) :: [Macro.t()]

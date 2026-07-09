@@ -35,7 +35,7 @@ defmodule Mutare.Ecto.Ordering do
   # runtime ordering, a `fragment`, or a computed expression is left untouched (flipping it would
   # mutate a value, not a direction).
 
-  alias Mutare.Ecto.AST
+  alias Mutare.Ecto.{AST, Tag}
 
   # Direction axis: flip `:asc`↔`:desc`, preserving any nulls qualifier. One target per key.
   @direction_flips %{
@@ -61,23 +61,22 @@ defmodule Mutare.Ecto.Ordering do
   @implicit_label "asc"
 
   @doc """
-  Mutated ordering values for `value` as `{family, mutated_value}` pairs — one per mutated axis
+  Mutated ordering values for `value` as self-tagging `Mutare.Ecto.Tag`s — one per mutated axis
   per entry: an explicitly-keyed `direction: field` pair flips its direction (`:ordering`) and, if
   nulls-qualified, its placement (`:ordering_nulls`); a bare, implicitly-ascending term (`:name`,
   `u.name`) gets its implicit `asc` re-tagged `desc` (`:ordering`). `[]` for a term we don't
   re-tag (a `^`-pinned ordering, a `fragment`, a computed expression). Sourceror wraps a list
   literal in a value position in a single-element `__block__`, so that is unwrapped first.
   """
-  @spec flips(Macro.t()) :: [{:ordering | :ordering_nulls, Macro.t(), String.t()}]
+  @spec flips(Macro.t()) :: [Tag.t()]
   def flips({:__block__, _meta, [inner]}) when is_list(inner), do: flips(inner)
 
   def flips(value) when is_list(value) do
     value
     |> Enum.with_index()
     |> Enum.flat_map(fn {entry, index} ->
-      for {family, flipped, label} <- axis_flips(entry) do
-        {family, List.replace_at(value, index, flipped), label}
-      end
+      for tag <- axis_flips(entry),
+          do: Tag.map_node(tag, &List.replace_at(value, index, &1))
     end)
   end
 
@@ -86,7 +85,7 @@ defmodule Mutare.Ecto.Ordering do
   def flips(value) do
     case implicit_desc(value) do
       nil -> []
-      pair -> [{:ordering, [pair], @implicit_label}]
+      pair -> [Tag.new(:ordering, [pair], @implicit_label)]
     end
   end
 
@@ -121,7 +120,7 @@ defmodule Mutare.Ecto.Ordering do
   defp axis_flips(element) do
     case implicit_desc(element) do
       nil -> []
-      pair -> [{:ordering, pair, @implicit_label}]
+      pair -> [Tag.new(:ordering, pair, @implicit_label)]
     end
   end
 
@@ -161,10 +160,12 @@ defmodule Mutare.Ecto.Ordering do
   defp tag(_family, nil, _field, _direction), do: []
 
   defp tag(:ordering, to, field, direction),
-    do: [{:ordering, {Mutare.AST.keyword_key(to), field}, direction_label(direction)}]
+    do: [Tag.new(:ordering, {Mutare.AST.keyword_key(to), field}, direction_label(direction))]
 
   defp tag(:ordering_nulls, to, field, direction),
-    do: [{:ordering_nulls, {Mutare.AST.keyword_key(to), field}, placement_label(direction)}]
+    do: [
+      Tag.new(:ordering_nulls, {Mutare.AST.keyword_key(to), field}, placement_label(direction))
+    ]
 
   # The direction half of a sort key (`:asc_nulls_first` → `"asc"`); every flippable key starts asc/desc.
   defp direction_label(direction) do

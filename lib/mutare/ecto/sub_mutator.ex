@@ -32,23 +32,15 @@ defmodule Mutare.Ecto.SubMutator do
   # an unreachable clause.
 
   alias Mutare.Ecto.AST.QueryCall
-  alias Mutare.Ecto.Config
 
   @typedoc """
-  One produced mutation: its SQL `family` and mutated `node`, optionally with a finer
-  `# mutare:ignore` label (a swap's operator / a value's kind — see `Mutare.Ecto.Config.tagged/1`).
-  A structural family omits the label; a swap/value family appends it. A whole-`from` rewrite
-  (`Mutare.Ecto.Query`) additionally carries a `Mutare.Mutator.Mutation.Attribution` (from
-  `Mutation.at/2`/`at_drop/1`) so its site is reported at the inner clause it changed, not the
-  whole `from`.
+  One produced mutation — the uniform `%Mutare.Ecto.Tag{}`: its SQL `family` and mutated `node`,
+  optionally a finer `# mutare:ignore` `label` (a swap's operator / a value's kind — a structural
+  family leaves it `nil`; see `Mutare.Ecto.Config.tagged/1`) and, for a whole-`from` rewrite
+  (`Mutare.Ecto.Query`), an `attribution` (`Mutation.at/2`/`at_drop/1`) so its site is reported at
+  the inner clause it changed, not the whole `from`.
   """
-  @type tagged ::
-          {family :: Config.family(), mutated :: Macro.t()}
-          | {family :: Config.family(), mutated :: Macro.t(),
-             label :: String.t() | [String.t()] | nil}
-          | {family :: Config.family(), mutated :: Macro.t(),
-             label :: String.t() | [String.t()] | nil,
-             attribution :: Mutare.Mutator.Mutation.Attribution.t()}
+  @type tagged :: Mutare.Ecto.Tag.t()
 
   @callback mutations(node :: Macro.t() | QueryCall.t(), context :: Mutare.Mutator.context()) :: [
               tagged() | Mutare.Mutator.Mutation.t()

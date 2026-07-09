@@ -82,6 +82,6 @@ defmodule Mutare.Ecto.FragmentWalkParityTest do
     src
     |> Sourceror.parse_string!()
     |> Fragment.mutants()
-    |> Enum.any?(fn {family, _node, _label} -> family == :integer_literal end)
+    |> Enum.any?(&(&1.family == :integer_literal))
   end
 end

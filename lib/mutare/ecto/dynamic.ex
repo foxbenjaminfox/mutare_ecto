@@ -36,7 +36,7 @@ defmodule Mutare.Ecto.Dynamic do
   a variable is mutated nowhere by core — so it degrades to no mutants without a special case.)
   """
 
-  alias Mutare.Ecto.Config
+  alias Mutare.Ecto.{Config, Tag}
   alias Mutare.Ecto.AST.QueryCall
   alias Mutare.Ecto.Host.{Bindings, Catalog}
 
@@ -45,7 +45,7 @@ defmodule Mutare.Ecto.Dynamic do
   @doc """
   Every single-point in-fragment mutant of a free-standing `dynamic/1,2` call, each the **whole
   call** rebuilt with one condition position swapped — the plugin's own catalog mutants as
-  `{family, node, label}` tags, the sub-contracted island mutants as producer-attributed
+  `Mutare.Ecto.Tag`s, the sub-contracted island mutants as producer-attributed
   `Mutare.Mutator.Mutation`s (passed through `Mutare.Ecto.mutate/2` untouched) — or `[]` when
   there is nothing to mutate (a body with no condition, or a top-level-pin body).
 
@@ -72,8 +72,8 @@ defmodule Mutare.Ecto.Dynamic do
         # `families:` filter and the equivalence note. For a top-level-pin body the catalog is empty
         # (a `^` has no SQL swap); the sub-contract below carries its interior to core.
         own =
-          for {family, mutated, label} <- Catalog.own_catalog(condition, config),
-              do: {family, QueryCall.replace_arg(call, index, mutated), label}
+          for tag <- Catalog.own_catalog(condition, config),
+              do: Tag.map_node(tag, &QueryCall.replace_arg(call, index, &1))
 
         # mutare:ignore[operand_swap] equivalent — two independent mutant lists, consumed as a set
         own ++ subcontracted(condition, call, index, context)

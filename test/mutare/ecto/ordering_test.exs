@@ -12,7 +12,7 @@ defmodule Mutare.Ecto.OrderingTest do
     code
     |> Sourceror.parse_string!()
     |> Ordering.flips()
-    |> Enum.map(fn {family, node, _label} -> {family, Sourceror.to_string(node)} end)
+    |> Enum.map(&{&1.family, Sourceror.to_string(&1.node)})
   end
 
   # The `{family, rendered, finer_label}` triples, for asserting the per-axis label.
@@ -20,7 +20,7 @@ defmodule Mutare.Ecto.OrderingTest do
     code
     |> Sourceror.parse_string!()
     |> Ordering.flips()
-    |> Enum.map(fn {family, node, label} -> {family, Sourceror.to_string(node), label} end)
+    |> Enum.map(&{&1.family, Sourceror.to_string(&1.node), &1.label})
   end
 
   test "a bare direction flips only its direction (no nulls placement declared)" do

@@ -1,7 +1,7 @@
 defmodule Mutare.Ecto.AggregateTest do
   use ExUnit.Case, async: true
 
-  alias Mutare.Ecto.Aggregate
+  alias Mutare.Ecto.{Aggregate, Tag}
 
   # Unit tests for the select-expression aggregate walker — `Aggregate.swaps/1` over a parsed
   # select expression, rendered back. Delivery (whole-`from` vs standalone) is tested in
@@ -12,7 +12,7 @@ defmodule Mutare.Ecto.AggregateTest do
     code
     |> Sourceror.parse_string!()
     |> Aggregate.swaps()
-    |> Enum.map(fn {:aggregate, node, _label} -> Sourceror.to_string(node) end)
+    |> Enum.map(fn %Tag{family: :aggregate, node: node} -> Sourceror.to_string(node) end)
     |> MapSet.new()
   end
 
@@ -21,7 +21,9 @@ defmodule Mutare.Ecto.AggregateTest do
     code
     |> Sourceror.parse_string!()
     |> Aggregate.swaps()
-    |> Enum.map(fn {:aggregate, node, label} -> {Sourceror.to_string(node), label} end)
+    |> Enum.map(fn %Tag{family: :aggregate, node: node, label: label} ->
+      {Sourceror.to_string(node), label}
+    end)
     |> Map.new()
   end
 
@@ -34,7 +36,7 @@ defmodule Mutare.Ecto.AggregateTest do
 
   test "each swap is self-tagged with the :aggregate family" do
     tagged = "sum(u.amount)" |> Sourceror.parse_string!() |> Aggregate.swaps()
-    assert [{:aggregate, _node, _label}] = tagged
+    assert [%Tag{family: :aggregate}] = tagged
   end
 
   test "each swap carries the source function as its finer label" do

@@ -107,14 +107,7 @@ defmodule Mutare.Ecto.Fragment do
   macro's own, so it is left raw. We mutate only what the author wrote in a form we understand.
   """
 
-  alias Mutare.Ecto.{Config, Descent, Scalar, Subquery}
-
-  # The finer `# mutare:ignore` label(s) a mutant carries beyond its family — the operator a swap
-  # mutates (`<`), or a literal's kind (`zero`) — or a *list* when one mutant collapses several kinds
-  # (a deduped `0` is both `pred` and `zero`). It lets `# mutare:ignore[ecto:<]` suppress just the
-  # `<` swap while the `>` swap on the same line keeps running. Folded into the plugin's variant
-  # vocabulary by `Mutare.Ecto.variants/0` (the labels here are the source of `variant_labels/0`).
-  @type label :: String.t() | [String.t()]
+  alias Mutare.Ecto.{Config, Descent, Scalar, Subquery, Tag}
 
   # Each operator's single SQL-meaningful swap, by family. `:count`-style arity-changing or
   # NULL-equivalent rewrites are deliberately absent. The `like`/`ilike`
@@ -135,15 +128,15 @@ defmodule Mutare.Ecto.Fragment do
   @string_sentinel Mutare.AST.sentinel_string()
 
   @doc """
-  Every single-point mutant of a `where`/`having` condition as `{family, node, label}` triples, or
+  Every single-point mutant of a `where`/`having` condition as self-tagging `Mutare.Ecto.Tag`s, or
   `[]` when the condition has nothing the catalog mutates (a bare boolean column, a keyword-shorthand
-  value, an interpolation). One triple per mutatable position, each the full condition with that one
-  position swapped, tagged with the SQL `family` that produced it (so the caller can filter by
-  `families:`) **and** the finer `label` naming the operator/kind it swapped (so a qualified
+  value, an interpolation). One tag per mutatable position, each the full condition with that one
+  position swapped, tagged with the SQL family that produced it (so the caller can filter by
+  `families:`) **and** the finer label naming the operator/kind it swapped (so a qualified
   `# mutare:ignore[ecto:<]` can suppress just that one). `opts` carries `dialects:` — the
   `like`↔`ilike` swap is emitted only under `:postgres`.
   """
-  @spec mutants(Macro.t(), keyword() | Config.t()) :: [{Config.family(), Macro.t(), label()}]
+  @spec mutants(Macro.t(), keyword() | Config.t()) :: [Tag.t()]
   def mutants(condition, opts \\ []), do: do_mutants(condition, opts, nil)
 
   @doc """
@@ -241,7 +234,7 @@ defmodule Mutare.Ecto.Fragment do
   # Both directions are tagged `"is_nil"` (`not is_nil` has a space — not a wire-safe label), so
   # `# mutare:ignore[ecto:is_nil]` suppresses the null-predicate flip whichever way it points.
   defp do_mutants({:not, _meta, [{:is_nil, _, [_arg]} = inner]}, _opts, _position),
-    do: [{:null_predicate, inner, "is_nil"}]
+    do: [Tag.new(:null_predicate, inner, "is_nil")]
 
   # `is_nil(x)` → `not is_nil(x)`. The argument is deliberately **not** descended — and not
   # because there is nothing there (`is_nil(u.a + u.b)` is legal SQL): the value families
@@ -250,7 +243,7 @@ defmodule Mutare.Ecto.Fragment do
   # provably equivalent — and the coalesce drop, the one NULL-ness-changing mutation, would only
   # fire under an `is_nil` the author already wrote constantly false. Clean meta on the fresh `not`.
   defp do_mutants({:is_nil, _meta, [_arg]} = node, _opts, _position),
-    do: [{:null_predicate, {:not, [], [node]}, "is_nil"}]
+    do: [Tag.new(:null_predicate, {:not, [], [node]}, "is_nil")]
 
   # Membership. `x not in list` → `x in list`: flip the whole predicate as a unit (no double
   # negation) — but unlike `is_nil`, the operands *are* worth descending: an arithmetic swap on
@@ -260,7 +253,7 @@ defmodule Mutare.Ecto.Fragment do
   # (`not in` has a space), so `# mutare:ignore[ecto:in]` names the polarity flip.
   defp do_mutants({:not, meta, [{:in, imeta, [_l, _r] = iargs} = inner]}, opts, _position) do
     [
-      {:membership, inner, "in"}
+      Tag.new(:membership, inner, "in")
       # mutare:ignore[operand_swap] equivalent — two independent mutant lists, consumed as a set
       | rewrap(element_drops(inner) ++ lift(:in, imeta, iargs, opts), meta)
     ]
@@ -270,7 +263,7 @@ defmodule Mutare.Ecto.Fragment do
   # written list and the operand descent — a pinned `^list` or a field reference yields nothing.
   defp do_mutants({:in, meta, [_l, _r] = args} = node, opts, _position) do
     [
-      {:membership, {:not, [], [node]}, "in"}
+      Tag.new(:membership, {:not, [], [node]}, "in")
       # mutare:ignore[operand_swap] equivalent — two independent mutant lists, consumed as a set
       | element_drops(node) ++ lift(:in, meta, args, opts)
     ]
@@ -284,22 +277,22 @@ defmodule Mutare.Ecto.Fragment do
   # unobserved by EXISTS, so it is suppressed there), each re-wrapped inside the `not exists`.
   defp do_mutants({:not, not_meta, [{:exists, ex_meta, [arg]} = inner]}, opts, _position) do
     interior =
-      for {family, mutated, label} <- Subquery.interior_mutants(arg, opts, :existence),
-          do: {family, {:not, not_meta, [{:exists, ex_meta, [mutated]}]}, label}
+      for tag <- Subquery.interior_mutants(arg, opts, :existence),
+          do: Tag.map_node(tag, &{:not, not_meta, [{:exists, ex_meta, [&1]}]})
 
     # mutare:ignore[operand_swap] equivalent — the polarity flip and the interior set are independent, consumed as a set
-    [{:membership, inner, "exists"} | interior]
+    [Tag.new(:membership, inner, "exists") | interior]
   end
 
   # `exists(subquery)` → `not exists(subquery)` (clean meta on the fresh `not`), plus the subquery's
   # interior mutants in `:existence` mode, each re-wrapped inside the `exists`.
   defp do_mutants({:exists, ex_meta, [arg]} = node, opts, _position) do
     interior =
-      for {family, mutated, label} <- Subquery.interior_mutants(arg, opts, :existence),
-          do: {family, {:exists, ex_meta, [mutated]}, label}
+      for tag <- Subquery.interior_mutants(arg, opts, :existence),
+          do: Tag.map_node(tag, &{:exists, ex_meta, [&1]})
 
     # mutare:ignore[operand_swap] equivalent — the polarity flip and the interior set are independent, consumed as a set
-    [{:membership, {:not, [], [node]}, "exists"} | interior]
+    [Tag.new(:membership, {:not, [], [node]}, "exists") | interior]
   end
 
   # An interpolation island (`^expr`): ordinary Elixir evaluated at runtime and bound as a query
@@ -330,8 +323,8 @@ defmodule Mutare.Ecto.Fragment do
   # `json_extract_path` path element must know it is one — see `json_path_position?/1`).
   # mutare:ignore[guard_drop] equivalent — the literal clause above already claims every non-list scalar Sourceror wraps in a single-element block (int/float/binary/atom), so by clause order only a genuine list ever reaches here regardless of this guard
   defp do_mutants({:__block__, meta, [list]}, opts, position) when is_list(list) do
-    for {family, mutated, label} <- do_mutants(list, opts, position),
-        do: {family, {:__block__, meta, [mutated]}, label}
+    for tag <- do_mutants(list, opts, position),
+        do: Tag.map_node(tag, &{:__block__, meta, [&1]})
   end
 
   # An operator/connective (atom form): offer its own swap (if any), then descend into its
@@ -364,8 +357,8 @@ defmodule Mutare.Ecto.Fragment do
     list
     |> Enum.with_index()
     |> Enum.flat_map(fn {el, index} ->
-      for {family, mutated, label} <- do_mutants(el, opts, position),
-          do: {family, List.replace_at(list, index, mutated), label}
+      for tag <- do_mutants(el, opts, position),
+          do: Tag.map_node(tag, &List.replace_at(list, index, &1))
     end)
   end
 
@@ -382,7 +375,7 @@ defmodule Mutare.Ecto.Fragment do
   defp element_drops({:in, meta, [l, {:__block__, lmeta, [elems]}]}) when is_list(elems) do
     for index <- 0..(length(elems) - 1)//1 do
       dropped = {:__block__, lmeta, [List.delete_at(elems, index)]}
-      {:membership, {:in, meta, [l, dropped]}, "element"}
+      Tag.new(:membership, {:in, meta, [l, dropped]}, "element")
     end
   end
 
@@ -390,7 +383,8 @@ defmodule Mutare.Ecto.Fragment do
 
   # Rebuild each descent/drop mutant of a reverse-polarity unit's inner predicate back inside the
   # written `not`, keeping the tag — so the emitted node is the full condition, single-point.
-  defp rewrap(mutants, meta), do: for({f, m, l} <- mutants, do: {f, {:not, meta, [m]}, l})
+  defp rewrap(mutants, meta),
+    do: Enum.map(mutants, &Tag.map_node(&1, fn m -> {:not, meta, [m]} end))
 
   # IntegerLiteral: an integer literal written into the fragment (Sourceror-wrapped). Boundary
   # (`n±1`) plus the zero sentinel, deduped and never equal to `n` — owned here so it stays
@@ -417,7 +411,7 @@ defmodule Mutare.Ecto.Fragment do
   # comparisons (rarely idiomatic), but at a boolean used elsewhere in a fragment — worth mutating
   # exactly when it is worth using. `nil` is *not* a boolean and is left alone (NULL/absence).
   defp literal_mutants({:__block__, _meta, [bool]}) when is_boolean(bool),
-    do: [{:boolean_literal, Mutare.AST.literal(not bool), "negate"}]
+    do: [Tag.new(:boolean_literal, Mutare.AST.literal(not bool), "negate")]
 
   # AtomLiteral: any other literal atom → the `:mutare` sentinel (core's `AtomLiteral` convention),
   # dropped when the atom already is the sentinel. `true`/`false` are BooleanLiteral's (above) and
@@ -425,7 +419,7 @@ defmodule Mutare.Ecto.Fragment do
   defp literal_mutants({:__block__, _meta, [atom]})
        # mutare:ignore[literal] equivalent — the preceding is_boolean/1 clause already claims every true/false atom, so by clause order neither value can ever reach this guard regardless of which of the two is named here
        when is_atom(atom) and atom not in [true, false, nil] and atom != @atom_sentinel,
-       do: [{:atom_literal, Mutare.AST.literal(@atom_sentinel), "sentinel"}]
+       do: [Tag.new(:atom_literal, Mutare.AST.literal(@atom_sentinel), "sentinel")]
 
   # `nil` and the already-sentinel atom carry no clean swap.
   defp literal_mutants(_node), do: []
@@ -489,18 +483,18 @@ defmodule Mutare.Ecto.Fragment do
   defp local(form, meta, args, opts) do
     cond do
       Map.has_key?(@comparison_swaps, form) ->
-        [{:comparison, {@comparison_swaps[form], meta, args}, to_string(form)}]
+        [Tag.new(:comparison, {@comparison_swaps[form], meta, args}, to_string(form))]
 
       Map.has_key?(@connective_swaps, form) ->
-        [{:connective, {@connective_swaps[form], meta, args}, to_string(form)}]
+        [Tag.new(:connective, {@connective_swaps[form], meta, args}, to_string(form))]
 
       Map.has_key?(@membership_op_swaps, form) and Config.dialect_enabled?(opts, [:postgres]) ->
-        [{:membership, {@membership_op_swaps[form], meta, args}, to_string(form)}]
+        [Tag.new(:membership, {@membership_op_swaps[form], meta, args}, to_string(form))]
 
       # `ago(n, unit)` ↔ `from_now(n, unit)` — Ecto's interval helpers are exactly /2, so an
       # off-arity same-named call is an author helper, left alone.
       Map.has_key?(@temporal_swaps, form) and length(args) == 2 ->
-        [{:temporal, {@temporal_swaps[form], meta, args}, to_string(form)}]
+        [Tag.new(:temporal, {@temporal_swaps[form], meta, args}, to_string(form))]
 
       # Anything else may still be a scalar-expression operator — the arithmetic swaps and the
       # coalesce drop owned by the shared catalog (`Mutare.Ecto.Scalar.local/1`, which carries
@@ -525,12 +519,12 @@ defmodule Mutare.Ecto.Fragment do
     arity = length(args)
 
     Descent.each_arg({form, meta, args}, fn arg, index ->
-      for {family, mutated, label} <- do_mutants(arg, opts, {form, arity, index}),
-          do: {family, {form, meta, List.replace_at(args, index, mutated)}, label}
+      for tag <- do_mutants(arg, opts, {form, arity, index}),
+          do: Tag.map_node(tag, &{form, meta, List.replace_at(args, index, &1)})
     end)
   end
 
-  # Build `{family, literal_node, labels}` for each distinct mutated value: drop any candidate equal
+  # Build a `family`-tagged literal mutant for each distinct mutated value: drop any candidate equal
   # to the original, then dedup by value while **merging** the kind labels of colliding candidates —
   # so `1`'s `pred` (`n-1` = 0) and its `zero` sentinel collapse to one `0` tagged `["pred", "zero"]`
   # (mirroring core's `Literal`), and a qualifier naming *either* suppresses it. Order-stable.
@@ -543,6 +537,6 @@ defmodule Mutare.Ecto.Fragment do
         {^value, kinds} -> List.keyreplace(acc, value, 0, {value, kinds ++ [kind]})
       end
     end)
-    |> Enum.map(fn {value, kinds} -> {family, Mutare.AST.literal(value), kinds} end)
+    |> Enum.map(fn {value, kinds} -> Tag.new(family, Mutare.AST.literal(value), kinds) end)
   end
 end

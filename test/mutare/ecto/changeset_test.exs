@@ -199,7 +199,7 @@ defmodule Mutare.Ecto.ChangesetTest do
     defp cs_mutations(code, pipe_mode) do
       Sourceror.parse_string!(code)
       |> Mutare.Ecto.Changeset.mutations(%{pipe_mode: pipe_mode})
-      |> Enum.map(fn {family, node} -> {family, Sourceror.to_string(node)} end)
+      |> Enum.map(&{&1.family, Sourceror.to_string(&1.node)})
     end
 
     test "the piped drop is the alias-proof Elixir.Function.identity()" do

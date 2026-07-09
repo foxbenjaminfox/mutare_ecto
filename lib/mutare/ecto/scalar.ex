@@ -26,17 +26,17 @@ defmodule Mutare.Ecto.Scalar do
   # behaviour, not Elixir's float `//2`. **Binary** forms only: a written negative number parses
   # as the arity-1 `-` over the wrapped literal — sign syntax, not an operator to swap.
 
-  alias Mutare.Ecto.ExpressionWalk
+  alias Mutare.Ecto.{ExpressionWalk, Tag}
 
   @arithmetic_swaps %{:+ => :-, :- => :+, :* => :/, :/ => :*}
 
   @doc """
-  Every single-point scalar mutant of expression `expr` as `{family, node, label}` triples — the
-  self-tagging contract the other shared catalogs (`Mutare.Ecto.Aggregate.swaps/1`,
-  `Mutare.Ecto.Ordering.flips/1`) use. `label` is the **source** operator the swap mutates
+  Every single-point scalar mutant of expression `expr` as self-tagging `Mutare.Ecto.Tag`s — the
+  contract the other shared catalogs (`Mutare.Ecto.Aggregate.swaps/1`,
+  `Mutare.Ecto.Ordering.flips/1`) use. The label is the **source** operator the swap mutates
   (`"+"` for `+`↔`-`), so `# mutare:ignore[ecto:+]` names just it.
   """
-  @spec swaps(Macro.t()) :: [ExpressionWalk.tagged()]
+  @spec swaps(Macro.t()) :: [Tag.t()]
   def swaps(expr), do: ExpressionWalk.walk(expr, &local/1)
 
   @doc """
@@ -46,14 +46,14 @@ defmodule Mutare.Ecto.Scalar do
   wrapped literal, sign syntax with no swap (and Ecto has no unary `+`); `coalesce` is exactly
   `/2` in Ecto, so an off-arity call is left alone.
   """
-  @spec local(Macro.t()) :: [ExpressionWalk.tagged()]
+  @spec local(Macro.t()) :: [Tag.t()]
   def local({form, meta, [_l, _r] = args}) when is_map_key(@arithmetic_swaps, form),
-    do: [{:arithmetic, {@arithmetic_swaps[form], meta, args}, to_string(form)}]
+    do: [Tag.new(:arithmetic, {@arithmetic_swaps[form], meta, args}, to_string(form))]
 
   # The coalesce drop replaces the whole call with its wrapped expression — a same-type,
   # compile-safe alternative whose only difference is where NULL rows land. The *default*'s own
   # value mutants are the traversal's job (it is an ordinary data argument).
-  def local({:coalesce, _meta, [x, _default]}), do: [{:coalesce, x, "coalesce"}]
+  def local({:coalesce, _meta, [x, _default]}), do: [Tag.new(:coalesce, x, "coalesce")]
 
   def local(_node), do: []
 

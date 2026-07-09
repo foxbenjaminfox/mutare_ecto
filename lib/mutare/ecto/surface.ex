@@ -100,6 +100,11 @@ defmodule Mutare.Ecto.Surface do
     Map.put(@combination, :name, :intersect_all),
     %{name: :dynamic, macro: :dynamic},
     %{name: :is_named_binding, macro: :skip},
+    # ── from-clause-only keys ─────────────────────────────────────────────────────────────────
+    # The rows below are not standalone query macros — each name exists only as a `from` keyword
+    # key (`on:` and the spelled-out join kinds), so it carries `from:` capabilities but no
+    # `:macro` routing kind: `macro_kind/1` answers `nil`, and `macro_registrations/0`/
+    # `hosted_macro_names/0` skip it (their comprehensions match on `:macro`).
     %{name: :on, from: [:hosted]},
     %{name: :inner_join, from: [:join_binding, :join_type]},
     %{name: :left_join, from: [:join_binding, :join_type]},

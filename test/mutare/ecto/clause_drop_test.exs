@@ -164,8 +164,11 @@ defmodule Mutare.Ecto.ClauseDropTest do
     test "a limit/offset stage drop is tagged :bound (parity with the from-keyword drop)" do
       # The family must key off membership in the bound set; a limit/offset drop is :bound, not the
       # catch-all :clause_drop.
-      assert [{:bound, _}] = drop_mutations("Ecto.Query.limit(q, 10)", :unpiped)
-      assert [{:bound, _}] = drop_mutations("Ecto.Query.offset(q, 5)", :unpiped)
+      assert [%Mutare.Ecto.Tag{family: :bound}] =
+               drop_mutations("Ecto.Query.limit(q, 10)", :unpiped)
+
+      assert [%Mutare.Ecto.Tag{family: :bound}] =
+               drop_mutations("Ecto.Query.offset(q, 5)", :unpiped)
     end
 
     test "a degenerate zero-arg droppable clause yields no mutant, never a crash" do

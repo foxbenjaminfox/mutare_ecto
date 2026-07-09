@@ -44,11 +44,10 @@ defmodule Mutare.Ecto.Changeset do
   @hooks ~w(prepare_changes optimistic_lock)a
 
   @doc """
-  Changeset-step drop mutations for an `Ecto.Changeset` call as `{family, node}` pairs, or `[]`.
+  Changeset-step drop mutations for an `Ecto.Changeset` call as tags, or `[]`.
   A validator/constraint drops under `:validation_drop`; a Repo-time hook under `:hook_drop`.
   """
-  @spec mutations(Macro.t(), Mutare.Mutator.context()) ::
-          [{:validation_drop | :hook_drop, Macro.t()}]
+  @spec mutations(Macro.t(), Mutare.Mutator.context()) :: [Mutare.Ecto.Tag.t()]
   @impl Mutare.Ecto.SubMutator
   def mutations(node, %{pipe_mode: pipe_mode}),
     do: StageDrop.mutations(node, Ecto.Changeset, &family/1, pipe_mode)

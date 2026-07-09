@@ -29,13 +29,13 @@ defmodule Mutare.Ecto.BindingReorder do
   mutant identifies a redundant binding declaration, matching core's pattern-swap policy.
   """
 
-  alias Mutare.Ecto.Surface
+  alias Mutare.Ecto.{Surface, Tag}
   alias Mutare.Ecto.AST.{BindingList, QueryCall}
 
   @behaviour Mutare.Ecto.SubMutator
 
-  @doc "Binding-reorder mutants for `node` as `{:binding_reorder, node}` pairs, or `[]`."
-  @spec mutations(QueryCall.t(), Mutare.Mutator.context()) :: [{:binding_reorder, Macro.t()}]
+  @doc "Binding-reorder mutants for `node` as `:binding_reorder` tags, or `[]`."
+  @spec mutations(QueryCall.t(), Mutare.Mutator.context()) :: [Tag.t()]
   @impl Mutare.Ecto.SubMutator
   # `Mutare.Ecto.Dispatcher` normalizes the call (`Mutare.Ecto.AST.QueryCall.parse/1`) before
   # calling here, so the qualified (`Ecto.Query.select`) and aliased (`Q.select`) forms reorder
@@ -52,7 +52,7 @@ defmodule Mutare.Ecto.BindingReorder do
       {index, binding_list} ->
         for swapped <- BindingList.transpositions(binding_list) do
           new_args = List.replace_at(args, index, swapped)
-          {:binding_reorder, QueryCall.rebuild(call, new_args)}
+          Tag.new(:binding_reorder, QueryCall.rebuild(call, new_args))
         end
 
       nil ->

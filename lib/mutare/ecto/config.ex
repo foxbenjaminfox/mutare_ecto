@@ -7,6 +7,7 @@ defmodule Mutare.Ecto.Config do
   # (and/or `repo:`) is how a user narrows the catalog, names a sub-family in the report, or covers
   # multiple repos.
 
+  alias Mutare.Ecto.Tag
   alias Mutare.Mutator.Mutation
 
   @valid_options ~w(repo families dialects)a
@@ -225,18 +226,22 @@ defmodule Mutare.Ecto.Config do
   def equivalence_note(family, _finer), do: Map.get(@equivalence_notes, family)
 
   @doc """
-  Wrap a producer's mutation tag as a `Mutare.Mutator.Mutation` carrying its `# mutare:ignore`
-  labels. A producer emits either `{family, node}` (a structural family — no finer label) or
-  `{family, node, finer}` (a swap/value family appending the operator/kind it mutated, for a
-  qualified `# mutare:ignore[ecto:<op>]`); both become `variant: [family | finer]`:
+  Wrap a producer's `%Mutare.Ecto.Tag{}` as a `Mutare.Mutator.Mutation` carrying its
+  `# mutare:ignore` labels — `variant: [family | label]`:
 
     * `family` is the per-site analogue of the run-wide `families:` filter
       (`# mutare:ignore[ecto:comparison]`) — and the label `finalize/2` reads the family back from.
-    * `finer` is the operator/kind a swap or value family also tags (`# mutare:ignore[ecto:<]` —
-      the `<` swap alone), a single label, a list, or absent for a structural family. A qualifier
+    * `label` is the operator/kind a swap or value family also tags (`# mutare:ignore[ecto:<]` —
+      the `<` swap alone), a single label, a list, or `nil` for a structural family. A qualifier
       matching **any** label suppresses the mutant. The full vocabulary is `Mutare.Ecto.variants/0`;
       labels are recorded only because `Mutare.Ecto` declares it (an un-opted-in mutator records
       `[]`).
+    * `attribution` — carried by a whole-`from` rewrite (`Mutare.Ecto.Query`), a
+      `Mutare.Mutator.Mutation.at/2`/`at_drop/1` value naming the inner clause it changed — makes
+      core report the site (line/column + diff) at that clause rather than at the whole `from`, so
+      a clause-level `# mutare:ignore` is reachable. The mutated `node` still splices the whole
+      rewrite; attribution moves only the report, and `finalize/2` reads the family off `variant`
+      exactly as for an attribution-less tag.
 
   The one normalizer both delivery paths return through — `Mutare.Ecto.mutate/2` and the host's
   `Mutare.Ecto.Host.Catalog` — so adding a finer label to a producer never touches delivery code.
@@ -246,26 +251,12 @@ defmodule Mutare.Ecto.Config do
   An already-final relayed `Mutation` — explicit `producer:`, a sub-contracted island mutant of a
   free-standing `dynamic` (`Mutare.Ecto.Dynamic`) — passes through untouched: it is a *core*
   family's mutant, carrying core's note and variant, and core's finalize pass bypasses it too.
-
-  A whole-`from` rewrite (`Mutare.Ecto.Query`) additionally carries an `attribution` — a
-  `Mutare.Mutator.Mutation.at/2`/`at_drop/1` value naming the inner clause it changed — so core
-  reports the site (line/column + diff) at that clause rather than at the whole `from`, making a
-  clause-level `# mutare:ignore` reachable. The mutated `node` still splices the whole rewrite;
-  attribution moves only the report. `finalize/2` reads the family off `variant` exactly as for the
-  bare tuples.
   """
-  @spec tagged(
-          {family(), Macro.t()}
-          | {family(), Macro.t(), Mutation.variant()}
-          | {family(), Macro.t(), Mutation.variant(), Mutation.Attribution.t()}
-          | Mutation.t()
-        ) :: Mutation.t()
+  @spec tagged(Tag.t() | Mutation.t()) :: Mutation.t()
   def tagged(%Mutation{producer: producer} = relayed) when not is_nil(producer), do: relayed
-  def tagged({family, node}), do: Mutation.tagged(node, [family])
-  def tagged({family, node, finer}), do: Mutation.tagged(node, [family | List.wrap(finer)])
 
-  def tagged({family, node, finer, %Mutation.Attribution{} = attribution}),
-    do: Mutation.new(node, variant: [family | List.wrap(finer)], attribution: attribution)
+  def tagged(%Tag{family: family, node: node, label: label, attribution: attribution}),
+    do: Mutation.new(node, variant: [family | List.wrap(label)], attribution: attribution)
 
   @doc """
   The tag → filter → enrich funnel, defined once (`c:Mutare.Mutator.finalize/2` —

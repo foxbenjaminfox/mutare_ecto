@@ -14,7 +14,7 @@ defmodule Mutare.Ecto.FragmentTest do
     code
     |> Sourceror.parse_string!()
     |> Fragment.mutants(opts)
-    |> Enum.map(fn {_family, node, _label} -> Sourceror.to_string(node) end)
+    |> Enum.map(&Sourceror.to_string(&1.node))
     |> MapSet.new()
   end
 
@@ -23,7 +23,7 @@ defmodule Mutare.Ecto.FragmentTest do
     code
     |> Sourceror.parse_string!()
     |> Fragment.mutants(opts)
-    |> Enum.map(fn {family, _node, _label} -> family end)
+    |> Enum.map(& &1.family)
     |> MapSet.new()
   end
 
@@ -33,7 +33,7 @@ defmodule Mutare.Ecto.FragmentTest do
     code
     |> Sourceror.parse_string!()
     |> Fragment.mutants(opts)
-    |> Enum.map(fn {_family, _node, label} -> label end)
+    |> Enum.map(& &1.label)
     |> MapSet.new()
   end
 
@@ -268,8 +268,8 @@ defmodule Mutare.Ecto.FragmentTest do
         "u.age > 1"
         |> Sourceror.parse_string!()
         |> Fragment.mutants()
-        |> Enum.filter(fn {family, _node, _label} -> family == :integer_literal end)
-        |> Enum.map(fn {_family, node, _label} -> Sourceror.to_string(node) end)
+        |> Enum.filter(&(&1.family == :integer_literal))
+        |> Enum.map(&Sourceror.to_string(&1.node))
         |> Enum.sort()
 
       assert literals == ["u.age > 0", "u.age > 2"]
@@ -282,8 +282,8 @@ defmodule Mutare.Ecto.FragmentTest do
         "u.age > 1"
         |> Sourceror.parse_string!()
         |> Fragment.mutants()
-        |> Enum.find(fn {_family, node, _label} -> Sourceror.to_string(node) == "u.age > 0" end)
-        |> elem(2)
+        |> Enum.find(&(Sourceror.to_string(&1.node) == "u.age > 0"))
+        |> Map.fetch!(:label)
 
       assert Enum.sort(labels) == ["pred", "zero"]
     end
@@ -297,8 +297,8 @@ defmodule Mutare.Ecto.FragmentTest do
         "u.age > 1"
         |> Sourceror.parse_string!()
         |> Fragment.mutants()
-        |> Enum.filter(fn {family, _node, _label} -> family == :integer_literal end)
-        |> Enum.map(fn {_family, node, _label} -> Sourceror.to_string(node) end)
+        |> Enum.filter(&(&1.family == :integer_literal))
+        |> Enum.map(&Sourceror.to_string(&1.node))
 
       assert ordered == ["u.age > 2", "u.age > 0"]
     end
@@ -311,8 +311,8 @@ defmodule Mutare.Ecto.FragmentTest do
         "u.age > 1"
         |> Sourceror.parse_string!()
         |> Fragment.mutants()
-        |> Enum.find(fn {_family, node, _label} -> Sourceror.to_string(node) == "u.age > 0" end)
-        |> elem(2)
+        |> Enum.find(&(Sourceror.to_string(&1.node) == "u.age > 0"))
+        |> Map.fetch!(:label)
 
       assert labels == ["pred", "zero"]
     end

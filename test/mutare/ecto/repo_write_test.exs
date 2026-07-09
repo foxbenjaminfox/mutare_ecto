@@ -248,7 +248,7 @@ defmodule Mutare.Ecto.RepoWriteTest do
       # A non-on_conflict option that happens to be valued `:nothing` must not be flipped to
       # `:raise` — the gate is the *key*, not merely the value.
       muts = write_mutations("MyApp.Repo.insert(cs, log: :nothing)", :unpiped)
-      refute Enum.any?(muts, fn {family, _node} -> family == :on_conflict end)
+      refute Enum.any?(muts, &(&1.family == :on_conflict))
     end
   end
 end

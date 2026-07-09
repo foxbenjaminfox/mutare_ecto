@@ -43,7 +43,7 @@ defmodule Mutare.Ecto.RepoWrite do
   `Mutare.Calls`, so it is pipe-position-agnostic.
   """
 
-  alias Mutare.Ecto.{AST, RepoCall}
+  alias Mutare.Ecto.{AST, RepoCall, Tag}
   alias Mutare.Ecto.AST.KeywordList
 
   use Mutare.Ecto.SubMutator
@@ -89,9 +89,8 @@ defmodule Mutare.Ecto.RepoWrite do
   # update, a query) read as `nil` via `AST.atom_value` and are skipped.
   @on_conflict_swaps %{nothing: :raise, raise: :nothing, replace_all: :nothing}
 
-  @doc "RepoWrite mutations for `node` as `{family, node}` pairs, or `[]`."
-  @spec mutations(Macro.t(), Mutare.Mutator.context()) ::
-          [{:persistence | :on_conflict, Macro.t()}]
+  @doc "RepoWrite mutations for `node` as `:persistence`/`:on_conflict` tags, or `[]`."
+  @spec mutations(Macro.t(), Mutare.Mutator.context()) :: [Tag.t()]
   @impl Mutare.Ecto.SubMutator
   def mutations(node, %{pipe_mode: pipe_mode} = context) do
     case RepoCall.resolve(node, context) do
@@ -110,7 +109,7 @@ defmodule Mutare.Ecto.RepoWrite do
   end
 
   defp wrap(nil), do: []
-  defp wrap(node), do: [{:persistence, node}]
+  defp wrap(node), do: [Tag.new(:persistence, node)]
 
   # Piped: the changeset is the pipe's LHS (not in `args`), so emit a right-nested pipe stage —
   # `change() |> apply_action(action)` — that Mutare splices onto the piped value. Opts are dropped.
@@ -136,7 +135,7 @@ defmodule Mutare.Ecto.RepoWrite do
 
     case swap_on_conflict(last) do
       nil -> []
-      swapped -> [{:on_conflict, rebuild.(fun, init ++ [swapped])}]
+      swapped -> [Tag.new(:on_conflict, rebuild.(fun, init ++ [swapped]))]
     end
   end
 

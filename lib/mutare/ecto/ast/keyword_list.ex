@@ -42,6 +42,32 @@ defmodule Mutare.Ecto.AST.KeywordList do
   def to_ast(%__MODULE__{node: node, entries: entries}),
     do: AST.rewrap_list(node, Enum.map(entries, &entry_ast/1))
 
+  @doc "The list truncated to its first `count` entries — same wrapper, a prefix of the entries."
+  @spec take(t(), non_neg_integer()) :: t()
+  def take(%__MODULE__{entries: entries} = list, count),
+    do: %{list | entries: Enum.take(entries, count)}
+
+  @doc """
+  Flat-map `fun.(entry, index)` over the entries, in written order — the shared "for each clause,
+  produce results" skeleton behind the whole-`from` mutators (`Mutare.Ecto.Query`), the subquery
+  interior walks (`Mutare.Ecto.Subquery`), and the host's from-clause targets (`Mutare.Ecto.Host`).
+  """
+  @spec flat_map(t(), (Entry.t(), non_neg_integer() -> [term()])) :: [term()]
+  def flat_map(%__MODULE__{entries: entries}, fun) do
+    entries
+    |> Enum.with_index()
+    |> Enum.flat_map(fn {entry, index} -> fun.(entry, index) end)
+  end
+
+  @doc "Like `flat_map/2`, visiting only the entries whose *key* satisfies `key_filter`."
+  @spec flat_map(t(), (atom() -> boolean()), (Entry.t(), non_neg_integer() -> [term()])) ::
+          [term()]
+  def flat_map(%__MODULE__{} = list, key_filter, fun) do
+    flat_map(list, fn entry, index ->
+      if key_filter.(entry.key), do: fun.(entry, index), else: []
+    end)
+  end
+
   @doc "Render the list with a new `value` for the entry at `index`."
   @spec replace_value(t(), non_neg_integer(), Macro.t()) :: Macro.t()
   def replace_value(%__MODULE__{entries: entries} = list, index, value) do

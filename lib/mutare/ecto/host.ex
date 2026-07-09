@@ -59,9 +59,7 @@ defmodule Mutare.Ecto.Host do
   defp from_targets(source, %KeywordList{entries: entries} = clauses, opts, context) do
     hostable_on = JoinOn.hostable_from_indices(entries)
 
-    entries
-    |> Enum.with_index()
-    |> Enum.flat_map(fn {entry, index} ->
+    KeywordList.flat_map(clauses, fn entry, index ->
       # A bound clause (`limit:`/`offset:`) weaves pin-only — no `dynamic/2` wrap, so no bindings
       # to accumulate; every other entry takes the condition path.
       if Surface.bound?(entry.key) do
@@ -69,9 +67,7 @@ defmodule Mutare.Ecto.Host do
       else
         # `Bindings.visible_to/2` owns the truncation offset (and why it includes the current
         # entry itself); each clause sees only the join bindings introduced up to it.
-        bindings =
-          Bindings.from(source, %{clauses | entries: Bindings.visible_to(entries, index)})
-
+        bindings = Bindings.from(source, Bindings.visible_to(clauses, index))
         from_target({entry, index}, bindings, {opts, context}, hostable_on)
       end
     end)

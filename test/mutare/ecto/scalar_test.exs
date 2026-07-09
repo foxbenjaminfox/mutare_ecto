@@ -1,7 +1,7 @@
 defmodule Mutare.Ecto.ScalarTest do
   use ExUnit.Case, async: true
 
-  alias Mutare.Ecto.Scalar
+  alias Mutare.Ecto.{Scalar, Tag}
 
   # Unit tests for the shared scalar-expression catalog — `Scalar.swaps/1` over a parsed
   # expression, rendered back. Delivery (whole-`from` vs standalone vs hosted) is tested in
@@ -12,7 +12,7 @@ defmodule Mutare.Ecto.ScalarTest do
     code
     |> Sourceror.parse_string!()
     |> Scalar.swaps()
-    |> Enum.map(fn {_family, node, _label} -> Sourceror.to_string(node) end)
+    |> Enum.map(&Sourceror.to_string(&1.node))
     |> MapSet.new()
   end
 
@@ -21,7 +21,7 @@ defmodule Mutare.Ecto.ScalarTest do
     code
     |> Sourceror.parse_string!()
     |> Scalar.swaps()
-    |> Enum.map(fn {_family, node, label} -> {Sourceror.to_string(node), label} end)
+    |> Enum.map(&{Sourceror.to_string(&1.node), &1.label})
     |> Map.new()
   end
 
@@ -34,7 +34,7 @@ defmodule Mutare.Ecto.ScalarTest do
 
   test "each swap is self-tagged with the :arithmetic family" do
     tagged = "u.a + u.b" |> Sourceror.parse_string!() |> Scalar.swaps()
-    assert [{:arithmetic, _node, _label}] = tagged
+    assert [%Tag{family: :arithmetic}] = tagged
   end
 
   test "each swap carries the source operator as its finer label" do
@@ -83,7 +83,7 @@ defmodule Mutare.Ecto.ScalarTest do
     assert swap_labels("coalesce(u.score, 0)") == %{"u.score" => "coalesce"}
 
     tagged = "coalesce(u.score, 0)" |> Sourceror.parse_string!() |> Scalar.swaps()
-    assert [{:coalesce, _node, "coalesce"}] = tagged
+    assert [%Tag{family: :coalesce, label: "coalesce"}] = tagged
   end
 
   test "a nested coalesce drops one layer per mutant, and its default is still descended" do

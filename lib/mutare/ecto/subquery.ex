@@ -46,9 +46,8 @@ defmodule Mutare.Ecto.Subquery do
   # `:skip` and never walked) all yield nothing.
 
   alias Mutare.Calls
-  alias Mutare.Ecto.{Aggregate, Config, Fragment, Query, Scalar, Surface}
+  alias Mutare.Ecto.{Aggregate, Config, Fragment, Query, Scalar, Surface, Tag}
   alias Mutare.Ecto.AST.{KeywordList, QueryCall}
-  alias Mutare.Ecto.AST.KeywordList.Entry
 
   # The whole-`from` families from `Mutare.Ecto.Query` that change the subquery's **row set** — the
   # ones observable through every wrapper. Its projection/ordering/window families
@@ -64,21 +63,18 @@ defmodule Mutare.Ecto.Subquery do
   Every single-point interior mutant of an inline subquery `from`, each the **whole inner `from`**
   rebuilt (which the caller wraps back into the wrapper). `[]` unless `node` is an inline
   `from(source, clauses)` (or, in `:existence` mode, `subquery(from(source, clauses))`).
-  Returned as `{family, node, label}` triples — `Fragment`'s internal
-  contract — carrying each family's **normal** tag (`:comparison`, `:filter_drop`, `:join_type`, …)
-  so `Config.tagged/1`, the `families:` filter, and the equivalence notes apply unchanged.
+  Returned as `Mutare.Ecto.Tag`s — the shared catalog contract — carrying each family's **normal**
+  tag (`:comparison`, `:filter_drop`, `:join_type`, …) so `Config.tagged/1`, the `families:`
+  filter, and the equivalence notes apply unchanged.
   """
-  @spec interior_mutants(Macro.t(), Config.t() | keyword(), mode()) ::
-          [{Config.family(), Macro.t(), Fragment.label() | []}]
+  @spec interior_mutants(Macro.t(), Config.t() | keyword(), mode()) :: [Tag.t()]
   def interior_mutants(node, opts, mode) do
     case inline_from(node, mode) do
       {%QueryCall{args: args} = call, wrap} ->
         config = to_config(opts)
 
-        for {family, mutated, label} <-
-              structural(call, config) ++ clause_mutants(call, args, config, mode) do
-          {family, wrap.(mutated), label}
-        end
+        for tag <- structural(call, config) ++ clause_mutants(call, args, config, mode),
+            do: Tag.map_node(tag, wrap)
 
       _other ->
         []
@@ -99,8 +95,8 @@ defmodule Mutare.Ecto.Subquery do
   def interior_islands(node, mode) do
     with {%QueryCall{args: [source, clauses_node]} = call, wrap} <- inline_from(node, mode),
          %KeywordList{} = clauses <- KeywordList.parse(clauses_node) do
-      each_clause(clauses, &island_clause?(&1, mode), fn value, index ->
-        for {interior, rebuild} <- Fragment.islands(value) do
+      KeywordList.flat_map(clauses, &island_clause?(&1, mode), fn entry, index ->
+        for {interior, rebuild} <- Fragment.islands(entry.value) do
           {interior, &wrap.(rebuild_clause(call, source, clauses, index, rebuild.(&1)))}
         end
       end)
@@ -146,20 +142,14 @@ defmodule Mutare.Ecto.Subquery do
     do: Surface.from_clause?(key, :hosted) or (mode == :value and key in [:select, :select_merge])
 
   # The row-set structural families: `Query.mutations_for/2` (the config-taking entry) over the
-  # inner `from`, filtered to the families every wrapper observes, normalized to `Fragment`'s
-  # 3-tuple contract. `Query` returns `{family, node, label, attribution}` (the attribution names
-  # the inner clause the whole-`from` site is reported at); here the mutant is instead wrapped back
-  # into the wrapper and delivered through the host's weave, so the attribution is dropped and only
-  # the `Fragment` 3-tuple (`label` normalized to `[]` when absent) is kept.
+  # inner `from`, filtered to the families every wrapper observes. `Query`'s attribution (naming
+  # the inner clause the whole-`from` site is reported at) is deliberately **dropped**: here the
+  # mutant is instead wrapped back into the outer condition and delivered through the host's
+  # weave, which reports at the woven condition.
   defp structural(call, config) do
-    call
-    |> Query.mutations_for(config)
-    |> Enum.filter(fn tuple -> elem(tuple, 0) in @structural_families end)
-    |> Enum.map(fn
-      {family, node} -> {family, node, []}
-      {family, node, label} -> {family, node, label || []}
-      {family, node, label, _attribution} -> {family, node, label || []}
-    end)
+    for %Tag{family: family} = tag <- Query.mutations_for(call, config),
+        family in @structural_families,
+        do: %{tag | attribution: nil}
   end
 
   # The clause-value families: the inner conditions (all modes) plus, under `:value`, the `select`
@@ -183,10 +173,9 @@ defmodule Mutare.Ecto.Subquery do
   # single-point condition mutant. Nesting (`exists` inside the subquery's own `where`) re-enters
   # `Fragment`, which re-recognizes the wrapper.
   defp conditions(call, source, clauses, config) do
-    each_clause(clauses, &Surface.from_clause?(&1, :hosted), fn value, index ->
-      for {family, mutated, label} <- Fragment.mutants(value, config) ++ Aggregate.swaps(value) do
-        {family, rebuild_clause(call, source, clauses, index, mutated), label}
-      end
+    KeywordList.flat_map(clauses, &Surface.from_clause?(&1, :hosted), fn entry, index ->
+      for tag <- Fragment.mutants(entry.value, config) ++ Aggregate.swaps(entry.value),
+          do: Tag.map_node(tag, &rebuild_clause(call, source, clauses, index, &1))
     end)
   end
 
@@ -194,25 +183,13 @@ defmodule Mutare.Ecto.Subquery do
   # projected column is the observed value. `order_by` is deliberately excluded (its ordering is
   # inert through every wrapper we host).
   defp select_projection(call, source, clauses, :value) do
-    each_clause(clauses, &(&1 in [:select, :select_merge]), fn value, index ->
-      for {family, swapped, label} <- Aggregate.swaps(value) ++ Scalar.swaps(value) do
-        {family, rebuild_clause(call, source, clauses, index, swapped), label}
-      end
+    KeywordList.flat_map(clauses, &(&1 in [:select, :select_merge]), fn entry, index ->
+      for tag <- Aggregate.swaps(entry.value) ++ Scalar.swaps(entry.value),
+          do: Tag.map_node(tag, &rebuild_clause(call, source, clauses, index, &1))
     end)
   end
 
   defp select_projection(_call, _source, _clauses, :existence), do: []
-
-  # Flat-map `generator.(value, index)` over each clause entry whose key `filter.(key)` admits, in
-  # written order — the shared "for each qualifying clause, mutate its value and rebuild the inner
-  # `from`" skeleton behind `conditions/4`, `select_projection/4`, and `interior_islands/2`.
-  defp each_clause(%KeywordList{entries: entries}, filter, generator) do
-    entries
-    |> Enum.with_index()
-    |> Enum.flat_map(fn {%Entry{key: key, value: value}, index} ->
-      if filter.(key), do: generator.(value, index), else: []
-    end)
-  end
 
   # Rebuild the whole inner `from` with the clause at `index` carrying `value`, preserving the
   # source's written form (`QueryCall.rebuild/2`) and the clause list's Sourceror wrapper

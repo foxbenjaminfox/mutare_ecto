@@ -15,25 +15,24 @@ defmodule Mutare.Ecto.StageDrop do
   # (nil = not droppable), keeping the family taxonomy with the family that owns it.
 
   alias Mutare.Calls
-  alias Mutare.Ecto.Config
+  alias Mutare.Ecto.{Config, Tag}
 
   @doc """
   Stage-drop mutations for `node` when it resolves (via `Mutare.Calls.resolved_call_to/3`) to a
-  call on `module` whose function `family_fun` maps to a family. Returns `{family, node}` pairs,
-  or `[]` when the call is on another module or `family_fun` returns `nil`. Pipe-aware via
-  `pipe_mode`.
+  call on `module` whose function `family_fun` maps to a family. Returns `family`-tagged
+  `Mutare.Ecto.Tag`s, or `[]` when the call is on another module or `family_fun` returns `nil`.
+  Pipe-aware via `pipe_mode`.
   """
   @spec mutations(
           Macro.t(),
           module(),
           (atom() -> Config.family() | nil),
           :piped | :unpiped
-        ) ::
-          [{Config.family(), Macro.t()}]
+        ) :: [Tag.t()]
   def mutations(node, module, family_fun, pipe_mode) do
     with {:ok, fun, args, _rebuild} <- Calls.resolved_call_to(node, module),
          family when not is_nil(family) <- family_fun.(fun) do
-      for dropped <- drop(pipe_mode, args), do: {family, dropped}
+      for dropped <- drop(pipe_mode, args), do: Tag.new(family, dropped)
     else
       _ -> []
     end

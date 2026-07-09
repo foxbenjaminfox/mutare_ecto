@@ -22,7 +22,7 @@ defmodule Mutare.Ecto.Host.Catalog do
   # A binding-reorder is *not* hosted: it swaps a written binding list in place (`Mutare.Ecto.BindingReorder`
   # for the standalone/pipe macros, `Mutare.Ecto.Query` for a `from` source list), never the condition body.
 
-  alias Mutare.Ecto.{Aggregate, AST, Config, Fragment}
+  alias Mutare.Ecto.{Aggregate, AST, Config, Fragment, Tag}
   alias Mutare.Mutator.Mutation
 
   @doc """
@@ -56,8 +56,11 @@ defmodule Mutare.Ecto.Host.Catalog do
   @spec bounds(Macro.t()) :: [Mutare.Mutator.mutation()]
   def bounds(value) do
     case AST.int_value(value) do
-      nil -> []
-      n -> for bumped <- AST.bumps(n), do: Config.tagged({:bound, Mutare.AST.literal(bumped)})
+      nil ->
+        []
+
+      n ->
+        for bumped <- AST.bumps(n), do: Config.tagged(Tag.new(:bound, Mutare.AST.literal(bumped)))
     end
   end
 
@@ -75,12 +78,12 @@ defmodule Mutare.Ecto.Host.Catalog do
   @doc """
   The plugin's own in-fragment catalogs for a condition — the SQL operator/literal swaps
   (`Mutare.Ecto.Fragment`) and the aggregate swap (`Mutare.Ecto.Aggregate`) — as raw
-  `{family, node, label}` tags. The single source of truth for "what the plugin itself mutates in a
+  `Mutare.Ecto.Tag`s. The single source of truth for "what the plugin itself mutates in a
   hosted condition", shared by the host (`own/2`, which tags them via `Config.tagged/1`) and
   `Mutare.Ecto.Dynamic` (which rebuilds each into the whole free-standing `dynamic` call). `config`
   threads to `Fragment` only for its `dialects:` gate.
   """
-  @spec own_catalog(Macro.t(), Config.t()) :: [{Config.family(), Macro.t(), Fragment.label()}]
+  @spec own_catalog(Macro.t(), Config.t()) :: [Tag.t()]
   def own_catalog(condition, config) do
     # Same equivalence as `mutants/3` above: two independent catalogs, order not observable.
     # mutare:ignore[operand_swap] equivalent: concatenation order of two independent mutant catalogs is not observable

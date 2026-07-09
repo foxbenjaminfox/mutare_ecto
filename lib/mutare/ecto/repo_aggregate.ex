@@ -15,20 +15,21 @@ defmodule Mutare.Ecto.RepoAggregate do
   the visible args — `Mutare.Mutator.visible_index/2` recovers where.
   """
 
-  alias Mutare.Ecto.{Aggregate, AST, RepoCall}
+  alias Mutare.Ecto.{Aggregate, AST, RepoCall, Tag}
 
   use Mutare.Ecto.SubMutator
 
   # The aggregate's effective argument position: aggregate(queryable, agg, field) → 1.
   @agg_position 1
 
-  @doc "Aggregate-swap mutations for a `Repo.aggregate/3` node as `{:aggregate, node, label}` triples, or `[]`."
-  @spec mutations(Macro.t(), Mutare.Mutator.context()) :: [{:aggregate, Macro.t(), String.t()}]
+  @doc "Aggregate-swap mutations for a `Repo.aggregate/3` node as labelled `:aggregate` tags, or `[]`."
+  @spec mutations(Macro.t(), Mutare.Mutator.context()) :: [Tag.t()]
   @impl Mutare.Ecto.SubMutator
   def mutations(node, %{pipe_mode: pipe_mode} = context) do
     case RepoCall.resolve(node, context) do
       {:aggregate, args, rebuild} ->
-        for {mutated, label} <- swap(args, rebuild, pipe_mode), do: {:aggregate, mutated, label}
+        for {mutated, label} <- swap(args, rebuild, pipe_mode),
+            do: Tag.new(:aggregate, mutated, label)
 
       _ ->
         []

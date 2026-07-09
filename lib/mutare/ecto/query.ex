@@ -53,20 +53,20 @@ defmodule Mutare.Ecto.Query do
       *argument* binding lists reorder in place (`Mutare.Ecto.BindingReorder`); a scalar source and
       synthesized join bindings never reorder.
 
-  Each mutation is returned as `{family, node, label, attribution}`: `label` is the finer
-  operator/kind a swap family names (order/join/aggregate — `nil` for a structural drop), and
-  `attribution` (`Mutare.Mutator.Mutation.at/2`/`at_drop/1`) names the **inner clause** the rewrite
+  Each mutation is returned as a `Mutare.Ecto.Tag`: its label is the finer operator/kind a swap
+  family names (order/join/aggregate — `nil` for a structural drop), and its attribution
+  (`Mutare.Mutator.Mutation.at/2`/`at_drop/1`) names the **inner clause** the rewrite
   changed, so core reports the site — line/column and diff — at that clause rather than at the
-  whole `from`, making a clause-level `# mutare:ignore` reachable even though `node` still splices
-  the whole rewritten query. The caller (`Mutare.Ecto.Config.tagged/1`) turns this into a tagged
-  `Mutation`, then filters by `families:`/a `# mutare:ignore` qualifier; `opts` carries `dialects:`
-  for the join gate. A `from` node is `{:from, meta, [source, clauses]}`
+  whole `from`, making a clause-level `# mutare:ignore` reachable even though the node still
+  splices the whole rewritten query. The caller (`Mutare.Ecto.Config.tagged/1`) turns this into a
+  tagged `Mutation`, then filters by `families:`/a `# mutare:ignore` qualifier; `opts` carries
+  `dialects:` for the join gate. A `from` node is `{:from, meta, [source, clauses]}`
   where `clauses` is a keyword list (in Sourceror form, each key wrapped as
   `{:__block__, [format: :keyword], [atom]}`). A scalar `from/1` (`from(Post)`, no clauses) yields
   nothing, while a source binding list (`from([a, b] in query)`) can still reorder.
   """
 
-  alias Mutare.Ecto.{Aggregate, Combination, Config, Ordering, Scalar, Surface}
+  alias Mutare.Ecto.{Aggregate, Combination, Config, Ordering, Scalar, Surface, Tag}
   alias Mutare.Ecto.AST.{BindingList, KeywordList, QueryCall}
   alias Mutare.Ecto.AST.KeywordList.Entry
   alias Mutare.Mutator.Mutation
@@ -93,9 +93,9 @@ defmodule Mutare.Ecto.Query do
   @right_join_dialects [:postgres, :mysql]
 
   @doc """
-  Whole-`from` mutations for a `from(...)` node as self-tagging
-  `{family, node, label, attribution}` entries (`label` the finer operator/kind for a swap family,
-  `nil` for a structural drop; `attribution` the inner clause the site is reported at), or `[]`.
+  Whole-`from` mutations for a `from(...)` node as self-tagging `Mutare.Ecto.Tag`s (the label the
+  finer operator/kind for a swap family, `nil` for a structural drop; the attribution the inner
+  clause the site is reported at), or `[]`.
   """
   @spec mutations(QueryCall.t(), Mutare.Mutator.context()) :: [Mutare.Ecto.SubMutator.tagged()]
   @impl Mutare.Ecto.SubMutator
@@ -153,8 +153,12 @@ defmodule Mutare.Ecto.Query do
       for swapped <- BindingList.transpositions(list) do
         swapped_source = {:in, meta, [swapped, rhs]}
 
-        {:binding_reorder, QueryCall.replace_arg(call, 0, swapped_source), nil,
-         Mutation.at(source, swapped_source)}
+        Tag.new(
+          :binding_reorder,
+          QueryCall.replace_arg(call, 0, swapped_source),
+          nil,
+          Mutation.at(source, swapped_source)
+        )
       end
     else
       _ -> []
@@ -164,12 +168,17 @@ defmodule Mutare.Ecto.Query do
   # Remove each clause whose key is in `keys`, keeping the others — so the query still
   # compiles (it reuses the surviving clauses). Used for both the filter drops (where/having,
   # tagged `:filter_drop`) and the bound drops (limit/offset, tagged `:bound`).
-  defp drops(call, source, %KeywordList{entries: entries} = clauses, family) do
-    for {%Entry{} = entry, index} <- Enum.with_index(entries),
-        Surface.from_drop_family(entry.key) == family do
-      {family, rebuild_from(call, source, drop_clause(clauses, entry, index)), nil,
-       Mutation.at_drop(entry.value)}
-    end
+  defp drops(call, source, clauses, family) do
+    KeywordList.flat_map(clauses, &(Surface.from_drop_family(&1) == family), fn entry, index ->
+      [
+        Tag.new(
+          family,
+          rebuild_from(call, source, drop_clause(clauses, entry, index)),
+          nil,
+          Mutation.at_drop(entry.value)
+        )
+      ]
+    end)
   end
 
   # Dropping a `limit:` takes an immediately-following `with_ties:` with it: Ecto validates the
@@ -248,13 +257,19 @@ defmodule Mutare.Ecto.Query do
   # Swap a clause's *key* to each target `targets.(key)` yields, keeping its value — the shared
   # delivery for JoinType and Combination. Both filter on and tag with the same `family` atom; each
   # names its own `label.(key)` and attributes the change at the key node. One mutant per target.
-  defp key_swaps(call, source, %KeywordList{entries: entries} = clauses, family, targets, label) do
-    for {%Entry{key: key, key_node: key_node}, index} <- Enum.with_index(entries),
-        Surface.from_clause?(key, family),
-        to <- targets.(key) do
-      {family, rebuild_from(call, source, KeywordList.replace_key(clauses, index, to)),
-       label.(key), Mutation.at(key_node, Mutare.AST.keyword_key(to))}
-    end
+  defp key_swaps(call, source, clauses, family, targets, label) do
+    KeywordList.flat_map(clauses, &Surface.from_clause?(&1, family), fn entry, index ->
+      %Entry{key: key, key_node: key_node} = entry
+
+      for to <- targets.(key) do
+        Tag.new(
+          family,
+          rebuild_from(call, source, KeywordList.replace_key(clauses, index, to)),
+          label.(key),
+          Mutation.at(key_node, Mutare.AST.keyword_key(to))
+        )
+      end
+    end)
   end
 
   # Mutate each clause value the `capability` selects through the shared `catalog` — one mutant per
@@ -269,13 +284,16 @@ defmodule Mutare.Ecto.Query do
   # A `where`/`having` value with any of these is deliberately *not* here: its condition is hosted
   # (`^`/`dynamic`), so those mutants ride the host (`Mutare.Ecto.Fragment`/`Host.catalog/3`)
   # alongside the operator swaps rather than duplicating the whole `from`.
-  defp value_swaps(call, source, %KeywordList{entries: entries} = clauses, capability, catalog) do
-    for {%Entry{key: key, value: value}, index} <- Enum.with_index(entries),
-        Surface.from_clause?(key, capability),
-        {family, mutated, label} <- catalog.(value) do
-      {family, rebuild_from(call, source, KeywordList.replace_value(clauses, index, mutated)),
-       label, Mutation.at(value, mutated)}
-    end
+  defp value_swaps(call, source, clauses, capability, catalog) do
+    KeywordList.flat_map(clauses, &Surface.from_clause?(&1, capability), fn entry, index ->
+      for %Tag{node: mutated} = tag <- catalog.(entry.value) do
+        %{
+          tag
+          | node: rebuild_from(call, source, KeywordList.replace_value(clauses, index, mutated)),
+            attribution: Mutation.at(entry.value, mutated)
+        }
+      end
+    end)
   end
 
   # Rebuild the `from` with the chosen clause replaced/removed via the node's own `rebuild`, so the

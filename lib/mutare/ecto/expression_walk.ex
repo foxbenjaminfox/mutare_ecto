@@ -5,23 +5,20 @@ defmodule Mutare.Ecto.ExpressionWalk do
   # list, a map or keyword list of them — and a `local` catalog producing the tagged alternatives
   # of *one* node, `walk/2` returns every **single-point** mutant: the whole expression with
   # exactly one position replaced by one of `local`'s alternatives, threading each mutant's
-  # `{family, node, label}` tag up unchanged.
+  # family/label (`Mutare.Ecto.Tag`) up unchanged while rebuilding its node.
   #
   # Descent follows the same author-macro rule as `Mutare.Ecto.Fragment`, shared through
   # `Mutare.Ecto.Descent`: a nested macro the author wrote may invent its own argument grammar
   # (Mutare mutates source, not expansions), so a call's argument is descended **only** when it is
   # plainly standard syntax — a non-macro node or an argument the macro routed `:expression`.
 
-  alias Mutare.Ecto.Descent
-
-  @typedoc "One tagged single-point mutant: `{family, node, finer_label}`."
-  @type tagged :: {atom(), Macro.t(), String.t()}
+  alias Mutare.Ecto.{Descent, Tag}
 
   @typedoc "The per-node catalog: the tagged alternatives of one node, no descent."
-  @type local :: (Macro.t() -> [tagged()])
+  @type local :: (Macro.t() -> [Tag.t()])
 
   @doc "Every single-point mutant of `expr` under the `local` per-node catalog."
-  @spec walk(Macro.t(), local()) :: [tagged()]
+  @spec walk(Macro.t(), local()) :: [Tag.t()]
   # An interpolation island (`^expr`) is ordinary Elixir evaluated at runtime — outside every SQL
   # catalog's competence, so never offered and never descended. (In a hosted condition the host
   # sub-contracts the interior to core's generation; in these in-place `select`/`order_by` walks
@@ -38,8 +35,8 @@ defmodule Mutare.Ecto.ExpressionWalk do
   # A 2-tuple literal — a `{a, b}` select, or a keyword/map pair: descend into both sides.
   def walk({left, right}, local) do
     # mutare:ignore[operand_swap] branch order is irrelevant — mutants are consumed as a set
-    for({f, m, l} <- walk(left, local), do: {f, {m, right}, l}) ++
-      for({f, m, l} <- walk(right, local), do: {f, {left, m}, l})
+    for(tag <- walk(left, local), do: Tag.map_node(tag, &{&1, right})) ++
+      for(tag <- walk(right, local), do: Tag.map_node(tag, &{left, &1}))
   end
 
   # A list — a list select, the args of a `%{}`/`{}` node, or a keyword list: descend per element.
@@ -47,7 +44,7 @@ defmodule Mutare.Ecto.ExpressionWalk do
     list
     |> Enum.with_index()
     |> Enum.flat_map(fn {el, i} ->
-      for {f, m, l} <- walk(el, local), do: {f, List.replace_at(list, i, m), l}
+      for tag <- walk(el, local), do: Tag.map_node(tag, &List.replace_at(list, i, &1))
     end)
   end
 
@@ -60,7 +57,8 @@ defmodule Mutare.Ecto.ExpressionWalk do
   # `sum(p.x)` even means an aggregate to `clamp`.
   defp lift_args(form, meta, args, local) do
     Descent.each_arg({form, meta, args}, fn arg, i ->
-      for {f, m, l} <- walk(arg, local), do: {f, {form, meta, List.replace_at(args, i, m)}, l}
+      for tag <- walk(arg, local),
+          do: Tag.map_node(tag, &{form, meta, List.replace_at(args, i, &1)})
     end)
   end
 end

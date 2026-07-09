@@ -281,7 +281,7 @@ defmodule Mutare.Ecto do
   @impl Mutare.Mutator
   def mutate(_node), do: :skip
 
-  # A dispatched result is either the plugin's own `{family, node, label}` tag — wrapped by
+  # A dispatched result is either the plugin's own `%Mutare.Ecto.Tag{}` — wrapped by
   # `Config.tagged/1` as a `Mutation` carrying its labels, for the `finalize/2` funnel below — or
   # an already-final `%Mutare.Mutator.Mutation{}` relayed with `producer:` set (a sub-contracted
   # island mutant of a free-standing `dynamic`, `Mutare.Ecto.Dynamic`), which `Config.tagged/1`

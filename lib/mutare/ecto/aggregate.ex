@@ -18,19 +18,20 @@ defmodule Mutare.Ecto.Aggregate do
   # value aggregate changes the result's meaning in a way its `:distinct`/arity contract makes
   # awkward, and `count`↔a-value-aggregate is rarely a focused, killable mutation.
 
-  alias Mutare.Ecto.ExpressionWalk
+  alias Mutare.Ecto.{ExpressionWalk, Tag}
 
   @agg_swaps %{sum: :avg, avg: :sum, min: :max, max: :min}
   @agg_funcs Map.keys(@agg_swaps)
 
   @doc """
-  Every single-point aggregate swap of select-expression `expr` as `{:aggregate, node, label}`
-  triples, or `[]` — the self-tagging `{family, node, label}` contract the other shared catalogs
+  Every single-point aggregate swap of select-expression `expr` as `:aggregate`-family
+  `Mutare.Ecto.Tag`s, or `[]` — the self-tagging contract the other shared catalogs
   (`Mutare.Ecto.Fragment.mutants/2`, `Mutare.Ecto.Ordering.flips/1`) use, so a caller threads the
-  family and finer label uniformly when it rebuilds the surrounding clause. `label` is the **source**
-  function the swap mutates (`"sum"` for `sum`↔`avg`), so `# mutare:ignore[ecto:sum]` names just it.
+  family and finer label uniformly when it rebuilds the surrounding clause. The label is the
+  **source** function the swap mutates (`"sum"` for `sum`↔`avg`), so `# mutare:ignore[ecto:sum]`
+  names just it.
   """
-  @spec swaps(Macro.t()) :: [ExpressionWalk.tagged()]
+  @spec swaps(Macro.t()) :: [Tag.t()]
   def swaps(expr), do: ExpressionWalk.walk(expr, &local/1)
 
   @doc false
@@ -56,7 +57,7 @@ defmodule Mutare.Ecto.Aggregate do
   # `# mutare:ignore` label naming the swap; descent (a nested `max(sum(...))` — degenerate but
   # harmless) is the shared walker's job.
   defp local({f, meta, args}) when f in @agg_funcs and is_list(args),
-    do: [{:aggregate, {@agg_swaps[f], meta, args}, to_string(f)}]
+    do: [Tag.new(:aggregate, {@agg_swaps[f], meta, args}, to_string(f))]
 
   defp local(_node), do: []
 end

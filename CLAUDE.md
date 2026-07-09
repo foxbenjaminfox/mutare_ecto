@@ -133,7 +133,7 @@ hosting):
   `Config.parse!/1`; a typo'd option raises at startup, and core delivers the parsed `%Config{}`
   to every context-aware callback as `context.config`.
 - `mutate/2` — asks `Mutare.Ecto.Dispatcher` to classify the node and invoke only relevant
-  sub-mutators, then returns the resulting `{family, node}` pairs as tagged `Mutation`s
+  sub-mutators, then returns the resulting `%Mutare.Ecto.Tag{}`s as tagged `Mutation`s
   (`Config.tagged/1` — pure production, no filtering; a `Dynamic`-relayed producer-set `Mutation`
   passes through as-is). Everything runs through `mutate/2` because all mutations read
   `context.config`.
@@ -202,6 +202,7 @@ selector because a query clause can't host a runtime `case`:
 | `dispatcher.ex` | Classifies each node once and invokes only the sub-mutators relevant to that query macro, Ecto call, or configured Repo call |
 | `surface.ex` | Single descriptor table for every owned query macro and `from` key: routing kind, standalone mutation capabilities, stage/whole-`from` drop families, and hosted/binding/join capabilities |
 | `sub_mutator.ex` | The uniform `mutations(node, context)` behaviour implemented by each mutation producer |
+| `tag.ex` | `%Mutare.Ecto.Tag{family, node, label, attribution}` — the **one** shape every producer and shared catalog emits (previously three tuple arities), plus `map_node/2`, the "rebuild the surrounding form around each mutant" step; `Config.tagged/1` turns it into the delivered `Mutation` |
 | `host.ex` | Selector-host **coordinator** (bucket 3): turns a hosted call into `Target`s — condition weaves plus the pin-only bound-bump targets — delegating to the `host/*` parts below |
 | `host/routing.ex` | `route_arguments/2` — the per-argument routing classifier (`:hosted`/`:expression`/`:skip`/`:interpolated`/`{:keyword,…}`), over `treatments/1` |
 | `host/bindings.ex` | Interprets Ecto binding declarations and renders the binding list re-declared by a woven `dynamic/2` |
@@ -216,7 +217,7 @@ selector because a query clause can't host a runtime `case`:
 | `query.ex` | Whole-`from` rewrites (clause drop, order flip, bound **drop**, join-type, `select`/`order_by` aggregate, source binding-reorder for a `[a, b] in q` source) — the bound *bump* is hosted instead |
 | `clause.ex` | Standalone/pipe cousins of `query.ex` (`order_by`/`select`/set-operation macros; the `limit`/`offset` bump is hosted) |
 | `clause_drop.ex` | Drop a standalone/pipe clause stage (`q \|> where(…)` → `q`), via `stage_drop.ex` |
-| `ordering.ex` / `aggregate.ex` / `scalar.ex` | Shared `{family, node}` catalogs used by `query.ex`, `clause.ex`, and the condition host. `scalar.ex` owns the Arithmetic swaps and the Coalesce fallback drop, applied per node by `fragment.ex` in hosted conditions and walked over `select`/`order_by` values. `ordering.ex` flips a sort direction (`:asc`↔`:desc`) / nulls placement, **and** re-tags the implicit `asc` of a bare ordering term (`:name`, `u.name`) to `desc` — the reliable replacement for the removed `order_by` clause-drop (dropping an `ORDER BY` left an SQL-unspecified row order, so its survival tracked engine nondeterminism, not the tests) |
+| `ordering.ex` / `aggregate.ex` / `scalar.ex` | Shared self-tagging (`tag.ex`) catalogs used by `query.ex`, `clause.ex`, and the condition host. `scalar.ex` owns the Arithmetic swaps and the Coalesce fallback drop, applied per node by `fragment.ex` in hosted conditions and walked over `select`/`order_by` values. `ordering.ex` flips a sort direction (`:asc`↔`:desc`) / nulls placement, **and** re-tags the implicit `asc` of a bare ordering term (`:name`, `u.name`) to `desc` — the reliable replacement for the removed `order_by` clause-drop (dropping an `ORDER BY` left an SQL-unspecified row order, so its survival tracked engine nondeterminism, not the tests) |
 | `expression_walk.ex` | The generic single-point structural walker under the expression catalogs (`aggregate.ex`, `scalar.ex`) |
 | `descent.ex` | The author-macro descent rule, shared by `fragment.ex`'s two walks (`mutants`/`islands`) and `expression_walk.ex`: `each_arg/2` visits a call's arguments, entering only the ones the macro routed `:expression` (or a non-macro node) per `Mutare.Calls.macro_treatment/1`. Homing it once keeps the catalog's mutation walk and its island walk provably in agreement about which arguments they enter (`fragment_walk_parity_test.exs` guards the structural half) |
 | `combination.ex` | Shared set-operation swap catalog (`intersect`↔`except`, `intersect_all`↔`except_all`; `union` deliberately unswapped) used by `query.ex` (clause-key swap) and `clause.ex` (macro-name swap) |
@@ -260,8 +261,8 @@ Every mutation is tagged with an SQL **family**; `config.ex` holds the canonical
 - The note rides onto the `Site` via the `finalize/2` funnel (see Architecture), which core runs
   on **both** delivery paths just before recording — so the in-fragment families surface it
   through the host and `:ordering_nulls`/`:join_type` through their `mutate/2` rewrites, and no
-  delivery site can forget it. Producers stay pure: they return tag tuples wrapped by
-  `Config.tagged/1` into `Mutation.tagged(node, [family | finer])`.
+  delivery site can forget it. Producers stay pure: they return `%Mutare.Ecto.Tag{}`s wrapped by
+  `Config.tagged/1` into `Mutation`s carrying `variant: [family | finer]`.
 
 ## Conventions and gotchas
 

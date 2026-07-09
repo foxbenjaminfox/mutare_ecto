@@ -39,13 +39,13 @@ defmodule Mutare.Ecto.Clause do
   (`Mutare.Ecto.ClauseDrop`) still touches a bound macro in place.
   """
 
-  alias Mutare.Ecto.{Aggregate, Combination, Ordering, Scalar, Surface}
+  alias Mutare.Ecto.{Aggregate, Combination, Ordering, Scalar, Surface, Tag}
   alias Mutare.Ecto.AST.QueryCall
 
   @behaviour Mutare.Ecto.SubMutator
 
   @doc """
-  Standalone/pipe clause-macro mutations for `node` as self-tagging `{family, node, label}` entries
+  Standalone/pipe clause-macro mutations for `node` as self-tagging `Mutare.Ecto.Tag`s
   (a swap family — order/aggregate — carries the finer operator/kind label), or `[]`.
   """
   @spec mutations(QueryCall.t(), Mutare.Mutator.context()) :: [Mutare.Ecto.SubMutator.tagged()]
@@ -69,14 +69,13 @@ defmodule Mutare.Ecto.Clause do
   # The shape the last-argument clause-macro mutators share: split the mutated **last argument**
   # off (the ordering / selector — `init` keeps the binding list when one is written), map it to
   # tagged mutants via `catalog`, and rebuild the call around each, keeping the source's written
-  # form. Every catalog emits uniform `{family, node, label}` triples, so the rebuilt entry
-  # threads the finer label through. The `args != []` guard in `mutations/2` makes the `[last]`
-  # destructure total.
+  # form. Every catalog emits uniform `Mutare.Ecto.Tag`s, so the rebuilt entry threads the finer
+  # label through. The `args != []` guard in `mutations/2` makes the `[last]` destructure total.
   defp mutate_last(%QueryCall{args: args} = call, catalog) do
     {init, [last]} = Enum.split(args, -1)
 
-    for {family, mutated, label} <- catalog.(last),
-        do: {family, QueryCall.rebuild(call, init ++ [mutated]), label}
+    for tag <- catalog.(last),
+        do: Tag.map_node(tag, &QueryCall.rebuild(call, init ++ [&1]))
   end
 
   # Swap the set operation by renaming the macro call itself (`q |> intersect(^other)` →
@@ -86,7 +85,7 @@ defmodule Mutare.Ecto.Clause do
   defp combination_swaps(%QueryCall{name: name} = call) do
     case Combination.swap(name) do
       nil -> []
-      to -> [{:combination, QueryCall.rename(call, to), Combination.label(name)}]
+      to -> [Tag.new(:combination, QueryCall.rename(call, to), Combination.label(name))]
     end
   end
 end
