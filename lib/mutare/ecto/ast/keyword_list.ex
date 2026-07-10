@@ -68,12 +68,22 @@ defmodule Mutare.Ecto.AST.KeywordList do
     end)
   end
 
-  @doc "Render the list with a new `value` for the entry at `index`."
-  @spec replace_value(t(), non_neg_integer(), Macro.t()) :: Macro.t()
-  def replace_value(%__MODULE__{entries: entries} = list, index, value) do
+  @doc "The list with a new `value` for the entry at `index` — same wrapper, one value swapped."
+  @spec put_value(t(), non_neg_integer(), Macro.t()) :: t()
+  def put_value(%__MODULE__{entries: entries} = list, index, value) do
     entries = List.update_at(entries, index, fn %Entry{} = entry -> %{entry | value: value} end)
-    to_ast(%__MODULE__{list | entries: entries})
+    %__MODULE__{list | entries: entries}
   end
+
+  @doc "The list without every entry keyed `key` — same wrapper, the other entries kept."
+  @spec reject_key(t(), atom()) :: t()
+  def reject_key(%__MODULE__{entries: entries} = list, key),
+    do: %__MODULE__{list | entries: Enum.reject(entries, &(&1.key == key))}
+
+  @doc "Render the list with a new `value` for the entry at `index` (`put_value/3` + `to_ast/1`)."
+  @spec replace_value(t(), non_neg_integer(), Macro.t()) :: Macro.t()
+  def replace_value(%__MODULE__{} = list, index, value),
+    do: list |> put_value(index, value) |> to_ast()
 
   @doc "Render the list with a new `key` (and matching key node) for the entry at `index`."
   @spec replace_key(t(), non_neg_integer(), atom()) :: Macro.t()

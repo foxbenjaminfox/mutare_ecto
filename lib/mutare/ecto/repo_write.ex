@@ -30,10 +30,18 @@ defmodule Mutare.Ecto.RepoWrite do
       duplicate fails), and `:replace_all`→`:nothing` (overwrite-row → keep-old-row — kill with a
       test that asserts the conflicting row was actually overwritten). Every *target* (`:raise`,
       `:nothing`) is valid with no `conflict_target` on all dialects, so each swap is crash-free.
-      `:replace_all` is a swap **source** only, never a target — the reverse needs a
-      `conflict_target` on Postgres, so a target-less swap would be a runtime crash (a
-      trivially-killed non-mutant). Non-atom `on_conflict:` values (a `{:replace, …}` tuple, a
-      keyword-list update, a query) are left untouched.
+      A swap **to `:raise` also drops any written `conflict_target:` pair** — Ecto forbids the
+      combination (`ArgumentError`, ":conflict_target option is forbidden when :on_conflict is
+      :raise", raised in the planner before any SQL), so keeping the pair would turn the mutant
+      into an unconditional crasher (raising on *every* insert, conflict or not — a
+      trivially-killed non-mutant) instead of the intended crash-on-conflict. A swap to
+      `:nothing` keeps the pair: `:nothing` accepts a target, and the target still *arbitrates* —
+      `ON CONFLICT (email) DO NOTHING` skips only conflicts on the named constraint while a
+      conflict on any other unique constraint raises in mutant and baseline alike, so preserving
+      the author's arbiter preserves the semantics. `:replace_all` is a swap **source** only,
+      never a target — the reverse needs a `conflict_target` on Postgres, so a target-less swap
+      would be a runtime crash (a trivially-killed non-mutant). Non-atom `on_conflict:` values (a
+      `{:replace, …}` tuple, a keyword-list update, a query) are left untouched.
 
   **Pipe-aware.** Piped (`cs |> Repo.insert()`) the changeset is the `|>` left-hand side, so the
   `:persistence` mutant is delivered as a right-nested pipe stage
@@ -76,7 +84,8 @@ defmodule Mutare.Ecto.RepoWrite do
 
   # Each explicit `on_conflict:` atom → the *distinct* alternative it swaps to. Every target
   # (`:raise`/`:nothing`) is valid with **no** `conflict_target` on all three dialects, so each swap
-  # is crash-free regardless of the surrounding opts:
+  # is crash-free — provided the surrounding opts stay legal for the *new* value (see
+  # `drop_forbidden_target/2`: `:raise` forbids a `conflict_target:`, so that swap drops the pair):
   #
   #   * `:nothing` → `:raise`     — silent-skip → crash. Kill: any test that exercises the conflict path.
   #   * `:raise`   → `:nothing`   — crash → silent-skip. Kill: a test asserting a duplicate insert fails.
@@ -150,7 +159,10 @@ defmodule Mutare.Ecto.RepoWrite do
         Enum.find_value(Enum.with_index(entries), fn {entry, index} ->
           with :on_conflict <- entry.key,
                to when not is_nil(to) <- @on_conflict_swaps[AST.atom_value(entry.value)] do
-            KeywordList.replace_value(options, index, Mutare.AST.literal(to))
+            options
+            |> KeywordList.put_value(index, Mutare.AST.literal(to))
+            |> drop_forbidden_target(to)
+            |> KeywordList.to_ast()
           else
             _ -> nil
           end
@@ -162,4 +174,14 @@ defmodule Mutare.Ecto.RepoWrite do
   end
 
   defp swap_on_conflict(_other), do: nil
+
+  # `:raise` forbids a `conflict_target:` — Ecto's planner raises `ArgumentError` on the
+  # combination before any SQL, on every execution — so the swap to it drops the pair (whatever
+  # its value shape: atom, list, `{:unsafe_fragment, …}`), keeping the mutant's crash on the
+  # *conflict path* rather than on every insert. The other swap target (`:nothing`) accepts a
+  # target and keeps the author's arbiter.
+  defp drop_forbidden_target(options, :raise),
+    do: KeywordList.reject_key(options, :conflict_target)
+
+  defp drop_forbidden_target(options, _to), do: options
 end

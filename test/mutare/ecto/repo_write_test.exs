@@ -120,18 +120,25 @@ defmodule Mutare.Ecto.RepoWriteTest do
   end
 
   describe ":on_conflict — :nothing → :raise" do
-    test "flips an explicit on_conflict: :nothing, preserving the other opts" do
+    test "flips an explicit on_conflict: :nothing, dropping the now-forbidden conflict_target" do
       src = """
       defmodule Accounts do
         alias MyApp.Repo
-        def upsert(cs), do: Repo.insert(cs, on_conflict: :nothing, conflict_target: :email)
+
+        def upsert(cs),
+          do: Repo.insert(cs, returning: true, on_conflict: :nothing, conflict_target: :email)
       end
       """
 
       assert [{original, mutated}] = ecto_diffs(src, on_conflict())
       assert original =~ "on_conflict: :nothing"
       assert mutated =~ "on_conflict: :raise"
-      assert mutated =~ "conflict_target: :email"
+      # `:raise` forbids a `conflict_target:` (Ecto raises `ArgumentError` on the combination
+      # before any SQL), so the pair rides along only in the original — keeping it would make the
+      # mutant crash on *every* insert instead of on the conflict path.
+      refute mutated =~ "conflict_target"
+      # …while an unrelated opt survives the rebuild untouched.
+      assert mutated =~ "returning: true"
       # The changeset stays the *first* argument — the rebuild reassembles `init ++ [swapped]`,
       # not the reverse (which would emit `insert([on_conflict: …], cs)`, a malformed call).
       assert mutated =~ "insert(cs,"
@@ -162,7 +169,7 @@ defmodule Mutare.Ecto.RepoWriteTest do
       assert mutated =~ "on_conflict: :nothing"
     end
 
-    test "flips on_conflict: :replace_all to :nothing (a crash-free, target-less target)" do
+    test "flips on_conflict: :replace_all to :nothing, keeping the conflict_target" do
       src = """
       defmodule Accounts do
         alias MyApp.Repo
@@ -173,6 +180,8 @@ defmodule Mutare.Ecto.RepoWriteTest do
       assert [{original, mutated}] = ecto_diffs(src, on_conflict())
       assert original =~ "on_conflict: :replace_all"
       assert mutated =~ "on_conflict: :nothing"
+      # `:nothing` accepts a target, and the target still *arbitrates* (a conflict on another
+      # unique constraint raises either way), so the author's arbiter is preserved.
       assert mutated =~ "conflict_target: :email"
     end
 
@@ -189,6 +198,22 @@ defmodule Mutare.Ecto.RepoWriteTest do
       assert mutated =~ "on_conflict: :raise"
       # The schema/entries args stay first — only the trailing opts pair flips.
       assert mutated =~ ~s(insert_all("users", rows,)
+    end
+
+    test "the conflict_target drop is value-shape-agnostic (a list target on insert_all)" do
+      src = """
+      defmodule Accounts do
+        alias MyApp.Repo
+
+        def bulk(rows) do
+          Repo.insert_all("users", rows, on_conflict: :nothing, conflict_target: [:email, :org_id])
+        end
+      end
+      """
+
+      assert [{_o, mutated}] = ecto_diffs(src, on_conflict())
+      assert mutated =~ "on_conflict: :raise"
+      refute mutated =~ "conflict_target"
     end
 
     test "swaps each source to exactly one distinct target (no reverse/extra mutants)" do

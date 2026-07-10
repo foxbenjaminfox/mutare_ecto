@@ -39,7 +39,7 @@ defmodule Mutare.Ecto.Config do
   #     `order_by` is deliberately *not* droppable — an unordered query's row order is unspecified);
   #   * repo write: persistence (insert/update/delete → apply_action), on_conflict (swap an explicit
   #     `on_conflict:` atom on insert/insert!/insert_all — `:nothing`→`:raise`, `:raise`→`:nothing`,
-  #     `:replace_all`→`:nothing`);
+  #     `:replace_all`→`:nothing`; the swap to `:raise` drops the forbidden `conflict_target:` pair);
   #   * changeset: validation_drop (validators/constraints), hook_drop (prepare_changes/optimistic_lock).
   #
   # Generates the catalog machinery from this one declaration: `@type family` (the union),

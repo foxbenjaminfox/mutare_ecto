@@ -1454,14 +1454,18 @@ defmodule Mutare.Ecto.SemanticCases do
         # The other behavioural axis: `:nothing` swallows a unique conflict (returns `{:ok, _}`, leaving
         # the row); the `:raise` mutant lets the conflict raise. Asserting *that the call raises* — not a
         # specific exception type — keeps the test stable across the matrix's ecto_sqlite3 versions while
-        # still proving the swapped atom reached the engine.
+        # still proving the swapped atom reached the engine. The email is parameterized so the mutant can
+        # be driven down both paths: the swap to `:raise` must *drop* the `conflict_target:` pair (Ecto
+        # forbids the combination with an `ArgumentError` in the planner), so a non-conflicting insert
+        # under the mutant must still succeed — under the pre-drop bug it raised on every insert, making
+        # the raise assertion below pass without the swapped atom ever reaching the engine.
         @skip_upsert """
         defmodule W do
           alias MyApp.Account
           alias #{inspect(@repo)}, as: Repo
 
-          def upsert do
-            Repo.insert(%Account{email: "a@x", name: "New"},
+          def upsert(email) do
+            Repo.insert(%Account{email: email, name: "New"},
               on_conflict: :nothing,
               conflict_target: :email
             )
@@ -1469,7 +1473,7 @@ defmodule Mutare.Ecto.SemanticCases do
         end
         """
 
-        test ":nothing returns {:ok, _} on a conflict; the :raise mutant raises and persists nothing" do
+        test ":nothing returns {:ok, _} on a conflict; the :raise mutant raises on the conflict only" do
           {mod, sites} =
             H.compile(@skip_upsert,
               mutators: [{Mutare.Ecto, repo: @repo, families: [:on_conflict]}]
@@ -1479,12 +1483,17 @@ defmodule Mutare.Ecto.SemanticCases do
 
           # Baseline (:nothing): the conflict is skipped — an `{:ok, _}` result and the row unchanged.
           reset_accounts!()
-          assert {:ok, _} = H.activate(0, fn -> mod.upsert() end)
+          assert {:ok, _} = H.activate(0, fn -> mod.upsert("a@x") end)
           assert account_name() == "Original"
 
-          # Mutant (:raise): the same insert now raises on the unique conflict; the row is untouched.
+          # Mutant (:raise), no conflict: the insert still succeeds — the `conflict_target:` pair was
+          # dropped with the swap, so the mutant crashes on the conflict path only, not on every insert.
           reset_accounts!()
-          assert raises?(fn -> H.activate(flip, fn -> mod.upsert() end) end)
+          assert {:ok, _} = H.activate(flip, fn -> mod.upsert("b@x") end)
+
+          # Mutant (:raise), conflict: the engine's unique violation surfaces; the row is untouched.
+          reset_accounts!()
+          assert raises?(fn -> H.activate(flip, fn -> mod.upsert("a@x") end) end)
           assert account_name() == "Original"
         end
       end
