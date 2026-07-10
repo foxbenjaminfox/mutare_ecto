@@ -131,11 +131,11 @@ defmodule Mutare.Ecto.Query do
     Enum.concat([
       drops(call, source, clauses, :filter_drop),
       drops(call, source, clauses, :bound),
-      value_swaps(call, source, clauses, :ordering, &Ordering.flips/1),
+      value_swaps(call, source, clauses, :ordering, &Ordering.flips(&1.value)),
       join_swaps(call, source, clauses, config),
       combination_swaps(call, source, clauses),
-      value_swaps(call, source, clauses, :aggregate, &Aggregate.swaps/1),
-      value_swaps(call, source, clauses, :scalar, &Scalar.swaps/1),
+      value_swaps(call, source, clauses, :aggregate, &Aggregate.swaps(&1.value)),
+      value_swaps(call, source, clauses, :scalar, &scalar_value_swaps/1),
       binding_reorders(call, source)
     ])
   end
@@ -272,29 +272,40 @@ defmodule Mutare.Ecto.Query do
     end)
   end
 
-  # Mutate each clause value the `capability` selects through the shared `catalog` — one mutant per
+  # Mutate each clause value the `capability` selects through the shared `catalog` (which
+  # receives the whole `Entry`, so a catalog can read the clause key) — one mutant per
   # `{family, node, label}` the catalog yields for that value, rebuilt into the whole `from` and
-  # attributed at the value. Covers the three value-position families delivered as whole-`from`
-  # rewrites, each over a `select`/`select_merge`/`order_by` clause value:
+  # attributed at the mutated node: a walk-based catalog (`Mutare.Ecto.ExpressionWalk`) stamps
+  # node-level attribution itself — kept, so the Site lands on the exact expression — and a
+  # catalog that doesn't (`Ordering.flips/1`, which replaces a whole entry) falls back to the
+  # clause value. Covers the three value-position families delivered as whole-`from` rewrites,
+  # each over a `select`/`select_merge`/`order_by` clause value:
   #
   #   * `:ordering` (`Mutare.Ecto.Ordering.flips/1`) — an `order_by` direction/nulls flip.
   #   * `:aggregate` (`Mutare.Ecto.Aggregate.swaps/1`) — a `sum`↔`avg`/`min`↔`max` swap.
-  #   * `:scalar` (`Mutare.Ecto.Scalar.swaps/1`) — an arithmetic swap or coalesce drop.
+  #   * `:scalar` (`scalar_value_swaps/1` over `Mutare.Ecto.Scalar.swaps/2`) — an arithmetic swap
+  #     or coalesce drop, position-aware for the `order_by:` key.
   #
   # A `where`/`having` value with any of these is deliberately *not* here: its condition is hosted
   # (`^`/`dynamic`), so those mutants ride the host (`Mutare.Ecto.Fragment`/`Host.catalog/3`)
   # alongside the operator swaps rather than duplicating the whole `from`.
   defp value_swaps(call, source, clauses, capability, catalog) do
     KeywordList.flat_map(clauses, &Surface.from_clause?(&1, capability), fn entry, index ->
-      for %Tag{node: mutated} = tag <- catalog.(entry.value) do
+      for %Tag{node: mutated} = tag <- catalog.(entry) do
         %{
           tag
           | node: rebuild_from(call, source, KeywordList.replace_value(clauses, index, mutated)),
-            attribution: Mutation.at(entry.value, mutated)
+            attribution: tag.attribution || Mutation.at(entry.value, mutated)
         }
       end
     end)
   end
+
+  # The scalar walk over one clause value, in the position its key declares: an `order_by:` value
+  # (the one `from` key carrying `Surface`'s `:ordering` capability alongside `:scalar`) is a
+  # sort key, so its coalesce drops carry the placement-aware label/note (`Mutare.Ecto.Scalar`).
+  defp scalar_value_swaps(%Entry{key: key, value: value}),
+    do: Scalar.swaps(value, if(Surface.from_clause?(key, :ordering), do: :ordering, else: :value))
 
   # Rebuild the `from` with the chosen clause replaced/removed via the node's own `rebuild`, so the
   # mutant keeps the source's written form (bare/qualified/aliased) — a minimal, shape-correct diff.

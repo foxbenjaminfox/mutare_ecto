@@ -114,9 +114,17 @@ defmodule Mutare.Ecto.Config do
   #     or the left is 0 (`@arithmetic_multiplicative_note`) — a zero *divisor*, by contrast, makes
   #     the swapped query raise, which is a kill, not an equivalence. `equivalence_note/2` picks
   #     between them from the finer operator label, like `:comparison`.
-  #   * `:coalesce` (`@coalesce_note`) — `coalesce(x, default)` → `x`. The two forms differ
-  #     exactly on the rows where `x` is NULL (the default's whole purpose), so with no NULL row
-  #     seeded the drop is legitimately equivalent.
+  #   * `:coalesce` — two sub-cases, by the position of the dropped call. In a value position
+  #     (`@coalesce_note`) `coalesce(x, default)` → `x` differs exactly on the rows where `x` is
+  #     NULL (the default's whole purpose), so with no NULL row seeded the drop is legitimately
+  #     equivalent. In an **ordering** position (`@coalesce_ordering_note` — the
+  #     `"coalesce_in_ordering"` finer label `Mutare.Ecto.Scalar` attaches for an `order_by`
+  #     value or an `over/2` window's `order_by:` option) the drop needs more than NULL rows: it
+  #     re-sorts only those rows to the engine's *default* NULL placement (engine-defined, not
+  #     Ecto-defined — Postgres sorts NULL as larger than every value, SQLite/MySQL as smaller;
+  #     see `Mutare.Ecto.Ordering`), so a fallback that would rank them in that same place is
+  #     legitimately unobservable on that engine. `equivalence_note/2` picks between them from
+  #     the finer label, like `:comparison`.
   #   * `:temporal` (`@temporal_note`) — `ago(n, unit)`↔`from_now(n, unit)`. The two instants sit
   #     the same distance on opposite sides of now, so a comparison against them differs only for
   #     rows whose timestamp falls between them — all-historical (or all-far-future) data makes
@@ -140,15 +148,17 @@ defmodule Mutare.Ecto.Config do
   @arithmetic_additive_note "kill may require a row whose right operand is nonzero — a + b and a - b compute the same value exactly when b is 0 (the identity of both)"
   @arithmetic_multiplicative_note "kill may require a row whose right operand is not ±1 (with a nonzero left) — a * b and a / b coincide there, while a zero divisor raises (a kill, not an equivalence)"
   @coalesce_note "kill may require NULL rows in the wrapped expression — coalesce(x, default) and x differ only where x is NULL, the exact rows the default exists for"
+  @coalesce_ordering_note "kill may require NULL rows in the wrapped expression and a test pinning where they rank — in an ordering position the drop re-sorts only those rows to the engine's default NULL placement (Postgres sorts NULL as larger than every value, SQLite/MySQL as smaller), which may coincide with where the fallback already put them"
   @temporal_note "kill may require a row timestamped near now — ago(n, unit) and from_now(n, unit) sit the same distance on opposite sides of now, so comparisons against them differ only for rows between the two instants"
   @ordering_nulls_note "kill may require NULL rows in the ordered column — nulls_first and nulls_last only change where NULLs sort, ordering all other rows identically"
   @join_note "kill may require an orphan row — a preserved-side row with no match (join kinds coincide when every row matches)"
 
   # The note for each equivalence-sensitive family; the single source of truth for the set (a family
   # is equivalence-sensitive iff it appears here). `equivalence_sensitive_families/0` derives the
-  # ordered set by filtering `all_families()`. `:comparison` and `:arithmetic` map to their default
-  # sub-case notes; `equivalence_note/2` overrides them with `@comparison_equality_note` for an
-  # `==`/`!=` swap and `@arithmetic_multiplicative_note` for a `*`/`/` swap.
+  # ordered set by filtering `all_families()`. `:comparison`, `:arithmetic`, and `:coalesce` map to
+  # their default sub-case notes; `equivalence_note/2` overrides them with
+  # `@comparison_equality_note` for an `==`/`!=` swap, `@arithmetic_multiplicative_note` for a
+  # `*`/`/` swap, and `@coalesce_ordering_note` for an ordering-position drop.
   @equivalence_notes %{
     comparison: @comparison_boundary_note,
     connective: @connective_note,
@@ -210,9 +220,11 @@ defmodule Mutare.Ecto.Config do
   @doc """
   The report note for a `family`'s mutants — a string for an equivalence-sensitive family
   (surfaced on each such mutant's Site), or `nil` for an ordinary family (a bare mutant). The
-  optional `finer` operator label refines the two-sub-case families: an `==`/`!=` swap reads
-  `:comparison`'s NULL-exclusion note (every other comparison the boundary note), and a `*`/`/`
-  swap reads `:arithmetic`'s multiplicative-identity note (a `+`/`-` swap the additive one).
+  optional `finer` label refines the sub-case families: an `==`/`!=` swap reads `:comparison`'s
+  NULL-exclusion note (every other comparison the boundary note), a `*`/`/` swap reads
+  `:arithmetic`'s multiplicative-identity note (a `+`/`-` swap the additive one), and an
+  ordering-position drop (`"coalesce_in_ordering"`) reads `:coalesce`'s engine-default-placement
+  note (a value-position drop the plain NULL-data one).
   """
   @spec equivalence_note(family(), Mutation.variant()) :: String.t() | nil
   def equivalence_note(family, finer \\ nil)
@@ -222,6 +234,8 @@ defmodule Mutare.Ecto.Config do
 
   def equivalence_note(:arithmetic, finer) when finer in ["*", "/"],
     do: @arithmetic_multiplicative_note
+
+  def equivalence_note(:coalesce, "coalesce_in_ordering"), do: @coalesce_ordering_note
 
   def equivalence_note(family, _finer), do: Map.get(@equivalence_notes, family)
 

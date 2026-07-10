@@ -528,6 +528,40 @@ defmodule Mutare.Ecto.ConfigTest do
       refute additive.note == multiplicative.note
     end
 
+    test "the two coalesce sub-cases carry different notes (NULL data vs engine-default placement)" do
+      # A value-position drop survives only when no NULL row exists; an ordering-position drop
+      # can also survive with NULL rows present, because the engine's *default* NULL placement
+      # may coincide with where the fallback ranked them (Postgres sorts NULL as larger than
+      # every value, SQLite/MySQL as smaller). Each position reads its own note, resolved from
+      # the finer label exactly as `:comparison`'s and `:arithmetic`'s splits are.
+      src = """
+      defmodule M do
+        import Ecto.Query
+
+        def q do
+          from(u in User,
+            order_by: [desc: coalesce(u.score, 0)],
+            select: coalesce(u.score, 0)
+          )
+        end
+      end
+      """
+
+      %Mutare.Transform.Result{mutants: sites} =
+        Mutare.transform_string(src,
+          mutators: [{Mutare.Ecto, repo: MyApp.Repo}],
+          expand_uses: true
+        )
+
+      coalesce_sites = Enum.filter(sites, &(&1.mutator == :ecto and "coalesce" in &1.variant))
+      ordering = Enum.find(coalesce_sites, &("coalesce_in_ordering" in &1.variant))
+      value = Enum.find(coalesce_sites, &("coalesce_in_ordering" not in &1.variant))
+
+      assert value.note =~ "the exact rows the default exists for"
+      assert ordering.note =~ "default NULL placement"
+      refute value.note == ordering.note
+    end
+
     test "the / -> * direction reads the same multiplicative-identity note (finer tags the source operator)" do
       # Mirrors the comparison case above: the `"/"` guard arm is reached only when the *written*
       # operator is `/` (swapped to `*`) — the earlier test's `u.a * u.b` only ever exercises the

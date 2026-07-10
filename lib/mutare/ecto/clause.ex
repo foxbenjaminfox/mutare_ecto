@@ -63,8 +63,17 @@ defmodule Mutare.Ecto.Clause do
 
   defp capability_mutations(:ordering, call), do: mutate_last(call, &Ordering.flips/1)
   defp capability_mutations(:aggregate, call), do: mutate_last(call, &Aggregate.swaps/1)
-  defp capability_mutations(:scalar, call), do: mutate_last(call, &Scalar.swaps/1)
+
+  defp capability_mutations(:scalar, call),
+    do: mutate_last(call, &Scalar.swaps(&1, scalar_position(call)))
+
   defp capability_mutations(:combination, call), do: combination_swaps(call)
+
+  # An `order_by`/`prepend_order_by` value is an ordering position — derived from `Surface`'s
+  # `:ordering` capability (the macros whose value *is* a sort key) so the two can't drift — so
+  # its coalesce drops carry the placement-aware label/note (`Mutare.Ecto.Scalar`).
+  defp scalar_position(%QueryCall{name: name}),
+    do: if(:ordering in Surface.mutations(name), do: :ordering, else: :value)
 
   # The shape the last-argument clause-macro mutators share: split the mutated **last argument**
   # off (the ordering / selector — `init` keeps the binding list when one is written), map it to

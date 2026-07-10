@@ -122,7 +122,7 @@ defmodule Mutare.Ecto.DynamicTest do
       orig = "dynamic([p], sum(p.views) > ^n)"
       # Origin pinned: the aggregate swaps down its ladder and the comparison swaps, each a
       # distinct single-point mutant of the same rebuilt call.
-      assert {orig, "dynamic([p], avg(p.views) > ^n)"} in diffs
+      assert {"sum(p.views)", "avg(p.views)"} in diffs
       assert {orig, "dynamic([p], sum(p.views) >= ^n)"} in diffs
       assert_compiles(src)
     end

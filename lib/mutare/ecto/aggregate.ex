@@ -32,7 +32,7 @@ defmodule Mutare.Ecto.Aggregate do
   names just it.
   """
   @spec swaps(Macro.t()) :: [Tag.t()]
-  def swaps(expr), do: ExpressionWalk.walk(expr, &local/1)
+  def swaps(expr), do: ExpressionWalk.walk(expr, &local/2)
 
   @doc false
   # The finer `# mutare:ignore` labels the aggregate family can emit — each swappable function name,
@@ -55,9 +55,10 @@ defmodule Mutare.Ecto.Aggregate do
   # the call form atom (not a wrapped literal), so the rename keeps the call's meta and renders
   # cleanly. Each mutant is tagged with the **source** function name (`"sum"`), the
   # `# mutare:ignore` label naming the swap; descent (a nested `max(sum(...))` — degenerate but
-  # harmless) is the shared walker's job.
-  defp local({f, meta, args}) when f in @agg_funcs and is_list(args),
+  # harmless) is the shared walker's job. The walk's position is ignored: an aggregate swap means
+  # the same thing in a `select` value and an ordering.
+  defp local({f, meta, args}, _position) when f in @agg_funcs and is_list(args),
     do: [Tag.new(:aggregate, {@agg_swaps[f], meta, args}, to_string(f))]
 
-  defp local(_node), do: []
+  defp local(_node, _position), do: []
 end

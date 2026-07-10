@@ -151,6 +151,34 @@ defmodule Mutare.Ecto.SemanticHarness do
   def postgres?(repo), do: repo.__adapter__() == Ecto.Adapters.Postgres
 
   @doc """
+  The engine's default NULL placement for each bare `order_by` direction, as
+  `{bare, equivalent, distinct}` triples — the per-engine fact behind `Mutare.Ecto.Ordering`'s
+  rule that a bare direction is never nulls-qualified.
+
+  Postgres sorts NULL as if *larger* than any non-null value (its `ORDER BY` docs: NULLS FIRST is
+  the default for DESC, NULLS LAST otherwise); SQLite as *smaller* — the mirror image. Runtime-
+  dispatched on `repo.__adapter__()` (a per-engine `case` inside the `use`d template would leave
+  the other engine's clause provably unreachable in each instantiation), with no fallback arm: a
+  new engine must declare its defaults here deliberately.
+  """
+  @spec default_null_placements(module()) :: [{atom(), atom(), atom()}]
+  def default_null_placements(repo) do
+    case repo.__adapter__() do
+      Ecto.Adapters.Postgres ->
+        [
+          {:asc, :asc_nulls_last, :asc_nulls_first},
+          {:desc, :desc_nulls_first, :desc_nulls_last}
+        ]
+
+      Ecto.Adapters.SQLite3 ->
+        [
+          {:asc, :asc_nulls_first, :asc_nulls_last},
+          {:desc, :desc_nulls_last, :desc_nulls_first}
+        ]
+    end
+  end
+
+  @doc """
   Whether `repo`'s engine can execute a `FULL JOIN` — for gating the full-join liveness fixture.
 
   Postgres always can; SQLite only at 3.39+. Runtime-guarded (not tag-skipped) because the engine

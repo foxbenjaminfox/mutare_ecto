@@ -403,14 +403,13 @@ defmodule Mutare.Ecto.QueryTest do
       """
 
       diffs = ecto_diffs(src)
-      orig = ~s|%{total: sum(p.views), peak: max(p.views)}|
 
-      # Each aggregate swaps in place as its own single-point mutant — reported at the enclosing
-      # select clause. origin→target pinned so a swap sourced from the wrong node (or an extra
-      # one) can't pass.
-      assert {orig, ~s|%{total: avg(p.views), peak: max(p.views)}|} in diffs
-
-      assert {orig, ~s|%{total: sum(p.views), peak: min(p.views)}|} in diffs
+      # Each aggregate swaps in place as its own single-point mutant — reported at the swapped
+      # call's own node (the walk stamps node-level attribution), not the enclosing select
+      # clause. origin→target pinned so a swap sourced from the wrong node (or an extra one)
+      # can't pass.
+      assert {"sum(p.views)", "avg(p.views)"} in diffs
+      assert {"max(p.views)", "min(p.views)"} in diffs
     end
 
     test "swaps an aggregate inside a from order_by clause" do
@@ -421,7 +420,7 @@ defmodule Mutare.Ecto.QueryTest do
       end
       """
 
-      assert {"[desc: sum(p.views)]", "[desc: avg(p.views)]"} in ecto_diffs(src)
+      assert {"sum(p.views)", "avg(p.views)"} in ecto_diffs(src)
 
       assert_compiles(src)
     end
@@ -449,9 +448,7 @@ defmodule Mutare.Ecto.QueryTest do
       end
       """
 
-      assert {"%{total: sum(p.views + p.bonus)}", "%{total: sum(p.views - p.bonus)}"} in ecto_diffs(
-               src
-             )
+      assert {"p.views + p.bonus", "p.views - p.bonus"} in ecto_diffs(src)
 
       assert_compiles(src)
     end
@@ -464,7 +461,7 @@ defmodule Mutare.Ecto.QueryTest do
       end
       """
 
-      assert {"[desc: p.views - p.penalty]", "[desc: p.views + p.penalty]"} in ecto_diffs(src)
+      assert {"p.views - p.penalty", "p.views + p.penalty"} in ecto_diffs(src)
 
       assert_compiles(src)
     end

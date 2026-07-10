@@ -109,4 +109,65 @@ defmodule Mutare.Ecto.ScalarTest do
     assert swaps("%{id: u.id}") == MapSet.new([])
     assert swaps("u") == MapSet.new([])
   end
+
+  describe "ordering position (swaps/2)" do
+    # A coalesce drop in a sort key has a different equivalence character — it re-sorts only the
+    # NULL rows to the engine's *default* NULL placement, which may coincide with where the
+    # fallback put them — so it carries its own finer label (the note/ignore discriminator).
+
+    test "a coalesce drop in an ordering value carries the placement-aware label" do
+      tagged =
+        "[desc: coalesce(u.score, 0)]" |> Sourceror.parse_string!() |> Scalar.swaps(:ordering)
+
+      assert [%Tag{family: :coalesce, label: "coalesce_in_ordering"}] = tagged
+    end
+
+    test "an arithmetic swap means the same thing in an ordering — label unchanged" do
+      tagged = "[desc: u.a + u.b]" |> Sourceror.parse_string!() |> Scalar.swaps(:ordering)
+
+      assert [%Tag{family: :arithmetic, label: "+"}] = tagged
+    end
+
+    test "an over/2 window's order_by: option is an ordering position inside a :value walk" do
+      # The walk refines the position itself: a window's sort key is an ordering even when the
+      # walk's root is an ordinary select value (the one place an ordering hides inside another
+      # expression).
+      code =
+        "%{rank: over(row_number(), partition_by: u.hash, order_by: [desc: coalesce(u.ts, u.at)])}"
+
+      tagged = code |> Sourceror.parse_string!() |> Scalar.swaps()
+
+      assert [%Tag{family: :coalesce, label: "coalesce_in_ordering"}] = tagged
+    end
+
+    test "an over/2 window expression and partition_by: stay value positions" do
+      # Only the sort key is an ordering: a coalesce under the window function or in the
+      # partitioning keeps the plain label.
+      code = "over(sum(coalesce(u.score, 0)), partition_by: coalesce(u.group, 0), order_by: u.id)"
+      labels = code |> Sourceror.parse_string!() |> Scalar.swaps() |> Enum.map(& &1.label)
+
+      assert labels == ["coalesce", "coalesce"]
+    end
+  end
+
+  describe "node-level attribution" do
+    # The walk stamps each mutant with `Mutation.at(node, mutant)` at the moment the catalog
+    # offers it — so an in-place delivery reports the Site at the mutated expression's own range
+    # (AttributionTest pins the delivered line/ignore behaviour; here the stamp itself).
+
+    test "each walk mutant is stamped at the node it mutates" do
+      [tag] = "%{total: sum(u.price * u.qty)}" |> Sourceror.parse_string!() |> Scalar.swaps()
+
+      assert %Mutare.Mutator.Mutation.Attribution{} = tag.attribution
+      assert Sourceror.to_string(tag.attribution.original) == "u.price * u.qty"
+      assert Sourceror.to_string(tag.attribution.mutated) == "u.price / u.qty"
+    end
+
+    test "a coalesce drop's attribution shows the call collapsing to its wrapped expression" do
+      [tag] = "%{at: coalesce(u.ts, u.at)}" |> Sourceror.parse_string!() |> Scalar.swaps()
+
+      assert Sourceror.to_string(tag.attribution.original) == "coalesce(u.ts, u.at)"
+      assert Sourceror.to_string(tag.attribution.mutated) == "u.ts"
+    end
+  end
 end

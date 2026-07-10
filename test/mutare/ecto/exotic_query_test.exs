@@ -53,11 +53,7 @@ defmodule Mutare.Ecto.ExoticQueryTest do
       end
       """
 
-      assert {"%{total: over(sum(p.views), partition_by: p.user_id, order_by: p.views)}",
-              "%{total: over(avg(p.views), partition_by: p.user_id, order_by: p.views)}"} in ecto_diffs(
-               src,
-               @all
-             )
+      assert {"sum(p.views)", "avg(p.views)"} in ecto_diffs(src, @all)
 
       assert_compiles(src, @all)
     end
@@ -162,10 +158,10 @@ defmodule Mutare.Ecto.ExoticQueryTest do
       # The hosted having condition swaps around the alias reference…
       assert {"selected_as(:total) > 2", "selected_as(:total) >= 2"} in diffs
       assert {"selected_as(:total) > 2", "selected_as(:total) > 3"} in diffs
-      # …and the select-side aggregate swaps inside the alias definition (reported at the select
-      # clause).
-      assert {"%{user: p.user_id, total: selected_as(sum(p.views), :total)}",
-              "%{user: p.user_id, total: selected_as(avg(p.views), :total)}"} in diffs
+
+      # …and the select-side aggregate swaps inside the alias definition (reported at the swapped
+      # call's own node — the walk stamps node-level attribution).
+      assert {"sum(p.views)", "avg(p.views)"} in diffs
 
       assert_compiles(@selected_as_src, @all)
     end

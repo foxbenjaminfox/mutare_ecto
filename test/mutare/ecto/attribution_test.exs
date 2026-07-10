@@ -113,6 +113,82 @@ defmodule Mutare.Ecto.AttributionTest do
       refute live.ignored, "the sibling where:'s drop on another line keeps running"
     end
 
+    test "an ignore above the window's order_by suppresses only the window's coalesce drop" do
+      # The scenario that motivated node-level attribution: one select stage carrying two
+      # *textually identical* coalesce calls — a projected value and a window sort key. Same
+      # family, same logical diff; before node-level attribution both Sites collapsed onto the
+      # stage head, so no line-scoped directive could suppress one without also killing the
+      # other, and no vocabulary could tell identical expressions apart — position is the only
+      # discriminator.
+      src = """
+      defmodule M do
+        import Ecto.Query
+
+        def q(query) do
+          select(query, [m], %{
+            at: coalesce(m.timestamp, m.inserted_at),
+            rank:
+              over(row_number(),
+                partition_by: m.hash,
+                # mutare:ignore[ecto:coalesce] PG's DESC NULLS FIRST makes the fallback unobservable
+                order_by: [desc: coalesce(m.timestamp, m.inserted_at), desc: m.id]
+              )
+          })
+        end
+      end
+      """
+
+      sites = sites_for(src)
+
+      window = one(sites, &("coalesce_in_ordering" in &1.variant))
+
+      value =
+        one(sites, &("coalesce" in &1.variant and "coalesce_in_ordering" not in &1.variant))
+
+      # Node-level diffs — each Site names the coalesce call, not the whole select stage…
+      assert value.original_code == "coalesce(m.timestamp, m.inserted_at)"
+      assert value.mutated_code == "m.timestamp"
+      assert window.original_code == value.original_code
+
+      # …on their own lines: the at: projection and the window's order_by option.
+      assert value.line == 6
+      assert window.line == 11
+
+      # The payoff: the directive above the window line reaches exactly the window's drop.
+      assert window.ignored, "the window sort key's drop is suppressed"
+      refute value.ignored, "the identical projected coalesce keeps running"
+
+      # And each position reads its own equivalence note — the projection the NULL-data reason,
+      # the sort key the engine-default-placement one.
+      assert value.note =~ "the exact rows the default exists for"
+      assert window.note =~ "default NULL placement"
+    end
+
+    test "on a shared line, [ecto:coalesce_in_ordering] tells identical drops apart by label" do
+      # When both coalesces sit on one line, line-scoped attribution can't separate them — but
+      # the ordering-position drop's finer label can: the qualifier matches only the window's.
+      src = """
+      defmodule M do
+        import Ecto.Query
+
+        def q(query) do
+          select(query, [m], %{at: coalesce(m.a, m.b), rank: over(row_number(), order_by: [desc: coalesce(m.a, m.b)])}) # mutare:ignore[ecto:coalesce_in_ordering]
+        end
+      end
+      """
+
+      sites = sites_for(src)
+
+      assert one(sites, &("coalesce_in_ordering" in &1.variant)).ignored,
+             "the window sort key's drop is suppressed"
+
+      refute one(
+               sites,
+               &("coalesce" in &1.variant and "coalesce_in_ordering" not in &1.variant)
+             ).ignored,
+             "the projected coalesce on the same line keeps running"
+    end
+
     test "a clause-level directive leaves the same clause's other-family mutants alone" do
       # `[ecto:filter_drop]` is family-specific: it kills only the drop, not the hosted comparison
       # or literal bumps that also anchor on that same clause line.

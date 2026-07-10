@@ -286,8 +286,14 @@ defmodule Mutare.Ecto.VariantTest do
 
       sites = sites_for(src)
 
-      assert site(sites, "avg(u.age), avg").ignored, "the sum → avg swap is suppressed"
-      refute site(sites, "sum(u.age), sum").ignored, "the avg → sum swap keeps running"
+      # Node-level attribution narrows each swap's site to the aggregate call itself, so the two
+      # sites are told apart by their own original → mutated pair (both still sit on the ignore's
+      # line).
+      sum_swap = Enum.find(sites, &(&1.mutator == :ecto and &1.original_code == "sum(u.age)"))
+      avg_swap = Enum.find(sites, &(&1.mutator == :ecto and &1.original_code == "avg(u.age)"))
+
+      assert sum_swap.ignored, "the sum → avg swap is suppressed"
+      refute avg_swap.ignored, "the avg → sum swap keeps running"
     end
 
     test "[ecto:asc] kills the asc direction flip, leaving desc live (ordering)" do

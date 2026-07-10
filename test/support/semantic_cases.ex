@@ -901,6 +901,48 @@ defmodule Mutare.Ecto.SemanticCases do
         end
       end
 
+      describe "OrderingNulls — the engine-default equivalence behind the bare-direction rule" do
+        # `Mutare.Ecto.Ordering` gives a bare `asc`/`desc` **no** nulls-placement mutant. The
+        # author-intent half of that rule lives in the module doc; this fixture pins the *engine*
+        # half, per engine: a bare direction already places NULLs exactly where one of the two
+        # qualified forms does — Postgres sorts NULL as if larger than every non-null value (bare
+        # `asc` ≡ `asc_nulls_last`, bare `desc` ≡ `desc_nulls_first`), SQLite as smaller (the
+        # mirror image) — so a bare→qualified mutant would be provably unkillable in the default
+        # direction, and *which direction that is* flips across engines (MySQL can't express the
+        # qualifier at all: MyXQL raises). No Mutare machinery here, deliberately: the claim under
+        # guard is the engines' own defaults, which the catalog's suppression rests on — if an
+        # engine or the seeded data ever drifts, this fails before the docs go stale.
+        test "a bare direction sorts NULLs exactly where the engine-default qualification does" do
+          for {bare, default, non_default} <- H.default_null_placements(@repo) do
+            # The two explicit placements genuinely differ here (so coinciding with one of them
+            # is informative, and the flip the catalog DOES emit is live on this data)...
+            assert order_shape(default) != order_shape(non_default)
+
+            # ...and the bare direction coincides with exactly the engine-default one.
+            assert order_shape(bare) == order_shape(default)
+            assert order_shape(bare) != order_shape(non_default)
+          end
+        end
+      end
+
+      # The users ordered by score under `direction` (a runtime-interpolated direction atom), as a
+      # comparable shape: the NULL-score rows (Bob 2, Dave 4) collapse to a `:null` marker because
+      # their order *within* the NULL block is engine-unspecified — two behaviourally equivalent
+      # queries may still tie-break the block differently.
+      defp order_shape(direction) do
+        import Ecto.Query
+
+        @repo.all(from(u in MyApp.User, order_by: [{^direction, u.score}], select: u.id))
+        |> Enum.map(fn id -> if id in [2, 4], do: :null, else: id end)
+      end
+
+      # The non-NULL-score user ids of `{id, rank}` rows, in rank order — the window-ordering
+      # coalesce-drop fixture's stable half (the NULL rows tie, so only their rank *set* is
+      # asserted).
+      defp non_null_by_rank(rows) do
+        for {id, _rank} <- Enum.sort_by(rows, &elem(&1, 1)), id not in [2, 4], do: id
+      end
+
       describe "Bound — drop (whole-`from`) / bump (pin-only weave) of `limit`" do
         test "dropping the limit returns the whole table; +1 widens the window by one row" do
           {mod, sites} =
@@ -1849,8 +1891,10 @@ defmodule Mutare.Ecto.SemanticCases do
             end
             """)
 
+          # The swap's site is node-level (the walk's attribution), so the diff names the bare
+          # aggregate call, not the surrounding `over(...)`.
           {baseline, mutant} =
-            observe_rows(mod, sites, {~r/over\(sum\(p\.views\)/, ~r/over\(avg\(p\.views\)/})
+            observe_rows(mod, sites, {"sum(p.views)", "avg(p.views)"})
 
           # Partitions: published {P1(10), P3(5)} and unpublished {P2(20)}. The avg mutant's per-partition
           # value is adapter-typed (float on SQLite, Decimal on Postgres), so normalize before comparing.
@@ -1858,6 +1902,54 @@ defmodule Mutare.Ecto.SemanticCases do
 
           assert Enum.map(mutant, fn {id, value} -> {id, to_number(value)} end) ==
                    [{1, 7.5}, {2, 20.0}, {3, 7.5}]
+        end
+      end
+
+      describe "Exotic constructs — a coalesce drop in a window's order_by is live" do
+        # The `coalesce_in_ordering` drop (a window sort key's NULL fallback removed) re-sorts
+        # only the NULL-score rows (Bob 2, Dave 4) to the engine's *default* NULL placement — so
+        # its liveness depends on the fallback *disagreeing* with that default. Under `desc`,
+        # SQLite defaults NULLs last (a high fallback ranks them first → live) and Postgres
+        # defaults NULLs first (a low fallback ranks them last → live); with the agreeing
+        # fallback the same drop is legitimately equivalent — exactly what its report note
+        # warns. The fallback is chosen per engine to disagree, proving the mutant deliverable
+        # and the note's engine-default claim in one observation.
+        test "dropping the sort-key fallback moves the NULL rows to the engine's default end" do
+          {fallback, baseline_null_ranks, mutant_null_ranks} =
+            if H.postgres?(@repo),
+              do: {-1, [5, 6], [1, 2]},
+              else: {1000, [1, 2], [5, 6]}
+
+          {mod, sites} =
+            build("""
+            defmodule Q do
+              import Ecto.Query
+              alias MyApp.User
+
+              def q do
+                from u in User,
+                  select: {u.id, over(row_number(), order_by: [desc: coalesce(u.score, #{fallback})])}
+              end
+            end
+            """)
+
+          # The drop's site is node-level (the walk's attribution), so the diff is the bare
+          # coalesce pair.
+          {baseline, mutant} =
+            observe_rows(mod, sites, {"coalesce(u.score, #{fallback})", "u.score"})
+
+          # The two NULL-score rows tie on the sort key (both as the fallback, then both as
+          # NULL), so their ranks are asserted as a set; the non-NULL rows rank by score
+          # descending — Alice(100), Frank(70), Carol(50), Eve(0) — on both sides.
+          ranks = fn rows -> Map.new(rows) end
+
+          baseline_ranks = ranks.(baseline)
+          assert Enum.sort([baseline_ranks[2], baseline_ranks[4]]) == baseline_null_ranks
+          assert non_null_by_rank(baseline) == [1, 6, 3, 5]
+
+          mutant_ranks = ranks.(mutant)
+          assert Enum.sort([mutant_ranks[2], mutant_ranks[4]]) == mutant_null_ranks
+          assert non_null_by_rank(mutant) == [1, 6, 3, 5]
         end
       end
 

@@ -183,7 +183,7 @@ defmodule Mutare.Ecto.ClauseTest do
       end
       """
 
-      assert {"select([u], sum(u.amount))", "select([u], avg(u.amount))"} in ecto_diffs(src)
+      assert {"sum(u.amount)", "avg(u.amount)"} in ecto_diffs(src)
       assert_compiles(src)
     end
 
@@ -195,9 +195,7 @@ defmodule Mutare.Ecto.ClauseTest do
       end
       """
 
-      assert {"select_merge([u], %{peak: max(u.x)})", "select_merge([u], %{peak: min(u.x)})"} in ecto_diffs(
-               src
-             )
+      assert {"max(u.x)", "min(u.x)"} in ecto_diffs(src)
 
       assert_compiles(src)
     end
@@ -214,9 +212,7 @@ defmodule Mutare.Ecto.ClauseTest do
       end
       """
 
-      assert {"select(query, [u], sum(u.amount))", "select(query, [u], avg(u.amount))"} in ecto_diffs(
-               src
-             )
+      assert {"sum(u.amount)", "avg(u.amount)"} in ecto_diffs(src)
 
       assert_compiles(src)
     end
@@ -235,7 +231,7 @@ defmodule Mutare.Ecto.ClauseTest do
 
       diffs = ecto_diffs(src)
       # the aggregate swap (keep the direction)…
-      assert {"order_by([u], desc: sum(u.amount))", "order_by([u], desc: avg(u.amount))"} in diffs
+      assert {"sum(u.amount)", "avg(u.amount)"} in diffs
       # …and the orthogonal direction flip (keep the aggregate).
       assert {"order_by([u], desc: sum(u.amount))", "order_by([u], asc: sum(u.amount))"} in diffs
       assert_compiles(src)
@@ -296,7 +292,7 @@ defmodule Mutare.Ecto.ClauseTest do
       end
       """
 
-      assert {"select([u], u.price * u.qty)", "select([u], u.price / u.qty)"} in ecto_diffs(src)
+      assert {"u.price * u.qty", "u.price / u.qty"} in ecto_diffs(src)
       assert_compiles(src)
     end
 
@@ -308,8 +304,7 @@ defmodule Mutare.Ecto.ClauseTest do
       end
       """
 
-      assert {"select_merge([u], %{net: u.gross - u.tax})",
-              "select_merge([u], %{net: u.gross + u.tax})"} in ecto_diffs(src)
+      assert {"u.gross - u.tax", "u.gross + u.tax"} in ecto_diffs(src)
 
       assert_compiles(src)
     end
@@ -324,7 +319,7 @@ defmodule Mutare.Ecto.ClauseTest do
 
       diffs = ecto_diffs(src)
       # the arithmetic swap (keep the direction)…
-      assert {"order_by([u], desc: u.a + u.b)", "order_by([u], desc: u.a - u.b)"} in diffs
+      assert {"u.a + u.b", "u.a - u.b"} in diffs
       # …and the orthogonal direction flip (keep the operator).
       assert {"order_by([u], desc: u.a + u.b)", "order_by([u], asc: u.a + u.b)"} in diffs
       assert_compiles(src)
@@ -343,7 +338,7 @@ defmodule Mutare.Ecto.ClauseTest do
       end
       """
 
-      assert {"select([u], coalesce(u.score, 0))", "select([u], u.score)"} in ecto_diffs(src)
+      assert {"coalesce(u.score, 0)", "u.score"} in ecto_diffs(src)
       assert_compiles(src)
     end
 
@@ -357,8 +352,7 @@ defmodule Mutare.Ecto.ClauseTest do
 
       diffs = ecto_diffs(src)
       # the coalesce fallback drop (keep the direction)…
-      assert {"order_by(query, [u], asc: coalesce(u.score, 0))",
-              "order_by(query, [u], asc: u.score)"} in diffs
+      assert {"coalesce(u.score, 0)", "u.score"} in diffs
 
       # …and the orthogonal direction flip (keep the coalesce).
       assert {"order_by(query, [u], asc: coalesce(u.score, 0))",

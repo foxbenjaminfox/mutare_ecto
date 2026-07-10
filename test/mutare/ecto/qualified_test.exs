@@ -82,7 +82,7 @@ defmodule Mutare.Ecto.QualifiedTest do
       bare = wrap(~S/from(s in "t") |> select([s], sum(s.x))/)
       qual = wrap(~S/from(s in "t") |> Ecto.Query.select([s], sum(s.x))/)
 
-      assert {"select([s], sum(s.x))", "select([s], avg(s.x))"} in normalized_ecto_diffs(qual)
+      assert {"sum(s.x)", "avg(s.x)"} in normalized_ecto_diffs(qual)
       assert normalized_ecto_diffs(qual) == normalized_ecto_diffs(bare)
     end
 

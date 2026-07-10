@@ -13,13 +13,43 @@ defmodule Mutare.Ecto.Ordering do
   #     direction (`:asc_nulls_first`→`:asc_nulls_last`). **Only** for an explicitly nulls-
   #     qualified key: writing `:asc_nulls_first` is the author *asserting they care where NULLs
   #     sort*, so an untested placement is a real gap — whereas a bare `:asc`/`:desc` makes no
-  #     such claim and gets only the direction flip. This axis is equivalence-sensitive (it
-  #     needs NULL rows in the result to kill), so it is recorded under its own family.
+  #     such claim and gets only the direction flip (the deeper, provable half of that rule is
+  #     below). This axis is equivalence-sensitive (it needs NULL rows in the result to kill),
+  #     so it is recorded under its own family.
   #
   # So a bare `:asc` yields one mutant (direction); an `:asc_nulls_first` yields two (direction
   # and placement), each flipping exactly one axis. Flipping both at once — the earlier
   # behaviour — was a *weaker* mutant: any order-pinning test killed it, so a missing
   # NULL-placement assertion never surfaced.
+  #
+  # ## Why a bare direction is never nulls-qualified
+  #
+  # The author-intent reason above has a harder, engine-level companion: where a bare `:asc`/
+  # `:desc` puts NULLs is defined by the **engine**, not by Ecto, and every engine's default *is*
+  # one of the two qualified forms. So of the two candidate mutants for a bare key
+  # (`desc` → `desc_nulls_first` / `desc` → `desc_nulls_last`), one is always provably equivalent
+  # — a guaranteed-unkillable survivor, not signal — and **which one flips across engines**:
+  #
+  #   * Postgres sorts NULL as if *larger* than any non-null value — bare `asc` ≡
+  #     `asc_nulls_last`, bare `desc` ≡ `desc_nulls_first`;
+  #   * SQLite and MySQL sort it *smaller* — the mirror image (bare `asc` ≡ `asc_nulls_first`,
+  #     bare `desc` ≡ `desc_nulls_last`);
+  #   * MySQL cannot even express the qualifier — the MyXQL adapter raises `Ecto.QueryError` for
+  #     any nulls-qualified direction, so there the "live" half would be a trivially-killed crash.
+  #
+  # There is therefore no portable half to emit, and even a `dialects:`-gated one would mutate a
+  # placement the author never wrote. Contrast the implicit-direction flip below, which is sound
+  # precisely because bare-means-ascending is *Ecto's own* guarantee, engine-independent. The
+  # per-engine equivalences are pinned live, per engine, by the semantic suite
+  # (`Mutare.Ecto.SemanticCases`, "OrderingNulls — the engine-default equivalence…"). The
+  # explicit-key placement flip this module *does* emit is immune to all of this: `*_nulls_first`
+  # ↔ `*_nulls_last` changes the emitted SQL on both engines that can express it, whatever the
+  # engine's default.
+  #
+  # The same engine fact resurfaces one family over: a coalesce drop in a *sort key*
+  # (`Mutare.Ecto.Scalar`'s `"coalesce_in_ordering"` label) re-sorts only the NULL rows to this
+  # default placement, so its equivalence turns on whether the written fallback agrees with it —
+  # its report note names the per-engine placement for exactly that reason.
   #
   # ## Implicit-direction flip
   #

@@ -30,40 +30,65 @@ defmodule Mutare.Ecto.Scalar do
 
   @arithmetic_swaps %{:+ => :-, :- => :+, :* => :/, :/ => :*}
 
+  # The ordering-position coalesce drop's finer label. Named apart from the plain "coalesce"
+  # because its equivalence character differs: dropping the fallback in a sort key re-sorts only
+  # the NULL rows to the engine's *default* NULL placement — which may coincide with where the
+  # fallback put them (Postgres sorts NULL as larger than every value, SQLite/MySQL as smaller;
+  # see `Mutare.Ecto.Ordering`). The distinct label lets `Mutare.Ecto.Config.equivalence_note/2`
+  # attach the placement-aware note, and lets `# mutare:ignore[ecto:coalesce_in_ordering]` name
+  # exactly the ordering-position drop — while a family-level `[ecto:coalesce]` still covers both.
+  @ordering_coalesce_label "coalesce_in_ordering"
+
   @doc """
   Every single-point scalar mutant of expression `expr` as self-tagging `Mutare.Ecto.Tag`s — the
   contract the other shared catalogs (`Mutare.Ecto.Aggregate.swaps/1`,
   `Mutare.Ecto.Ordering.flips/1`) use. The label is the **source** operator the swap mutates
-  (`"+"` for `+`↔`-`), so `# mutare:ignore[ecto:+]` names just it.
+  (`"+"` for `+`↔`-`), so `# mutare:ignore[ecto:+]` names just it. `position` is the expression's
+  root position (`:ordering` for an `order_by` value — `Mutare.Ecto.ExpressionWalk.position/0`);
+  a coalesce drop there is labelled `"coalesce_in_ordering"`.
   """
-  @spec swaps(Macro.t()) :: [Tag.t()]
-  def swaps(expr), do: ExpressionWalk.walk(expr, &local/1)
+  @spec swaps(Macro.t(), ExpressionWalk.position()) :: [Tag.t()]
+  def swaps(expr, position \\ :value), do: ExpressionWalk.walk(expr, &local/2, position)
 
   @doc """
   The scalar mutants of one node — **no descent** — the per-node hook `Mutare.Ecto.Fragment`
-  applies as it walks a hosted condition (its own traversal already handles descent). The
-  two-element args pattern is the binary-arity guard: a written `-5` is the arity-1 `-` over the
-  wrapped literal, sign syntax with no swap (and Ecto has no unary `+`); `coalesce` is exactly
-  `/2` in Ecto, so an off-arity call is left alone.
+  applies as it walks a hosted condition (its own traversal already handles descent; a boolean
+  condition is a `:value` position by construction). The two-element args pattern is the
+  binary-arity guard: a written `-5` is the arity-1 `-` over the wrapped literal, sign syntax
+  with no swap (and Ecto has no unary `+`); `coalesce` is exactly `/2` in Ecto, so an off-arity
+  call is left alone.
   """
   @spec local(Macro.t()) :: [Tag.t()]
-  def local({form, meta, [_l, _r] = args}) when is_map_key(@arithmetic_swaps, form),
+  def local(node), do: local(node, :value)
+
+  @doc false
+  # The position-aware per-node catalog `swaps/2` threads through the walk. Only the coalesce
+  # drop reads the position (its label); an arithmetic swap means the same thing everywhere.
+  @spec local(Macro.t(), ExpressionWalk.position()) :: [Tag.t()]
+  def local({form, meta, [_l, _r] = args}, _position) when is_map_key(@arithmetic_swaps, form),
     do: [Tag.new(:arithmetic, {@arithmetic_swaps[form], meta, args}, to_string(form))]
 
   # The coalesce drop replaces the whole call with its wrapped expression — a same-type,
   # compile-safe alternative whose only difference is where NULL rows land. The *default*'s own
   # value mutants are the traversal's job (it is an ordinary data argument).
-  def local({:coalesce, _meta, [x, _default]}), do: [Tag.new(:coalesce, x, "coalesce")]
+  def local({:coalesce, _meta, [x, _default]}, position),
+    do: [Tag.new(:coalesce, x, coalesce_label(position))]
 
-  def local(_node), do: []
+  def local(_node, _position), do: []
 
   @doc false
   # The finer `# mutare:ignore` labels the scalar catalog can emit — each swappable operator
   # (derived from the swap table so the vocabulary can't drift from what's produced) plus the
-  # coalesce drop. Folded into the plugin's variant vocabulary by `Mutare.Ecto.variants/0`.
+  # coalesce drop's two positional labels. Folded into the plugin's variant vocabulary by
+  # `Mutare.Ecto.variants/0`.
   @spec variant_labels() :: [String.t()]
   # `Enum.sort` canonicalises the order: `Map.keys` iteration order over atom keys is unspecified
   # and varies with runtime atom-table state, so an unsorted vocabulary is non-deterministic.
-  def variant_labels,
-    do: Enum.sort((@arithmetic_swaps |> Map.keys() |> Enum.map(&to_string/1)) ++ ["coalesce"])
+  def variant_labels do
+    operators = @arithmetic_swaps |> Map.keys() |> Enum.map(&to_string/1)
+    Enum.sort(operators ++ ["coalesce", @ordering_coalesce_label])
+  end
+
+  defp coalesce_label(:ordering), do: @ordering_coalesce_label
+  defp coalesce_label(:value), do: "coalesce"
 end
