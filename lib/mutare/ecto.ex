@@ -143,12 +143,14 @@ defmodule Mutare.Ecto do
     Combination,
     Config,
     Dispatcher,
+    Equivalence,
     Fragment,
     Host,
     Ordering,
     Query,
     Scalar,
-    Surface
+    Surface,
+    Tag
   }
 
   # Query macros routed through the plugin's **selector host** (`c:Mutare.Mutator.MacroHost.host/2`) — the
@@ -197,7 +199,7 @@ defmodule Mutare.Ecto do
   their own `:as` name to group "kill requires …" survivors in the report (see "Configuration").
   """
   @spec equivalence_sensitive_families() :: [atom()]
-  defdelegate equivalence_sensitive_families, to: Config
+  defdelegate equivalence_sensitive_families, to: Equivalence, as: :sensitive_families
 
   @doc """
   The `# mutare:ignore` variant vocabulary: every SQL **family** the plugin can emit (`families/0`),
@@ -304,30 +306,30 @@ defmodule Mutare.Ecto do
   # Every node mutation runs through `mutate/2` (not `mutate/1`), because all of them read
   # `context.config` — the `dialects:` gate (so a non-portable mutation only fires under a
   # supporting adapter) and, per producer, the `repo:` key. Production is pure: each dispatched
-  # tag is wrapped as a `Mutation.tagged(node, [family | finer])` (`Config.tagged/1`) and the
+  # tag is wrapped as a `Mutation.tagged(node, [family | finer])` (`Tag.to_mutation/1`) and the
   # `families:` filter + equivalence note are applied once, by core, in `finalize/2`.
   @impl Mutare.Mutator
   def mutate(_node), do: :skip
 
   # A dispatched result is either the plugin's own `%Mutare.Ecto.Tag{}` — wrapped by
-  # `Config.tagged/1` as a `Mutation` carrying its labels, for the `finalize/2` funnel below — or
+  # `Tag.to_mutation/1` as a `Mutation` carrying its labels, for the `finalize/2` funnel below — or
   # an already-final `%Mutare.Mutator.Mutation{}` relayed with `producer:` set (a sub-contracted
-  # island mutant of a free-standing `dynamic`, `Mutare.Ecto.Dynamic`), which `Config.tagged/1`
+  # island mutant of a free-standing `dynamic`, `Mutare.Ecto.Dynamic`), which `Tag.to_mutation/1`
   # passes through untouched and core's finalize pass bypasses: it is a *core* family's mutant, so
   # the plugin's SQL-family filter and notes never apply to it.
   @impl Mutare.Mutator
   def mutate(node, %{config: %Config{}} = context) do
     case Dispatcher.mutations(node, context) do
       [] -> :skip
-      tagged -> Enum.map(tagged, &Config.tagged/1)
+      tagged -> Enum.map(tagged, &Tag.to_mutation/1)
     end
   end
 
-  # The tag → filter → enrich funnel, defined once (`Mutare.Ecto.Config.finalize/2`): core applies
+  # The tag → filter → enrich funnel, defined once (`Mutare.Ecto.Equivalence.finalize/2`): core applies
   # it to every mutation the plugin produces, on **both** delivery paths — a `mutate/2` return and
   # a host target's `:mutants` — so no delivery site can forget the `families:` filter or the
   # equivalence note. A relayed island mutant (explicit `producer:` — the host's core sub-contract)
   # bypasses it in core: it belongs to the producing core family, whose own funnel already ran.
   @impl Mutare.Mutator
-  defdelegate finalize(mutation, context), to: Config
+  defdelegate finalize(mutation, context), to: Equivalence
 end

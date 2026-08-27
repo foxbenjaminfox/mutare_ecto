@@ -1,9 +1,11 @@
 defmodule Mutare.Ecto.FragmentTest do
   use ExUnit.Case, async: true
 
-  alias Mutare.Ecto.Fragment
+  alias Mutare.Ecto.{Config, Fragment}
 
-  # Unit tests for the SQL-semantics catalog itself — `Fragment.mutants/1` over a parsed
+  @config Config.parse!([])
+
+  # Unit tests for the SQL-semantics catalog itself — `Fragment.mutants/2` over a parsed
   # condition, rendered back to source. The host's *delivery* of these (the `^`/`dynamic`
   # weaving, routing) is `Mutare.Ecto.HostTest`'s job; here we pin exactly which single-point
   # variants the catalog offers for each family, reasoned in SQL's semantics (not Elixir's).
@@ -13,7 +15,7 @@ defmodule Mutare.Ecto.FragmentTest do
   defp mutants(code, opts \\ []) do
     code
     |> Sourceror.parse_string!()
-    |> Fragment.mutants(opts)
+    |> Fragment.mutants(Config.parse!(opts))
     |> Enum.map(&Sourceror.to_string(&1.node))
     |> MapSet.new()
   end
@@ -22,7 +24,7 @@ defmodule Mutare.Ecto.FragmentTest do
   defp families(code, opts \\ []) do
     code
     |> Sourceror.parse_string!()
-    |> Fragment.mutants(opts)
+    |> Fragment.mutants(Config.parse!(opts))
     |> Enum.map(& &1.family)
     |> MapSet.new()
   end
@@ -32,7 +34,7 @@ defmodule Mutare.Ecto.FragmentTest do
   defp labels(code, opts \\ []) do
     code
     |> Sourceror.parse_string!()
-    |> Fragment.mutants(opts)
+    |> Fragment.mutants(Config.parse!(opts))
     |> Enum.map(& &1.label)
     |> MapSet.new()
   end
@@ -267,7 +269,7 @@ defmodule Mutare.Ecto.FragmentTest do
       literals =
         "u.age > 1"
         |> Sourceror.parse_string!()
-        |> Fragment.mutants()
+        |> Fragment.mutants(@config)
         |> Enum.filter(&(&1.family == :integer_literal))
         |> Enum.map(&Sourceror.to_string(&1.node))
         |> Enum.sort()
@@ -281,7 +283,7 @@ defmodule Mutare.Ecto.FragmentTest do
       labels =
         "u.age > 1"
         |> Sourceror.parse_string!()
-        |> Fragment.mutants()
+        |> Fragment.mutants(@config)
         |> Enum.find(&(Sourceror.to_string(&1.node) == "u.age > 0"))
         |> Map.fetch!(:label)
 
@@ -296,7 +298,7 @@ defmodule Mutare.Ecto.FragmentTest do
       ordered =
         "u.age > 1"
         |> Sourceror.parse_string!()
-        |> Fragment.mutants()
+        |> Fragment.mutants(@config)
         |> Enum.filter(&(&1.family == :integer_literal))
         |> Enum.map(&Sourceror.to_string(&1.node))
 
@@ -310,7 +312,7 @@ defmodule Mutare.Ecto.FragmentTest do
       labels =
         "u.age > 1"
         |> Sourceror.parse_string!()
-        |> Fragment.mutants()
+        |> Fragment.mutants(@config)
         |> Enum.find(&(Sourceror.to_string(&1.node) == "u.age > 0"))
         |> Map.fetch!(:label)
 

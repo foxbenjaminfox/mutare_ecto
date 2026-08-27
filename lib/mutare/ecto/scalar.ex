@@ -34,7 +34,7 @@ defmodule Mutare.Ecto.Scalar do
   # because its equivalence character differs: dropping the fallback in a sort key re-sorts only
   # the NULL rows to the engine's *default* NULL placement — which may coincide with where the
   # fallback put them (Postgres sorts NULL as larger than every value, SQLite/MySQL as smaller;
-  # see `Mutare.Ecto.Ordering`). The distinct label lets `Mutare.Ecto.Config.equivalence_note/2`
+  # see `Mutare.Ecto.Ordering`). The distinct label lets `Mutare.Ecto.Equivalence.note/2`
   # attach the placement-aware note, and lets `# mutare:ignore[ecto:coalesce_in_ordering]` name
   # exactly the ordering-position drop — while a family-level `[ecto:coalesce]` still covers both.
   @ordering_coalesce_label "coalesce_in_ordering"

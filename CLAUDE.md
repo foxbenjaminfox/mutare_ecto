@@ -143,10 +143,10 @@ hosting):
   to every context-aware callback as `context.config`.
 - `mutate/2` — asks `Mutare.Ecto.Dispatcher` to classify the node and invoke only relevant
   sub-mutators, then returns the resulting `%Mutare.Ecto.Tag{}`s as tagged `Mutation`s
-  (`Config.tagged/1` — pure production, no filtering; a `Dynamic`-relayed producer-set `Mutation`
+  (`Tag.to_mutation/1` — pure production, no filtering; a `Dynamic`-relayed producer-set `Mutation`
   passes through as-is). Everything runs through `mutate/2` because all mutations read
   `context.config`.
-- `finalize/2` (`Mutare.Mutator`, delegated to `Config.finalize/2`) — the one
+- `finalize/2` (`Mutare.Mutator`, delegated to `Equivalence.finalize/2`) — the one
   tag → filter → enrich funnel: reads the mutation's leading variant label back as its SQL family,
   drops a disabled family (`families:`), attaches the equivalence note. Core applies it to every
   produced mutation on **both** delivery paths (a `mutate/2` return and a host target's
@@ -224,7 +224,7 @@ selector because a query clause can't host a runtime `case`:
 | `dispatcher.ex` | Classifies each node once and invokes only the sub-mutators relevant to that query macro, Ecto call, or configured Repo call |
 | `surface.ex` | Single descriptor table for every owned query macro and `from` key: routing kind, standalone mutation capabilities, stage/whole-`from` drop families, and hosted/binding/join capabilities |
 | `sub_mutator.ex` | The uniform `mutations(node, context)` behaviour implemented by each mutation producer |
-| `tag.ex` | `%Mutare.Ecto.Tag{family, node, label, attribution}` — the **one** shape every producer and shared catalog emits (previously three tuple arities), plus `map_node/2`, the "rebuild the surrounding form around each mutant" step; `Config.tagged/1` turns it into the delivered `Mutation` |
+| `tag.ex` | `%Mutare.Ecto.Tag{family, node, label, attribution}` — the **one** shape every producer and shared catalog emits (previously three tuple arities), plus `map_node/2`, the "rebuild the surrounding form around each mutant" step; `to_mutation/1` turns it into the delivered `Mutation` (a producer-set relayed `Mutation` passes through untouched) |
 | `host.ex` | Selector-host **coordinator** (bucket 3): turns a hosted call into `Target`s — condition weaves plus the pin-only bound-bump targets — delegating to the `host/*` parts below |
 | `host/routing.ex` | `route_arguments/2` — the per-argument routing classifier (`:hosted`/`:expression`/`:skip`/`:interpolated`/`{:keyword,…}`), over `treatments/1` |
 | `host/condition.ex` | `locate/1` — the host-owned condition argument of a `where`/`having` (and the free-standing `dynamic`, which shares their shape) as a `%Condition{node, index, bindings}`: the binding-form (one slot past the written list) and binding-less (trailing argument, `bindings: nil`) shapes. Pure argument-shape parsing, consumed by `host.ex`, `host/routing.ex`, and `dynamic.ex`; rendering the declarations is `host/bindings.ex`'s job |
@@ -251,7 +251,8 @@ selector because a query clause can't host a runtime `case`:
 | `repo_call.ex` | Shared "resolve a call on the configured `repo:`" preamble for `repo_aggregate.ex`/`repo_write.ex` |
 | `stage_drop.ex` | Shared pipe-aware stage-drop delivery for `clause_drop.ex` and `changeset.ex` |
 | `changeset.ex` | Changeset pipeline drops (`:validation_drop`, `:hook_drop`) |
-| `config.ex` | `families:`/`dialects:`/`repo:` parsing + validation (`parse!/1`, run once by `init/1`; the family catalog via core's `use Mutare.Mutator.Families`); equivalence-sensitive set + note; the `tagged/1` wrapper and the `finalize/2` funnel body |
+| `config.ex` | `families:`/`dialects:`/`repo:` parsing + validation (`parse!/1`, run once by `init/1`; the family catalog via core's `use Mutare.Mutator.Families`) into the `%Config{}` every production accessor takes — production never holds raw options; a unit test builds a struct through `parse!/1` |
+| `equivalence.ex` | The equivalence-sensitive family set and each family's report note (`note/2`, refined by the finer label), plus the `finalize/2` funnel body — the `families:` filter and the note, applied once by core on both delivery paths |
 | `ast.ex` | Small Sourceror AST helpers the plugin genuinely owns: typed literal *readers* (`atom_value`/`int_value`), the list unwrap/rewrap pair (`unwrap_list`/`rewrap_list`, over core's `unwrap_literal`) — everything *emitted* comes from core's `Mutare.AST` constructors |
 
 ### Families and configuration
@@ -283,13 +284,13 @@ Every mutation is tagged with an SQL **family**; `config.ex` holds the canonical
   ordering-position sub-case, `coalesce_in_ordering`, additionally needs the fallback to disagree
   with the engine's default NULL placement), or an
   operand off the operation's identity (`:arithmetic` — 0 for `+`/`-`, ±1 for `*`/`/`).
-  `Config.equivalence_note/2` resolves the note (refining `:comparison` and `:arithmetic` by the
+  `Equivalence.note/2` resolves the note (refining `:comparison` and `:arithmetic` by the
   swapped operator, and `:coalesce` by the position label).
 - The note rides onto the `Site` via the `finalize/2` funnel (see Architecture), which core runs
   on **both** delivery paths just before recording — so the in-fragment families surface it
   through the host and `:ordering_nulls`/`:join_type` through their `mutate/2` rewrites, and no
   delivery site can forget it. Producers stay pure: they return `%Mutare.Ecto.Tag{}`s wrapped by
-  `Config.tagged/1` into `Mutation`s carrying `variant: [family | finer]`.
+  `Tag.to_mutation/1` into `Mutation`s carrying `variant: [family | finer]`.
 
 ## Conventions and gotchas
 

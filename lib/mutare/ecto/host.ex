@@ -57,7 +57,7 @@ defmodule Mutare.Ecto.Host do
     end
   end
 
-  defp from_targets(source, %KeywordList{entries: entries} = clauses, opts, context) do
+  defp from_targets(source, %KeywordList{entries: entries} = clauses, config, context) do
     hostable_on = JoinOn.hostable_from_indices(entries)
 
     KeywordList.flat_map(clauses, fn entry, index ->
@@ -69,7 +69,7 @@ defmodule Mutare.Ecto.Host do
         # `Bindings.visible_to/2` owns the truncation offset (and why it includes the current
         # entry itself); each clause sees only the join bindings introduced up to it.
         bindings = Bindings.from(source, Bindings.visible_to(clauses, index))
-        from_target({entry, index}, bindings, {opts, context}, hostable_on)
+        from_target({entry, index}, bindings, {config, context}, hostable_on)
       end
     end)
   end
@@ -84,7 +84,7 @@ defmodule Mutare.Ecto.Host do
   defp from_target(
          {%Entry{key: key, value: condition}, index},
          bindings,
-         {opts, context},
+         {config, context},
          hostable_on
        ) do
     # No `bindings` non-emptiness guard: a bare-queryable source (`from("t", as: :t, where:
@@ -96,7 +96,7 @@ defmodule Mutare.Ecto.Host do
     # `[_ | _]` guard passes whenever core has something to mutate in that interior.
     with true <- hostable_clause?(key, index, hostable_on),
          true <- Surface.from_clause?(key, :hosted),
-         [_ | _] = mutants <- Catalog.mutants(condition, opts, context) do
+         [_ | _] = mutants <- Catalog.mutants(condition, config, context) do
       [Target.from_clause(condition, mutants, bindings, index)]
     else
       _ -> []
@@ -111,9 +111,9 @@ defmodule Mutare.Ecto.Host do
 
   # The woven `dynamic/2` re-declares the written binding list — or an empty one for the
   # binding-less form (`bindings: nil`), which `Bindings.declarations/1` renders as `[]`.
-  defp condition_target(args, opts, context) do
+  defp condition_target(args, config, context) do
     with %Condition{node: condition, index: index, bindings: list} <- Condition.locate(args),
-         [_ | _] = mutants <- Catalog.mutants(condition, opts, context) do
+         [_ | _] = mutants <- Catalog.mutants(condition, config, context) do
       [Target.condition(condition, mutants, Bindings.declarations(list), index)]
     else
       _ -> []

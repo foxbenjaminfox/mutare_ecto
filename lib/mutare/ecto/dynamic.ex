@@ -77,7 +77,7 @@ defmodule Mutare.Ecto.Dynamic do
       %Condition{node: condition, index: index} ->
         # The shared in-fragment catalog, exactly what the hosted path composes
         # (`Mutare.Ecto.Host.Catalog.own_catalog/2`) — returned as raw tags: `Mutare.Ecto.mutate/2`
-        # wraps every dispatched tag (`Config.tagged/1`) and core's finalize pass applies the
+        # wraps every dispatched tag (`Tag.to_mutation/1`) and core's finalize pass applies the
         # `families:` filter and the equivalence note. Each tag is anchored at the condition node
         # it mutates (`Mutare.Ecto.Walk`), so although the *delivered* node is the whole rebuilt
         # call, the Site reports at the operator/literal itself — a line-scoped `# mutare:ignore`

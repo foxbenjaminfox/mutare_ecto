@@ -15,7 +15,7 @@ defmodule Mutare.Ecto.Bound do
   # `^pinned`/expression bound is left raw — its value is mutated where it is bound, in ordinary
   # Elixir.
 
-  alias Mutare.Ecto.{AST, Config, Tag}
+  alias Mutare.Ecto.{AST, Tag}
 
   @doc """
   The tagged ±1 bumps for a bound value node (`limit:`/`offset:`): `n+1` always, and `n-1` only
@@ -31,7 +31,7 @@ defmodule Mutare.Ecto.Bound do
 
       n ->
         for bumped <- off_by_one(n),
-            do: Config.tagged(Tag.new(:bound, Mutare.AST.literal(bumped)))
+            do: Tag.to_mutation(Tag.new(:bound, Mutare.AST.literal(bumped)))
     end
   end
 

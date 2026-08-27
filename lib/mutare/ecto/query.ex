@@ -58,7 +58,7 @@ defmodule Mutare.Ecto.Query do
   (`Mutare.Mutator.Mutation.at/2`/`at_drop/1`) names the **inner clause** the rewrite
   changed, so core reports the site — line/column and diff — at that clause rather than at the
   whole `from`, making a clause-level `# mutare:ignore` reachable even though the node still
-  splices the whole rewritten query. The caller (`Mutare.Ecto.Config.tagged/1`) turns this into a
+  splices the whole rewritten query. The caller (`Mutare.Ecto.Tag.to_mutation/1`) turns this into a
   tagged `Mutation`, then filters by `families:`/a `# mutare:ignore` qualifier; `opts` carries
   `dialects:` for the join gate. A `from` node is `{:from, meta, [source, clauses]}`
   where `clauses` is a keyword list (in Sourceror form, each key wrapped as

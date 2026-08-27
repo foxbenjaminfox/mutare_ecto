@@ -5,7 +5,7 @@ defmodule Mutare.Ecto.Host.Catalog do
   #   * the plugin's **own** catalog — the in-fragment operator/predicate/literal swaps of
   #     `Mutare.Ecto.Fragment`, which folds the shared per-node scalar and aggregate catalogs in
   #     (`Mutare.Ecto.Scalar`/`Aggregate`) so the condition is walked once — each tagged with
-  #     its family labels (`Mutare.Ecto.Config.tagged/1`); the `families:` filter and equivalence
+  #     its family labels (`Mutare.Ecto.Tag.to_mutation/1`); the `families:` filter and equivalence
   #     note are core's job — `Mutare.Ecto.finalize/2` runs on every host-target mutant, and core
   #     drops a target whose mutants all skip;
   #   * the **sub-contracted** mutants of each interpolation island (`^expr`), through the shared
@@ -45,13 +45,13 @@ defmodule Mutare.Ecto.Host.Catalog do
   operator/predicate/literal swaps, with the shared scalar and aggregate per-node catalogs folded
   in — as raw `Mutare.Ecto.Tag`s, each anchored at the node it mutates. The single name for
   "what the plugin itself mutates in a hosted condition", shared by the host (`own/2`, which tags
-  them via `Config.tagged/1`; the weave discards the anchor structurally) and `Mutare.Ecto.Dynamic`
-  (which rebuilds each into the whole free-standing `dynamic` call and reports it at the anchor).
-  `config` threads to `Fragment` only for its `dialects:` gate.
+  them via `Tag.to_mutation/1`; the weave discards the anchor structurally) and
+  `Mutare.Ecto.Dynamic` (which rebuilds each into the whole free-standing `dynamic` call and
+  reports it at the anchor). `config` threads to `Fragment` only for its `dialects:` gate.
   """
   @spec own_catalog(Macro.t(), Config.t()) :: [Tag.t()]
   def own_catalog(condition, config), do: Fragment.mutants(condition, config)
 
   # Pure production: each catalog tag becomes `Mutation.tagged(node, [family | finer])`.
-  defp own(condition, config), do: Enum.map(own_catalog(condition, config), &Config.tagged/1)
+  defp own(condition, config), do: Enum.map(own_catalog(condition, config), &Tag.to_mutation/1)
 end

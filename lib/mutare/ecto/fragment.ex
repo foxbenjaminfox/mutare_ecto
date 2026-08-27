@@ -146,16 +146,16 @@ defmodule Mutare.Ecto.Fragment do
   value, an interpolation). One tag per mutatable position, each the full condition with that one
   position swapped, tagged with the SQL family that produced it (so the caller can filter by
   `families:`) **and** the finer label naming the operator/kind it swapped (so a qualified
-  `# mutare:ignore[ecto:<]` can suppress just that one). `opts` carries `dialects:` — the
+  `# mutare:ignore[ecto:<]` can suppress just that one). `config` carries `dialects:` — the
   `like`↔`ilike` swap is emitted only under `:postgres`.
 
   The catalog proper is `local/3` — what one node offers, at its `{parent_form, arity, index}`
   position — read over every position the shared walk (`Mutare.Ecto.Walk`) admits under this
   catalog's own descent rule (`children/2`).
   """
-  @spec mutants(Macro.t(), keyword() | Config.t()) :: [Tag.t()]
-  def mutants(condition, opts \\ []),
-    do: Walk.mutants(condition, nil, &children/2, &local(&1, &2, opts))
+  @spec mutants(Macro.t(), Config.t()) :: [Tag.t()]
+  def mutants(condition, %Config{} = config),
+    do: Walk.mutants(condition, nil, &children/2, &local(&1, &2, config))
 
   @doc """
   Every interpolation **island** (`^expr`) in the condition, as `{interior, rebuild}` pairs —
@@ -283,12 +283,12 @@ defmodule Mutare.Ecto.Fragment do
   # a redundant `not not is_nil(x)`).
   # Both directions are tagged `"is_nil"` (`not is_nil` has a space — not a wire-safe label), so
   # `# mutare:ignore[ecto:is_nil]` suppresses the null-predicate flip whichever way it points.
-  defp local({:not, _meta, [{:is_nil, _, [_arg]} = inner]}, _position, _opts),
+  defp local({:not, _meta, [{:is_nil, _, [_arg]} = inner]}, _position, _config),
     do: [Tag.new(:null_predicate, inner, "is_nil")]
 
   # `is_nil(x)` → `not is_nil(x)`, clean meta on the fresh `not`. (Why its argument is never
   # descended: `children/2`.)
-  defp local({:is_nil, _meta, [_arg]} = node, _position, _opts),
+  defp local({:is_nil, _meta, [_arg]} = node, _position, _config),
     do: [Tag.new(:null_predicate, {:not, [], [node]}, "is_nil")]
 
   # Membership. `x not in list` → `x in list`: flip the whole predicate as a unit (no double
@@ -297,12 +297,12 @@ defmodule Mutare.Ecto.Fragment do
   # left, a literal bump inside the written list) is the walk's, spliced through the `not` by
   # `children/2`. Both polarity directions are tagged `"in"` (`not in` has a space), so
   # `# mutare:ignore[ecto:in]` names the polarity flip.
-  defp local({:not, meta, [{:in, _imeta, [_l, _r]} = inner]}, _position, _opts),
+  defp local({:not, meta, [{:in, _imeta, [_l, _r]} = inner]}, _position, _config),
     do: [Tag.new(:membership, inner, "in") | rewrap(element_drops(inner), meta)]
 
   # `x in list` → `x not in list` (clean meta on the fresh `not`), plus the element drops of a
   # written list — a pinned `^list` or a field reference yields nothing.
-  defp local({:in, _meta, [_l, _r]} = node, _position, _opts),
+  defp local({:in, _meta, [_l, _r]} = node, _position, _config),
     do: [Tag.new(:membership, {:not, [], [node]}, "in") | element_drops(node)]
 
   # Existence polarity, as a unit (the subquery cousin of the `in` flip — SQL's other membership
@@ -311,9 +311,9 @@ defmodule Mutare.Ecto.Fragment do
   # wire-safe label — so `# mutare:ignore[ecto:exists]` names the flip whichever way it points);
   # the interior mutants come from `Mutare.Ecto.Subquery` in `:existence` mode (its `select` is
   # unobserved by EXISTS, so it is suppressed there), each re-wrapped inside the `not exists`.
-  defp local({:not, not_meta, [{:exists, ex_meta, [arg]} = inner]}, _position, opts) do
+  defp local({:not, not_meta, [{:exists, ex_meta, [arg]} = inner]}, _position, config) do
     interior =
-      for tag <- Subquery.interior_mutants(arg, opts, :existence),
+      for tag <- Subquery.interior_mutants(arg, config, :existence),
           do: Tag.map_node(tag, &{:not, not_meta, [{:exists, ex_meta, [&1]}]})
 
     # mutare:ignore[operand_swap] equivalent — the polarity flip and the interior set are independent, consumed as a set
@@ -322,9 +322,9 @@ defmodule Mutare.Ecto.Fragment do
 
   # `exists(subquery)` → `not exists(subquery)` (clean meta on the fresh `not`), plus the subquery's
   # interior mutants in `:existence` mode, each re-wrapped inside the `exists`.
-  defp local({:exists, ex_meta, [arg]} = node, _position, opts) do
+  defp local({:exists, ex_meta, [arg]} = node, _position, config) do
     interior =
-      for tag <- Subquery.interior_mutants(arg, opts, :existence),
+      for tag <- Subquery.interior_mutants(arg, config, :existence),
           do: Tag.map_node(tag, &{:exists, ex_meta, [&1]})
 
     # mutare:ignore[operand_swap] equivalent — the polarity flip and the interior set are independent, consumed as a set
@@ -335,7 +335,7 @@ defmodule Mutare.Ecto.Fragment do
   # parameter — never SQL for this catalog to reason about (a swap here changes the *parameter's*
   # Elixir value/type under an SQL rationale). The catalog contributes nothing, and the walk never
   # enters it; `islands/1` collects the interior for the host's core sub-contract instead.
-  defp local({:^, _meta, _args}, _position, _opts), do: []
+  defp local({:^, _meta, _args}, _position, _config), do: []
 
   # A literal (int/float/string/bool/atom) written directly into the fragment (Sourceror-wrapped).
   # At a *structural* position of a known Ecto DSL form — the `fragment` template, an interval unit
@@ -345,7 +345,7 @@ defmodule Mutare.Ecto.Fragment do
   # `{parent_form, arity, index}` the walk threads down — `child_position/3`). Elsewhere each type
   # emits its own SQL-safe, labelled mutants via `literal_mutants/1`. A *pinned* `^value` is not
   # this shape and never reaches here.
-  defp local({:__block__, _meta, [lit]} = node, position, _opts)
+  defp local({:__block__, _meta, [lit]} = node, position, _config)
        when is_integer(lit) or is_float(lit) or is_binary(lit) or is_atom(lit) do
     cond do
       structural_position?(position) -> []
@@ -357,27 +357,27 @@ defmodule Mutare.Ecto.Fragment do
   # Any other Sourceror block — the wrapper around a written list or a tuple — is transparent
   # syntax with no swap of its own; the walk threads its position through to the payload
   # (`child_position/3`), so a written in-list's literals are fragment SQL exactly like a bare one.
-  defp local({:__block__, _meta, _args}, _position, _opts), do: []
+  defp local({:__block__, _meta, _args}, _position, _config), do: []
 
   # An operator/connective (atom form): its own swap (if any). A bare inline subquery `from(...)`
   # (the argument of a value-wrapper — `all`/`any`/`subquery`/`in` — reached by the operand descent)
   # has no swap of its own, but `Subquery` recurses its interior in `:value` mode; every other
   # node's `interior_mutants` is `[]`.
-  defp local({form, meta, args} = node, _position, opts) when is_atom(form) and is_list(args) do
+  defp local({form, meta, args} = node, _position, config) when is_atom(form) and is_list(args) do
     # mutare:ignore[operand_swap] swap/subquery order is irrelevant — mutants are consumed as a set
-    swap(form, meta, args, opts) ++ Subquery.interior_mutants(node, opts, :value)
+    swap(form, meta, args, config) ++ Subquery.interior_mutants(node, config, :value)
   end
 
   # A non-atom-form node (e.g. a `u.age` field access, whose form is the `{:., …}` dot tuple, or a
   # qualified `Ecto.Query.from(...)` subquery): no swap of its own — its arguments are the walk's,
   # exactly as core's analyzer recurses — but a qualified subquery's interior is offered in
   # `:value` mode.
-  defp local({_form, _meta, args} = node, _position, opts) when is_list(args),
-    do: Subquery.interior_mutants(node, opts, :value)
+  defp local({_form, _meta, args} = node, _position, config) when is_list(args),
+    do: Subquery.interior_mutants(node, config, :value)
 
   # Variables, a block's bare payload, 2-tuples, bare atoms: no catalog target (interpolations are
   # core's; the `in`/`like` membership forms are handled by their own clauses above).
-  defp local(_node, _position, _opts), do: []
+  defp local(_node, _position, _config), do: []
 
   # ── The islands: what one position hands to core ───────────────────────────────────────────
   #
@@ -534,7 +534,7 @@ defmodule Mutare.Ecto.Fragment do
   # The atom-form node's own single swap, tagged by family **and** by the operator it swaps (the
   # source `form`, e.g. `<`) — so `# mutare:ignore[ecto:<]` names just this swap. `like`↔`ilike` is
   # dialect-gated (Postgres); comparison/connective are portable.
-  defp swap(form, meta, args, opts) do
+  defp swap(form, meta, args, config) do
     cond do
       Map.has_key?(@comparison_swaps, form) ->
         [Tag.new(:comparison, {@comparison_swaps[form], meta, args}, to_string(form))]
@@ -542,7 +542,7 @@ defmodule Mutare.Ecto.Fragment do
       Map.has_key?(@connective_swaps, form) ->
         [Tag.new(:connective, {@connective_swaps[form], meta, args}, to_string(form))]
 
-      Map.has_key?(@membership_op_swaps, form) and Config.dialect_enabled?(opts, [:postgres]) ->
+      Map.has_key?(@membership_op_swaps, form) and Config.dialect_enabled?(config, [:postgres]) ->
         [Tag.new(:membership, {@membership_op_swaps[form], meta, args}, to_string(form))]
 
       # `ago(n, unit)` ↔ `from_now(n, unit)` — Ecto's interval helpers are exactly /2, so an

@@ -64,15 +64,13 @@ defmodule Mutare.Ecto.Subquery do
   rebuilt (which the caller wraps back into the wrapper). `[]` unless `node` is an inline
   `from(source, clauses)` (or, in `:existence` mode, `subquery(from(source, clauses))`).
   Returned as `Mutare.Ecto.Tag`s — the shared catalog contract — carrying each family's **normal**
-  tag (`:comparison`, `:filter_drop`, `:join_type`, …) so `Config.tagged/1`, the `families:`
+  tag (`:comparison`, `:filter_drop`, `:join_type`, …) so `Mutare.Ecto.Tag.to_mutation/1`, the `families:`
   filter, and the equivalence notes apply unchanged.
   """
-  @spec interior_mutants(Macro.t(), Config.t() | keyword(), mode()) :: [Tag.t()]
-  def interior_mutants(node, opts, mode) do
+  @spec interior_mutants(Macro.t(), Config.t(), mode()) :: [Tag.t()]
+  def interior_mutants(node, %Config{} = config, mode) do
     case inline_from(node, mode) do
       {%QueryCall{args: args} = call, wrap} ->
-        config = to_config(opts)
-
         for tag <- structural(call, config) ++ clause_mutants(call, args, config, mode),
             do: Tag.map_node(tag, wrap)
 
@@ -198,10 +196,4 @@ defmodule Mutare.Ecto.Subquery do
   # (`KeywordList.replace_value/3`).
   defp rebuild_clause(call, source, clauses, index, value),
     do: QueryCall.rebuild(call, [source, KeywordList.replace_value(clauses, index, value)])
-
-  # `Fragment` threads its `opts` here; in delivery it is the `init/1`-parsed `%Config{}`, but a
-  # direct-unit-test `Fragment.mutants/2` may pass raw keyword options — normalize both so
-  # `Query.mutations` and the dialect gates see a struct.
-  defp to_config(%Config{} = config), do: config
-  defp to_config(opts) when is_list(opts), do: Config.parse!(opts)
 end

@@ -8,10 +8,10 @@ defmodule Mutare.Ecto.SubMutator do
   # `init/1`-parsed `families:`/`dialects:`/`repo:` `%Config{}` — and `:pipe_mode`), and returns the
   # `{family, node}` mutation pairs it produces, or `[]`. A sub-mutator that needs neither config
   # nor pipe-mode simply ignores the context; `Mutare.Ecto.mutate/2` returns the merged pairs as
-  # tagged `Mutation`s (`Mutare.Ecto.Config.tagged/1`), and the `families:` filter + equivalence
+  # tagged `Mutation`s (`Mutare.Ecto.Tag.to_mutation/1`), and the `families:` filter + equivalence
   # note are applied once, by core, via `Mutare.Ecto.finalize/2`. A sub-mutator that
   # *sub-contracts* islands to core's generation (`Mutare.Ecto.Dynamic`) additionally returns
-  # producer-attributed `Mutare.Mutator.Mutation`s, which pass through `Config.tagged/1` untouched
+  # producer-attributed `Mutare.Mutator.Mutation`s, which pass through `Tag.to_mutation/1` untouched
   # and core's finalize pass bypasses — the mutant is a core family's, not one of the plugin's.
   #
   # `node` is a raw AST `Macro.t()` for most sub-mutators (`RepoAggregate`, `RepoWrite`,
@@ -36,7 +36,7 @@ defmodule Mutare.Ecto.SubMutator do
   @typedoc """
   One produced mutation — the uniform `%Mutare.Ecto.Tag{}`: its SQL `family` and mutated `node`,
   optionally a finer `# mutare:ignore` `label` (a swap's operator / a value's kind — a structural
-  family leaves it `nil`; see `Mutare.Ecto.Config.tagged/1`) and, for a whole-`from` rewrite
+  family leaves it `nil`; see `Mutare.Ecto.Tag.to_mutation/1`) and, for a whole-`from` rewrite
   (`Mutare.Ecto.Query`), an `attribution` (`Mutation.at/2`/`at_drop/1`) so its site is reported at
   the inner clause it changed, not the whole `from`.
   """

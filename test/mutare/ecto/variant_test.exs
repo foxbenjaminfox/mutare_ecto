@@ -2,7 +2,7 @@ defmodule Mutare.Ecto.VariantTest do
   use ExUnit.Case, async: true
 
   # `# mutare:ignore[ecto:<label>]` variant suppression. Every recorded mutant is tagged (via
-  # `Mutare.Ecto.Config.tagged/1`) with its SQL **family** and, for a swap/value family, the finer
+  # `Mutare.Ecto.Tag.to_mutation/1`) with its SQL **family** and, for a swap/value family, the finer
   # **operator/kind** it mutated — and `Mutare.Ecto.variants/0` declares the whole vocabulary. So a
   # qualified directive suppresses just one family *or* one operator at a site while its siblings keep
   # running (the per-site analogue of the run-wide `families:` filter, only finer). The tags ride both
@@ -84,7 +84,7 @@ defmodule Mutare.Ecto.VariantTest do
       end
       """
 
-      # The pin-only weave still runs through `Config.tagged/1` + `finalize/2`, so the Site
+      # The pin-only weave still runs through `Tag.to_mutation/1` + `finalize/2`, so the Site
       # carries its `:bound` family label like every other host-delivered mutant.
       bump = Enum.find(sites_for(src), &(&1.mutator == :ecto and &1.mutated_code == "11"))
 
