@@ -45,9 +45,11 @@ defmodule Mutare.Ecto.Host.Catalog do
   operator/predicate/literal swaps, with the shared scalar and aggregate per-node catalogs folded
   in — as raw `Mutare.Ecto.Tag`s, each anchored at the node it mutates. The single name for
   "what the plugin itself mutates in a hosted condition", shared by the host (`own/2`, which tags
-  them via `Tag.to_mutation/1`; the weave discards the anchor structurally) and
-  `Mutare.Ecto.Dynamic` (which rebuilds each into the whole free-standing `dynamic` call and
-  reports it at the anchor). `config` threads to `Fragment` only for its `dialects:` gate.
+  them via `Tag.to_mutation/1`; the weave discards the anchor structurally), `Mutare.Ecto.Dynamic`
+  (which rebuilds each into the whole free-standing `dynamic` call and reports it at the anchor),
+  and `Mutare.Ecto.Subquery` (which recurses it into a subquery's own `where`/`having` values,
+  rebuilding each into the whole inner `from`, the anchor riding along to whichever delivery
+  wraps the subquery). `config` threads to `Fragment` only for its `dialects:` gate.
   """
   @spec own_catalog(Macro.t(), Config.t()) :: [Tag.t()]
   def own_catalog(condition, config), do: Fragment.mutants(condition, config)

@@ -106,40 +106,101 @@ defmodule Mutare.Ecto.Query do
   def mutations(%QueryCall{} = call, context),
     do: mutations_for(call, Config.from_context(context))
 
+  @typedoc """
+  One whole-`from` producer, named in `Mutare.Ecto.Surface`'s vocabulary: a `from_drop` family
+  walked over the clause list (`:filter_drop`, `:bound`), a `from` capability walked over the
+  clauses carrying it (the `:ordering`/`:aggregate`/`:scalar` value swaps, the
+  `:join_type`/`:combination` key swaps), or the source-level `:binding_reorder`.
+  """
+  @type producer ::
+          :filter_drop
+          | :bound
+          | :ordering
+          | :join_type
+          | :combination
+          | :aggregate
+          | :scalar
+          | :binding_reorder
+
+  # Every producer, in the order `mutations/2` runs them.
+  @producers [
+    :filter_drop,
+    :bound,
+    :ordering,
+    :join_type,
+    :combination,
+    :aggregate,
+    :scalar,
+    :binding_reorder
+  ]
+
   @doc """
   The whole-`from` mutations for `call` under an already-resolved `%Config{}` — the config-taking
-  body `mutations/2` delegates to, exposed so `Mutare.Ecto.Subquery` can recurse it into a
-  subquery's inner `from` (where it holds the parsed config, not a full callback context).
+  body `mutations/2` delegates to — restricted to `producers` (default: every producer, in
+  `mutations/2`'s order) over the clauses whose key `clause?` admits (default: every clause;
+  `:binding_reorder` rewrites the source, not a clause, so the predicate never reaches it).
+
+  Exposed so `Mutare.Ecto.Subquery` can **compose** exactly the producers a subquery wrapper
+  observes into an inner `from` (where it holds the parsed config, not a full callback context):
+  the row-set producers under every wrapper, and the `select` projection's `:aggregate`/`:scalar`
+  swaps under a value-wrapper only — rather than running all eight and filtering what it never
+  wanted. An unknown producer is a programming error and fails loudly.
   """
-  @spec mutations_for(QueryCall.t(), Config.t()) :: [Mutare.Ecto.SubMutator.tagged()]
-  def mutations_for(%QueryCall{} = call, %Config{} = config) do
-    case call do
-      %QueryCall{name: :from, args: [source]} ->
-        binding_reorders(call, source)
+  @spec mutations_for(QueryCall.t(), Config.t(), [producer()], (atom() -> boolean())) ::
+          [Mutare.Ecto.SubMutator.tagged()]
+  def mutations_for(call, config, producers \\ @producers, clause? \\ fn _key -> true end)
 
-      %QueryCall{name: :from, args: [source, clauses]} ->
-        case KeywordList.parse(clauses) do
-          %KeywordList{} = clauses -> from_mutations(source, clauses, call, config)
-          nil -> []
-        end
+  def mutations_for(
+        %QueryCall{name: :from, args: [source]} = call,
+        %Config{},
+        producers,
+        _clause?
+      ),
+      do: if(:binding_reorder in producers, do: binding_reorders(call, source), else: [])
 
-      _ ->
+  def mutations_for(
+        %QueryCall{name: :from, args: [source, clauses]} = call,
+        %Config{} = config,
+        producers,
+        clause?
+      ) do
+    case KeywordList.parse(clauses) do
+      %KeywordList{} = clauses ->
+        Enum.flat_map(producers, &produce(&1, call, source, clauses, config, clause?))
+
+      nil ->
         []
     end
   end
 
-  defp from_mutations(source, clauses, call, config) do
-    Enum.concat([
-      drops(call, source, clauses, :filter_drop),
-      drops(call, source, clauses, :bound),
-      value_swaps(call, source, clauses, :ordering, &Ordering.flips(&1.value)),
-      join_swaps(call, source, clauses, config),
-      combination_swaps(call, source, clauses),
-      value_swaps(call, source, clauses, :aggregate, &Aggregate.swaps(&1.value)),
-      value_swaps(call, source, clauses, :scalar, &scalar_value_swaps/1),
-      binding_reorders(call, source)
-    ])
-  end
+  def mutations_for(%QueryCall{}, %Config{}, _producers, _clause?), do: []
+
+  # One producer over the parsed clause list — the table `mutations_for/4` folds its `producers`
+  # through. Each clause-walking producer admits a clause only when both its own `Surface`
+  # capability/drop-family test and the caller's `clause?` hold.
+  defp produce(:filter_drop, call, source, clauses, _config, clause?),
+    do: drops(call, source, clauses, :filter_drop, clause?)
+
+  defp produce(:bound, call, source, clauses, _config, clause?),
+    do: drops(call, source, clauses, :bound, clause?)
+
+  defp produce(:ordering, call, source, clauses, _config, clause?),
+    do: value_swaps(call, source, clauses, :ordering, clause?, &Ordering.flips(&1.value))
+
+  defp produce(:join_type, call, source, clauses, config, clause?),
+    do: join_swaps(call, source, clauses, config, clause?)
+
+  defp produce(:combination, call, source, clauses, _config, clause?),
+    do: combination_swaps(call, source, clauses, clause?)
+
+  defp produce(:aggregate, call, source, clauses, _config, clause?),
+    do: value_swaps(call, source, clauses, :aggregate, clause?, &Aggregate.swaps(&1.value))
+
+  defp produce(:scalar, call, source, clauses, _config, clause?),
+    do: value_swaps(call, source, clauses, :scalar, clause?, &scalar_value_swaps/1)
+
+  defp produce(:binding_reorder, call, source, _clauses, _config, _clause?),
+    do: binding_reorders(call, source)
 
   # Whole-`from` binding-reorder: a `from` whose **source** declares a positional binding list
   # (`from [a, b] in q, …`) wrote that list at the whole-`from` level, so its reorder belongs there —
@@ -169,8 +230,10 @@ defmodule Mutare.Ecto.Query do
   # Remove each clause whose key is in `keys`, keeping the others — so the query still
   # compiles (it reuses the surviving clauses). Used for both the filter drops (where/having,
   # tagged `:filter_drop`) and the bound drops (limit/offset, tagged `:bound`).
-  defp drops(call, source, clauses, family) do
-    KeywordList.flat_map(clauses, &(Surface.from_drop_family(&1) == family), fn entry, index ->
+  defp drops(call, source, clauses, family, clause?) do
+    admit? = &(Surface.from_drop_family(&1) == family and clause?.(&1))
+
+    KeywordList.flat_map(clauses, admit?, fn entry, index ->
       [
         Tag.new(
           family,
@@ -200,10 +263,10 @@ defmodule Mutare.Ecto.Query do
   # `full_join`→`left_join`/`right_join`, and `left_join`↔`right_join` under a `RIGHT`-capable
   # dialect), keeping the join's value (`c in assoc(p, :x)`). `join`/`inner_join` are never a
   # flip source, so they never match here. One mutant per enabled target.
-  defp join_swaps(call, source, clauses, config) do
+  defp join_swaps(call, source, clauses, config, clause?) do
     flips = join_flips(config)
 
-    key_swaps(call, source, clauses, :join_type, &Map.get(flips, &1, []), &join_label/1)
+    key_swaps(call, source, clauses, :join_type, clause?, &Map.get(flips, &1, []), &join_label/1)
   end
 
   # The `# mutare:ignore` label for a join swap: the **source** join kind without its `_join`
@@ -238,12 +301,13 @@ defmodule Mutare.Ecto.Query do
   # the join-swap delivery, over the shared `Mutare.Ecto.Combination` catalog. `Combination.swap/1`
   # returns `nil` off its flip table (`List.wrap` then yields no target), so a non-swappable key is
   # simply skipped — though `Surface` only registers `:combination` on the flip-table names anyway.
-  defp combination_swaps(call, source, clauses) do
+  defp combination_swaps(call, source, clauses, clause?) do
     key_swaps(
       call,
       source,
       clauses,
       :combination,
+      clause?,
       &List.wrap(Combination.swap(&1)),
       &Combination.label/1
     )
@@ -252,8 +316,10 @@ defmodule Mutare.Ecto.Query do
   # Swap a clause's *key* to each target `targets.(key)` yields, keeping its value — the shared
   # delivery for JoinType and Combination. Both filter on and tag with the same `family` atom; each
   # names its own `label.(key)` and attributes the change at the key node. One mutant per target.
-  defp key_swaps(call, source, clauses, family, targets, label) do
-    KeywordList.flat_map(clauses, &Surface.from_clause?(&1, family), fn entry, index ->
+  defp key_swaps(call, source, clauses, family, clause?, targets, label) do
+    admit? = &(Surface.from_clause?(&1, family) and clause?.(&1))
+
+    KeywordList.flat_map(clauses, admit?, fn entry, index ->
       %Entry{key: key, key_node: key_node} = entry
 
       for to <- targets.(key) do
@@ -285,8 +351,10 @@ defmodule Mutare.Ecto.Query do
   # A `where`/`having` value with any of these is deliberately *not* here: its condition is hosted
   # (`^`/`dynamic`), so those mutants ride the host (`Mutare.Ecto.Fragment`/`Host.catalog/3`)
   # alongside the operator swaps rather than duplicating the whole `from`.
-  defp value_swaps(call, source, clauses, capability, catalog) do
-    KeywordList.flat_map(clauses, &Surface.from_clause?(&1, capability), fn entry, index ->
+  defp value_swaps(call, source, clauses, capability, clause?, catalog) do
+    admit? = &(Surface.from_clause?(&1, capability) and clause?.(&1))
+
+    KeywordList.flat_map(clauses, admit?, fn entry, index ->
       for %Tag{node: mutated} = tag <- catalog.(entry) do
         %{
           tag

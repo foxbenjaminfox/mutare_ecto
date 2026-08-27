@@ -214,4 +214,52 @@ defmodule Mutare.Ecto.AttributionTest do
       refute one(sites, &(&1.mutated_code == "p.views > 2")).ignored, "the literal bump survives"
     end
   end
+
+  describe "a subquery interior's whole-`from` attribution follows the delivery path" do
+    # `Mutare.Ecto.Subquery` composes `Query`'s producers into an inline subquery's `from`, and each
+    # tag keeps the inner-clause attribution `Query` stamps. What happens to it depends on who
+    # delivers: a free-standing `dynamic` is rewritten whole-call **in place**
+    # (`Mutare.Ecto.Dynamic`), so the attribution is honoured and the drop lands on the inner
+    # `where:` line (5), not the `dynamic` opener (4) — exactly as a top-level `from`'s would.
+    @dynamic_src """
+    defmodule M do
+      import Ecto.Query
+      def d do
+        dynamic([p], p.views > subquery(from(c in MyApp.Post,
+          where: c.likes > 1,
+          select: max(c.views))))
+      end
+    end
+    """
+
+    # Through the host's weave the same tag's attribution is discarded structurally: a hosted Site
+    # reports at the woven condition — here the outer `where:` line (5), not the inner one (6) —
+    # as a `:replace` of that condition (the outer clause's own top-level drop is the `:delete`
+    # sharing the line).
+    @hosted_src """
+    defmodule M do
+      import Ecto.Query
+      def q do
+        from(p in MyApp.Post,
+          where: p.views > subquery(from(c in MyApp.Post,
+            where: c.likes > 1,
+            select: max(c.views))))
+      end
+    end
+    """
+
+    test "in place (a free-standing dynamic), the inner filter drop lands on its own clause line" do
+      drop = @dynamic_src |> sites_for() |> one(&(&1.variant == ["filter_drop"]))
+      assert {drop.line, drop.operation} == {5, :delete}
+    end
+
+    test "hosted (a from's where:), the inner filter drop reports at the woven condition" do
+      drop =
+        @hosted_src
+        |> sites_for()
+        |> one(&(&1.variant == ["filter_drop"] and &1.operation == :replace))
+
+      assert drop.line == 5
+    end
+  end
 end

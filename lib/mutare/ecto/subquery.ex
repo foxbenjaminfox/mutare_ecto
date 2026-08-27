@@ -11,20 +11,20 @@ defmodule Mutare.Ecto.Subquery do
   # **What is mutated is gated by what the wrapper can observe** (`mode`):
   #
   #   * **row-set-changing families — every wrapper (`mode`-agnostic):** the inner
-  #     `where`/`having` operator/literal/aggregate swaps (`Mutare.Ecto.Fragment`, the aggregate
-  #     folded in per node), and the whole-`from` structural rewrites that change which rows
-  #     the subquery returns — filter-clause drops, join-type swaps, combination-key swaps, and the
-  #     source binding-reorder (reused from `Mutare.Ecto.Query`, filtered to
-  #     `@structural_families`). A changed row set is observable through existence, a value set, a
-  #     scalar, or membership alike.
-  #   * **`select` projection — `mode: :value` only** (`all`/`any`/`subquery`/`in`): the
-  #     `select`/`select_merge` aggregate/scalar swaps (`Mutare.Ecto.Aggregate`/`Scalar`), where the
-  #     projected column *is* the observed value. **Suppressed under `mode: :existence`**
-  #     (`exists`): SQL never evaluates an EXISTS subquery's select list for any row on any engine,
-  #     so a swap there is *unconditionally* equivalent — the same category as `Fragment`'s
-  #     `is_nil`-interior suppression, and dropped for the same reason (`Query.mutations`' own
-  #     `:aggregate`/`:arithmetic`/`:coalesce` mutants are filtered out, then re-added here for
-  #     `select` only, under `:value`).
+  #     `where`/`having` condition catalog — exactly what the host and `Mutare.Ecto.Dynamic`
+  #     compose (`Mutare.Ecto.Host.Catalog.own_catalog/2`: `Fragment`'s operator/literal swaps,
+  #     the aggregate swap folded in per node) — and the whole-`from` structural rewrites that
+  #     change which rows the subquery returns: filter-clause drops, join-type swaps,
+  #     combination-key swaps, and the source binding-reorder, composed from
+  #     `Mutare.Ecto.Query`'s producers (`@structural_producers`). A changed row set is observable
+  #     through existence, a value set, a scalar, or membership alike.
+  #   * **`select` projection — `mode: :value` only** (`all`/`any`/`subquery`/`in`): `Query`'s
+  #     `:aggregate`/`:scalar` producers narrowed to the `select`/`select_merge` keys
+  #     (`@projection_producers` over `@projection_keys`), where the projected column *is* the
+  #     observed value. **Suppressed under `mode: :existence`** (`exists`): SQL never evaluates an
+  #     EXISTS subquery's select list for any row on any engine, so a swap there is
+  #     *unconditionally* equivalent — the same category as `Fragment`'s `is_nil`-interior
+  #     suppression, and left uncomposed for the same reason.
   #
   # Deliberately **not** mutated (considered and rejected): the inner `order_by` (inert under
   # `exists` and under set-wrappers; only observable in the narrow `order_by … limit 1` scalar
@@ -46,15 +46,18 @@ defmodule Mutare.Ecto.Subquery do
   # `:skip` and never walked) all yield nothing.
 
   alias Mutare.Calls
-  alias Mutare.Ecto.{Aggregate, Config, Fragment, Query, Scalar, Surface, Tag}
+  alias Mutare.Ecto.{Config, Fragment, Query, Surface, Tag}
   alias Mutare.Ecto.AST.{KeywordList, QueryCall}
+  alias Mutare.Ecto.Host.Catalog
 
-  # The whole-`from` families from `Mutare.Ecto.Query` that change the subquery's **row set** — the
-  # ones observable through every wrapper. Its projection/ordering/window families
-  # (`:aggregate`/`:arithmetic`/`:coalesce` for `select`/`order_by`, `:ordering`/`:ordering_nulls`,
-  # `:bound`) are filtered out: `select` is re-added per-wrapper here, and the rest are excluded
-  # entirely (see the moduledoc).
-  @structural_families [:filter_drop, :join_type, :combination, :binding_reorder]
+  # The `Mutare.Ecto.Query` producers composed into the inner `from`: the ones that change the
+  # subquery's **row set** (observable through every wrapper), and — under a value-wrapper only —
+  # its `:aggregate`/`:scalar` value swaps narrowed to the projection keys. `Query`'s remaining
+  # producers (`:ordering`, `:bound`, and those two over `order_by`) are never composed (see the
+  # moduledoc).
+  @structural_producers [:filter_drop, :join_type, :combination, :binding_reorder]
+  @projection_producers [:aggregate, :scalar]
+  @projection_keys [:select, :select_merge]
 
   @typedoc "The wrapper's observation mode — whether its projected `select` is visible."
   @type mode :: :existence | :value
@@ -64,14 +67,21 @@ defmodule Mutare.Ecto.Subquery do
   rebuilt (which the caller wraps back into the wrapper). `[]` unless `node` is an inline
   `from(source, clauses)` (or, in `:existence` mode, `subquery(from(source, clauses))`).
   Returned as `Mutare.Ecto.Tag`s — the shared catalog contract — carrying each family's **normal**
-  tag (`:comparison`, `:filter_drop`, `:join_type`, …) so `Mutare.Ecto.Tag.to_mutation/1`, the `families:`
-  filter, and the equivalence notes apply unchanged.
+  tag (`:comparison`, `:filter_drop`, `:join_type`, …) so `Mutare.Ecto.Tag.to_mutation/1`, the
+  `families:` filter, and the equivalence notes apply unchanged. Each tag also keeps the
+  attribution its producer stamped (`Query`'s inner-clause attribution, the expression walks' node
+  stamp): the host's weave never reads it — a hosted Site is reported at the woven condition —
+  while `Mutare.Ecto.Dynamic`'s in-place delivery honours it, so a mutant inside a free-standing
+  `dynamic`'s subquery reports at the inner clause it changed, as a top-level `from`'s would.
   """
   @spec interior_mutants(Macro.t(), Config.t(), mode()) :: [Tag.t()]
   def interior_mutants(node, %Config{} = config, mode) do
     case inline_from(node, mode) do
-      {%QueryCall{args: args} = call, wrap} ->
-        for tag <- structural(call, config) ++ clause_mutants(call, args, config, mode),
+      {%QueryCall{} = call, wrap} ->
+        # mutare:ignore[operand_swap] equivalent — three independent mutant lists, consumed as a set
+        for tag <-
+              structural(call, config) ++
+                conditions(call, config) ++ projection(call, config, mode),
             do: Tag.map_node(tag, wrap)
 
       _other ->
@@ -138,58 +148,45 @@ defmodule Mutare.Ecto.Subquery do
   # A clause whose pins we sub-contract: the hosted conditions (every mode), plus a value-wrapper's
   # observed `select` projection. Mirrors exactly the clauses `interior_mutants/3` mutates.
   defp island_clause?(key, mode),
-    do: Surface.from_clause?(key, :hosted) or (mode == :value and key in [:select, :select_merge])
+    do: Surface.from_clause?(key, :hosted) or (mode == :value and key in @projection_keys)
 
-  # The row-set structural families: `Query.mutations_for/2` (the config-taking entry) over the
-  # inner `from`, filtered to the families every wrapper observes. `Query`'s attribution (naming
-  # the inner clause the whole-`from` site is reported at) is deliberately **dropped**: here the
-  # mutant is wrapped back into the outer condition, so it reports where that condition's walk
-  # anchors it — the subquery node (`Mutare.Ecto.Walk.mutants/4`) for an in-place `dynamic`, and
-  # the woven condition itself on the host path, whose weave discards attribution structurally.
-  defp structural(call, config) do
-    for %Tag{family: family} = tag <- Query.mutations_for(call, config),
-        family in @structural_families,
-        do: %{tag | attribution: nil}
-  end
+  # The row-set producers, composed straight from `Mutare.Ecto.Query` — attribution included:
+  # the outer condition's walk anchors only an *unattributed* tag (`Mutare.Ecto.Walk.mutants/4`),
+  # so an in-place delivery reports the drop at the inner clause it removed, while the host's
+  # weave discards the stamp structurally (see `interior_mutants/3`).
+  defp structural(call, config), do: Query.mutations_for(call, config, @structural_producers)
 
-  # The clause-value families: the inner conditions (all modes) plus, under `:value`, the `select`
-  # projection. Only an inline `from(source, clauses)` with a keyword clause list has these; a
-  # scalar/binding-list-only source (its reorder rode `structural/2`) contributes nothing here.
-  defp clause_mutants(call, [source, clauses_node], config, mode) do
+  # The hosted-condition catalog (`Mutare.Ecto.Host.Catalog.own_catalog/2` — `Fragment` with the
+  # aggregate swap folded in, exactly what the host weaves and `Mutare.Ecto.Dynamic` rebuilds)
+  # recursed into each
+  # `where`/`having`/`or_where`/`or_having` value (the hosted-clause keys), rebuilding the whole
+  # inner `from` around each single-point condition mutant. Nesting (`exists` inside the
+  # subquery's own `where`) re-enters `Fragment`, which re-recognizes the wrapper. Only an inline
+  # `from(source, clauses)` with a keyword clause list has conditions; a scalar/binding-list-only
+  # source (its reorder rode `structural/2`) contributes nothing here.
+  defp conditions(%QueryCall{args: [source, clauses_node]} = call, config) do
     case KeywordList.parse(clauses_node) do
       %KeywordList{} = clauses ->
-        conditions(call, source, clauses, config) ++
-          select_projection(call, source, clauses, mode)
+        KeywordList.flat_map(clauses, &Surface.from_clause?(&1, :hosted), fn entry, index ->
+          for tag <- Catalog.own_catalog(entry.value, config),
+              do: Tag.map_node(tag, &rebuild_clause(call, source, clauses, index, &1))
+        end)
 
       nil ->
         []
     end
   end
 
-  defp clause_mutants(_call, _args, _config, _mode), do: []
+  defp conditions(_call, _config), do: []
 
-  # Recurse the hosted condition catalog (`Fragment`, the aggregate swap folded in) into each
-  # `where`/`having`/`or_where`/`or_having` condition value (the hosted-clause keys), rebuilding
-  # the whole inner `from` around each single-point condition mutant. Nesting (`exists` inside
-  # the subquery's own `where`) re-enters `Fragment`, which re-recognizes the wrapper.
-  defp conditions(call, source, clauses, config) do
-    KeywordList.flat_map(clauses, &Surface.from_clause?(&1, :hosted), fn entry, index ->
-      for tag <- Fragment.mutants(entry.value, config),
-          do: Tag.map_node(tag, &rebuild_clause(call, source, clauses, index, &1))
-    end)
-  end
+  # The `select`/`select_merge` projection's aggregate/scalar swaps — `Query`'s own
+  # `:aggregate`/`:scalar` producers narrowed to the projection keys — only under a value-wrapper,
+  # where the projected column is the observed value. `order_by` (the other key those producers
+  # walk) is deliberately excluded: its ordering is inert through every wrapper we host.
+  defp projection(call, config, :value),
+    do: Query.mutations_for(call, config, @projection_producers, &(&1 in @projection_keys))
 
-  # The `select`/`select_merge` aggregate/scalar swaps — only under a value-wrapper, where the
-  # projected column is the observed value. `order_by` is deliberately excluded (its ordering is
-  # inert through every wrapper we host).
-  defp select_projection(call, source, clauses, :value) do
-    KeywordList.flat_map(clauses, &(&1 in [:select, :select_merge]), fn entry, index ->
-      for tag <- Aggregate.swaps(entry.value) ++ Scalar.swaps(entry.value),
-          do: Tag.map_node(tag, &rebuild_clause(call, source, clauses, index, &1))
-    end)
-  end
-
-  defp select_projection(_call, _source, _clauses, :existence), do: []
+  defp projection(_call, _config, :existence), do: []
 
   # Rebuild the whole inner `from` with the clause at `index` carrying `value`, preserving the
   # source's written form (`QueryCall.rebuild/2`) and the clause list's Sourceror wrapper
