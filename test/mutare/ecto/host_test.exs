@@ -1092,8 +1092,13 @@ defmodule Mutare.Ecto.HostTest do
   # shape failures easy to diagnose without manufacturing resolver metadata or bypassing the
   # public transform for mutation delivery.
 
-  describe "treatments/1 — per-argument treatment" do
-    defp routing(code), do: code |> Sourceror.parse_string!() |> Host.Routing.treatments()
+  describe "treatments/2 — per-argument treatment" do
+    # The classifier takes the resolved macro name and visible args (what core reads off a
+    # `Mutare.MacroRouting.Call`); a bare call's own head and args stand in for them here.
+    defp routing(code) do
+      {name, _meta, args} = Sourceror.parse_string!(code)
+      Host.Routing.treatments(name, args)
+    end
 
     test "from keyword form routes each binding condition independently" do
       assert routing("from(u in User, where: u.x == u.y, select: u.id)") ==
@@ -1161,7 +1166,7 @@ defmodule Mutare.Ecto.HostTest do
     end
 
     test "a qualified Ecto.Query call that isn't a query builder is not the threaded query" do
-      # `Ecto.Query.exclude/2` resolves to the `Ecto.Query` module (so `qualified_query_builder?/1`
+      # `Ecto.Query.exclude/2` resolves to the `Ecto.Query` module (so `query_builder_call?/1`
       # reaches `Surface.query_builder?/1`) but isn't one of the registered query-builder macro
       # names — unlike `Ecto.Query.where(...)` or a nested `from(...)`, so it must route `:skip`,
       # not `:expression` (which would let core descend into its own arguments as if it were the
@@ -1220,22 +1225,6 @@ defmodule Mutare.Ecto.HostTest do
 
     test "a non-routing macro yields []" do
       assert routing("foobar(query, 1)") == []
-    end
-
-    test "a node with no macro/call shape at all yields [] (the total catch-all)" do
-      # A bare 2-tuple literal doesn't match `{macro, meta, args}` (a 3-tuple) at all — every
-      # top-level scalar/list Sourceror parses gets wrapped in a 3-element `__block__`, so this is
-      # the one realistic shape that reaches `treatments/1`'s final catch-all clause.
-      assert routing("{1, 2}") == []
-    end
-
-    test "a bare variable that happens to share a query-macro name never crashes" do
-      # `{macro, meta, args}` also matches a bare *variable* reference (`args` is `nil`, not a
-      # list) — e.g. a local variable literally named `where`. Without the `is_list(args)` guard,
-      # a name that collides with a registered macro (`Surface.macro_kind(:where) == :condition`)
-      # would reach `route_macro/3` with `args: nil` and crash in `query_threading_route/1` (which
-      # only matches `[]` or `[first | rest]`).
-      assert routing("where") == []
     end
 
     test "a clause-less from(Post) routes :skip (nothing to host)" do

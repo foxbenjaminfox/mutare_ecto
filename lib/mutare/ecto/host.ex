@@ -128,16 +128,11 @@ defmodule Mutare.Ecto.Host do
   # `Bound.literal?/1`), so a `^pinned`/expression bound (or a degenerate `limit()`)
   # yields no target and the call degrades safely to raw.
   defp bound_target(macro, [_ | _] = args) do
+    {bound, index} = last_argument(args)
+
     with true <- Surface.bound?(macro),
-         [_ | _] = mutants <- Bound.bumps(List.last(args)) do
-      # `length(args) - 1` is always the bound's own (last) position, since `limit`/`offset` are
-      # arity-1 (piped) or arity-2 (direct) macros — never more. `List.replace_at/3` (which
-      # consumes this index in `Target.bound_argument/3`) treats a negative index as counting
-      # from the end, so the operand-swapped `1 - length(args)` still lands on the same last
-      # element for both possible arities (0 for arity 1, -1 for arity 2) — equivalent given the
-      # macros' fixed arity, not a real index bug.
-      # mutare:ignore[operand_swap] equivalent: List.replace_at/3's negative index still hits the last element
-      [Target.bound_argument(List.last(args), mutants, length(args) - 1)]
+         [_ | _] = mutants <- Bound.bumps(bound) do
+      [Target.bound_argument(bound, mutants, index)]
     else
       _ -> []
     end
@@ -169,11 +164,16 @@ defmodule Mutare.Ecto.Host do
   end
 
   defp trailing_options(args) do
-    index = length(args) - 1
+    {trailing, index} = last_argument(args)
 
-    case KeywordList.nonempty(List.last(args)) do
+    case KeywordList.nonempty(trailing) do
       %KeywordList{} = options -> {index, options}
       _ -> nil
     end
   end
+
+  # The trailing argument and its index. A bound value (`limit(q, 10)` / `q |> limit(10)`) and a
+  # join's options list sit last in the direct and pipe forms alike — a piped call's visible args
+  # exclude the threaded query, so "last" is the one position that holds in both.
+  defp last_argument(args), do: {List.last(args), length(args) - 1}
 end

@@ -43,31 +43,30 @@ defmodule Mutare.Ecto.Host.Routing do
   """
 
   alias Mutare.Ecto.{Binding, Bound, Surface}
-  alias Mutare.Ecto.AST.{KeywordList, QueryCall}
+  alias Mutare.Ecto.AST.KeywordList
   alias Mutare.Ecto.Host.Condition
   alias Mutare.Calls
   alias Mutare.MacroRouting.{ArgumentRoutes, Call}
 
   @doc """
   `c:Mutare.MacroRouting.route_arguments/2` for a `:routing`-registered query macro: the
-  per-visible-argument `treatments/1` classification, wrapped as `ArgumentRoutes`. Core hands in a
+  per-visible-argument `treatments/2` classification, wrapped as `ArgumentRoutes`. Core hands in a
   resolved `Mutare.MacroRouting.Call`, so the written form (bare/qualified/aliased/piped) is already
   normalized. A piped call's hidden left side is the threaded query, so it keeps `from_visible`'s
   `:expression` default — the upstream query stays mutable through the stage.
   """
   @spec route_arguments(Call.t(), Mutare.MacroRouting.routing_context()) :: ArgumentRoutes.t()
   def route_arguments(%Call{name: name, arguments: args} = call, _context) do
-    ArgumentRoutes.from_visible(call, treatments({name, [], args}))
+    ArgumentRoutes.from_visible(call, treatments(name, args))
   end
 
   @doc """
   Per-visible-argument treatment for a `:routing`-registered query macro (`from`, the
-  `where`/`having` family, `join`, and the plain clause macros), one entry per visible argument.
-  Returns `[]` for anything else.
+  `where`/`having` family, `join`, and the plain clause macros), given the resolved macro `name`
+  and its visible `args`: one entry per argument. Returns `[]` for a name the plugin doesn't route.
   """
-  @spec treatments(Macro.t()) :: [Mutare.MacroRouting.treatment()]
-  # mutare:ignore[guard_drop] equivalent — `rest` is the tail of the `[source | rest]` cons match, so it is always a list; the guard is redundant
-  def treatments({:from, _meta, [_source | rest]}) when is_list(rest) do
+  @spec treatments(atom(), [Macro.t()]) :: [Mutare.MacroRouting.treatment()]
+  def treatments(:from, [_source | rest]) do
     # The source is never mutated (a table/schema swap is a broken query, not a mutant). Each clause
     # routes independently: a binding-referencing `where`/`having` expression is hosted, while a
     # keyword-shorthand condition routes its values per pair so core mutates them (`^`-pinned). This
@@ -87,11 +86,7 @@ defmodule Mutare.Ecto.Host.Routing do
     [:skip | List.duplicate(clause_treatment, length(rest))]
   end
 
-  def treatments({macro, _meta, args}) when is_atom(macro) and is_list(args) do
-    route_macro(Surface.macro_kind(macro), macro, args)
-  end
-
-  def treatments(_node), do: []
+  def treatments(macro, args), do: route_macro(Surface.macro_kind(macro), macro, args)
 
   defp route_macro(:condition, _name, args) do
     # The threaded query (the first arg, when written directly) is an ordinary expression; its own
@@ -116,22 +111,20 @@ defmodule Mutare.Ecto.Host.Routing do
   defp route_macro(:clause, name, args) do
     # No hosted fragment, no shorthand: thread the query (first arg → `:expression` when it is
     # one) and leave the data positions raw for the plugin's own `mutate/2` mutators — except a
-    # bound macro's literal-integer value (the **last** argument in the direct and pipe forms
-    # alike; a piped call's visible args exclude the threaded query), which routes `:hosted` so
-    # the `:bound` bump weaves pin-only. `List.last([])` is `nil`, never a literal integer, so a
-    # degenerate `limit()` keeps the empty route.
+    # bound macro's literal-integer value (the trailing argument — `route_last/2`), which routes
+    # `:hosted` so the `:bound` bump weaves pin-only. `List.last([])` is `nil`, never a literal
+    # integer, so a degenerate `limit()` keeps the empty route.
     base = query_threading_route(args)
 
     if Surface.bound?(name) and Bound.literal?(List.last(args)) do
-      # mutare:ignore[operand_swap] equivalent — limit/offset are arity-1 (piped) or arity-2 (direct) macros only, and List.replace_at/3's negative index counts from the end, so `1 - length(args)` still lands on the same last element as `length(args) - 1` for both possible arities
-      List.replace_at(base, length(args) - 1, :hosted)
+      route_last(base, :hosted)
     else
       base
     end
   end
 
   # Only `:dynamic`/`:skip` (registered `:skip`, so core never calls `route_arguments/2` for
-  # them — reachable here only through a direct `treatments/1` call) and `nil` (a name the
+  # them — reachable here only through a direct `treatments/2` call) and `nil` (a name the
   # plugin doesn't own) land here. A **new** Surface kind registers `:routing` by default
   # (`Surface.macro_registrations/0`), so it must take a real branch above —
   # `macro_kind_parity_test.exs` probes every `Surface.macro_kinds/0` value and fails until
@@ -152,31 +145,24 @@ defmodule Mutare.Ecto.Host.Routing do
     [first_treatment | List.duplicate(:skip, length(rest))]
   end
 
-  # Whether a first-argument node is a query expression that should remain reachable: a bare
-  # variable (`q`), any nested query-builder macro (`from(…)`, `where(…)`, …), or a nested pipe.
-  # A binding list, keyword list, literal, or other DSL-data shape is not — that is a piped call's
+  # Whether a first-argument node is a query expression that should remain reachable: a nested
+  # pipe, a bare variable (`q`), or a nested query-builder call (`from(…)`, `where(…)`, …). A
+  # binding list, keyword list, literal, or other DSL-data shape is not — that is a piped call's
   # own first data argument (the threaded query is the `|>` left side, routed separately).
   defp query_arg?({:|>, _meta, _args}), do: true
+  defp query_arg?(node), do: Binding.variable?(node) or query_builder_call?(node)
 
-  defp query_arg?({name, _meta, args}) when is_atom(name) and is_list(args),
+  # A bare call is a query builder by **name** — no stamp consulted, so it holds for a nested
+  # call the resolve pass hasn't reached yet (an outer classifier runs before core descends into
+  # its arguments) and a false positive (a local `from/2`) only routes `:expression`, core's
+  # ordinary treatment. A qualified call (`Ecto.Query.where(…)`) resolves through its explicit
+  # receiver, which ordinary call resolution reads stamp or not; once routed `:expression`,
+  # descent stamps and analyzes it normally. The name must be registered either way:
+  # `Ecto.Query.exclude/2` resolves to the module but is no query builder.
+  defp query_builder_call?({name, _meta, args}) when is_atom(name) and is_list(args),
     do: Surface.query_builder?(name)
 
-  defp query_arg?(node) do
-    Binding.variable?(node) or query_builder_call?(node)
-  end
-
   defp query_builder_call?(node) do
-    case QueryCall.parse(node) do
-      %QueryCall{name: name} -> Surface.query_builder?(name)
-      nil -> qualified_query_builder?(node)
-    end
-  end
-
-  # An outer routing classifier runs before core descends into its arguments, so a nested qualified
-  # macro has no macro-identity stamp yet. Its explicit `Ecto.Query` receiver is nevertheless
-  # authoritative through ordinary call resolution; once routed `:expression`, descent stamps and
-  # analyzes it normally. Bare query builders are recognized by the clause above.
-  defp qualified_query_builder?(node) do
     case Calls.resolved_call_to(node, Ecto.Query) do
       {:ok, name, _args, _rebuild} -> Surface.query_builder?(name)
       :error -> false
@@ -186,11 +172,18 @@ defmodule Mutare.Ecto.Host.Routing do
   defp host_join_options(routing, args) do
     with %KeywordList{entries: entries} <- KeywordList.nonempty(List.last(args)),
          true <- Enum.any?(entries, &(&1.key == :on)) do
-      List.replace_at(routing, length(args) - 1, :hosted)
+      route_last(routing, :hosted)
     else
       _ -> routing
     end
   end
+
+  # Overlay `treatment` on the trailing argument's slot. Every overlay the classifier places
+  # outside a condition position sits last in the direct and pipe forms alike — the bound
+  # value, the join options, the shorthand pairs (a piped call's visible args exclude the
+  # threaded query, so "last" is the one index that holds in both) — and `routes` carries one
+  # slot per argument, so the last slot is that argument's.
+  defp route_last(routes, treatment), do: List.replace_at(routes, -1, treatment)
 
   # === keyword-shorthand routing =============================================
 
@@ -199,12 +192,8 @@ defmodule Mutare.Ecto.Host.Routing do
   # `^`-pinned, leaving keys and nil/compound values alone. A non-shorthand trailing arg → default.
   defp shorthand_route(args, default) do
     case args |> List.last() |> KeywordList.nonempty() do
-      nil ->
-        default
-
-      pairs ->
-        # mutare:ignore[operand_swap] equivalent — a shorthand call carries at most two args, where `length - 1` and `1 - length` both index the last element
-        List.replace_at(default, length(args) - 1, {:keyword, pair_treatments(pairs)})
+      nil -> default
+      pairs -> route_last(default, {:keyword, pair_treatments(pairs)})
     end
   end
 

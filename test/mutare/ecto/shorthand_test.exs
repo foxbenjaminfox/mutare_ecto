@@ -14,7 +14,10 @@ defmodule Mutare.Ecto.ShorthandTest do
 
   @all [:all, {Mutare.Ecto, repo: MyApp.Repo}]
 
-  defp routing(code), do: code |> Sourceror.parse_string!() |> Host.Routing.treatments()
+  defp routing(code) do
+    {name, _meta, args} = Sourceror.parse_string!(code)
+    Host.Routing.treatments(name, args)
+  end
 
   describe "treatments — the per-pair treatment the plugin emits" do
     test "a standalone shorthand routes each scalar value :interpolated, keys raw, query :expression" do
