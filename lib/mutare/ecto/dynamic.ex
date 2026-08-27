@@ -11,9 +11,11 @@ defmodule Mutare.Ecto.Dynamic do
   semantics, never core's, with the scalar and aggregate per-node catalogs folded in:
   `sum`↔`avg`/`min`↔`max` for a dynamic destined for a `having`). Each mutant is **reported at
   the mutated expression** (the walk anchors it — `Mutare.Ecto.Walk`), even though what is
-  delivered is the whole rebuilt call. This closes the loop the `where(q, ^d)` splice site deliberately leaves
-  open: a top-level `^dynamic` operand is routed raw there because it is *"mutated where it is
-  built"* (`Mutare.Ecto.Host.Bindings`) — this module is that build site.
+  delivered is the whole rebuilt call. This closes the loop the `where(q, ^d)` splice site leaves
+  open: a top-level `^d` is hosted there like any other condition (`Mutare.Ecto.Host.Routing`), but
+  the SQL catalog stops at the pin and the island sub-contract finds only a bare variable inside,
+  which core mutates nowhere (`Mutare.Ecto.Island`) — the splice contributes nothing of its own,
+  so the `dynamic` is *mutated where it is built*. This module is that build site.
 
   **Delivery** differs from the hosted path. `dynamic` is registered `:skip`
   (`Mutare.Ecto.Surface.macro_registrations/0`), so core never descends into its DSL arguments —

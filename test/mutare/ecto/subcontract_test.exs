@@ -410,9 +410,12 @@ defmodule Mutare.Ecto.SubcontractTest do
       assert_compiles(src, @with_core)
     end
 
-    test "a top-level pin condition stays raw — no host, no sub-contract" do
-      # `where: ^cond` is routed `:skip` (already-evaluated Elixir, "mutated where it is
-      # built"); the sub-contract only exists inside a *hosted* condition.
+    test "a top-level pin condition with the plugin alone relays nothing — no target, no weave" do
+      # `where: ^cond` routes `:hosted` and its interior *is* sub-contracted — but over the run's
+      # mutators, here the plugin alone, which has nothing to say about the Elixir `c and true`.
+      # So the sub-contract relays nothing, no target forms, and no weave is emitted. The same
+      # pin sub-contracts once core's families are on ("a top-level-pin condition sub-contracts
+      # its interior in every hosted form" below).
       src = """
       defmodule M do
         import Ecto.Query

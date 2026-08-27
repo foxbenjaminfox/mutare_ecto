@@ -10,8 +10,9 @@ defmodule Mutare.Ecto.DynamicTest do
   # `DynamicExpr`), so no `^`/`dynamic` weaving is needed — while each Site is **reported at the
   # mutated expression** (the walk anchors every catalog mutant at its node — `Mutare.Ecto.Walk`),
   # so the recorded diff is the operator/literal, never the whole call. This is the build site the
-  # `where(q, ^d)` splice deliberately leaves raw ("mutated where it is built" —
-  # `Mutare.Ecto.Host.Bindings`).
+  # `where(q, ^d)` splice leaves to us: the splice is hosted like any condition, but a bare `^d`
+  # interior is a variable core mutates nowhere (`Mutare.Ecto.Island`), so the `dynamic` is mutated
+  # where it is built.
 
   # The full-family plugin instance plus core's shipped routing-only fixture
   # (`Mutare.Test.Fixtures.RoutingExtension`, threaded via `extensions:`), for the nested-`:skip`

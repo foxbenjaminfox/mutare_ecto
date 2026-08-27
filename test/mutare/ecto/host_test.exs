@@ -630,10 +630,12 @@ defmodule Mutare.Ecto.HostTest do
       assert_compiles(src)
     end
 
-    test "a `^dynamic` operand is left raw — the host weaves nothing" do
-      # The condition is a pre-built dynamic interpolated with `^`: Ecto's own composition primitive,
-      # mutated where it is defined, not in the fragment. No `dynamic(` scaffolding is woven (the one
-      # mutation is the orthogonal stage drop).
+    test "a `^dynamic` operand weaves nothing — it is mutated where it is built" do
+      # The condition is a pre-built dynamic interpolated with `^`: Ecto's own composition primitive.
+      # The pin is hosted like any condition, but the SQL catalog stops at it and its interior is a
+      # bare variable core mutates nowhere (`Mutare.Ecto.Island`), so no target forms and no
+      # `dynamic(` scaffolding is woven (the one mutation is the orthogonal stage drop). The
+      # dynamic's own SQL mutates at its build site (`Mutare.Ecto.Dynamic`).
       src = """
       defmodule M do
         import Ecto.Query
@@ -645,7 +647,11 @@ defmodule Mutare.Ecto.HostTest do
       assert_compiles(src)
     end
 
-    test "a top-level interpolation in a from clause is left outside the SQL host" do
+    test "a top-level interpolation in a from clause is outside the SQL catalog — plugin alone, nothing woven" do
+      # Hosted (`where: ^cond` routes `:hosted`, see the routing tests below), but the SQL catalog
+      # stops at the pin and the plugin alone has nothing for the Elixir interior — so no target
+      # forms. With core's families on, the interior sub-contracts (subcontract_test.exs, "a
+      # top-level-pin condition sub-contracts its interior in every hosted form").
       src = """
       defmodule M do
         import Ecto.Query
@@ -658,7 +664,7 @@ defmodule Mutare.Ecto.HostTest do
       assert_compiles(src)
     end
 
-    test "a top-level interpolation stays raw alongside a hosted bare-source condition" do
+    test "a top-level interpolation is untouched by the SQL catalog alongside a hosted bare-source condition" do
       src = """
       defmodule M do
         import Ecto.Query
