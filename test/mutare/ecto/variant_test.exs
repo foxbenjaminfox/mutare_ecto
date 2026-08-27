@@ -55,6 +55,40 @@ defmodule Mutare.Ecto.VariantTest do
       assert "intersect" in variants
       assert "except_all" in variants
     end
+
+    test "is canonical: the finer labels deduped and sorted, after the family atoms" do
+      # Each producer contributes its labels raw (`Mutare.Ecto.Vocabulary` — `Map.keys` order over
+      # its swap table is unspecified, and `left_join` is a source in both join-flip tables), so
+      # `variants/0` is the one place that canonicalises the union.
+      {families, labels} = Enum.split_with(Mutare.Ecto.variants(), &is_atom/1)
+
+      assert Enum.sort(families) == Enum.sort(Mutare.Ecto.families())
+      assert labels != []
+      assert labels == labels |> Enum.uniq() |> Enum.sort()
+    end
+
+    test "every Vocabulary implementer is folded in (no orphaned producer)" do
+      # A producer that implements `Mutare.Ecto.Vocabulary` but is missing from `variants/0`'s
+      # list would emit labels no directive can name. Found by behaviour, not by a hand-kept list.
+      {:ok, modules} = :application.get_key(:mutare_ecto, :modules)
+
+      implementers =
+        for module <- modules,
+            Code.ensure_loaded?(module),
+            Mutare.Ecto.Vocabulary in behaviours(module),
+            do: module
+
+      variants = Mutare.Ecto.variants()
+      refute implementers == []
+
+      for module <- implementers, label <- module.variant_labels() do
+        assert label in variants, "#{inspect(module)} emits #{inspect(label)} outside variants/0"
+      end
+    end
+  end
+
+  defp behaviours(module) do
+    module.module_info(:attributes) |> Keyword.get_values(:behaviour) |> List.flatten()
   end
 
   describe "every mutant's Site carries its family and finer label" do

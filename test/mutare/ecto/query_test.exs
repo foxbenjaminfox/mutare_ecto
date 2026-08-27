@@ -217,12 +217,14 @@ defmodule Mutare.Ecto.QueryTest do
   end
 
   describe "JoinType" do
-    test "variant_labels/0 is the deduped source-kind vocabulary, in canonical order" do
-      # Every flip table's keys, deduped — pins the three label strings against a
-      # drifted/blanked/renamed constant. `join`/`inner_join` are never a flip source (widening is
-      # deliberately not offered — see the moduledoc), so "inner" is not in this vocabulary. The
-      # result is sorted, so it is stable regardless of `Map.keys` runtime iteration order.
-      assert Mutare.Ecto.Query.variant_labels() == ["full", "left", "right"]
+    test "variant_labels/0 is the source-kind vocabulary" do
+      # Every flip table's keys — pins the three label strings against a drifted/blanked/renamed
+      # constant. `join`/`inner_join` are never a flip source (widening is deliberately not
+      # offered — see the moduledoc), so "inner" is not in this vocabulary. The raw contribution
+      # is unordered and repeats `left` (a source in both tables); `Mutare.Ecto.variants/0` is
+      # where the union is canonicalised (`Mutare.Ecto.Vocabulary`).
+      labels = Mutare.Ecto.Query.variant_labels()
+      assert Enum.sort(Enum.uniq(labels)) == ["full", "left", "right"]
     end
 
     test "a default (inner) join has no join_type mutant — widening is not offered" do

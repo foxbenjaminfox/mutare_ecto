@@ -220,16 +220,18 @@ defmodule Mutare.Ecto do
       #                                            ^ only the `<` swap is suppressed; the `>` swap,
       #                                              and the 18/90 literal swaps, all keep running
   """
+  # Every producer contributing finer labels (`Mutare.Ecto.Vocabulary`). The arithmetic operators
+  # arrive via `Scalar`, which owns them (`Fragment` only applies its swaps per condition node).
+  @vocabularies [Fragment, Scalar, Aggregate, Ordering, Query, Combination]
   @impl Mutare.Mutator
   @spec variants() :: [atom() | String.t()]
   def variants do
-    Config.all_families() ++
-      Fragment.variant_labels() ++
-      Scalar.variant_labels() ++
-      Aggregate.variant_labels() ++
-      Ordering.variant_labels() ++
-      Query.variant_labels() ++
-      Combination.variant_labels()
+    labels = Enum.flat_map(@vocabularies, & &1.variant_labels())
+    # Canonicalised once, here (see `Mutare.Ecto.Vocabulary`): each producer returns its labels
+    # raw — `Map.keys` order over its atom-keyed swap table is unspecified, and two tables can
+    # share a source — so the union is neither ordered nor unique until it is. Core consumes the
+    # vocabulary as a set; deduping and sorting only make it stable run to run.
+    Config.all_families() ++ Enum.sort(Enum.uniq(labels))
   end
 
   @doc """

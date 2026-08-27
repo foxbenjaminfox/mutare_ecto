@@ -28,6 +28,8 @@ defmodule Mutare.Ecto.Scalar do
 
   alias Mutare.Ecto.{ExpressionWalk, Tag}
 
+  @behaviour Mutare.Ecto.Vocabulary
+
   @arithmetic_swaps %{:+ => :-, :- => :+, :* => :/, :/ => :*}
 
   # The ordering-position coalesce drop's finer label. Named apart from the plain "coalesce"
@@ -76,17 +78,12 @@ defmodule Mutare.Ecto.Scalar do
 
   def local(_node, _position), do: []
 
-  @doc false
-  # The finer `# mutare:ignore` labels the scalar catalog can emit — each swappable operator
-  # (derived from the swap table so the vocabulary can't drift from what's produced) plus the
-  # coalesce drop's two positional labels. Folded into the plugin's variant vocabulary by
-  # `Mutare.Ecto.variants/0`.
-  @spec variant_labels() :: [String.t()]
-  # `Enum.sort` canonicalises the order: `Map.keys` iteration order over atom keys is unspecified
-  # and varies with runtime atom-table state, so an unsorted vocabulary is non-deterministic.
+  # `Mutare.Ecto.Vocabulary`: each swappable operator plus the coalesce drop's two positional
+  # labels.
+  @impl Mutare.Ecto.Vocabulary
   def variant_labels do
     operators = @arithmetic_swaps |> Map.keys() |> Enum.map(&to_string/1)
-    Enum.sort(operators ++ ["coalesce", @ordering_coalesce_label])
+    operators ++ [coalesce_label(:value), coalesce_label(:ordering)]
   end
 
   defp coalesce_label(:ordering), do: @ordering_coalesce_label

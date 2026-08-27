@@ -60,54 +60,55 @@ defmodule Mutare.Ecto.Host do
   defp from_targets(source, %KeywordList{entries: entries} = clauses, config, context) do
     hostable_on = JoinOn.hostable_from_indices(entries)
 
-    KeywordList.flat_map(clauses, fn entry, index ->
-      # A bound clause (`limit:`/`offset:`) weaves pin-only — no `dynamic/2` wrap, so no bindings
-      # to accumulate; every other entry takes the condition path.
-      if Surface.bound?(entry.key) do
-        bound_from_target(entry, index)
-      else
-        # `Bindings.visible_to/2` owns the truncation offset (and why it includes the current
-        # entry itself); each clause sees only the join bindings introduced up to it.
-        bindings = Bindings.from(source, Bindings.visible_to(clauses, index))
-        from_target({entry, index}, bindings, {config, context}, hostable_on)
+    KeywordList.flat_map(clauses, fn %Entry{key: key, value: value}, index ->
+      cond do
+        # A bound clause (`limit:`/`offset:`) weaves pin-only — no `dynamic/2` wrap, so no
+        # bindings to accumulate.
+        Surface.bound?(key) ->
+          bound_from_target(value, index)
+
+        # A hostable condition clause. `Bindings.visible_to/2` owns the truncation offset (and
+        # why it includes the current entry itself); each clause sees only the join bindings
+        # introduced up to it.
+        hostable_clause?(key, index, hostable_on) ->
+          bindings = Bindings.from(source, Bindings.visible_to(clauses, index))
+          from_target(value, bindings, index, config, context)
+
+        true ->
+          []
       end
     end)
   end
 
-  defp bound_from_target(%Entry{value: value}, index) do
+  # Whether a `from` clause key's value is a hostable condition: one of the `:hosted` keys
+  # (`where`/`having`/`on` — `Mutare.Ecto.Surface`), where `where`/`having` always host (each is
+  # its own top-level clause) but an `on:` hosts only when it is its join's sole, top-level
+  # on-expression — otherwise Ecto folds it under an `and` where a `^dynamic` operand is illegal
+  # (`Mutare.Ecto.Host.JoinOn`).
+  defp hostable_clause?(:on, index, hostable_on), do: MapSet.member?(hostable_on, index)
+  defp hostable_clause?(key, _index, _hostable_on), do: Surface.from_clause?(key, :hosted)
+
+  defp bound_from_target(value, index) do
     case Bound.bumps(value) do
       [] -> []
       mutants -> [Target.bound_from_clause(value, mutants, index)]
     end
   end
 
-  defp from_target(
-         {%Entry{key: key, value: condition}, index},
-         bindings,
-         {config, context},
-         hostable_on
-       ) do
-    # No `bindings` non-emptiness guard: a bare-queryable source (`from("t", as: :t, where:
-    # as(:t).x > 1)`) declares no positional binding, so `Bindings.from/2` returns `[]` and the woven
-    # `dynamic([], …)` re-declares none — valid, since such a condition can only reference a *named*
-    # binding. Hostability is decided by the clause key and a non-empty catalog, not the binding count.
-    # A top-level-pin condition (`where: ^cond`) hosts too: its own catalog is empty, but the host
-    # sub-contracts the pin's interior to core (`Mutare.Ecto.Host.Catalog.mutants/3`), so the
-    # `[_ | _]` guard passes whenever core has something to mutate in that interior.
-    with true <- hostable_clause?(key, index, hostable_on),
-         true <- Surface.from_clause?(key, :hosted),
-         [_ | _] = mutants <- Catalog.mutants(condition, config, context) do
-      [Target.from_clause(condition, mutants, bindings, index)]
-    else
-      _ -> []
+  # No `bindings` non-emptiness guard: a bare-queryable source (`from("t", as: :t, where:
+  # as(:t).x > 1)`) declares no positional binding, so `Bindings.from/2` returns `[]` and the woven
+  # `dynamic([], …)` re-declares none — valid, since such a condition can only reference a *named*
+  # binding. Hostability is decided by the clause key (`hostable_clause?/3`, in the caller) and a
+  # non-empty catalog, not the binding count. A top-level-pin condition (`where: ^cond`) hosts
+  # too: its own catalog is empty, but the host sub-contracts the pin's interior to core
+  # (`Mutare.Ecto.Host.Catalog.mutants/3`), so the non-empty branch is taken whenever core has
+  # something to mutate in that interior.
+  defp from_target(condition, bindings, index, config, context) do
+    case Catalog.mutants(condition, config, context) do
+      [] -> []
+      mutants -> [Target.from_clause(condition, mutants, bindings, index)]
     end
   end
-
-  # `where`/`having` always host (each is its own top-level clause). An `on:` hosts only when it is
-  # its join's sole, top-level on-expression — otherwise Ecto folds it under an `and` where a
-  # `^dynamic` operand is illegal (`Mutare.Ecto.Host.JoinOn`).
-  defp hostable_clause?(:on, index, hostable_on), do: MapSet.member?(hostable_on, index)
-  defp hostable_clause?(_key, _index, _hostable_on), do: true
 
   # The woven `dynamic/2` re-declares the written binding list — or an empty one for the
   # binding-less form (`bindings: nil`), which `Bindings.declarations/1` renders as `[]`.

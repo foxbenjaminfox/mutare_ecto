@@ -267,11 +267,6 @@ defmodule Mutare.Ecto.Surface do
   @spec from_clause?(atom(), from_capability()) :: boolean()
   def from_clause?(name, capability), do: capability in get(name, :from, [])
 
-  @doc "Every `from` clause key carrying `capability`, in descriptor order."
-  @spec from_keys(from_capability()) :: [atom()]
-  def from_keys(capability),
-    do: for(%{name: name} <- @surface, from_clause?(name, capability), do: name)
-
   @doc "The family used when a whole-`from` clause is removed, or `nil` when it is retained."
   @spec from_drop_family(atom()) :: drop_family() | nil
   def from_drop_family(name), do: get(name, :from_drop)

@@ -122,6 +122,8 @@ defmodule Mutare.Ecto.Fragment do
 
   alias Mutare.Ecto.{Aggregate, Config, Scalar, Subquery, Tag, Walk}
 
+  @behaviour Mutare.Ecto.Vocabulary
+
   # Each operator's single SQL-meaningful swap, by family. `:count`-style arity-changing or
   # NULL-equivalent rewrites are deliberately absent. The `like`/`ilike`
   # case-sensitivity swap is dialect-gated (Postgres) in `swap/4`.
@@ -191,22 +193,16 @@ defmodule Mutare.Ecto.Fragment do
         do: {interior, &rebuild.(inner.(&1))}
   end
 
-  @doc false
-  # The finer variant labels every fragment-owned family can emit — the operators the swap families
-  # mutate (derived from the swap tables, so the vocabulary can't drift from what's produced) plus
-  # the unit and value kinds. `Mutare.Ecto.variants/0` folds these in alongside the family names
-  # (the arithmetic operators arrive via `Mutare.Ecto.Scalar.variant_labels/0`, which owns them).
-  @spec variant_labels() :: [String.t()]
+  # `Mutare.Ecto.Vocabulary`: the operators the swap families mutate (the swap tables' keys) plus
+  # the unit and value kinds. The arithmetic operators are `Mutare.Ecto.Scalar`'s, which owns them.
+  @impl Mutare.Ecto.Vocabulary
   def variant_labels do
     swap_ops =
       [@comparison_swaps, @connective_swaps, @membership_op_swaps, @temporal_swaps]
       |> Enum.flat_map(&Map.keys/1)
       |> Enum.map(&to_string/1)
 
-    # Sort for determinism: `Map.keys` iteration order over atom keys is unspecified and varies
-    # with runtime atom-table state. The result is consumed as a set of known labels, so a
-    # canonical order changes nothing but makes the vocabulary stable run to run.
-    Enum.sort(swap_ops ++ ~w(in element exists is_nil succ pred zero empty sentinel negate))
+    swap_ops ++ ~w(in element exists is_nil succ pred zero empty sentinel negate)
   end
 
   # ── Descent: which nodes of a condition are positions ──────────────────────────────────────

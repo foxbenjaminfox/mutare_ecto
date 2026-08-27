@@ -253,6 +253,7 @@ selector because a query clause can't host a runtime `case`:
 | `changeset.ex` | Changeset pipeline drops (`:validation_drop`, `:hook_drop`) |
 | `config.ex` | `families:`/`dialects:`/`repo:` parsing + validation (`parse!/1`, run once by `init/1`; the family catalog via core's `use Mutare.Mutator.Families`) into the `%Config{}` every production accessor takes — production never holds raw options; a unit test builds a struct through `parse!/1` |
 | `equivalence.ex` | The equivalence-sensitive family set and each family's report note (`note/2`, refined by the finer label), plus the `finalize/2` funnel body — the `families:` filter and the note, applied once by core on both delivery paths |
+| `vocabulary.ex` | The `variant_labels/0` `@callback` each label-tagging producer (`fragment.ex`, `scalar.ex`, `aggregate.ex`, `ordering.ex`, `query.ex`, `combination.ex`) implements, returning its finer `# mutare:ignore` labels **raw** (derived from its own swap/flip table); `Mutare.Ecto.variants/0` iterates the implementers and dedupes/sorts the union once — the single place the vocabulary is canonicalised |
 | `ast.ex` | Small Sourceror AST helpers the plugin genuinely owns: typed literal *readers* (`atom_value`/`int_value`), the list unwrap/rewrap pair (`unwrap_list`/`rewrap_list`, over core's `unwrap_literal`) — everything *emitted* comes from core's `Mutare.AST` constructors |
 
 ### Families and configuration

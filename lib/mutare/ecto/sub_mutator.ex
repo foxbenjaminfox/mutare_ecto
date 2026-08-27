@@ -6,9 +6,9 @@ defmodule Mutare.Ecto.SubMutator do
   #
   # `mutations/2` takes a `node` and the mutation `context` (carrying `:config` — the
   # `init/1`-parsed `families:`/`dialects:`/`repo:` `%Config{}` — and `:pipe_mode`), and returns the
-  # `{family, node}` mutation pairs it produces, or `[]`. A sub-mutator that needs neither config
-  # nor pipe-mode simply ignores the context; `Mutare.Ecto.mutate/2` returns the merged pairs as
-  # tagged `Mutation`s (`Mutare.Ecto.Tag.to_mutation/1`), and the `families:` filter + equivalence
+  # `%Mutare.Ecto.Tag{}`s it produces, or `[]`. A sub-mutator that needs neither config nor
+  # pipe-mode simply ignores the context; `Mutare.Ecto.mutate/2` returns the merged tags as
+  # `Mutation`s (`Mutare.Ecto.Tag.to_mutation/1`), and the `families:` filter + equivalence
   # note are applied once, by core, via `Mutare.Ecto.finalize/2`. A sub-mutator that
   # *sub-contracts* islands to core's generation (`Mutare.Ecto.Dynamic`) additionally returns
   # producer-attributed `Mutare.Mutator.Mutation`s, which pass through `Tag.to_mutation/1` untouched

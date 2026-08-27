@@ -67,6 +67,8 @@ defmodule Mutare.Ecto.Ordering do
 
   alias Mutare.Ecto.{AST, Tag}
 
+  @behaviour Mutare.Ecto.Vocabulary
+
   # Direction axis: flip `:asc`↔`:desc`, preserving any nulls qualifier. One target per key.
   @direction_flips %{
     asc: :desc,
@@ -119,17 +121,13 @@ defmodule Mutare.Ecto.Ordering do
     end
   end
 
-  @doc false
-  # The finer `# mutare:ignore` labels the ordering families emit — the direction axis (`asc`/`desc`)
-  # and the nulls-placement axis (`nulls_first`/`nulls_last`), derived from the flip tables so the
-  # vocabulary can't drift. Folded into the plugin's variant vocabulary by `Mutare.Ecto.variants/0`.
-  @spec variant_labels() :: [String.t()]
+  # `Mutare.Ecto.Vocabulary`: the direction axis (`asc`/`desc`) and the nulls-placement axis
+  # (`nulls_first`/`nulls_last`), each flip table's keys read through the label rule `axis_flips/1`
+  # tags with (so every qualified key repeats its axis label — the assembler dedupes).
+  @impl Mutare.Ecto.Vocabulary
   def variant_labels do
-    directions = @direction_flips |> Map.keys() |> Enum.map(&direction_label/1) |> Enum.uniq()
-    placements = @nulls_flips |> Map.keys() |> Enum.map(&placement_label/1) |> Enum.uniq()
-    # Sort for determinism: `Map.keys` iteration order over atom keys is unspecified and varies
-    # with runtime atom-table state, so the raw concatenation is non-deterministic.
-    Enum.sort(directions ++ placements)
+    Enum.map(Map.keys(@direction_flips), &direction_label/1) ++
+      Enum.map(Map.keys(@nulls_flips), &placement_label/1)
   end
 
   # Every single-axis flip of one `direction: field` pair, tagged with its family **and** the axis

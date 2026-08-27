@@ -16,6 +16,8 @@ defmodule Mutare.Ecto.Combination do
   # (both `intersect` and `except` are candidates), so a union swap would be an arbitrary choice
   # rather than a principled pair. Union stages still get the orthogonal `:clause_drop`.
 
+  @behaviour Mutare.Ecto.Vocabulary
+
   @flips %{
     intersect: :except,
     except: :intersect,
@@ -31,15 +33,17 @@ defmodule Mutare.Ecto.Combination do
   The finer `# mutare:ignore` label for a combination swap: the **source** operation's name
   (`# mutare:ignore[ecto:intersect]` leaves an `intersect`'s swap alone). The `_all` variants keep
   their own labels — `INTERSECT` and `INTERSECT ALL` are different SQL, so they suppress separately.
+
+  A pure naming rule, **total** over any name: whether a swap *exists* is `swap/1`'s decision
+  (`nil` off the flip table), and every caller labels only a name `swap/1` accepted
+  (`Mutare.Ecto.Clause`'s `case`, `Mutare.Ecto.Query`'s per-target comprehension) — so a label
+  for a non-combination name is never minted, and the vocabulary (`variant_labels/0`) is this
+  rule over the same table.
   """
   @spec label(atom()) :: String.t()
-  def label(name) when is_map_key(@flips, name), do: Atom.to_string(name)
+  def label(name), do: Atom.to_string(name)
 
-  @doc false
-  # The finer labels the `:combination` family can emit — derived from the flip table's keys so the
-  # vocabulary can't drift. Folded into the plugin's variant vocabulary by `Mutare.Ecto.variants/0`.
-  @spec variant_labels() :: [String.t()]
-  # `Enum.sort` canonicalises the order: `Map.keys` iteration order over atom keys is unspecified
-  # and varies with runtime atom-table state, so an unsorted vocabulary is non-deterministic.
-  def variant_labels, do: @flips |> Map.keys() |> Enum.map(&label/1) |> Enum.sort()
+  # `Mutare.Ecto.Vocabulary`: the label of every flip source.
+  @impl Mutare.Ecto.Vocabulary
+  def variant_labels, do: @flips |> Map.keys() |> Enum.map(&label/1)
 end

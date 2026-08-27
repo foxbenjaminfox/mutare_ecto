@@ -72,6 +72,7 @@ defmodule Mutare.Ecto.Query do
   alias Mutare.Mutator.Mutation
 
   @behaviour Mutare.Ecto.SubMutator
+  @behaviour Mutare.Ecto.Vocabulary
 
   # JoinType: each join-clause key's kind narrows (or, for left↔right, moves sideways) by
   # rewriting its key. `join`/`inner_join` never appear as a flip *source* — widening an inner
@@ -212,19 +213,13 @@ defmodule Mutare.Ecto.Query do
   # `inner_join` are never a flip source.
   defp join_label(key), do: String.replace_suffix(Atom.to_string(key), "_join", "")
 
-  @doc false
-  # The finer `# mutare:ignore` labels the `:join_type` family can emit — each source join kind,
-  # derived from the flip tables so the vocabulary can't drift. Folded into the plugin's variant
-  # vocabulary by `Mutare.Ecto.variants/0`.
-  @spec variant_labels() :: [String.t()]
+  # `Mutare.Ecto.Vocabulary`: each source join kind, under both flip tables (`left_join` sits in
+  # both, so it repeats — the assembler dedupes).
+  @impl Mutare.Ecto.Vocabulary
   def variant_labels do
-    # Sort for determinism: `Map.keys` iteration order over atom keys is unspecified and varies
-    # with runtime atom-table state, so an unsorted vocabulary flips order run to run.
     [@portable_join_flips, @right_join_flips]
     |> Enum.flat_map(&Map.keys/1)
     |> Enum.map(&join_label/1)
-    |> Enum.uniq()
-    |> Enum.sort()
   end
 
   # The portable (narrowing) flips, plus the RIGHT-capable map when `config` enables a dialect

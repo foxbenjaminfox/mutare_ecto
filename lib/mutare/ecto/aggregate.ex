@@ -25,6 +25,8 @@ defmodule Mutare.Ecto.Aggregate do
 
   alias Mutare.Ecto.{ExpressionWalk, Tag}
 
+  @behaviour Mutare.Ecto.Vocabulary
+
   @agg_swaps %{sum: :avg, avg: :sum, min: :max, max: :min}
   @agg_funcs Map.keys(@agg_swaps)
 
@@ -39,14 +41,9 @@ defmodule Mutare.Ecto.Aggregate do
   @spec swaps(Macro.t()) :: [Tag.t()]
   def swaps(expr), do: ExpressionWalk.walk(expr, &local/2)
 
-  @doc false
-  # The finer `# mutare:ignore` labels the aggregate family can emit — each swappable function name,
-  # derived from the swap table so the vocabulary can't drift from what's produced. Folded into the
-  # plugin's variant vocabulary by `Mutare.Ecto.variants/0`.
-  @spec variant_labels() :: [String.t()]
-  # `Enum.sort` canonicalises the order: `Map.keys` iteration order over atom keys is unspecified
-  # and varies with runtime atom-table state, so an unsorted vocabulary is non-deterministic.
-  def variant_labels, do: @agg_swaps |> Map.keys() |> Enum.map(&to_string/1) |> Enum.sort()
+  # `Mutare.Ecto.Vocabulary`: each swappable function name — the **source** label `local/2` tags.
+  @impl Mutare.Ecto.Vocabulary
+  def variant_labels, do: Enum.map(@agg_funcs, &to_string/1)
 
   @doc """
   The SQL-meaningful swap of a single aggregate function name (`:sum`↔`:avg`, `:min`↔`:max`), or

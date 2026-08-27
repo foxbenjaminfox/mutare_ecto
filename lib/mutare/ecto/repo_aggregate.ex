@@ -27,26 +27,21 @@ defmodule Mutare.Ecto.RepoAggregate do
   @impl Mutare.Ecto.SubMutator
   def mutations(node, %{pipe_mode: pipe_mode} = context) do
     case RepoCall.resolve(node, context) do
-      {:aggregate, args, rebuild} ->
-        for {mutated, label} <- swap(args, rebuild, pipe_mode),
-            do: Tag.new(:aggregate, mutated, label)
-
-      _ ->
-        []
+      {:aggregate, args, rebuild} -> swap(args, rebuild, pipe_mode)
+      _ -> []
     end
   end
 
-  # Each swap is paired with the **source** function name (`"sum"`), the `# mutare:ignore[ecto:sum]`
-  # label naming just this swap — matching the query-side aggregate family's labelling.
+  # The swap as an `:aggregate` tag labelled with the **source** function name (`"sum"`), so
+  # `# mutare:ignore[ecto:sum]` names just this swap — matching the query-side aggregate family's
+  # labelling.
   defp swap(args, rebuild, pipe_mode) do
     with index when is_integer(index) <- Mutare.Mutator.visible_index(@agg_position, pipe_mode),
          node when not is_nil(node) <- Enum.at(args, index),
          source = AST.atom_value(node),
          to when not is_nil(to) <- Aggregate.swap(source) do
-      [
-        {rebuild.(:aggregate, List.replace_at(args, index, Mutare.AST.literal(to))),
-         to_string(source)}
-      ]
+      mutated = rebuild.(:aggregate, List.replace_at(args, index, Mutare.AST.literal(to)))
+      [Tag.new(:aggregate, mutated, to_string(source))]
     else
       _ -> []
     end
