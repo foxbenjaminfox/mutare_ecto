@@ -85,8 +85,11 @@ whole-call `mutate/2` offer of a registered macro (the free-standing-`dynamic` s
 later widened to the **full** spec set — with a nested host's targets *lowered* to whole-call
 rebuilds in collect — so a pin interior is analyzed like top-level Elixir: an inner
 `dynamic(...)` reaches its owner and an inner `from`'s hosted conditions surface as rebuilds),
-the `c:Mutare.Mutator.finalize/2` enrichment seam core runs on both delivery paths, and the
-`c:Mutare.Mutator.required_modules/0` environment guard.
+the `c:Mutare.Mutator.finalize/2` enrichment seam core runs on both delivery paths, the
+`c:Mutare.Mutator.required_modules/0` environment guard, and the shared `:structural`
+argument-mark label (`Mutare.Mutator.structural_label/0`/`pinned?/1` — declined by every
+`:skip_arguments`-honouring value family; the plugin declares it on `apply_action`/`apply_action!`'s
+action atom via `argument_marks/1`).
 
 Core's public test surface for plugins is `Mutare.Test`, wrapped here by
 `Mutare.Ecto.TestSupport` (threads the plugin's default mutators, forwards every other option).
@@ -211,7 +214,7 @@ selector because a query clause can't host a runtime `case`:
 
 | Module | Role |
 |---|---|
-| `ecto.ex` | `Mutare.Mutator` + `Mutare.MacroRouting` + `Mutare.Mutator.MacroHost` callbacks: parses config once via `init/1`, delegates node classification; `finalize/2` filters by `families:` and applies the note |
+| `ecto.ex` | `Mutare.Mutator` + `Mutare.MacroRouting` + `Mutare.Mutator.MacroHost` callbacks: parses config once via `init/1`, delegates node classification; `finalize/2` filters by `families:` and applies the note; `argument_marks/1` pins `apply_action`/`apply_action!`'s action atom against core's value families (the shared `:structural` mark — metadata-only, so mutating it is noise) |
 | `dispatcher.ex` | Classifies each node once and invokes only the sub-mutators relevant to that query macro, Ecto call, or configured Repo call |
 | `surface.ex` | Single descriptor table for every owned query macro and `from` key: routing kind, standalone mutation capabilities, stage/whole-`from` drop families, and hosted/binding/join capabilities |
 | `sub_mutator.ex` | The uniform `mutations(node, context)` behaviour implemented by each mutation producer |

@@ -63,6 +63,15 @@ defmodule Mutare.Ecto do
       repos**, or with different `families:`/`as:` to split the catalog into separately-named
       report families.
 
+  **Structural positions held back from core's families.** Listing the plugin also *suppresses* a
+  little noise elsewhere: `argument_marks/1` (`c:Mutare.Mutator.argument_marks/1`) pins the action
+  atom of `Ecto.Changeset.apply_action/2` and `apply_action!/2` under core's shared `:structural`
+  label, so every value family that honours `:skip_arguments` declines there
+  (`Mutare.Mutator.pinned?/1`). The atom is metadata — never consulted on the success path, and on
+  the error path it only stamps `changeset.action` — so swapping it mints a mutant killable only by
+  asserting the label itself. This is **not** gated by `families:`, which selects what the plugin
+  *produces*; the declaration produces nothing and applies whenever the plugin is listed.
+
   **Equivalence-sensitive families.** Some mutants carry a **report note** — a survivor reads
   `… SURVIVED  — kill may require …` — so it is recognised as honest signal, not a plain test gap.
   Each note names the **specific** data a kill needs, because the equivalence reasons differ:
@@ -231,6 +240,23 @@ defmodule Mutare.Ecto do
   """
   @impl Mutare.Mutator
   def required_modules, do: [Ecto.Schema, Ecto.Query]
+
+  # Structural argument positions on the plain `Ecto.Changeset` call surface, pinned for **core's**
+  # value families via the shared `:structural` mark (`c:Mutare.Mutator.argument_marks/1`):
+  # `apply_action/2`'s (and the bang twin's) action atom is never consulted on the success path and
+  # only stamps `changeset.action` on the error path — metadata, not behaviour — so perturbing it
+  # (core's `:atom` family, when enabled alongside) mints a near-equivalent mutant killable only by
+  # asserting the label itself. Every `:skip_arguments`-honouring value family declines at the
+  # marked position (`Mutare.Mutator.pinned?/1`); the plugin's own dispatch never touches these
+  # calls, and `Mutare.Ecto.RepoWrite`'s `:persistence` rewrite fixes the same atom arbitrarily for
+  # `insert_or_update` on the same reasoning. Unconditional — `families:` selects what the plugin
+  # *produces*; this declaration only suppresses noise elsewhere.
+  @impl Mutare.Mutator
+  def argument_marks(_config) do
+    for fun <- [:apply_action, :apply_action!] do
+      {Ecto.Changeset, fun, 2, [1], Mutare.Mutator.structural_label()}
+    end
+  end
 
   @impl Mutare.MacroRouting
   def macro_routes do
