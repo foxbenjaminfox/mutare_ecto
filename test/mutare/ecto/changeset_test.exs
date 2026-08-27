@@ -198,7 +198,7 @@ defmodule Mutare.Ecto.ChangesetTest do
   describe "piped identity + totality (direct mutations/2)" do
     defp cs_mutations(code, pipe_mode) do
       Sourceror.parse_string!(code)
-      |> Mutare.Ecto.Changeset.mutations(%{pipe_mode: pipe_mode})
+      |> Mutare.Ecto.Changeset.mutations(context(pipe_mode: pipe_mode))
       |> Enum.map(&{&1.family, Sourceror.to_string(&1.node)})
     end
 

@@ -33,7 +33,7 @@ defmodule Mutare.Ecto.Dynamic do
   delivered as this module's whole-call rewrite instead of a weave.
   """
 
-  alias Mutare.Ecto.{Config, Island, Tag}
+  alias Mutare.Ecto.{Context, Island, Tag}
   alias Mutare.Ecto.AST.QueryCall
   alias Mutare.Ecto.Host.{Catalog, Condition}
 
@@ -46,16 +46,14 @@ defmodule Mutare.Ecto.Dynamic do
   `Mutare.Mutator.Mutation`s — or `[]` when there is nothing to mutate. The condition is located
   by `Mutare.Ecto.Host.Condition.locate/1`, exactly as for a standalone `where`.
   """
-  @spec mutations(QueryCall.t(), map()) :: [
+  @spec mutations(QueryCall.t(), Context.t()) :: [
           Mutare.Ecto.SubMutator.tagged() | Mutare.Mutator.Mutation.t()
         ]
   @impl Mutare.Ecto.SubMutator
   # `Mutare.Ecto.Dispatcher` only reaches here once it has already classified the call as the
   # `:dynamic` macro kind, and `Mutare.Ecto.Surface` registers that kind on exactly the `:dynamic`
   # name — so `call.name` is always `:dynamic` by the time this runs.
-  def mutations(%QueryCall{name: :dynamic, args: args} = call, context) do
-    config = Config.from_context(context)
-
+  def mutations(%QueryCall{name: :dynamic, args: args} = call, %Context{config: config} = context) do
     case Condition.locate(args) do
       %Condition{node: condition, index: index} ->
         # The shared in-fragment catalog (`Mutare.Ecto.Host.Catalog.own_catalog/2`), each tag

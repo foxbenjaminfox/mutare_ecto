@@ -158,7 +158,10 @@ defmodule Mutare.Ecto.ClauseDropTest do
 
   describe "family tag + totality (direct mutations/2)" do
     defp drop_mutations(code, pipe_mode) do
-      Mutare.Ecto.ClauseDrop.mutations(Sourceror.parse_string!(code), %{pipe_mode: pipe_mode})
+      Mutare.Ecto.ClauseDrop.mutations(
+        Sourceror.parse_string!(code),
+        context(pipe_mode: pipe_mode)
+      )
     end
 
     test "a limit/offset stage drop is tagged :bound (parity with the from-keyword drop)" do

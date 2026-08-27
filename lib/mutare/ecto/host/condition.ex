@@ -74,7 +74,7 @@ defmodule Mutare.Ecto.Host.Condition do
   # referencing only named bindings — is hosted; the catalog then decides whether there is
   # anything to mutate.
   @spec bindingless_form([Macro.t()]) :: t() | nil
-  # mutare:ignore[clause_drop] equivalent — dropping this leaves `Enum.at([], -1)` (nil) as the "condition", and Host.Catalog.mutants/3 (via Fragment.mutants's total catch-all clause) already returns [] for `nil`, so `Host.condition_target/3`'s own `[_ | _] = mutants` guard rejects it downstream regardless
+  # mutare:ignore[clause_drop] equivalent — dropping this leaves `Enum.at([], -1)` (nil) as the "condition", and Host.Catalog.mutants/2 (via Fragment.mutants's total catch-all clause) already returns [] for `nil`, so `Host.condition_target/2`'s own `[_ | _] = mutants` guard rejects it downstream regardless
   defp bindingless_form([]), do: nil
 
   defp bindingless_form(args) do

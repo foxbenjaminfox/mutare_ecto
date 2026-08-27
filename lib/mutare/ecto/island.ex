@@ -11,8 +11,9 @@ defmodule Mutare.Ecto.Island do
   #
   # `subcontracted/3` runs each pin interior (`Mutare.Ecto.Fragment.islands/1` — collected under
   # the catalog's own descent rules, so no island is reached that the catalog would not have
-  # walked past) through `Mutare.Analyze.expression_mutations/3` over `context.mutators`: the
-  # run's **full** enabled spec set, which core threads into both seams this is called from
+  # walked past) through `Mutare.Analyze.expression_mutations/3` over the `mutators` of the
+  # plugin's `%Mutare.Ecto.Context{}`: the run's **full** enabled spec set, which core threads
+  # into both seams this is called from
   # (`host/2` and the whole-call `mutate/2` offer of a registered macro). The full set is what
   # makes the interior ordinary top-level Elixir with no special case:
   #
@@ -47,7 +48,7 @@ defmodule Mutare.Ecto.Island do
   # where it is built (`Mutare.Ecto.Dynamic`). The SQL/Elixir boundary is enforced by routing
   # and ownership, not by refusing to look at the pin.
 
-  alias Mutare.Ecto.Fragment
+  alias Mutare.Ecto.{Context, Fragment}
   alias Mutare.Mutator.Mutation
 
   @doc """
@@ -84,14 +85,13 @@ defmodule Mutare.Ecto.Island do
   core mutant that renames or deletes such a pair (e.g. `:keyword_delete`) is dropped along
   with the field renames.
   """
-  @spec subcontracted(Macro.t(), Mutare.Mutator.context(), (Macro.t() -> Macro.t())) ::
-          [Mutation.t()]
-  def subcontracted(condition, context, deliver \\ & &1) do
-    specs = Map.get(context, :mutators, [])
-
+  @spec subcontracted(Macro.t(), Context.t(), (Macro.t() -> Macro.t())) :: [Mutation.t()]
+  def subcontracted(condition, %Context{mutators: specs}, deliver \\ & &1) do
+    # Core's seam also accepts a callback context, for call-site symmetry with the mutator
+    # callbacks, and reads nothing from it — so only the specs cross back into core; the plugin's
+    # own struct never does.
     for {interior, rebuild} <- Fragment.islands(condition),
-        {spec, mutated, note, variant} <-
-          Mutare.Analyze.expression_mutations(interior, specs, context),
+        {spec, mutated, note, variant} <- Mutare.Analyze.expression_mutations(interior, specs),
         keyword_filter_keys_preserved?(spec, interior, mutated) do
       Mutation.new(deliver.(rebuild.(mutated)), producer: spec, note: note, variant: variant)
     end

@@ -107,6 +107,7 @@ defmodule Mutare.Ecto do
     Aggregate,
     Combination,
     Config,
+    Context,
     Dispatcher,
     Equivalence,
     Fragment,
@@ -225,7 +226,8 @@ defmodule Mutare.Ecto do
   defdelegate host(call, context), to: Host
 
   # Options are parsed once, at spec resolution, and read back as `context.config` — see
-  # `Mutare.Ecto.Config`.
+  # `Mutare.Ecto.Config`; each core boundary unpacks that context once into the plugin's
+  # `%Mutare.Ecto.Context{}` — see `Mutare.Ecto.Context`.
   @impl Mutare.Mutator
   def init(opts), do: Config.parse!(opts)
 
@@ -236,9 +238,10 @@ defmodule Mutare.Ecto do
 
   # Each dispatched `%Mutare.Ecto.Tag{}` becomes a labelled `Mutation` (`Tag.to_mutation/1`) for the
   # `finalize/2` funnel; a `producer:`-relayed island mutant passes through untouched and bypasses
-  # the funnel — see `Mutare.Ecto.Island`.
+  # the funnel — see `Mutare.Ecto.Island`. The Dispatcher unpacks core's `context` first, and a
+  # malformed one fails loudly there (`Context.new/1`).
   @impl Mutare.Mutator
-  def mutate(node, %{config: %Config{}} = context) do
+  def mutate(node, context) do
     case Dispatcher.mutations(node, context) do
       [] -> :skip
       tagged -> Enum.map(tagged, &Tag.to_mutation/1)
@@ -246,7 +249,8 @@ defmodule Mutare.Ecto do
   end
 
   # The `families:` filter + equivalence note, applied by core on both delivery paths — see
-  # `Mutare.Ecto.Equivalence.finalize/2`.
+  # `Mutare.Ecto.Equivalence.finalize/2`, which takes the parsed `%Config{}` unpacked here: the one
+  # fact of core's context it needs.
   @impl Mutare.Mutator
-  defdelegate finalize(mutation, context), to: Equivalence
+  def finalize(mutation, context), do: Equivalence.finalize(mutation, Context.new(context).config)
 end

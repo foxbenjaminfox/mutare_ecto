@@ -264,11 +264,11 @@ defmodule Mutare.Ecto.EquivalenceTest do
       # an observed-in-the-wild shape: construct a variant whose finer list disagrees between its
       # first (">",  the default boundary note) and last ("==", the NULL-exclusion note) label, and
       # confirm the first one wins.
-      context = %{config: Mutare.Ecto.Config.parse!([])}
+      config = Mutare.Ecto.Config.parse!([])
       mutation = Mutare.Mutator.Mutation.new(quote(do: 1 > 2), variant: [:comparison, ">", "=="])
 
       assert %Mutare.Mutator.Mutation{note: note} =
-               Mutare.Ecto.Equivalence.finalize(mutation, context)
+               Mutare.Ecto.Equivalence.finalize(mutation, config)
 
       assert note =~ "a row whose value sits exactly on the bound"
     end

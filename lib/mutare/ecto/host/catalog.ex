@@ -12,15 +12,15 @@ defmodule Mutare.Ecto.Host.Catalog do
   # `:bound` bumps are `Mutare.Ecto.Bound`'s; a binding-reorder is never hosted
   # (`Mutare.Ecto.BindingReorder`).
 
-  alias Mutare.Ecto.{Config, Fragment, Island, Tag}
+  alias Mutare.Ecto.{Config, Context, Fragment, Island, Tag}
 
   @doc """
   The tagged logical mutants for a hosted condition: own catalog + island sub-contract. A
   top-level-pin condition (`where: ^cond`) has an empty own catalog and is carried entirely by
   the sub-contract (`Mutare.Ecto.Island`).
   """
-  @spec mutants(Macro.t(), Config.t(), Mutare.Mutator.context()) :: [Mutare.Mutator.mutation()]
-  def mutants(condition, config, context) do
+  @spec mutants(Macro.t(), Context.t()) :: [Mutare.Mutator.mutation()]
+  def mutants(condition, %Context{config: config} = context) do
     # The two halves are independent mutant sets (own SQL-catalog swaps vs. sub-contracted pin
     # interiors); concatenation order only affects which arbitrary branch id each ends up under
     # in the woven `^`/`dynamic` selector, never which mutants are produced or how any one branch

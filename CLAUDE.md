@@ -124,6 +124,9 @@ delegates: `init/1` → `Mutare.Ecto.Config` (options parsed once, delivered as 
 (tags → `Mutare.Ecto.Tag.to_mutation/1`); `finalize/2` → `Mutare.Ecto.Equivalence` (the one
 filter + note funnel); `argument_marks/1` pins `apply_action`'s action atom
 (NOTES "`apply_action`'s action atom: pinned against core's value families, never mutated").
+Each core→plugin boundary — `Dispatcher`, `Host.host/2`, `finalize/2` — unpacks core's context
+**once** into the plugin-owned `%Mutare.Ecto.Context{}` (`Mutare.Ecto.Context`), the one reader of
+core's map; every producer inside sees only that struct.
 
 ### The three delivery buckets (the spine of the design)
 
@@ -149,9 +152,10 @@ Each row is role + the rule(s) that module is the **home** for.
 | Module | Role |
 |---|---|
 | `ecto.ex` | the `Mutare.Mutator`/`MacroRouting`/`MacroHost` front (see Architecture above) and the public configuration doc (`families:`/`dialects:`/`repo:`/`as:`) |
-| `dispatcher.ex` | classifies a node once and invokes only the relevant sub-mutators |
+| `dispatcher.ex` | unpacks core's context into `%Context{}`, classifies a node once, and invokes only the relevant sub-mutators |
 | `surface.ex` | the one descriptor table for every owned query macro / `from` key (routing kind, capabilities, drop families); home of the macro-kind taxonomy and its dispatch-exhaustiveness rule (`macro_kinds/0`) |
-| `sub_mutator.ex` | the `mutations(node, context)` behaviour every producer implements |
+| `sub_mutator.ex` | the `mutations(node, %Context{})` behaviour every producer implements |
+| `context.ex` | `%Context{config, pipe_mode, mutators}`, the plugin's view of core's callback context; home of the unpack-once boundary rule (`new/1` is the only reader of core's map, and the struct is total, so no producer guards a context shape) |
 | `tag.ex` | `%Tag{family, node, label, attribution}` — the one shape every producer emits; `to_mutation/1`; home of what the `attribution` field means |
 | `host.ex` | selector-host coordinator (bucket 3): a hosted call → `Target`s |
 | `host/routing.ex` | `route_arguments/2`, the per-argument classifier; home of the routing rationale (`:hosted`/`:expression`/`:skip`/`:interpolated`/`{:keyword, …}`) |
@@ -179,7 +183,7 @@ Each row is role + the rule(s) that module is the **home** for.
 | `repo_aggregate.ex` / `repo_write.ex` / `query_terminal.ex` | bucket-1 families; `repo_write.ex` is home of the `on_conflict` swap rules |
 | `repo_call.ex` | the resolve-on-the-configured-`repo:` preamble |
 | `config.ex` | option parsing into `%Config{}`; home of parse-once / `context.config` |
-| `equivalence.ex` | home of the equivalence-sensitive set, each family's note, and the `finalize/2` funnel |
+| `equivalence.ex` | home of the equivalence-sensitive set, each family's note, and the `finalize/2` funnel (context-free, over a `%Config{}`) |
 | `vocabulary.ex` | the `variant_labels/0` callback; home of vocabulary canonicalisation |
 | `ast.ex` | typed literal readers + list unwrap/rewrap; home of "emit through core's `Mutare.AST`, `Elixir.`-prefixed" |
 | `ast/query_call.ex` / `ast/from_call.ex` / `ast/binding_list.ex` / `ast/keyword_list.ex` | normalized values that preserve the written form; `FromCall` is home of the empty-clause-list collapse |

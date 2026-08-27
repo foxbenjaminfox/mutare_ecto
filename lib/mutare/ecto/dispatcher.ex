@@ -9,6 +9,7 @@ defmodule Mutare.Ecto.Dispatcher do
     Clause,
     ClauseDrop,
     Config,
+    Context,
     Dynamic,
     Query,
     QueryTerminal,
@@ -26,12 +27,15 @@ defmodule Mutare.Ecto.Dispatcher do
   @query_key Calls.module_key(Ecto.Query)
   @changeset_key Calls.module_key(Ecto.Changeset)
   @doc "The tagged mutations applicable to one AST node."
-  # `context` carries the `init/1`-parsed `%Config{}` as `:config` (`Mutare.Ecto.Config`) — a
-  # superset of `Mutare.Mutator.context()`, hence `map()`. It threads unchanged to the sub-mutators.
-  @spec mutations(Macro.t(), map()) :: [
+  # `context` is core's callback context, unpacked here **once** into the plugin's `%Context{}`
+  # (`Mutare.Ecto.Context`), which then threads to every sub-mutator — so no producer reads core's
+  # map, and none guards its shape.
+  @spec mutations(Macro.t(), Mutare.Mutator.context()) :: [
           Mutare.Ecto.SubMutator.tagged() | Mutare.Mutator.Mutation.t()
         ]
   def mutations(node, context) do
+    context = Context.new(context)
+
     case QueryCall.parse(node) do
       %QueryCall{name: name} = call ->
         query_macro_mutations(Surface.macro_kind(name), call, context)
@@ -79,9 +83,9 @@ defmodule Mutare.Ecto.Dispatcher do
   defp call_mutations({@changeset_key, _name, _args, _rebuild}, node, context),
     do: Changeset.mutations(node, context)
 
-  defp call_mutations({module, _name, _args, _rebuild}, node, context) do
+  defp call_mutations({module, _name, _args, _rebuild}, node, %Context{config: config} = context) do
     # mutare:ignore[conditional] equivalent — RepoAggregate/RepoWrite's own RepoCall.resolve/2 independently re-verifies the module match and yields no mutation for a mismatch either way, so skipping the invoke/2 call here is a pure optimization, not an observable difference
-    if module == context |> Config.from_context() |> Config.repo_key() do
+    if module == Config.repo_key(config) do
       invoke([RepoAggregate, RepoWrite], node, context)
     else
       []

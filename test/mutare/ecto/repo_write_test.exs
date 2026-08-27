@@ -258,7 +258,7 @@ defmodule Mutare.Ecto.RepoWriteTest do
     defp write_mutations(code, pipe_mode) do
       Mutare.Ecto.RepoWrite.mutations(
         Sourceror.parse_string!(code),
-        %{config: Mutare.Ecto.Config.parse!(repo: MyApp.Repo), pipe_mode: pipe_mode}
+        context(pipe_mode: pipe_mode)
       )
     end
 

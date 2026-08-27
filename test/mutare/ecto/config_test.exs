@@ -396,27 +396,6 @@ defmodule Mutare.Ecto.ConfigTest do
         Mutare.Ecto.Config.parse!(42)
       end
     end
-
-    test "from_context/1 raises when the context lacks the init/1-parsed :config" do
-      # Core delivers `init/1`'s parsed `%Config{}` as `context.config` on every callback path, so
-      # a context missing it (or carrying raw options there) is a programming error, not an
-      # implicit all-families/no-repo config.
-      assert_raise ArgumentError,
-                   ~r/expected a context with the init\/1-parsed :config, got: %\{\}\z/,
-                   fn ->
-                     Mutare.Ecto.Config.from_context(%{})
-                   end
-
-      assert_raise ArgumentError,
-                   ~r/expected a context with the init\/1-parsed :config, got: %\{config: \[families: \[:comparison\]\]\}\z/,
-                   fn ->
-                     Mutare.Ecto.Config.from_context(%{config: [families: [:comparison]]})
-                   end
-
-      # A well-formed context resolves: the pre-parsed :config passes through.
-      config = Mutare.Ecto.Config.parse!(families: [:bound])
-      assert Mutare.Ecto.Config.from_context(%{config: config}) == config
-    end
   end
 
   describe "multiple repos" do

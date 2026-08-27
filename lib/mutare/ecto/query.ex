@@ -57,7 +57,7 @@ defmodule Mutare.Ecto.Query do
   a source binding list (`from([a, b] in query)`) can still reorder.
   """
 
-  alias Mutare.Ecto.{Combination, Config, Surface, Tag, ValueCatalog}
+  alias Mutare.Ecto.{Combination, Config, Context, Surface, Tag, ValueCatalog}
   alias Mutare.Ecto.AST.{BindingList, FromCall, KeywordList, QueryCall}
   alias Mutare.Ecto.AST.KeywordList.Entry
   alias Mutare.Mutator.Mutation
@@ -82,14 +82,14 @@ defmodule Mutare.Ecto.Query do
   finer operator/kind for a swap family, `nil` for a structural drop; the attribution the inner
   clause the site is reported at), or `[]`.
   """
-  @spec mutations(QueryCall.t(), Mutare.Mutator.context()) :: [Mutare.Ecto.SubMutator.tagged()]
+  @spec mutations(QueryCall.t(), Context.t()) :: [Mutare.Ecto.SubMutator.tagged()]
   @impl Mutare.Ecto.SubMutator
   # Receives the Dispatcher-normalized call (`Mutare.Ecto.SubMutator`). `FromCall.parse/1` reads
   # the `from` apart; one whose clauses aren't a keyword list (`from(p in Post, ^clauses)`)
   # yields nothing.
-  def mutations(%QueryCall{} = call, context) do
+  def mutations(%QueryCall{} = call, %Context{config: config}) do
     case FromCall.parse(call) do
-      %FromCall{} = from -> mutations_for(from, Config.from_context(context))
+      %FromCall{} = from -> mutations_for(from, config)
       nil -> []
     end
   end

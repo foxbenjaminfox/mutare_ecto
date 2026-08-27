@@ -3,7 +3,8 @@ defmodule Mutare.Ecto.Config do
   # Parses the plugin's per-instance options (the `opts` of a `{Mutare.Ecto, opts}` entry) **once**,
   # at spec resolution: `Mutare.Ecto.init/1` (`c:Mutare.Mutator.init/1`) calls `parse!/1`, so a
   # typo'd option raises at startup next to core's own option validation, and core delivers the
-  # result to every context-aware callback (`mutate/2`, `host/2`) as `context.config` — which SQL
+  # result to every context-aware callback (`mutate/2`, `host/2`) as `context.config`, unpacked
+  # once per callback into the plugin's `%Mutare.Ecto.Context{}` — which SQL
   # **families** are enabled, which SQL **dialects** to gate dialect-specific mutations on, and
   # which `repo:` the Repo-call families match. Listing the plugin twice with different
   # `families:`/`as:` (and/or `repo:`) is how a user narrows the catalog, names a sub-family in the
@@ -107,19 +108,6 @@ defmodule Mutare.Ecto.Config do
 
   def parse!(other),
     do: raise(ArgumentError, "Mutare.Ecto options must be a keyword list, got: #{inspect(other)}")
-
-  @doc "The `Mutare.Ecto.init/1`-normalized config core delivers on every callback context."
-  @spec from_context(map()) :: t()
-  def from_context(%{config: %__MODULE__{} = config}), do: config
-
-  # Core delivers the `init/1`-parsed struct as `:config` on every per-spec context path
-  # (`mutate/2`, `host/2`), so a miss is a programming error — fail loudly rather than silently
-  # defaulting to an all-families, no-repo config.
-  def from_context(other) do
-    raise ArgumentError,
-          "Mutare.Ecto.Config.from_context/1 expected a context with the init/1-parsed :config, " <>
-            "got: #{inspect(other)}"
-  end
 
   @doc """
   The families `config` enables, in catalog order — the configured `families:` selection, or the

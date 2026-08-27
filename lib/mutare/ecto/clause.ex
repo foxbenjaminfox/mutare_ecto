@@ -43,7 +43,7 @@ defmodule Mutare.Ecto.Clause do
   Standalone/pipe clause-macro mutations for `node` as self-tagging `Mutare.Ecto.Tag`s
   (a swap family — order/aggregate — carries the finer operator/kind label), or `[]`.
   """
-  @spec mutations(QueryCall.t(), Mutare.Mutator.context()) :: [Mutare.Ecto.SubMutator.tagged()]
+  @spec mutations(QueryCall.t(), Mutare.Ecto.Context.t()) :: [Mutare.Ecto.SubMutator.tagged()]
   @impl Mutare.Ecto.SubMutator
   # Receives the Dispatcher-normalized call (`Mutare.Ecto.SubMutator`). The `args: []` clause
   # protects the `{init, [last]} = Enum.split(args, -1)` destructuring on a degenerate zero-arg

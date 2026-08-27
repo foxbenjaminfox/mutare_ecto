@@ -75,7 +75,8 @@ defmodule Mutare.Ecto.Equivalence do
 
   @doc """
   The tag → filter → enrich funnel, defined once (`c:Mutare.Mutator.finalize/2` —
-  `Mutare.Ecto.finalize/2` delegates here). Producers stay pure — every tag becomes a
+  `Mutare.Ecto.finalize/2` unpacks the `%Config{}` from core's context and delegates here, so this
+  body is context-free). Producers stay pure — every tag becomes a
   `Mutation` carrying `variant: [family | finer]` (`Mutare.Ecto.Tag.to_mutation/1`) — and core
   applies this funnel to every mutation the plugin produces, on **both** delivery paths (a
   `mutate/2` return and a host target's `:mutants`), just before recording, so no delivery site
@@ -92,9 +93,9 @@ defmodule Mutare.Ecto.Equivalence do
   core skips finalize for it, because the producing family's own funnel already ran when the
   mutation was generated.
   """
-  @spec finalize(Mutation.t(), map()) :: Mutation.t() | :skip
-  def finalize(%Mutation{variant: [family | finer]} = mutation, context) do
-    if Config.family_enabled?(Config.from_context(context), family),
+  @spec finalize(Mutation.t(), Config.t()) :: Mutation.t() | :skip
+  def finalize(%Mutation{variant: [family | finer]} = mutation, %Config{} = config) do
+    if Config.family_enabled?(config, family),
       do: %{mutation | note: note(family, List.first(finer))},
       else: :skip
   end

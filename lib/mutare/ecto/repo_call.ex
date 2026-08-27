@@ -8,17 +8,17 @@ defmodule Mutare.Ecto.RepoCall do
   # drop families.
 
   alias Mutare.Calls
-  alias Mutare.Ecto.Config
+  alias Mutare.Ecto.{Config, Context}
 
   @doc """
   Resolve `node` to a `{fun, args, rebuild}` call on the context's configured `repo`, or `nil` when
   no `repo:` is set, the node is not a resolved call, or it targets another module. The caller then
   dispatches on `fun` (and re-emits each mutant in the source's written form via `rebuild`).
   """
-  @spec resolve(Macro.t(), map()) ::
+  @spec resolve(Macro.t(), Context.t()) ::
           {atom(), [Macro.t()], (atom(), [Macro.t()] -> Macro.t())} | nil
-  def resolve(node, context) do
-    with repo when not is_nil(repo) <- context |> Config.from_context() |> Config.repo_key(),
+  def resolve(node, %Context{config: config}) do
+    with repo when not is_nil(repo) <- Config.repo_key(config),
          {:ok, fun, args, rebuild} <- Calls.resolved_call_to(node, repo) do
       {fun, args, rebuild}
     else

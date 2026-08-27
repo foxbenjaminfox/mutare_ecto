@@ -1024,18 +1024,16 @@ defmodule Mutare.Ecto.SubcontractTest do
     end
   end
 
-  describe "totality — subcontracted/2,3 tolerates a context with no :mutators key" do
-    # `Map.get(context, :mutators, [])` defaults to `[]` when the key is absent. Every real caller
-    # (`host/2`, `Mutare.Ecto.Dynamic`) reaches this through core's `analyze_known_macro/5`, which
-    # always injects `:mutators` first — so a bare context never occurs on that path. Still, the
-    # function's own contract (`@spec subcontracted(Macro.t(), Mutare.Mutator.context(), ...)`)
-    # doesn't require the key, so drive it directly with a context that omits it (mirroring how
-    # `Mutare.Ecto.Clause.mutations/2` is tested with a bare `%{}` elsewhere): it degrades to no
-    # sub-contracted mutants rather than raising a `KeyError`/`FunctionClauseError` inside the
-    # `for` comprehension's `Mutare.Analyze.expression_mutations/3` call.
-    test "a context with no :mutators key yields no sub-contracted mutants, never crashes" do
+  describe "totality — subcontracted/2,3 under a context with no enabled specs" do
+    # Every real caller (`host/2`, `Mutare.Ecto.Dynamic`) reaches this through core's
+    # `analyze_known_macro/5`, which always injects `:mutators` first. An *ordinary* node offer
+    # carries no `:mutators` key at all, which `Mutare.Ecto.Context.new/1` reads as `[]` (core
+    # descends such a node itself, so there is no island left to relay). Drive the seam with that
+    # empty spec set directly: it degrades to no sub-contracted mutants rather than raising inside
+    # the `for` comprehension's `Mutare.Analyze.expression_mutations/2` call.
+    test "an empty spec set yields no sub-contracted mutants, never crashes" do
       condition = Sourceror.parse_string!("u.age > ^(min * 2)")
-      assert Mutare.Ecto.Island.subcontracted(condition, %{}) == []
+      assert Mutare.Ecto.Island.subcontracted(condition, context()) == []
     end
   end
 end

@@ -22,7 +22,7 @@ defmodule Mutare.Ecto.QueryTerminal do
   @behaviour Mutare.Ecto.SubMutator
 
   @doc "First↔last swap for an `Ecto.Query` terminal call as a `:query_terminal` tag, or `[]`."
-  @spec mutations(Macro.t(), Mutare.Mutator.context()) :: [Tag.t()]
+  @spec mutations(Macro.t(), Mutare.Ecto.Context.t()) :: [Tag.t()]
   @impl Mutare.Ecto.SubMutator
   def mutations(node, _context) do
     case Calls.resolved_call_to(node, Ecto.Query, @terminals) do

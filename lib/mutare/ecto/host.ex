@@ -15,7 +15,7 @@ defmodule Mutare.Ecto.Host do
   `Mutare.Ecto.Bound`, the bump catalog and its literal guard.
   """
 
-  alias Mutare.Ecto.{Bound, Config, Surface}
+  alias Mutare.Ecto.{Bound, Context, Surface}
   alias Mutare.Ecto.AST.{FromCall, KeywordList, QueryCall}
   alias Mutare.Ecto.AST.KeywordList.Entry
   alias Mutare.Ecto.Host.{Bindings, Catalog, Condition, JoinOn, Target}
@@ -24,20 +24,22 @@ defmodule Mutare.Ecto.Host do
   @doc """
   `c:Mutare.Mutator.MacroHost.host/2`: the selector-host targets for a resolved Ecto.Query macro
   call. The call's `node` is re-read through `Mutare.Ecto.AST.QueryCall` so the splice transforms
-  rebuild the author's written form.
+  rebuild the author's written form. Core's `context` is unpacked once here, into the plugin's
+  `%Mutare.Ecto.Context{}` — this is the hosted path's core boundary, as
+  `Mutare.Ecto.Dispatcher.mutations/2` is the `mutate/2` path's.
   """
   @spec host(Call.t(), Mutare.Mutator.context()) :: [Target.t()]
   def host(%Call{node: node}, context) do
-    config = Config.from_context(context)
+    context = Context.new(context)
 
     case QueryCall.parse(node) do
       %QueryCall{name: :from} = call ->
-        from_targets(FromCall.parse(call), config, context)
+        from_targets(FromCall.parse(call), context)
 
       %QueryCall{name: macro, args: args} ->
         case Surface.macro_kind(macro) do
-          :condition -> condition_target(args, config, context)
-          :join -> join_target(args, config, context)
+          :condition -> condition_target(args, context)
+          :join -> join_target(args, context)
           :clause -> bound_target(macro, args)
           # Defensively dead: `hosted_macro_names/0` subscribes only the kinds above. A new kind
           # must take a branch here or stay unsubscribed (`Surface.macro_kinds/0`).
@@ -51,9 +53,9 @@ defmodule Mutare.Ecto.Host do
 
   # A `from` whose second argument isn't a keyword clause list (`from(p in Post, ^clauses)`) has
   # no clause to host.
-  defp from_targets(nil, _config, _context), do: []
+  defp from_targets(nil, _context), do: []
 
-  defp from_targets(%FromCall{source: source, clauses: clauses}, config, context) do
+  defp from_targets(%FromCall{source: source, clauses: clauses}, context) do
     hostable_on = JoinOn.hostable_from_indices(clauses.entries)
 
     KeywordList.flat_map(clauses, fn %Entry{key: key, value: value}, index ->
@@ -68,7 +70,7 @@ defmodule Mutare.Ecto.Host do
         # introduced up to it.
         hostable_clause?(key, index, hostable_on) ->
           bindings = Bindings.from(source, Bindings.visible_to(clauses, index))
-          from_target(value, bindings, index, config, context)
+          from_target(value, bindings, index, context)
 
         true ->
           []
@@ -95,8 +97,8 @@ defmodule Mutare.Ecto.Host do
   # binding. Hostability is decided by the clause key (`hostable_clause?/3`, in the caller) and a
   # non-empty catalog, not the binding count — so a top-level-pin condition (`where: ^cond`)
   # hosts whenever its sub-contract yields something (`Mutare.Ecto.Island`).
-  defp from_target(condition, bindings, index, config, context) do
-    case Catalog.mutants(condition, config, context) do
+  defp from_target(condition, bindings, index, context) do
+    case Catalog.mutants(condition, context) do
       [] -> []
       mutants -> [Target.from_clause(condition, mutants, bindings, index)]
     end
@@ -105,9 +107,9 @@ defmodule Mutare.Ecto.Host do
   # The woven `dynamic/2` re-declares the written binding list — or an empty one for the
   # binding-less form (`bindings: nil` — `Mutare.Ecto.Host.Condition`), which
   # `Bindings.declarations/1` renders as `[]`.
-  defp condition_target(args, config, context) do
+  defp condition_target(args, context) do
     with %Condition{node: condition, index: index, bindings: list} <- Condition.locate(args),
-         [_ | _] = mutants <- Catalog.mutants(condition, config, context) do
+         [_ | _] = mutants <- Catalog.mutants(condition, context) do
       [Target.condition(condition, mutants, Bindings.declarations(list), index)]
     else
       _ -> []
@@ -141,14 +143,14 @@ defmodule Mutare.Ecto.Host do
   # mutare:ignore[clause_drop] unreachable: core only calls host/2 after routing confirms a non-empty, literal-bound arg list
   defp bound_target(_macro, _args), do: []
 
-  defp join_target(args, config, context) do
+  defp join_target(args, context) do
     with {arg_index, options} <- trailing_options(args),
          pair_index when not is_nil(pair_index) <-
            Enum.find_index(options.entries, &(&1.key == :on)),
          true <- JoinOn.hostable_standalone?(args, options.entries),
          %Entry{value: condition} = Enum.at(options.entries, pair_index),
          [_ | _] = bindings <- Bindings.join(args),
-         [_ | _] = mutants <- Catalog.mutants(condition, config, context) do
+         [_ | _] = mutants <- Catalog.mutants(condition, context) do
       [Target.keyword_condition(condition, mutants, bindings, arg_index, pair_index)]
     else
       _ -> []

@@ -379,7 +379,7 @@ defmodule Mutare.Ecto.ClauseTest do
 
         assert %QueryCall{name: ^name, args: []} = call
 
-        assert Mutare.Ecto.Clause.mutations(call, %{}) == [],
+        assert Mutare.Ecto.Clause.mutations(call, context()) == [],
                "expected no mutant for #{name}()"
       end
     end

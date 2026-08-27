@@ -51,10 +51,10 @@ defmodule Mutare.Ecto.RepoWrite do
   `Mutare.Calls`, so it is pipe-position-agnostic.
   """
 
-  alias Mutare.Ecto.{AST, RepoCall, Tag}
+  alias Mutare.Ecto.{AST, Context, RepoCall, Tag}
   alias Mutare.Ecto.AST.KeywordList
 
-  use Mutare.Ecto.SubMutator
+  @behaviour Mutare.Ecto.SubMutator
 
   # Alias-proof `Elixir.Ecto.Changeset` reference — see `Mutare.Ecto.AST`.
   @changeset Mutare.AST.absolute_alias([:Ecto, :Changeset])
@@ -84,9 +84,9 @@ defmodule Mutare.Ecto.RepoWrite do
   @on_conflict_swaps %{nothing: :raise, raise: :nothing, replace_all: :nothing}
 
   @doc "RepoWrite mutations for `node` as `:persistence`/`:on_conflict` tags, or `[]`."
-  @spec mutations(Macro.t(), Mutare.Mutator.context()) :: [Tag.t()]
+  @spec mutations(Macro.t(), Context.t()) :: [Tag.t()]
   @impl Mutare.Ecto.SubMutator
-  def mutations(node, %{pipe_mode: pipe_mode} = context) do
+  def mutations(node, %Context{pipe_mode: pipe_mode} = context) do
     case RepoCall.resolve(node, context) do
       # mutare:ignore[operand_swap] family order is irrelevant — mutations are consumed as a set
       {fun, args, rebuild} -> persistence(fun, args, pipe_mode) ++ on_conflict(fun, args, rebuild)

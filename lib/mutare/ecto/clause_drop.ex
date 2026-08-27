@@ -36,16 +36,16 @@ defmodule Mutare.Ecto.ClauseDrop do
   the mutant is exercised (killing it), never a compile error of the single metamutant build.
   """
 
-  alias Mutare.Ecto.{StageDrop, Surface}
+  alias Mutare.Ecto.{Context, StageDrop, Surface}
 
-  use Mutare.Ecto.SubMutator
+  @behaviour Mutare.Ecto.SubMutator
 
   @doc """
   Stage-drop mutations for an `Ecto.Query` clause macro as tags, or `[]`.
   Pipe-aware: the `pipe_mode` from `context` decides identity-vs-first-argument delivery.
   """
-  @spec mutations(Macro.t(), Mutare.Mutator.context()) :: [Mutare.Ecto.Tag.t()]
+  @spec mutations(Macro.t(), Context.t()) :: [Mutare.Ecto.Tag.t()]
   @impl Mutare.Ecto.SubMutator
-  def mutations(node, %{pipe_mode: pipe_mode}),
+  def mutations(node, %Context{pipe_mode: pipe_mode}),
     do: StageDrop.mutations(node, Ecto.Query, &Surface.stage_drop_family/1, pipe_mode)
 end

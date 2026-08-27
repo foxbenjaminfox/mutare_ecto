@@ -34,7 +34,7 @@ defmodule Mutare.Ecto.BindingReorder do
   @behaviour Mutare.Ecto.SubMutator
 
   @doc "Binding-reorder mutants for `node` as `:binding_reorder` tags, or `[]`."
-  @spec mutations(QueryCall.t(), Mutare.Mutator.context()) :: [Tag.t()]
+  @spec mutations(QueryCall.t(), Mutare.Ecto.Context.t()) :: [Tag.t()]
   @impl Mutare.Ecto.SubMutator
   # Receives the Dispatcher-normalized `QueryCall` (see `Mutare.Ecto.SubMutator`), so every written
   # form reorders alike and `rebuild` re-emits the swap as written.

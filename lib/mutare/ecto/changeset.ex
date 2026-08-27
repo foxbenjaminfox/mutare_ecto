@@ -22,9 +22,9 @@ defmodule Mutare.Ecto.Changeset do
   `Function.identity/1`; written directly, the call collapses to its changeset argument.
   """
 
-  alias Mutare.Ecto.StageDrop
+  alias Mutare.Ecto.{Context, StageDrop}
 
-  use Mutare.Ecto.SubMutator
+  @behaviour Mutare.Ecto.SubMutator
 
   # Transparent validators and constraints — each returns the changeset, so dropping it only
   # removes its rule. Content-*producing* calls (`cast`, `change`, `put_change`, …) are NOT
@@ -45,9 +45,9 @@ defmodule Mutare.Ecto.Changeset do
   Changeset-step drop mutations for an `Ecto.Changeset` call as tags, or `[]`.
   A validator/constraint drops under `:validation_drop`; a Repo-time hook under `:hook_drop`.
   """
-  @spec mutations(Macro.t(), Mutare.Mutator.context()) :: [Mutare.Ecto.Tag.t()]
+  @spec mutations(Macro.t(), Context.t()) :: [Mutare.Ecto.Tag.t()]
   @impl Mutare.Ecto.SubMutator
-  def mutations(node, %{pipe_mode: pipe_mode}),
+  def mutations(node, %Context{pipe_mode: pipe_mode}),
     do: StageDrop.mutations(node, Ecto.Changeset, &family/1, pipe_mode)
 
   defp family(fun) when fun in @droppable, do: :validation_drop
