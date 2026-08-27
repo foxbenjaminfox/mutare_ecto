@@ -1165,7 +1165,7 @@ defmodule Mutare.Ecto.HostTest do
     end
 
     test "condition macro with no condition after the binding list hosts nothing" do
-      # condition_index requires an argument *after* the binding list, so a binding-only call
+      # `Host.Condition.locate/1` requires an argument *after* the binding list, so a binding-only call
       # never marks a position `:hosted`.
       assert routing("where([u])") == [:skip]
       assert routing("where(q, [u])") == [:expression, :skip]

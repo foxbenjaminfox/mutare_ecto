@@ -3,8 +3,9 @@ defmodule Mutare.Ecto.Host do
   Builds selector-host targets for localized Ecto query conditions.
 
   The companion `Mutare.Ecto.Host.Routing` identifies hosted argument positions. This module then
-  coordinates three focused components: `Host.Bindings` interprets Ecto binding declarations,
-  `Host.Catalog` produces the logical mutants — the plugin's own SQL catalogs plus the mutants
+  coordinates four focused components: `Host.Condition` locates the condition argument a
+  `where`/`having` call owns (binding-form or binding-less), `Host.Bindings` interprets Ecto
+  binding declarations, `Host.Catalog` produces the logical mutants — the plugin's own SQL catalogs plus the mutants
   `Mutare.Ecto.Island` sub-contracts for each `^` pin interior via
   `Mutare.Analyze.expression_mutations/3` (which is why `context` threads down to the catalog) —
   and `Host.Target` constructs the `dynamic/2` wrap and selector splice consumed by Mutare core.
@@ -19,7 +20,7 @@ defmodule Mutare.Ecto.Host do
   alias Mutare.Ecto.{Bound, Config, Surface}
   alias Mutare.Ecto.AST.{KeywordList, QueryCall}
   alias Mutare.Ecto.AST.KeywordList.Entry
-  alias Mutare.Ecto.Host.{Bindings, Catalog, JoinOn, Target}
+  alias Mutare.Ecto.Host.{Bindings, Catalog, Condition, JoinOn, Target}
   alias Mutare.MacroRouting.Call
 
   @doc """
@@ -108,10 +109,12 @@ defmodule Mutare.Ecto.Host do
   defp hostable_clause?(:on, index, hostable_on), do: MapSet.member?(hostable_on, index)
   defp hostable_clause?(_key, _index, _hostable_on), do: true
 
+  # The woven `dynamic/2` re-declares the written binding list — or an empty one for the
+  # binding-less form (`bindings: nil`), which `Bindings.declarations/1` renders as `[]`.
   defp condition_target(args, opts, context) do
-    with {bindings, condition, index} <- Bindings.hosted_condition(args),
+    with %Condition{node: condition, index: index, bindings: list} <- Condition.locate(args),
          [_ | _] = mutants <- Catalog.mutants(condition, opts, context) do
-      [Target.condition(condition, mutants, bindings, index)]
+      [Target.condition(condition, mutants, Bindings.declarations(list), index)]
     else
       _ -> []
     end

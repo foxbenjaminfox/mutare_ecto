@@ -27,7 +27,7 @@ defmodule Mutare.Ecto.Host.Routing do
       condition that follows it routes `:hosted`. A **binding-less** condition
       (`q |> where(as(:post).x > 1)`) — no written list, the condition is the trailing argument —
       routes `:hosted` too (the woven `dynamic/2` re-declares an empty binding list; see
-      `Mutare.Ecto.Host.Bindings`). A keyword-shorthand `where(q, x: v)` instead routes its trailing
+      `Mutare.Ecto.Host.Condition`). A keyword-shorthand `where(q, x: v)` instead routes its trailing
       pairs `{:keyword, …}`. The plain clause macros (`limit`/`order_by`/…) only thread the
       query (first arg → `:expression`) and leave their data positions raw for the plugin's own
       `mutate/2` mutators — with one exception: a **literal-integer bound** (`limit(q, 10)` /
@@ -44,7 +44,7 @@ defmodule Mutare.Ecto.Host.Routing do
 
   alias Mutare.Ecto.{Binding, Bound, Surface}
   alias Mutare.Ecto.AST.{KeywordList, QueryCall}
-  alias Mutare.Ecto.Host.Bindings
+  alias Mutare.Ecto.Host.Condition
   alias Mutare.Calls
   alias Mutare.MacroRouting.{ArgumentRoutes, Call}
 
@@ -98,10 +98,10 @@ defmodule Mutare.Ecto.Host.Routing do
     # data positions stay raw. The condition/shorthand overlay then marks what the host/core own.
     base = query_threading_route(args)
 
-    case Bindings.condition_index(args) do
+    case Condition.locate(args) do
       # binding form (`where(q, [u], cond)`) — host the condition after the binding list — or the
       # binding-less form (`where(q, as(:post).x > 1)`) — host the trailing condition itself.
-      index when is_integer(index) -> List.replace_at(base, index, :hosted)
+      %Condition{index: index} -> List.replace_at(base, index, :hosted)
       # keyword-shorthand form (`where(q, col: v)`) — route the trailing keyword list per-pair.
       nil -> shorthand_route(args, base)
     end

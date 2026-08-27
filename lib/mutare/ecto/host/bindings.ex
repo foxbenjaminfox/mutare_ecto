@@ -2,8 +2,8 @@ defmodule Mutare.Ecto.Host.Bindings do
   @moduledoc false
   # Interprets Ecto binding declarations and renders the binding list re-declared by a hosted
   # `dynamic/2`. This is the only module that reasons about positional, named, ellipsis, and join
-  # placement. It also locates the condition argument a host owns — including the binding-less form
-  # (`q |> where(as(:post).x > 1)`), which has no written list and so re-declares an empty one.
+  # placement. Locating the condition argument those declarations precede is
+  # `Mutare.Ecto.Host.Condition`'s job, not this module's.
 
   alias Mutare.Ecto.{AST, Binding, Surface}
   alias Mutare.Ecto.AST.{BindingList, KeywordList}
@@ -65,92 +65,14 @@ defmodule Mutare.Ecto.Host.Bindings do
     end
   end
 
-  @doc "The index of the host-owned condition argument, or `nil`."
-  @spec condition_index([Macro.t()]) :: non_neg_integer() | nil
-  def condition_index(args) do
-    case hosted_condition(args) do
-      {_bindings, _condition, index} -> index
-      nil -> nil
-    end
-  end
-
   @doc """
-  The pieces a host needs for a hosted condition: the binding declarations re-emitted by the woven
-  `dynamic/2`, the condition node, and its argument index — or `nil` when the args carry no hosted
-  condition (the keyword-shorthand form).
-
-  Two shapes resolve here:
-
-    * a **binding-form** condition (`where(q, [u], u.x == ^v)`) — the condition sits one slot past
-      the written binding list, which the woven `dynamic/2` re-declares.
-    * a **binding-less** condition (`q |> where(as(:post).views > 100)`, `where(q, is_nil(c.x))`) —
-      no positional list is written, so the condition is the trailing argument and the woven
-      `dynamic/2` re-declares an **empty** binding list (`dynamic([], …)`). A named-binding
-      (`as(:_)`), `parent_as`, or `fragment` reference resolves against the query the dynamic is
-      spliced into, exactly as Ecto's own `where(q, ^dynamic)` form does. This is what lets a
-      binding-less `where`/`having` still have its SQL operators/literals mutated.
+  Normalize a lone binding or binding list for a synthesized `dynamic/2`. `nil` — no written list,
+  the binding-less condition form `Mutare.Ecto.Host.Condition.locate/1` reports — re-declares an
+  empty one (`dynamic([], …)`).
   """
-  @spec hosted_condition([Macro.t()]) :: {[Macro.t()], Macro.t(), non_neg_integer()} | nil
-  def hosted_condition(args) do
-    case locate(args) do
-      {_binding_index, binding_list, condition_index} ->
-        {declarations(binding_list), Enum.at(args, condition_index), condition_index}
-
-      nil ->
-        bindingless_condition(args)
-    end
-  end
-
-  # The trailing argument as a host-owned condition with no binding declarations, or `nil` when it is
-  # not a condition to host. The shapes that are *not* a binding-less condition: a list (a binding
-  # list like `[u]`, a keyword shorthand like `[active: true]`, or an empty `[]` — none a predicate
-  # body) and a bare variable (a degenerate non-condition call). Everything else — a
-  # comparison/connective/null/membership expression, or a top-level `^cond` pin (whose interior the
-  # host sub-contracts to core), possibly referencing only named bindings — is hosted; the catalog
-  # then decides whether there is anything to mutate.
-  @spec bindingless_condition([Macro.t()]) :: {[], Macro.t(), non_neg_integer()} | nil
-  # mutare:ignore[clause_drop] equivalent — dropping this leaves `Enum.at([], -1)` (nil) as the "condition", and Host.Catalog.mutants/3 (via Fragment.mutants's total catch-all clause) already returns [] for `nil`, so `Host.condition_target/3`'s own `[_ | _] = mutants` guard rejects it downstream regardless
-  defp bindingless_condition([]), do: nil
-
-  defp bindingless_condition(args) do
-    index = length(args) - 1
-    condition = Enum.at(args, index)
-    if hostable_bare_condition?(condition), do: {[], condition, index}, else: nil
-  end
-
-  # Every excluded shape here (a list, a bare variable) also reaches `Mutare.Ecto.Fragment.mutants/2`'s
-  # own total catch-all clause and yields no catalog mutants there, so `Mutare.Ecto.Host`'s
-  # `[_ | _] = mutants` guard rejects it downstream regardless of what this predicate answers —
-  # hence the ignore below. A top-level `^cond` pin *is* hosted (its interior is sub-contracted to
-  # core), so it is deliberately not excluded.
-  defp hostable_bare_condition?(node) do
-    # Sourceror wraps a bare list/literal in a single-element `__block__`; unwrap one level so the
-    # list check below sees the real shape.
-    case Mutare.AST.unwrap_literal(node) do
-      list when is_list(list) -> false
-      # mutare:ignore[conditional] equivalent — see the comment above
-      other -> not Binding.variable?(other)
-    end
-  end
-
-  # The binding-list index and the condition index one slot past it, or `nil` when the args carry no
-  # binding list (or nothing follows it). `hosted_condition/1` (and, through it, `condition_index/1`)
-  # derives the binding-form condition from this, so the offset lives here, not in callers; the
-  # binding-less fallback lives in `bindingless_condition/1`.
-  @spec locate([Macro.t()]) :: {non_neg_integer(), BindingList.t(), pos_integer()} | nil
-  defp locate(args) do
-    with {binding_index, binding_list} <- BindingList.find(args),
-         condition_index = binding_index + 1,
-         # mutare:ignore[relational, conditional] equivalent — loosening/dropping this check just lets an out-of-range condition_index through; Enum.at/2 then returns nil for it, and (as with hostable_bare_condition?/1 above) a nil condition still yields no catalog mutants downstream, so no target is produced either way
-         true <- condition_index < length(args) do
-      {binding_index, binding_list, condition_index}
-    else
-      _ -> nil
-    end
-  end
-
-  @doc "Normalize a lone binding or binding list for a synthesized `dynamic/2`."
-  @spec declarations(Macro.t() | BindingList.t()) :: [Macro.t()]
+  @spec declarations(Macro.t() | BindingList.t() | nil) :: [Macro.t()]
+  # mutare:ignore[clause_drop] equivalent — without this clause `nil` falls through to `BindingList.parse/1` (not a list, so `nil`) and then `declaration/1`'s catch-all, which also yields `[]`; the explicit clause states the binding-less contract rather than relying on that fallthrough
+  def declarations(nil), do: []
   def declarations(%BindingList{entries: entries}), do: Enum.flat_map(entries, &declaration/1)
 
   def declarations(node) do

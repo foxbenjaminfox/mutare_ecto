@@ -45,7 +45,7 @@ defmodule Mutare.Ecto.Dynamic do
 
   alias Mutare.Ecto.{Config, Island, Tag}
   alias Mutare.Ecto.AST.QueryCall
-  alias Mutare.Ecto.Host.{Bindings, Catalog}
+  alias Mutare.Ecto.Host.{Catalog, Condition}
 
   @behaviour Mutare.Ecto.SubMutator
 
@@ -56,7 +56,7 @@ defmodule Mutare.Ecto.Dynamic do
   `Mutare.Mutator.Mutation`s (passed through `Mutare.Ecto.mutate/2` untouched) — or `[]` when
   there is nothing to mutate (a body with no condition, or a top-level-pin body).
 
-  The condition is located by `Mutare.Ecto.Host.Bindings.hosted_condition/1`, which resolves both
+  The condition is located by `Mutare.Ecto.Host.Condition.locate/1`, which resolves both
   shapes exactly as it does for a standalone `where`: the binding form (`dynamic([p], p.x > 1)` —
   the condition one slot past the written list) and the binding-less form
   (`dynamic(as(:t).x > 1)` — the trailing argument).
@@ -71,8 +71,8 @@ defmodule Mutare.Ecto.Dynamic do
   def mutations(%QueryCall{name: :dynamic, args: args} = call, context) do
     config = Config.from_context(context)
 
-    case Bindings.hosted_condition(args) do
-      {_bindings, condition, index} ->
+    case Condition.locate(args) do
+      %Condition{node: condition, index: index} ->
         # The shared in-fragment catalog, exactly what the hosted path composes
         # (`Mutare.Ecto.Host.Catalog.own_catalog/2`) — returned as raw tags: `Mutare.Ecto.mutate/2`
         # wraps every dispatched tag (`Config.tagged/1`) and core's finalize pass applies the

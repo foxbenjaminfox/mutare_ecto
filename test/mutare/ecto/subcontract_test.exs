@@ -609,7 +609,7 @@ defmodule Mutare.Ecto.SubcontractTest do
 
     test "the binding-less dynamic/1 form sub-contracts too" do
       # The condition sits at a different argument slot (the trailing argument, no written
-      # binding list) — `Bindings.hosted_condition/1` resolves the index the whole-call wrap
+      # binding list) — `Host.Condition.locate/1` resolves the index the whole-call wrap
       # rebuilds around, so both shapes must relay.
       src = """
       defmodule M do
