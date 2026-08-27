@@ -396,12 +396,7 @@ defmodule Mutare.Ecto.ExoticRobustnessTest do
   #     line) anchor to the wrong code. Multi-line sites are skipped: their `original_code` is a
   #     re-render, not a source slice.
   defp assert_site_invariants(source) do
-    %Mutare.Transform.Result{mutants: sites} =
-      Mutare.transform_string(source,
-        file: "robustness_invariants.ex",
-        mutators: mutators(@with_core),
-        expand_uses: true
-      )
+    sites = sites(source, [file: "robustness_invariants.ex"] ++ @with_core)
 
     assert sites != [], "expected the fixture to produce mutants"
 

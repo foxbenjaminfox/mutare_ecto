@@ -284,19 +284,6 @@ defmodule Mutare.Ecto.SubcontractTest do
   end
 
   describe "# mutare:ignore — the island's vocabulary is the producer's, never :ecto's" do
-    # The Sites recorded for `src` under the plugin + core's builtins, with ignore directives
-    # resolved (the `diffs` helpers drop the `ignored` flag, so go through the transform).
-    defp sites_for(src) do
-      %Mutare.Transform.Result{mutants: sites} =
-        Mutare.transform_string(src,
-          file: "subcontract_ignore_fixture.ex",
-          mutators: Mutare.Ecto.TestSupport.mutators(@with_core),
-          expand_uses: true
-        )
-
-      sites
-    end
-
     defp site(sites, mutator, substring) do
       found = Enum.find(sites, &(&1.mutator == mutator and &1.mutated_code =~ substring))
       assert found, "no #{inspect(mutator)} site matching #{inspect(substring)}"
@@ -313,7 +300,7 @@ defmodule Mutare.Ecto.SubcontractTest do
       end
       """
 
-      sites = sites_for(src)
+      sites = sites(src, @with_core)
 
       assert site(sites, :arithmetic, "u.age > ^(min / 2)").ignored,
              "the island's arithmetic mutant answers to core's family name"
@@ -335,7 +322,7 @@ defmodule Mutare.Ecto.SubcontractTest do
       end
       """
 
-      sites = sites_for(src)
+      sites = sites(src, @with_core)
 
       assert site(sites, :ecto, "u.age >= ^(min * 2)").ignored
 
@@ -356,7 +343,7 @@ defmodule Mutare.Ecto.SubcontractTest do
       end
       """
 
-      sites = sites_for(arithmetic_src)
+      sites = sites(arithmetic_src, @with_core)
 
       assert site(sites, :arithmetic, "p.views > ^(min / 2)").ignored
       refute site(sites, :ecto, "p.views >= ^(min * 2)").ignored
@@ -371,7 +358,7 @@ defmodule Mutare.Ecto.SubcontractTest do
       end
       """
 
-      sites = sites_for(ecto_src)
+      sites = sites(ecto_src, @with_core)
 
       assert site(sites, :ecto, "p.views >= ^(min * 2)").ignored
       refute site(sites, :arithmetic, "p.views > ^(min / 2)").ignored
@@ -918,12 +905,7 @@ defmodule Mutare.Ecto.SubcontractTest do
     end
 
     test "the equivalence note rides the inner-dynamic mutant, exactly as at top level" do
-      %Mutare.Transform.Result{mutants: sites} =
-        Mutare.transform_string(@inner_dynamic,
-          file: "inner_dynamic_note_fixture.ex",
-          mutators: Mutare.Ecto.TestSupport.mutators(@with_core),
-          expand_uses: true
-        )
+      sites = sites(@inner_dynamic, @with_core)
 
       site = Enum.find(sites, &(&1.mutator == :ecto and &1.mutated_code =~ "p.x >= 1"))
       assert site, "no :ecto site for the inner-dynamic comparison swap"
@@ -941,12 +923,7 @@ defmodule Mutare.Ecto.SubcontractTest do
       end
       """
 
-      %Mutare.Transform.Result{mutants: sites} =
-        Mutare.transform_string(src,
-          file: "inner_dynamic_ignore_fixture.ex",
-          mutators: Mutare.Ecto.TestSupport.mutators(@with_core),
-          expand_uses: true
-        )
+      sites = sites(src, @with_core)
 
       inner = Enum.find(sites, &(&1.mutator == :ecto and &1.mutated_code =~ "p.x >= 1"))
       assert inner, "no :ecto site for the inner-dynamic comparison swap"
@@ -1039,12 +1016,7 @@ defmodule Mutare.Ecto.SubcontractTest do
     end
 
     test "the equivalence note rides the lowered mutant, exactly as at top level" do
-      %Mutare.Transform.Result{mutants: sites} =
-        Mutare.transform_string(@inner_from,
-          file: "inner_from_note_fixture.ex",
-          mutators: Mutare.Ecto.TestSupport.mutators(@with_core),
-          expand_uses: true
-        )
+      sites = sites(@inner_from, @with_core)
 
       site = Enum.find(sites, &(&1.mutator == :ecto and &1.mutated_code =~ "p.views >= 10"))
       assert site, "no :ecto site for the inner-from comparison swap"

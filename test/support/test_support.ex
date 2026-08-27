@@ -3,9 +3,11 @@ defmodule Mutare.Ecto.TestSupport do
   # Shared helpers layered on `Mutare.Test` — core's public test surface for custom-mutator
   # projects. Each is a thin thread of the plugin's default configuration (the
   # `{Mutare.Ecto, repo: …}` mutator and the `:all` shorthand) into the core helper of the same
-  # shape (`diffs`/`diffs_for`/`assert_metamutant_compiles`/`metamutant_source`); every remaining
-  # option (`:extensions`, `:macro_routes`, `expand_uses: false`, …) is forwarded to
-  # `Mutare.transform_string/2` through the core helpers' trailing `opts`.
+  # shape (`diffs`/`diffs_for`/`assert_metamutant_compiles`/`metamutant_source`) — except `sites`,
+  # which has no core counterpart (the `diffs` projections drop the Site) and reads
+  # `Mutare.transform_string/2`'s result directly. Every remaining option (`:extensions`,
+  # `:macro_routes`, `:file`, `expand_uses: false`, …) is forwarded to `Mutare.transform_string/2`
+  # through the trailing `opts`.
   #
   # `expand_uses: true` is the transform default the source helpers inherit — the
   # `use Ecto.Schema` / `use MyAppWeb` expansion the schema/query routing needs.
@@ -19,6 +21,23 @@ defmodule Mutare.Ecto.TestSupport do
   @doc "The `{original_code, mutated_code}` pairs the `:ecto` family records for `source`."
   def ecto_diffs(source, opts \\ []),
     do: Mutare.Test.diffs_for(source, mutators(opts), :ecto, transform_opts(opts))
+
+  @doc """
+  Every `Mutare.Transform.Site` recorded for `source` — the transform result itself.
+
+  For assertions on a Site's own fields (`variant`, `note`, `line`, `mutator`, `ignored`, …) that
+  the `diffs` projections drop; `# mutare:ignore` directives are resolved, as in a real run. `opts`
+  are threaded as in `diffs/2`.
+  """
+  def sites(source, opts \\ []) do
+    %Mutare.Transform.Result{mutants: sites} =
+      Mutare.transform_string(
+        source,
+        Keyword.put(transform_opts(opts), :mutators, mutators(opts))
+      )
+
+    sites
+  end
 
   @doc """
   Assert the metamutant embedding every mutant of `source` compiles (the single-build net).

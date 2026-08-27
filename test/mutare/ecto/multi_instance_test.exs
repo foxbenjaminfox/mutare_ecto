@@ -1,6 +1,8 @@
 defmodule Mutare.Ecto.MultiInstanceTest do
   use ExUnit.Case, async: true
 
+  import Mutare.Ecto.TestSupport
+
   # The headline configuration story: **list the plugin twice**. Per the `:as` convention
   # (consumed by core, never reaching the plugin), two instances split the catalog into
   # separately-named report families, or cover two repos — each instance parses its own
@@ -9,17 +11,6 @@ defmodule Mutare.Ecto.MultiInstanceTest do
   # edges: an instance must never record a family outside its own selection (else the split
   # double-fires the shared surface — both instances are offered every node and host every
   # subscribed macro), and each instance's sites must carry *its* report name.
-
-  defp sites_for(src, mutators) do
-    %Mutare.Transform.Result{mutants: sites} =
-      Mutare.transform_string(src,
-        file: "multi_instance_fixture.ex",
-        mutators: mutators,
-        expand_uses: true
-      )
-
-    sites
-  end
 
   describe "a families:/as: split (two instances over the same query surface)" do
     @src """
@@ -35,7 +26,7 @@ defmodule Mutare.Ecto.MultiInstanceTest do
     ]
 
     test "each family records under its instance's report name" do
-      sites = sites_for(@src, @split)
+      sites = sites(@src, mutators: @split)
 
       # The comparison swap belongs to the renamed instance…
       assert [comparison] = Enum.filter(sites, &(&1.mutated_code =~ "u.age >= 18"))
@@ -55,7 +46,7 @@ defmodule Mutare.Ecto.MultiInstanceTest do
     end
 
     test "the split never double-fires: the two selections partition the mutant set" do
-      sites = sites_for(@src, @split)
+      sites = sites(@src, mutators: @split)
 
       # No logical mutant appears under both instances (same range, same rendering)…
       keys = Enum.map(sites, &{&1.range, &1.mutated_code})
@@ -68,7 +59,7 @@ defmodule Mutare.Ecto.MultiInstanceTest do
 
       single =
         @src
-        |> sites_for([{Mutare.Ecto, repo: MyApp.Repo}])
+        |> sites()
         |> Enum.map(&{&1.range, &1.original_code, &1.mutated_code})
         |> Enum.sort()
 
@@ -86,10 +77,12 @@ defmodule Mutare.Ecto.MultiInstanceTest do
       """
 
       sites =
-        sites_for(src, [
-          {Mutare.Ecto, repo: MyApp.RepoA, as: :repo_a},
-          {Mutare.Ecto, repo: MyApp.RepoB, as: :repo_b}
-        ])
+        sites(src,
+          mutators: [
+            {Mutare.Ecto, repo: MyApp.RepoA, as: :repo_a},
+            {Mutare.Ecto, repo: MyApp.RepoB, as: :repo_b}
+          ]
+        )
 
       # One aggregate swap per repo, each under its own report name — instance A never fires on
       # RepoB's call and vice versa.

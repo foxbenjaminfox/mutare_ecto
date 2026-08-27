@@ -1,6 +1,8 @@
 defmodule Mutare.Ecto.VariantTest do
   use ExUnit.Case, async: true
 
+  import Mutare.Ecto.TestSupport
+
   # `# mutare:ignore[ecto:<label>]` variant suppression. Every recorded mutant is tagged (via
   # `Mutare.Ecto.Tag.to_mutation/1`) with its SQL **family** and, for a swap/value family, the finer
   # **operator/kind** it mutated — and `Mutare.Ecto.variants/0` declares the whole vocabulary. So a
@@ -8,19 +10,6 @@ defmodule Mutare.Ecto.VariantTest do
   # running (the per-site analogue of the run-wide `families:` filter, only finer). The tags ride both
   # delivery paths: the selector **host** (a hosted `where`/`having` condition) and a plain
   # **`mutate/2`** whole-`from` rewrite.
-
-  @mutators [{Mutare.Ecto, repo: MyApp.Repo}]
-
-  defp sites_for(src) do
-    %Mutare.Transform.Result{mutants: sites} =
-      Mutare.transform_string(src,
-        file: "variant_fixture.ex",
-        mutators: @mutators,
-        expand_uses: true
-      )
-
-    sites
-  end
 
   # The single `:ecto` site whose rendered mutant contains `substring`.
   defp site(sites, substring) do
@@ -100,7 +89,7 @@ defmodule Mutare.Ecto.VariantTest do
     """
 
     test "a host-delivered fragment mutant is tagged [family, finer]" do
-      sites = sites_for(@src)
+      sites = sites(@src)
 
       # `u.age > 18` → `u.age >= 18`: the comparison swap *of* `>`, woven through the selector host —
       # so it carries both its family and the operator it mutated.
@@ -120,7 +109,7 @@ defmodule Mutare.Ecto.VariantTest do
 
       # The pin-only weave still runs through `Tag.to_mutation/1` + `finalize/2`, so the Site
       # carries its `:bound` family label like every other host-delivered mutant.
-      bump = Enum.find(sites_for(src), &(&1.mutator == :ecto and &1.mutated_code == "11"))
+      bump = Enum.find(sites(src), &(&1.mutator == :ecto and &1.mutated_code == "11"))
 
       assert bump.variant == ["bound"]
     end
@@ -132,7 +121,7 @@ defmodule Mutare.Ecto.VariantTest do
       # that family label, so a `# mutare:ignore[ecto:filter_drop]` on the clause line suppresses it.
       drop =
         Enum.find(
-          sites_for(@src),
+          sites(@src),
           &(&1.mutator == :ecto and &1.operation == :delete and &1.original_code == "u.age > 18")
         )
 
@@ -143,7 +132,7 @@ defmodule Mutare.Ecto.VariantTest do
     test "the labels ride alongside the equivalence note, independently" do
       # `:comparison` is equivalence-sensitive, so its Site carries *both* the variant labels (for
       # `# mutare:ignore`) and the report note (for the survivor header) — the two are orthogonal.
-      comparison = site(sites_for(@src), "u.age >= 18")
+      comparison = site(sites(@src), "u.age >= 18")
 
       assert comparison.variant == ["comparison", ">"]
 
@@ -165,7 +154,7 @@ defmodule Mutare.Ecto.VariantTest do
       end
       """
 
-      sites = sites_for(src)
+      sites = sites(src)
 
       assert site(sites, "u.age <= 40").ignored, "the < swap is suppressed"
       refute site(sites, "u.age >= 18").ignored, "the > swap keeps running"
@@ -184,7 +173,7 @@ defmodule Mutare.Ecto.VariantTest do
       end
       """
 
-      sites = sites_for(src)
+      sites = sites(src)
 
       assert site(sites, "u.age <= 40").ignored, "the < swap is suppressed"
       assert site(sites, "u.age >= 18").ignored, "the > swap is suppressed too"
@@ -203,7 +192,7 @@ defmodule Mutare.Ecto.VariantTest do
       end
       """
 
-      sites = sites_for(src)
+      sites = sites(src)
 
       assert site(sites, "u.age > 19").ignored, "the literal bump is suppressed"
       refute site(sites, "u.age >= 18").ignored, "the comparison swap keeps running"
@@ -219,7 +208,7 @@ defmodule Mutare.Ecto.VariantTest do
       end
       """
 
-      sites = sites_for(src)
+      sites = sites(src)
 
       assert site(sites, "asc_nulls_last").ignored, "the NULLs-placement flip is suppressed"
       refute site(sites, "desc_nulls_first").ignored, "the sibling direction flip keeps running"
@@ -235,7 +224,7 @@ defmodule Mutare.Ecto.VariantTest do
       end
       """
 
-      sites = sites_for(src)
+      sites = sites(src)
 
       assert site(sites, "u.age >= 18").ignored, "the comparison swap is suppressed"
       assert site(sites, "u.age > 19").ignored, "the literal sibling is suppressed too"
@@ -263,7 +252,7 @@ defmodule Mutare.Ecto.VariantTest do
       end
       """
 
-      sites = sites_for(src)
+      sites = sites(src)
 
       assert site(sites, "11").ignored, "the +1 bump is suppressed"
       assert site(sites, "9").ignored, "the −1 bump is suppressed"
@@ -291,7 +280,7 @@ defmodule Mutare.Ecto.VariantTest do
       end
       """
 
-      sites = sites_for(src)
+      sites = sites(src)
 
       drop =
         Enum.find(
@@ -318,7 +307,7 @@ defmodule Mutare.Ecto.VariantTest do
       end
       """
 
-      sites = sites_for(src)
+      sites = sites(src)
 
       # Node-level attribution narrows each swap's site to the aggregate call itself, so the two
       # sites are told apart by their own original → mutated pair (both still sit on the ignore's
@@ -340,7 +329,7 @@ defmodule Mutare.Ecto.VariantTest do
       end
       """
 
-      sites = sites_for(src)
+      sites = sites(src)
 
       assert site(sites, "desc: u.name").ignored, "the asc → desc flip is suppressed"
       refute site(sites, "asc: u.age").ignored, "the desc → asc flip keeps running"
@@ -359,7 +348,7 @@ defmodule Mutare.Ecto.VariantTest do
       end
       """
 
-      sites = sites_for(src)
+      sites = sites(src)
 
       assert site(sites, "inner_join:").ignored, "the left → inner swap is suppressed"
       refute site(sites, "left_join:").ignored, "the full → left swap keeps running"

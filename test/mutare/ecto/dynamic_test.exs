@@ -285,11 +285,7 @@ defmodule Mutare.Ecto.DynamicTest do
       end
       """
 
-      %Mutare.Transform.Result{mutants: sites} =
-        Mutare.transform_string(src,
-          mutators: [{Mutare.Ecto, repo: MyApp.Repo}],
-          expand_uses: true
-        )
+      sites = sites(src)
 
       boundary = Enum.find(sites, &(&1.mutated_code =~ ">= 18" and &1.mutator == :ecto))
       assert boundary.note =~ "a row whose value sits exactly on the bound"

@@ -19,13 +19,6 @@ defmodule Mutare.Ecto.AttributionTest do
 
   @mutators [{Mutare.Ecto, repo: MyApp.Repo, dialects: [:postgres]}]
 
-  defp sites_for(src) do
-    %Mutare.Transform.Result{mutants: sites} =
-      Mutare.transform_string(src, file: "attribution_fixture.ex", mutators: @mutators)
-
-    sites
-  end
-
   defp one(sites, pred) do
     case Enum.filter(sites, pred) do
       [site] ->
@@ -58,7 +51,7 @@ defmodule Mutare.Ecto.AttributionTest do
     """
 
     test "a clause drop lands on the dropped clause's line — each of two where:s independently" do
-      sites = sites_for(@src)
+      sites = sites(@src, mutators: @mutators)
 
       drop1 = one(sites, &(&1.operation == :delete and &1.original_code == "p.views > 1"))
       drop2 = one(sites, &(&1.operation == :delete and &1.original_code == "p.likes > 2"))
@@ -70,7 +63,7 @@ defmodule Mutare.Ecto.AttributionTest do
     end
 
     test "the order flip, join-kind swap, bound drop, and set-op swap each land on their clause" do
-      sites = sites_for(@src)
+      sites = sites(@src, mutators: @mutators)
 
       assert one(sites, &("ordering" in &1.variant)).line == 7
 
@@ -104,7 +97,7 @@ defmodule Mutare.Ecto.AttributionTest do
       end
       """
 
-      sites = sites_for(src)
+      sites = sites(src, mutators: @mutators)
 
       ignored = one(sites, &(&1.operation == :delete and &1.original_code == "p.views > 1"))
       live = one(sites, &(&1.operation == :delete and &1.original_code == "p.likes > 2"))
@@ -138,7 +131,7 @@ defmodule Mutare.Ecto.AttributionTest do
       end
       """
 
-      sites = sites_for(src)
+      sites = sites(src, mutators: @mutators)
 
       window = one(sites, &("coalesce_in_ordering" in &1.variant))
 
@@ -177,7 +170,7 @@ defmodule Mutare.Ecto.AttributionTest do
       end
       """
 
-      sites = sites_for(src)
+      sites = sites(src, mutators: @mutators)
 
       assert one(sites, &("coalesce_in_ordering" in &1.variant)).ignored,
              "the window sort key's drop is suppressed"
@@ -204,7 +197,7 @@ defmodule Mutare.Ecto.AttributionTest do
       end
       """
 
-      sites = sites_for(src)
+      sites = sites(src, mutators: @mutators)
 
       assert one(sites, &(&1.operation == :delete)).ignored, "the drop is suppressed"
 
@@ -249,14 +242,14 @@ defmodule Mutare.Ecto.AttributionTest do
     """
 
     test "in place (a free-standing dynamic), the inner filter drop lands on its own clause line" do
-      drop = @dynamic_src |> sites_for() |> one(&(&1.variant == ["filter_drop"]))
+      drop = @dynamic_src |> sites(mutators: @mutators) |> one(&(&1.variant == ["filter_drop"]))
       assert {drop.line, drop.operation} == {5, :delete}
     end
 
     test "hosted (a from's where:), the inner filter drop reports at the woven condition" do
       drop =
         @hosted_src
-        |> sites_for()
+        |> sites(mutators: @mutators)
         |> one(&(&1.variant == ["filter_drop"] and &1.operation == :replace))
 
       assert drop.line == 5

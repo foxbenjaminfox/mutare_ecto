@@ -1,6 +1,8 @@
 defmodule Mutare.Ecto.EquivalenceTest do
   use ExUnit.Case, async: true
 
+  import Mutare.Ecto.TestSupport
+
   # The equivalence-sensitive families' report notes (`Mutare.Ecto.Equivalence`): each rides onto
   # its mutant's Site through the `finalize/2` funnel — on both delivery paths, the host's weave
   # and a plain `mutate/2` rewrite — phrased for the family's own equivalence reason.
@@ -14,11 +16,7 @@ defmodule Mutare.Ecto.EquivalenceTest do
       end
       """
 
-      %Mutare.Transform.Result{mutants: sites} =
-        Mutare.transform_string(src,
-          mutators: [{Mutare.Ecto, repo: MyApp.Repo}],
-          expand_uses: true
-        )
+      sites = sites(src)
 
       # The comparison swap (== → !=) is equivalence-sensitive → the note rides onto the recorded
       # mutant (core renders it as the survivor header's trailing "— kill may require …").
@@ -45,11 +43,7 @@ defmodule Mutare.Ecto.EquivalenceTest do
       end
       """
 
-      %Mutare.Transform.Result{mutants: sites} =
-        Mutare.transform_string(src,
-          mutators: [{Mutare.Ecto, repo: MyApp.Repo}],
-          expand_uses: true
-        )
+      sites = sites(src)
 
       equality = Enum.find(sites, &(&1.mutated_code =~ "u.x == u.y" and &1.mutator == :ecto))
 
@@ -68,11 +62,7 @@ defmodule Mutare.Ecto.EquivalenceTest do
       end
       """
 
-      %Mutare.Transform.Result{mutants: sites} =
-        Mutare.transform_string(src,
-          mutators: [{Mutare.Ecto, repo: MyApp.Repo}],
-          expand_uses: true
-        )
+      sites = sites(src)
 
       # `>` → `>=` is the strict↔non-strict boundary swap.
       boundary = Enum.find(sites, &(&1.mutated_code =~ ">=" and &1.mutator == :ecto))
@@ -96,11 +86,7 @@ defmodule Mutare.Ecto.EquivalenceTest do
       end
       """
 
-      %Mutare.Transform.Result{mutants: sites} =
-        Mutare.transform_string(src,
-          mutators: [{Mutare.Ecto, repo: MyApp.Repo}],
-          expand_uses: true
-        )
+      sites = sites(src)
 
       additive = Enum.find(sites, &(&1.mutated_code =~ "u.a - u.b" and &1.mutator == :ecto))
       assert additive.note =~ "right operand is nonzero"
@@ -130,11 +116,7 @@ defmodule Mutare.Ecto.EquivalenceTest do
       end
       """
 
-      %Mutare.Transform.Result{mutants: sites} =
-        Mutare.transform_string(src,
-          mutators: [{Mutare.Ecto, repo: MyApp.Repo}],
-          expand_uses: true
-        )
+      sites = sites(src)
 
       coalesce_sites = Enum.filter(sites, &(&1.mutator == :ecto and "coalesce" in &1.variant))
       ordering = Enum.find(coalesce_sites, &("coalesce_in_ordering" in &1.variant))
@@ -156,11 +138,7 @@ defmodule Mutare.Ecto.EquivalenceTest do
       end
       """
 
-      %Mutare.Transform.Result{mutants: sites} =
-        Mutare.transform_string(src,
-          mutators: [{Mutare.Ecto, repo: MyApp.Repo}],
-          expand_uses: true
-        )
+      sites = sites(src)
 
       multiplicative = Enum.find(sites, &(&1.mutated_code =~ "u.a * u.b" and &1.mutator == :ecto))
       assert multiplicative.note =~ "not ±1"
@@ -179,11 +157,7 @@ defmodule Mutare.Ecto.EquivalenceTest do
       end
       """
 
-      %Mutare.Transform.Result{mutants: sites} =
-        Mutare.transform_string(src,
-          mutators: [{Mutare.Ecto, repo: MyApp.Repo}],
-          expand_uses: true
-        )
+      sites = sites(src)
 
       hosted = Enum.find(sites, &(&1.mutated_code == "u.score > 10" and &1.mutator == :ecto))
       assert hosted.note =~ "NULL rows in the wrapped expression"
@@ -211,11 +185,7 @@ defmodule Mutare.Ecto.EquivalenceTest do
       end
       """
 
-      %Mutare.Transform.Result{mutants: sites} =
-        Mutare.transform_string(src,
-          mutators: [{Mutare.Ecto, repo: MyApp.Repo}],
-          expand_uses: true
-        )
+      sites = sites(src)
 
       # The NULLs-placement flip (asc_nulls_first → asc_nulls_last) is the ordering_nulls mutant; the
       # direction flip (→ desc_nulls_first) is plain :ordering and carries no note.
@@ -242,11 +212,7 @@ defmodule Mutare.Ecto.EquivalenceTest do
       end
       """
 
-      %Mutare.Transform.Result{mutants: sites} =
-        Mutare.transform_string(src,
-          mutators: [{Mutare.Ecto, repo: MyApp.Repo}],
-          expand_uses: true
-        )
+      sites = sites(src)
 
       join = Enum.find(sites, &(&1.mutated_code =~ "inner_join" and &1.mutator == :ecto))
 
@@ -272,11 +238,7 @@ defmodule Mutare.Ecto.EquivalenceTest do
       end
       """
 
-      %Mutare.Transform.Result{mutants: sites} =
-        Mutare.transform_string(src,
-          mutators: [{Mutare.Ecto, repo: MyApp.Repo}],
-          expand_uses: true
-        )
+      sites = sites(src)
 
       connective = Enum.find(sites, &(&1.mutator == :ecto and &1.mutated_code =~ ~r/\bor\b/))
       assert connective.note =~ "the operands disagree"
