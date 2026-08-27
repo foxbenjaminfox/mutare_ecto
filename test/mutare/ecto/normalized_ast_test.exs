@@ -1,7 +1,7 @@
 defmodule Mutare.Ecto.NormalizedASTTest do
   use ExUnit.Case, async: true
 
-  alias Mutare.Ecto.AST.{BindingList, KeywordList, QueryCall}
+  alias Mutare.Ecto.AST.{BindingList, FromCall, KeywordList, QueryCall}
   alias Mutare.Transform.Meta
 
   defp parse(code), do: Sourceror.parse_string!(code)
@@ -68,13 +68,24 @@ defmodule Mutare.Ecto.NormalizedASTTest do
       assert Enum.map(list.entries, & &1.key) == [:where, :limit]
 
       assert list
-             |> KeywordList.replace_value(1, Mutare.AST.literal(20))
+             |> KeywordList.put_value(1, Mutare.AST.literal(20))
+             |> KeywordList.to_ast()
              |> Sourceror.to_string() == "[where: u.active, limit: 20]"
 
-      assert list |> KeywordList.replace_key(1, :offset) |> Sourceror.to_string() ==
+      assert list
+             |> KeywordList.put_key(1, :offset)
+             |> KeywordList.to_ast()
+             |> Sourceror.to_string() ==
                "[where: u.active, offset: 10]"
 
-      assert list |> KeywordList.delete(0) |> Sourceror.to_string() == "[limit: 10]"
+      assert list |> KeywordList.delete_at([0]) |> KeywordList.to_ast() |> Sourceror.to_string() ==
+               "[limit: 10]"
+
+      assert list
+             |> KeywordList.delete_at([0, 1])
+             |> KeywordList.to_ast()
+             |> Sourceror.to_string() ==
+               "[]"
     end
 
     test "distinguishes a keyword list from mixed and non-list AST" do
@@ -82,6 +93,81 @@ defmodule Mutare.Ecto.NormalizedASTTest do
       assert KeywordList.nonempty(parse("[]")) == nil
       assert KeywordList.parse(parse("[u.id, asc: u.name]")) == nil
       assert KeywordList.parse(parse("u.id")) == nil
+    end
+  end
+
+  describe "FromCall" do
+    # A stamped `from`, as the resolve pre-pass leaves it for `QueryCall.parse/1`.
+    defp from(code) do
+      {head, meta, args} = parse(code)
+      meta = Meta.stamp_macro_call(meta, {Mutare.Calls.module_key(Ecto.Query), :from, :unpiped})
+      FromCall.parse({head, meta, args})
+    end
+
+    test "reads a from apart and rebuilds each edit in the written form" do
+      from = from("Q.from(p in Post, where: p.x > 1, limit: 10)")
+
+      assert %FromCall{source: {:in, _, _}, clauses: %KeywordList{entries: [_, _]}} = from
+
+      assert from |> FromCall.to_ast() |> Sourceror.to_string() ==
+               "Q.from(p in Post, where: p.x > 1, limit: 10)"
+
+      assert from
+             |> FromCall.replace_clause(1, Mutare.AST.literal(20))
+             |> FromCall.to_ast()
+             |> Sourceror.to_string() == "Q.from(p in Post, where: p.x > 1, limit: 20)"
+
+      assert from
+             |> FromCall.rekey_clause(0, :having)
+             |> FromCall.to_ast()
+             |> Sourceror.to_string() ==
+               "Q.from(p in Post, having: p.x > 1, limit: 10)"
+
+      assert from |> FromCall.delete_clauses([1]) |> FromCall.to_ast() |> Sourceror.to_string() ==
+               "Q.from(p in Post, where: p.x > 1)"
+
+      assert from
+             |> FromCall.replace_source(parse("c in Comment"))
+             |> FromCall.to_ast()
+             |> Sourceror.to_string() == "Q.from(c in Comment, where: p.x > 1, limit: 10)"
+    end
+
+    test "collapses an emptied clause list to the single-argument from" do
+      # The collapse changes the call's arity (2 → 1), so core's rebuild requalifies a *bare*
+      # imported `from` (an arity-restricted `import` could exclude `from/1`); a qualified or
+      # aliased call keeps its written head.
+      assert from("Q.from(p in Post, where: p.x > 1)")
+             |> FromCall.delete_clauses([0])
+             |> FromCall.to_ast()
+             |> Sourceror.to_string() == "Q.from(p in Post)"
+
+      assert from("from(p in Post, where: p.x > 1)")
+             |> FromCall.delete_clauses([0])
+             |> FromCall.to_ast()
+             |> Sourceror.to_string() == "Elixir.Ecto.Query.from(p in Post)"
+    end
+
+    test "parses a clause-less from as an empty clause list, and rejects other shapes" do
+      assert %FromCall{clauses: %KeywordList{entries: []}} = from = from("from(Post)")
+      assert from |> FromCall.to_ast() |> Sourceror.to_string() == "from(Post)"
+
+      assert from("from(p in Post, ^clauses)") == nil
+      assert FromCall.parse(parse("from(p in Post, where: p.x > 1)")) == nil
+
+      {head, meta, args} = parse("limit(q, 10)")
+      meta = Meta.stamp_macro_call(meta, {Mutare.Calls.module_key(Ecto.Query), :limit, :unpiped})
+      assert FromCall.parse({head, meta, args}) == nil
+    end
+
+    test "parse_args reads the shape without call identity" do
+      [source, clauses] = args = parse("from(p in Post, where: p.x > 1)") |> elem(2)
+
+      assert {^source, %KeywordList{entries: [%KeywordList.Entry{key: :where}]}} =
+               FromCall.parse_args(args)
+
+      assert {^source, %KeywordList{entries: []}} = FromCall.parse_args([source])
+      assert FromCall.parse_args([source, parse("^clauses")]) == nil
+      assert FromCall.parse_args([source, clauses, clauses]) == nil
     end
   end
 end

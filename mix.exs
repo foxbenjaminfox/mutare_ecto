@@ -5,7 +5,8 @@ defmodule Mutare.Ecto.MixProject do
   @source_url "https://github.com/foxbenjaminfox/mutare_ecto"
 
   # A few *typespecs* in visible modules reference a hidden internal type
-  # (`Mutare.Ecto.Clause`/`Query`/`BindingReorder` return `Mutare.Ecto.AST.QueryCall.t`;
+  # (`Mutare.Ecto.Clause`/`Query`/`BindingReorder` take `Mutare.Ecto.AST.QueryCall.t`, and
+  # `Query.mutations_for/2` a `Mutare.Ecto.AST.FromCall.t`;
   # `Mutare.Ecto.Host` returns `Mutare.Ecto.Host.Target.t`; `Mutare.Ecto.Fragment`
   # takes `Mutare.Ecto.Config.t`). ExDoc autolinks types in typespecs unconditionally, so a
   # reference to a hidden type is silenced on the *referencing* module instead — keep this list tight.

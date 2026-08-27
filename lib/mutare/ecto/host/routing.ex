@@ -43,7 +43,7 @@ defmodule Mutare.Ecto.Host.Routing do
   """
 
   alias Mutare.Ecto.{Binding, Bound, Surface}
-  alias Mutare.Ecto.AST.KeywordList
+  alias Mutare.Ecto.AST.{FromCall, KeywordList}
   alias Mutare.Ecto.Host.Condition
   alias Mutare.Calls
   alias Mutare.MacroRouting.{ArgumentRoutes, Call}
@@ -66,7 +66,7 @@ defmodule Mutare.Ecto.Host.Routing do
   and its visible `args`: one entry per argument. Returns `[]` for a name the plugin doesn't route.
   """
   @spec treatments(atom(), [Macro.t()]) :: [Mutare.MacroRouting.treatment()]
-  def treatments(:from, [_source | rest]) do
+  def treatments(:from, [_source | rest] = args) do
     # The source is never mutated (a table/schema swap is a broken query, not a mutant). Each clause
     # routes independently: a binding-referencing `where`/`having` expression is hosted, while a
     # keyword-shorthand condition routes its values per pair so core mutates them (`^`-pinned). This
@@ -75,12 +75,11 @@ defmodule Mutare.Ecto.Host.Routing do
     # (`as(:_)`), which the host weaves behind an empty-binding `dynamic([], …)`. Non-condition
     # clauses (select/order_by/… — whole-`from`'s job), keys, and nil pairs are left raw.
     clause_treatment =
-      case rest do
-        # mutare:ignore[guard_drop] equivalent — `clause_treatments/1` parses `clauses` via `KeywordList.parse/1`, which already returns `nil`/`[]` safely for a non-list, so dropping this guard doesn't crash or change behavior for malformed AST
-        [clauses] when is_list(clauses) -> {:keyword, clause_treatments(clauses)}
-        # `rest` is `[clauses]` for the usual `from(source, kw)`. It is `[]` for a clause-less
-        # `from(Post)` (nothing to host) and anything else is malformed AST — both route `:skip`.
-        _ -> :skip
+      case FromCall.parse_args(args) do
+        {_source, %KeywordList{} = clauses} -> {:keyword, clause_treatments(clauses)}
+        # A non-keyword clause argument (`from(source, ^clauses)`) or malformed AST routes `:skip`.
+        # (A clause-less `from(Post)` parses fine but has no clause position to route.)
+        nil -> :skip
       end
 
     [:skip | List.duplicate(clause_treatment, length(rest))]
@@ -201,21 +200,15 @@ defmodule Mutare.Ecto.Host.Routing do
   # condition value (below); a bound clause (`limit:`/`offset:`) routes `:hosted` iff its value
   # is a literal integer (the pin-only bound bump — an interpolated/expression bound stays raw);
   # every other clause (select/order_by — whole-`from`'s job, or a field-name carrier) is left raw.
-  defp clause_treatments(clauses) do
-    case KeywordList.parse(clauses) do
-      %KeywordList{entries: entries} ->
-        Enum.map(entries, fn entry ->
-          cond do
-            Surface.from_clause?(entry.key, :hosted) -> condition_treatment(entry.value)
-            # mutare:ignore[logical] equivalent — even a wrongly-:hosted entry produces no observable weave: `Bound.literal?/1` is `Mutare.Ecto.Bound.bumps/1` non-emptiness, so a pin/expression bound that slipped through yields an empty target list, and a hostable non-bound key is re-gated by `Surface` checks on the host side — the weave is empty regardless of what this routing classification says
-            Surface.bound?(entry.key) and Bound.literal?(entry.value) -> :hosted
-            true -> :skip
-          end
-        end)
-
-      nil ->
-        []
-    end
+  defp clause_treatments(%KeywordList{entries: entries}) do
+    Enum.map(entries, fn entry ->
+      cond do
+        Surface.from_clause?(entry.key, :hosted) -> condition_treatment(entry.value)
+        # mutare:ignore[logical] equivalent — even a wrongly-:hosted entry produces no observable weave: `Bound.literal?/1` is `Mutare.Ecto.Bound.bumps/1` non-emptiness, so a pin/expression bound that slipped through yields an empty target list, and a hostable non-bound key is re-gated by `Surface` checks on the host side — the weave is empty regardless of what this routing classification says
+        Surface.bound?(entry.key) and Bound.literal?(entry.value) -> :hosted
+        true -> :skip
+      end
+    end)
   end
 
   # The treatment for one `where`/`having` condition value. A keyword-shorthand value

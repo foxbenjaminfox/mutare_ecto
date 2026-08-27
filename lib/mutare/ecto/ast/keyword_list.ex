@@ -1,6 +1,8 @@
 defmodule Mutare.Ecto.AST.KeywordList do
   @moduledoc false
   # A normalized keyword/clause list that preserves each key node and the list's Sourceror wrapper.
+  # Every edit (`put_value/3`, `put_key/3`, `delete_at/2`, `reject_key/2`, `take/2`) returns a new
+  # list, so edits compose; `to_ast/1` renders the result.
 
   alias Mutare.Ecto.AST
 
@@ -36,6 +38,10 @@ defmodule Mutare.Ecto.AST.KeywordList do
       _ -> nil
     end
   end
+
+  @doc "The empty list (a bare `[]`) — what a clause-less `from(source)` declares."
+  @spec empty() :: t()
+  def empty, do: %__MODULE__{node: [], entries: []}
 
   @doc "Render the list back to AST, preserving its Sourceror wrapper."
   @spec to_ast(t()) :: Macro.t()
@@ -80,36 +86,23 @@ defmodule Mutare.Ecto.AST.KeywordList do
   def reject_key(%__MODULE__{entries: entries} = list, key),
     do: %__MODULE__{list | entries: Enum.reject(entries, &(&1.key == key))}
 
-  @doc "Render the list with a new `value` for the entry at `index` (`put_value/3` + `to_ast/1`)."
-  @spec replace_value(t(), non_neg_integer(), Macro.t()) :: Macro.t()
-  def replace_value(%__MODULE__{} = list, index, value),
-    do: list |> put_value(index, value) |> to_ast()
-
-  @doc "Render the list with a new `key` (and matching key node) for the entry at `index`."
-  @spec replace_key(t(), non_neg_integer(), atom()) :: Macro.t()
-  def replace_key(%__MODULE__{entries: entries} = list, index, key) do
+  @doc "The list with the entry at `index` re-keyed `key` (a fresh key node; the value kept)."
+  @spec put_key(t(), non_neg_integer(), atom()) :: t()
+  def put_key(%__MODULE__{entries: entries} = list, index, key) do
     entries =
       List.update_at(entries, index, fn %Entry{} = entry ->
         %{entry | key: key, key_node: Mutare.AST.keyword_key(key)}
       end)
 
-    to_ast(%__MODULE__{list | entries: entries})
+    %__MODULE__{list | entries: entries}
   end
 
-  @doc "Render the list with the entry at `index` (or entries at a list of indices) removed."
-  @spec delete(t(), non_neg_integer() | [non_neg_integer()]) :: Macro.t()
-  def delete(%__MODULE__{entries: entries} = list, indices) when is_list(indices) do
-    kept =
-      entries
-      |> Enum.with_index()
-      |> Enum.reject(fn {_entry, index} -> index in indices end)
-      |> Enum.map(fn {entry, _index} -> entry end)
-
-    to_ast(%__MODULE__{list | entries: kept})
+  @doc "The list without the entries at `indices` — same wrapper, the other entries kept in order."
+  @spec delete_at(t(), [non_neg_integer()]) :: t()
+  def delete_at(%__MODULE__{entries: entries} = list, indices) when is_list(indices) do
+    kept = for {entry, index} <- Enum.with_index(entries), index not in indices, do: entry
+    %__MODULE__{list | entries: kept}
   end
-
-  def delete(%__MODULE__{entries: entries} = list, index),
-    do: to_ast(%__MODULE__{list | entries: List.delete_at(entries, index)})
 
   defp parse_entries(list) do
     Enum.reduce_while(list, {:ok, []}, fn

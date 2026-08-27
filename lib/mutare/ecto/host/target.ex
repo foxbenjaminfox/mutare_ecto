@@ -6,7 +6,7 @@ defmodule Mutare.Ecto.Host.Target do
   # no `:wrap` (core defaults the branch wrapper to identity, so each branch is a bare integer)
   # and no bindings — the woven selector is plain Ecto interpolation, `limit: ^(case …)`.
 
-  alias Mutare.Ecto.AST.{KeywordList, QueryCall}
+  alias Mutare.Ecto.AST.{FromCall, KeywordList, QueryCall}
   alias Mutare.Mutator.MacroHost
 
   @type t :: MacroHost.Target.t()
@@ -43,7 +43,7 @@ defmodule Mutare.Ecto.Host.Target do
       QueryCall.replace_arg(
         call,
         arg_index,
-        KeywordList.replace_value(options, pair_index, pin(case_node))
+        options |> KeywordList.put_value(pair_index, pin(case_node)) |> KeywordList.to_ast()
       )
     end)
   end
@@ -67,9 +67,8 @@ defmodule Mutare.Ecto.Host.Target do
   # (`bound_from_clause/3`); only the `:wrap` differs between them.
   defp from_clause_splice(index) do
     fn node, case_node ->
-      %QueryCall{name: :from, args: [source, clauses]} = call = QueryCall.parse(node)
-      clauses = KeywordList.parse(clauses)
-      QueryCall.rebuild(call, [source, KeywordList.replace_value(clauses, index, pin(case_node))])
+      %FromCall{} = from = FromCall.parse(node)
+      from |> FromCall.replace_clause(index, pin(case_node)) |> FromCall.to_ast()
     end
   end
 

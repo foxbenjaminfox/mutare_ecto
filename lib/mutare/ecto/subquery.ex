@@ -47,7 +47,7 @@ defmodule Mutare.Ecto.Subquery do
 
   alias Mutare.Calls
   alias Mutare.Ecto.{Config, Fragment, Query, Surface, Tag}
-  alias Mutare.Ecto.AST.{KeywordList, QueryCall}
+  alias Mutare.Ecto.AST.{FromCall, KeywordList}
   alias Mutare.Ecto.Host.Catalog
 
   # The `Mutare.Ecto.Query` producers composed into the inner `from`: the ones that change the
@@ -77,14 +77,14 @@ defmodule Mutare.Ecto.Subquery do
   @spec interior_mutants(Macro.t(), Config.t(), mode()) :: [Tag.t()]
   def interior_mutants(node, %Config{} = config, mode) do
     case inline_from(node, mode) do
-      {%QueryCall{} = call, wrap} ->
+      {%FromCall{} = from, wrap} ->
         # mutare:ignore[operand_swap] equivalent — three independent mutant lists, consumed as a set
         for tag <-
-              structural(call, config) ++
-                conditions(call, config) ++ projection(call, config, mode),
+              structural(from, config) ++
+                conditions(from, config) ++ projection(from, config, mode),
             do: Tag.map_node(tag, wrap)
 
-      _other ->
+      nil ->
         []
     end
   end
@@ -101,15 +101,16 @@ defmodule Mutare.Ecto.Subquery do
   """
   @spec interior_islands(Macro.t(), mode()) :: [{Macro.t(), (Macro.t() -> Macro.t())}]
   def interior_islands(node, mode) do
-    with {%QueryCall{args: [source, clauses_node]} = call, wrap} <- inline_from(node, mode),
-         %KeywordList{} = clauses <- KeywordList.parse(clauses_node) do
-      KeywordList.flat_map(clauses, &island_clause?(&1, mode), fn entry, index ->
-        for {interior, rebuild} <- Fragment.islands(entry.value) do
-          {interior, &wrap.(rebuild_clause(call, source, clauses, index, rebuild.(&1)))}
-        end
-      end)
-    else
-      _ -> []
+    case inline_from(node, mode) do
+      {%FromCall{clauses: clauses} = from, wrap} ->
+        KeywordList.flat_map(clauses, &island_clause?(&1, mode), fn entry, index ->
+          for {interior, rebuild} <- Fragment.islands(entry.value) do
+            {interior, &wrap.(rebuild_clause(from, index, rebuild.(&1)))}
+          end
+        end)
+
+      nil ->
+        []
     end
   end
 
@@ -121,25 +122,27 @@ defmodule Mutare.Ecto.Subquery do
   # in that existence-mode path to avoid double-producing the value-wrapper mutants.
   defp inline_from(node, :existence) do
     case from_call(node) do
-      {%QueryCall{}, _wrap} = found -> found
+      {%FromCall{}, _wrap} = found -> found
       nil -> subquery_wrapped_from(node)
     end
   end
 
   defp inline_from(node, :value), do: from_call(node)
 
+  # The inline `from` itself (`Mutare.Ecto.AST.FromCall.parse/1` — `nil` for a non-`from` call or
+  # a `from` whose clauses aren't a keyword list) with an identity wrap.
   defp from_call(node) do
-    case QueryCall.parse(node) do
-      %QueryCall{name: :from} = call -> {call, fn mutated -> mutated end}
-      _other -> nil
+    case FromCall.parse(node) do
+      %FromCall{} = from -> {from, fn mutated -> mutated end}
+      nil -> nil
     end
   end
 
   defp subquery_wrapped_from(node) do
     with {:ok, :subquery, [inner | _rest] = args, rebuild} <-
            Calls.resolved_call_to(node, Ecto.Query, :subquery),
-         {%QueryCall{} = call, _identity} <- from_call(inner) do
-      {call, &rebuild.(:subquery, List.replace_at(args, 0, &1))}
+         {%FromCall{} = from, _identity} <- from_call(inner) do
+      {from, &rebuild.(:subquery, List.replace_at(args, 0, &1))}
     else
       _ -> nil
     end
@@ -154,43 +157,33 @@ defmodule Mutare.Ecto.Subquery do
   # the outer condition's walk anchors only an *unattributed* tag (`Mutare.Ecto.Walk.mutants/4`),
   # so an in-place delivery reports the drop at the inner clause it removed, while the host's
   # weave discards the stamp structurally (see `interior_mutants/3`).
-  defp structural(call, config), do: Query.mutations_for(call, config, @structural_producers)
+  defp structural(from, config), do: Query.mutations_for(from, config, @structural_producers)
 
   # The hosted-condition catalog (`Mutare.Ecto.Host.Catalog.own_catalog/2` — `Fragment` with the
   # aggregate swap folded in, exactly what the host weaves and `Mutare.Ecto.Dynamic` rebuilds)
-  # recursed into each
-  # `where`/`having`/`or_where`/`or_having` value (the hosted-clause keys), rebuilding the whole
-  # inner `from` around each single-point condition mutant. Nesting (`exists` inside the
-  # subquery's own `where`) re-enters `Fragment`, which re-recognizes the wrapper. Only an inline
-  # `from(source, clauses)` with a keyword clause list has conditions; a scalar/binding-list-only
-  # source (its reorder rode `structural/2`) contributes nothing here.
-  defp conditions(%QueryCall{args: [source, clauses_node]} = call, config) do
-    case KeywordList.parse(clauses_node) do
-      %KeywordList{} = clauses ->
-        KeywordList.flat_map(clauses, &Surface.from_clause?(&1, :hosted), fn entry, index ->
-          for tag <- Catalog.own_catalog(entry.value, config),
-              do: Tag.map_node(tag, &rebuild_clause(call, source, clauses, index, &1))
-        end)
-
-      nil ->
-        []
-    end
+  # recursed into each `where`/`having`/`or_where`/`or_having` value (the hosted-clause keys),
+  # rebuilding the whole inner `from` around each single-point condition mutant. Nesting (`exists`
+  # inside the subquery's own `where`) re-enters `Fragment`, which re-recognizes the wrapper. A
+  # scalar/binding-list-only source (`from(Post)` — its reorder rode `structural/2`) has an empty
+  # clause list, so it contributes nothing here.
+  defp conditions(%FromCall{clauses: clauses} = from, config) do
+    KeywordList.flat_map(clauses, &Surface.from_clause?(&1, :hosted), fn entry, index ->
+      for tag <- Catalog.own_catalog(entry.value, config),
+          do: Tag.map_node(tag, &rebuild_clause(from, index, &1))
+    end)
   end
-
-  defp conditions(_call, _config), do: []
 
   # The `select`/`select_merge` projection's aggregate/scalar swaps — `Query`'s own
   # `:aggregate`/`:scalar` producers narrowed to the projection keys — only under a value-wrapper,
   # where the projected column is the observed value. `order_by` (the other key those producers
   # walk) is deliberately excluded: its ordering is inert through every wrapper we host.
-  defp projection(call, config, :value),
-    do: Query.mutations_for(call, config, @projection_producers, &(&1 in @projection_keys))
+  defp projection(from, config, :value),
+    do: Query.mutations_for(from, config, @projection_producers, &(&1 in @projection_keys))
 
-  defp projection(_call, _config, :existence), do: []
+  defp projection(_from, _config, :existence), do: []
 
-  # Rebuild the whole inner `from` with the clause at `index` carrying `value`, preserving the
-  # source's written form (`QueryCall.rebuild/2`) and the clause list's Sourceror wrapper
-  # (`KeywordList.replace_value/3`).
-  defp rebuild_clause(call, source, clauses, index, value),
-    do: QueryCall.rebuild(call, [source, KeywordList.replace_value(clauses, index, value)])
+  # The whole inner `from` with the clause at `index` carrying `value` — `FromCall` keeps the
+  # source's written form and the clause list's Sourceror wrapper.
+  defp rebuild_clause(from, index, value),
+    do: from |> FromCall.replace_clause(index, value) |> FromCall.to_ast()
 end

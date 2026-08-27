@@ -18,7 +18,7 @@ defmodule Mutare.Ecto.Host do
   """
 
   alias Mutare.Ecto.{Bound, Config, Surface}
-  alias Mutare.Ecto.AST.{KeywordList, QueryCall}
+  alias Mutare.Ecto.AST.{FromCall, KeywordList, QueryCall}
   alias Mutare.Ecto.AST.KeywordList.Entry
   alias Mutare.Ecto.Host.{Bindings, Catalog, Condition, JoinOn, Target}
   alias Mutare.MacroRouting.Call
@@ -33,11 +33,8 @@ defmodule Mutare.Ecto.Host do
     config = Config.from_context(context)
 
     case QueryCall.parse(node) do
-      %QueryCall{name: :from, args: [source, clauses]} ->
-        case KeywordList.parse(clauses) do
-          %KeywordList{} = clauses -> from_targets(source, clauses, config, context)
-          nil -> []
-        end
+      %QueryCall{name: :from} = call ->
+        from_targets(FromCall.parse(call), config, context)
 
       %QueryCall{name: macro, args: args} ->
         case Surface.macro_kind(macro) do
@@ -57,8 +54,12 @@ defmodule Mutare.Ecto.Host do
     end
   end
 
-  defp from_targets(source, %KeywordList{entries: entries} = clauses, config, context) do
-    hostable_on = JoinOn.hostable_from_indices(entries)
+  # A `from` whose second argument isn't a keyword clause list (`from(p in Post, ^clauses)`) has
+  # no clause to host.
+  defp from_targets(nil, _config, _context), do: []
+
+  defp from_targets(%FromCall{source: source, clauses: clauses}, config, context) do
+    hostable_on = JoinOn.hostable_from_indices(clauses.entries)
 
     KeywordList.flat_map(clauses, fn %Entry{key: key, value: value}, index ->
       cond do
