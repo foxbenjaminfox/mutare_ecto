@@ -86,10 +86,13 @@ later widened to the **full** spec set — with a nested host's targets *lowered
 rebuilds in collect — so a pin interior is analyzed like top-level Elixir: an inner
 `dynamic(...)` reaches its owner and an inner `from`'s hosted conditions surface as rebuilds),
 the `c:Mutare.Mutator.finalize/2` enrichment seam core runs on both delivery paths, the
-`c:Mutare.Mutator.required_modules/0` environment guard, and the shared `:structural`
+`c:Mutare.Mutator.required_modules/0` environment guard, the shared `:structural`
 argument-mark label (`Mutare.Mutator.structural_label/0`/`pinned?/1` — declined by every
 `:skip_arguments`-honouring value family; the plugin declares it on `apply_action`/`apply_action!`'s
-action atom via `argument_marks/1`).
+action atom via `argument_marks/1`), and the published off-by-one/zero table
+`Mutare.AST.numeric_alternatives/3` (the built-in numeric families' own candidates, drop rule,
+and label-merging collapse — consumed by `fragment.ex`'s integer/float arms so the plugin's
+`# mutare:ignore[ecto:zero]` vocabulary can't drift from core's `[integer:zero]`).
 
 Core's public test surface for plugins is `Mutare.Test`, wrapped here by
 `Mutare.Ecto.TestSupport` (threads the plugin's default mutators, forwards every other option).

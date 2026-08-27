@@ -78,7 +78,9 @@ defmodule Mutare.Ecto.Fragment do
   These literal arms are owned here — not borrowed from core's `Literal`/`FloatLiteral`/
   `StringLiteral`/`AtomLiteral` — for the same reason the operator families are: the literal is
   part of the SQL the query runs, not interpolated Elixir, so core never sees it (the clause is
-  raw/`:hosted`). They follow core's value conventions but are decided here under SQL semantics.
+  raw/`:hosted`). They follow core's value conventions — the numeric arms take their
+  off-by-one/zero table and `# mutare:ignore` labels straight from `Mutare.AST.numeric_alternatives/3`,
+  so the two can't drift — but are decided here under SQL semantics.
   Each is named after the *type* it mutates (`integer_literal`, …), never after `fragment(...)`,
   with which it has nothing to do.
 
@@ -437,25 +439,25 @@ defmodule Mutare.Ecto.Fragment do
   defp rewrap(mutants, meta),
     do: Enum.map(mutants, &Tag.map_node(&1, fn m -> {:not, meta, [m]} end))
 
-  # IntegerLiteral: an integer literal written into the fragment (Sourceror-wrapped). Boundary
-  # (`n±1`) plus the zero sentinel, deduped and never equal to `n` — owned here so it stays
-  # SQL-safe (core can't reach it: the clause is raw).
-  defp literal_mutants({:__block__, _meta, [int]}) when is_integer(int) do
-    value_mutants([{int + 1, "succ"}, {int - 1, "pred"}, {0, "zero"}], int, :integer_literal)
-  end
+  # IntegerLiteral: an integer literal written into the fragment (Sourceror-wrapped). Core's own
+  # off-by-one/zero table (`Mutare.AST.numeric_alternatives/3`: `n±1` plus the zero sentinel,
+  # deduped and never equal to `n`, a collapse carrying both labels) — delivered here because core
+  # can't reach it: the clause is raw.
+  defp literal_mutants({:__block__, _meta, [int]}) when is_integer(int),
+    do: int |> Mutare.AST.numeric_alternatives(1, 0) |> value_mutants(:integer_literal)
 
-  # FloatLiteral: mirrors the integer arm with a `1.0` step and a `0.0` sentinel (core's
-  # `FloatLiteral` convention), deduped and never equal to `f`.
-  defp literal_mutants({:__block__, _meta, [f]}) when is_float(f) do
-    value_mutants([{f + 1.0, "succ"}, {f - 1.0, "pred"}, {0.0, "zero"}], f, :float_literal)
-  end
+  # FloatLiteral: the same table with core's `FloatLiteral` step and sentinel (`1.0`/`0.0`).
+  defp literal_mutants({:__block__, _meta, [f]}) when is_float(f),
+    do: f |> Mutare.AST.numeric_alternatives(1.0, 0.0) |> value_mutants(:float_literal)
 
   # StringLiteral: a plain string literal → the empty string (`empty`) and the `"mutare"` sentinel
   # (core's `StringLiteral` convention), dropping whichever already equals the original — so a
   # typical string yields two mutants. An interpolated string is a `<<>>` node, not this `:__block__`
   # shape, so it is left to core upstream.
   defp literal_mutants({:__block__, _meta, [s]}) when is_binary(s) do
-    value_mutants([{"", "empty"}, {@string_sentinel, "sentinel"}], s, :string_literal)
+    [{"", ["empty"]}, {@string_sentinel, ["sentinel"]}]
+    |> Enum.reject(fn {value, _labels} -> value == s end)
+    |> value_mutants(:string_literal)
   end
 
   # BooleanLiteral: `true` ↔ `false` (core's `Literal` boolean arm). Not aimed at direct boolean
@@ -483,9 +485,10 @@ defmodule Mutare.Ecto.Fragment do
   # poison the whole metamutant build. So an integer index keeps only its non-negative mutants;
   # every other literal kind mutates as usual.
   defp json_path_mutants({:__block__, _meta, [int]}) when is_integer(int) do
-    [{int + 1, "succ"}, {int - 1, "pred"}, {0, "zero"}]
-    |> Enum.filter(fn {value, _kind} -> value >= 0 end)
-    |> value_mutants(int, :integer_literal)
+    int
+    |> Mutare.AST.numeric_alternatives(1, 0)
+    |> Enum.filter(fn {value, _labels} -> value >= 0 end)
+    |> value_mutants(:integer_literal)
   end
 
   defp json_path_mutants(node), do: literal_mutants(node)
@@ -558,19 +561,10 @@ defmodule Mutare.Ecto.Fragment do
     end
   end
 
-  # Build a `family`-tagged literal mutant for each distinct mutated value: drop any candidate equal
-  # to the original, then dedup by value while **merging** the kind labels of colliding candidates —
-  # so `1`'s `pred` (`n-1` = 0) and its `zero` sentinel collapse to one `0` tagged `["pred", "zero"]`
-  # (mirroring core's `Literal`), and a qualifier naming *either* suppresses it. Order-stable.
-  defp value_mutants(candidates, original, family) do
-    candidates
-    |> Enum.reject(fn {value, _kind} -> value == original end)
-    |> Enum.reduce([], fn {value, kind}, acc ->
-      case List.keyfind(acc, value, 0) do
-        nil -> acc ++ [{value, [kind]}]
-        {^value, kinds} -> List.keyreplace(acc, value, 0, {value, kinds ++ [kind]})
-      end
-    end)
-    |> Enum.map(fn {value, kinds} -> Tag.new(family, Mutare.AST.literal(value), kinds) end)
-  end
+  # Tag each `{value, labels}` alternative as a `family` literal mutant. The labels ride as the
+  # list the table hands over (`["succ"]`; a collapse's `["pred", "zero"]`, which either qualifier
+  # suppresses) — the value families' label shape, distinct from an operator swap's bare `"<"`.
+  defp value_mutants(alternatives, family),
+    do:
+      for({value, labels} <- alternatives, do: Tag.new(family, Mutare.AST.literal(value), labels))
 end
