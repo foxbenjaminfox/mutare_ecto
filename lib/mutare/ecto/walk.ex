@@ -32,7 +32,7 @@ defmodule Mutare.Ecto.Walk do
   # *one* of two same-family mutants sharing a clause: two identical `coalesce(a, b)`s in one
   # `select`, or the two comparisons of a multi-line `dynamic`, are indistinguishable by
   # vocabulary — position is the only discriminator. On the hosted relay paths
-  # (`Mutare.Ecto.Host.Catalog`, `Mutare.Ecto.Subquery`) the stamp is structurally discarded — a
+  # (`Mutare.Ecto.Island`, `Mutare.Ecto.Subquery`) the stamp is structurally discarded — a
   # hosted mutant is normalized to a `{node, note, variant, producer}` quad with no attribution
   # slot — so the weave's own Site mechanics are untouched.
   #

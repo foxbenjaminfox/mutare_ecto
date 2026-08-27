@@ -33,8 +33,8 @@ defmodule Mutare.Ecto.Host.Routing do
       `mutate/2` mutators — with one exception: a **literal-integer bound** (`limit(q, 10)` /
       `q |> offset(5)`, and the `limit:`/`offset:` keys of the `from` keyword form) routes
       `:hosted`, so the `:bound` ±1 bump weaves pin-only (`limit: ^(case …)`) instead of
-      duplicating the whole call. The literal-only guard is the host's own
-      (`Mutare.Ecto.Host.Catalog.bound_literal?/1`, defined as `bounds/1` producing mutants), so
+      duplicating the whole call. The literal-only guard is the bump catalog's own
+      (`Mutare.Ecto.Bound.literal?/1`, defined as `bumps/1` producing mutants), so
       routing and host agree by definition — a `^pinned`/expression bound stays raw exactly as
       before.
 
@@ -42,9 +42,9 @@ defmodule Mutare.Ecto.Host.Routing do
   `c:Mutare.MacroRouting.route_arguments/2`.
   """
 
-  alias Mutare.Ecto.{Binding, Surface}
+  alias Mutare.Ecto.{Binding, Bound, Surface}
   alias Mutare.Ecto.AST.{KeywordList, QueryCall}
-  alias Mutare.Ecto.Host.{Bindings, Catalog}
+  alias Mutare.Ecto.Host.Bindings
   alias Mutare.Calls
   alias Mutare.MacroRouting.{ArgumentRoutes, Call}
 
@@ -122,7 +122,7 @@ defmodule Mutare.Ecto.Host.Routing do
     # degenerate `limit()` keeps the empty route.
     base = query_threading_route(args)
 
-    if Surface.bound?(name) and Catalog.bound_literal?(List.last(args)) do
+    if Surface.bound?(name) and Bound.literal?(List.last(args)) do
       # mutare:ignore[operand_swap] equivalent — limit/offset are arity-1 (piped) or arity-2 (direct) macros only, and List.replace_at/3's negative index counts from the end, so `1 - length(args)` still lands on the same last element as `length(args) - 1` for both possible arities
       List.replace_at(base, length(args) - 1, :hosted)
     else
@@ -218,8 +218,8 @@ defmodule Mutare.Ecto.Host.Routing do
         Enum.map(entries, fn entry ->
           cond do
             Surface.from_clause?(entry.key, :hosted) -> condition_treatment(entry.value)
-            # mutare:ignore[logical] equivalent — even a wrongly-:hosted entry produces no observable weave: `bound_literal?/1` is `Mutare.Ecto.Host.Catalog.bounds/1` non-emptiness, so a pin/expression bound that slipped through yields an empty target list, and a hostable non-bound key is re-gated by `Surface` checks on the host side — the weave is empty regardless of what this routing classification says
-            Surface.bound?(entry.key) and Catalog.bound_literal?(entry.value) -> :hosted
+            # mutare:ignore[logical] equivalent — even a wrongly-:hosted entry produces no observable weave: `Bound.literal?/1` is `Mutare.Ecto.Bound.bumps/1` non-emptiness, so a pin/expression bound that slipped through yields an empty target list, and a hostable non-bound key is re-gated by `Surface` checks on the host side — the weave is empty regardless of what this routing classification says
+            Surface.bound?(entry.key) and Bound.literal?(entry.value) -> :hosted
             true -> :skip
           end
         end)
@@ -247,7 +247,7 @@ defmodule Mutare.Ecto.Host.Routing do
   # The written-shorthand application of the condition-position keyword rule: a pair's **key
   # names a column** (left raw by the per-pair routing itself), only its value routes. The same
   # rule's *pin-side* application — a keyword filter interior a pin computes, where no call
-  # shape exists to route — lives in `Mutare.Ecto.Host.Catalog.subcontracted/3`'s key-set guard.
+  # shape exists to route — lives in `Mutare.Ecto.Island.subcontracted/3`'s key-set guard.
   defp pair_treatments(%KeywordList{entries: entries}) do
     Enum.map(entries, &pair_treatment(&1.value))
   end

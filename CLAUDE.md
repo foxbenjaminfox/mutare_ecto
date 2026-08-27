@@ -168,7 +168,7 @@ its in-fragment mutants (the same `Fragment` catalog the host uses, scalar/aggre
 catalogs folded in) are whole-call rewrites, not woven — each *reported* at the mutated
 expression, the walk's anchor. That includes its **island sub-contract**: core threads `context.mutators`
 into the whole-call offer of a registered macro, so `Dynamic` relays each pin interior's mutants
-through the same seam as the host (`Host.Catalog.subcontracted/3`), delivered as rebuilt calls.
+through the same seam as the host (`Island.subcontracted/3`), delivered as rebuilt calls.
 
 **2. Skipped** — `schema`/`embedded_schema` bodies. A mutated field name/type is a broken schema,
 not a mutant.
@@ -186,11 +186,12 @@ selector because a query clause can't host a runtime `case`:
   **pin-only** target (`limit: ^(case …)` — no `dynamic/2` wrap, no bindings): a bound is an
   integer parameter, so the pinned selector is plain Ecto interpolation with a behaviorally
   identical baseline, and the bump never duplicates the whole query the way a whole-`from` rewrite
-  would. (The bound *drop* stays a whole-`from`/stage rewrite in `Query`/`ClauseDrop`.)
+  would. `Bound` is the bump catalog and the literal guard `Routing` consumes. (The bound *drop*
+  stays a whole-`from`/stage rewrite in `Query`/`ClauseDrop`.)
 - **Interpolation islands.** A hosted condition's `^expr` interiors — ordinary Elixir evaluated at
   runtime — are **sub-contracted to generation over the run's full spec set**, i.e. analyzed
   exactly like top-level Elixir: `Fragment.islands/1` finds each pin under the catalog's own
-  descent rules, `Host.Catalog` runs `Mutare.Analyze.expression_mutations/3` over
+  descent rules, `Island` runs `Mutare.Analyze.expression_mutations/3` over
   `context.mutators` (the run's enabled specs — this plugin included through its ordinary
   `mutate/2` surface, so an inline `dynamic(...)` literal inside the pin mutates once, under SQL
   semantics, by `Dynamic`, and an inner `from`'s hosted `where:` swaps come back **lowered** —
@@ -227,11 +228,12 @@ selector because a query clause can't host a runtime `case`:
 | `host.ex` | Selector-host **coordinator** (bucket 3): turns a hosted call into `Target`s — condition weaves plus the pin-only bound-bump targets — delegating to the `host/*` parts below |
 | `host/routing.ex` | `route_arguments/2` — the per-argument routing classifier (`:hosted`/`:expression`/`:skip`/`:interpolated`/`{:keyword,…}`), over `treatments/1` |
 | `host/bindings.ex` | Interprets Ecto binding declarations and renders the binding list re-declared by a woven `dynamic/2` |
-| `host/catalog.ex` | The tagged logical mutants for one hosted condition (`Fragment`, the scalar/aggregate catalogs folded in; filtered/noted later by `finalize/2`); the island mutants sub-contracted per `^` pin to the run's full spec set — `subcontracted/3` is the shared seam, parameterized by delivery (`deliver`), so `dynamic.ex` relays through it too, and its keyword-key-set guard is the pin-side application of the "keys name columns" rule; and the `:bound` ±1 bumps of a literal `limit`/`offset` value (`bounds/1`) |
+| `host/catalog.ex` | The tagged logical mutants for one hosted condition: the plugin's own catalog (`own_catalog/2` — `Fragment`, the scalar/aggregate catalogs folded in; the raw tags `dynamic.ex` shares; filtered/noted later by `finalize/2`) plus the island mutants relayed through `island.ex` (`mutants/3`) |
 | `host/join_on.ex` | Which join `on:` conditions are safe to host: only a join's **sole, top-level** on-expression (not a multi-`on:` or `assoc` join, whose conditions Ecto folds into one `and` where a `^dynamic` operand is illegal) |
 | `host/target.ex` | The `dynamic`-wrap + `^`-pin + splice transforms consumed by core, plus the pin-only bound targets (no wrap — each branch is a bare integer) |
 | `fragment.ex` | The **SQL-semantics catalog** for `where`/`having` conditions (Comparison, Connective, NullPredicate, Membership, Arithmetic, Coalesce, Temporal, the literal arms IntegerLiteral/FloatLiteral/StringLiteral/AtomLiteral/BooleanLiteral): a per-node `local/3` read over `walk.ex`'s positions under its own `children/2` descent rule (the `is_nil`/`in`/`exists` units and their `not` forms; the `{parent_form, arity, index}` position the literal arms consult) — stops at every `^` pin, whose interiors `islands/1` (the second reader of the same positions) collects for the host's core sub-contract; recognizes an `exists`/`all`/`any`/`subquery`/`in` subquery wrapper and hands its inline `from` interior to `subquery.ex` |
 | `subquery.ex` | Recurses the plugin's own catalogs into a subquery's **interior** (see bucket 3 above for what's reachable under which wrapper). Each mutant is the whole inner `from` rebuilt, which `fragment.ex` wraps back into the condition and delivers through the same `Fragment.mutants`/`islands` seam the host and `dynamic.ex` already consume |
+| `island.ex` | The interpolation-island **seam**, shared by both condition owners (the host via `host/catalog.ex`, the free-standing `dynamic` via `dynamic.ex`): `subcontracted/3` runs each `^` pin interior (`Fragment.islands/1`) through `Mutare.Analyze.expression_mutations/3` over `context.mutators` — the run's full spec set — and relays every rebuild as a `producer:`-attributed `Mutation`, parameterized by delivery (`deliver`). Its keyword-key-set guard is the pin-side application of the "keys name columns" rule |
 | `ast/query_call.ex` / `ast/binding_list.ex` / `ast/keyword_list.ex` | Normalized query-call, binding-list, and keyword/clause-list values; preserve written form while centralizing validation and reconstruction |
 | `binding.ex` | Primitive binding-entry vocabulary (`variable?`/`ellipsis?`/`entry?`) used by the normalized binding list |
 | `binding_reorder.ex` | Positional binding-reorder (`[a, b]`→`[b, a]`) for **every** standalone/pipe binding-list macro — `where`/`having` included — delivered **in-place** by swapping the written list, never the condition body. A `from` binding-list *source* (`[a, b] in q`) reorders at the whole-`from` level (`query.ex`) instead |
@@ -242,13 +244,14 @@ selector because a query clause can't host a runtime `case`:
 | `walk.ex` | The **one** structural walk under every catalog. `Walk.positions/3` yields each admitted node as `{node, ctx, rebuild}` (`rebuild` reconstructs the walked root around a replacement), `Walk.mutants/4` reads a per-node `local` catalog over those positions and **anchors** every mutant at its node (`Mutation.at/2`), so in-place deliveries (`query.ex`/`clause.ex`/`dynamic.ex`) report Sites at the mutated expression's own line — two identical `coalesce(a, b)`s in one `select`, or two comparisons in one `dynamic`, become individually `# mutare:ignore`-able (hosted relays discard the stamp structurally); `Walk.structural/3` is the default descent — a call's arguments **only** where the author-macro rule admits them (a non-macro node, or an argument the macro routed `:expression` per `Mutare.Calls.macro_treatment/1`), a list's elements, a 2-tuple's sides; a `^` pin is a leaf. A catalog's own `children/2` rule wraps it to claim a unit (`fragment.ex`'s `not is_nil(x)`: one position, the inner predicate never its own), refuse a shape (`fragment.ex` declines 2-tuples), or refine a child's ctx (`expression_walk.ex`'s `over/2` `order_by:` option). `fragment.ex`'s `mutants` and `islands` are two readers of the same positions, so they agree by construction (`fragment_descent_test.exs` pins the policy itself) |
 | `expression_walk.ex` | The value-expression rules over `walk.ex` for the expression catalogs (`aggregate.ex`, `scalar.ex`): threads the ordering `position` to the catalogs and refines it itself inside an `over/2` window's `order_by:` option |
 | `combination.ex` | Shared set-operation swap catalog (`intersect`↔`except`, `intersect_all`↔`except_all`; `union` deliberately unswapped) used by `query.ex` (clause-key swap) and `clause.ex` (macro-name swap) |
-| `dynamic.ex` | In-fragment mutations of a **free-standing** `dynamic/1,2` (`d = dynamic([p], p.x > ^v)`): the shared `Fragment` catalog over its condition (scalar/aggregate folded in) **plus** the island sub-contract per `^` pin (via `Host.Catalog.subcontracted/3` over `context.mutators`), each mutant the whole call rebuilt and delivered in place (the `dynamic` registers `:skip` so core keeps its DSL args raw, but core still offers the whole call to `mutate/2` — with the run's specs threaded in) |
+| `bound.ex` | The `:bound` family's ±1 **bump** arm for a literal `limit`/`offset` value: `bumps/1` (the tagged mutants — `n+1` always, `n-1` only while non-negative) and `literal?/1`, defined as `bumps/1` non-emptiness, so the routing classifier and the host agree by definition on what is a literal bound. The bump is delivered pin-only by `host.ex`; the family's *drop* arm lives in `query.ex`/`clause_drop.ex` |
+| `dynamic.ex` | In-fragment mutations of a **free-standing** `dynamic/1,2` (`d = dynamic([p], p.x > ^v)`): the shared `Fragment` catalog over its condition (scalar/aggregate folded in) **plus** the island sub-contract per `^` pin (via `Island.subcontracted/3` over `context.mutators`), each mutant the whole call rebuilt and delivered in place (the `dynamic` registers `:skip` so core keeps its DSL args raw, but core still offers the whole call to `mutate/2` — with the run's specs threaded in) |
 | `repo_aggregate.ex` / `repo_write.ex` / `query_terminal.ex` | Bucket-1 Repo/query-function families |
 | `repo_call.ex` | Shared "resolve a call on the configured `repo:`" preamble for `repo_aggregate.ex`/`repo_write.ex` |
 | `stage_drop.ex` | Shared pipe-aware stage-drop delivery for `clause_drop.ex` and `changeset.ex` |
 | `changeset.ex` | Changeset pipeline drops (`:validation_drop`, `:hook_drop`) |
 | `config.ex` | `families:`/`dialects:`/`repo:` parsing + validation (`parse!/1`, run once by `init/1`; the family catalog via core's `use Mutare.Mutator.Families`); equivalence-sensitive set + note; the `tagged/1` wrapper and the `finalize/2` funnel body |
-| `ast.ex` | Small Sourceror AST helpers the plugin genuinely owns: typed literal *readers* (`atom_value`/`int_value`), the list unwrap/rewrap pair (`unwrap_list`/`rewrap_list`, over core's `unwrap_literal`), the bound bumps — everything *emitted* comes from core's `Mutare.AST` constructors |
+| `ast.ex` | Small Sourceror AST helpers the plugin genuinely owns: typed literal *readers* (`atom_value`/`int_value`), the list unwrap/rewrap pair (`unwrap_list`/`rewrap_list`, over core's `unwrap_literal`) — everything *emitted* comes from core's `Mutare.AST` constructors |
 
 ### Families and configuration
 

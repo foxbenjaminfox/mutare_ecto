@@ -8,41 +8,27 @@ defmodule Mutare.Ecto.Host.Catalog do
   #     its family labels (`Mutare.Ecto.Config.tagged/1`); the `families:` filter and equivalence
   #     note are core's job — `Mutare.Ecto.finalize/2` runs on every host-target mutant, and core
   #     drops a target whose mutants all skip;
-  #   * the **sub-contracted** mutants of each interpolation island (`^expr`) — a pin's interior
-  #     is ordinary Elixir evaluated at runtime, analyzed exactly like top-level Elixir: it is
-  #     handed to core's generation (`Mutare.Analyze.expression_mutations/3` over
-  #     `context.mutators`, the run's **full** spec set — this plugin included through its
-  #     ordinary `mutate/2` surface, so an inner `dynamic(...)` literal buried in the pin is
-  #     offered whole-call to `Mutare.Ecto.Dynamic` and mutates under SQL semantics, while the
-  #     surrounding Elixir stays core's). Each rebuild is relayed as a `Mutare.Mutator.Mutation`
-  #     with `producer:` set — the Site (and its `# mutare:ignore` vocabulary) belongs to the
-  #     producing family, core's or this plugin's, whose own `finalize/2` funnel already ran at
-  #     generation — while **delivery stays host-owned**: the relayed rebuilds are just more
-  #     branches of the same woven `^`/`dynamic` selector.
+  #   * the **sub-contracted** mutants of each interpolation island (`^expr`), through the shared
+  #     seam `Mutare.Ecto.Island.subcontracted/3` — each relayed with `producer:` set, so the Site
+  #     belongs to the producing family while the rebuilds are just more branches of the same
+  #     woven `^`/`dynamic` selector.
   #
-  # Besides conditions (`mutants/3`), the catalog also produces the `:bound` ±1 bumps of a
-  # literal `limit`/`offset` value (`bounds/1`) — the host weaves them pin-only, no `dynamic/2`.
-  #
-  # Delivery concerns (`dynamic`, pinning, and splicing) deliberately live in `Mutare.Ecto.Host.Target`.
+  # Delivery concerns (`dynamic`, pinning, and splicing) deliberately live in `Mutare.Ecto.Host.Target`;
+  # the pin-only `:bound` bumps of a literal `limit`/`offset` value are `Mutare.Ecto.Bound`'s.
   # A binding-reorder is *not* hosted: it swaps a written binding list in place (`Mutare.Ecto.BindingReorder`
   # for the standalone/pipe macros, `Mutare.Ecto.Query` for a `from` source list), never the condition body.
 
-  alias Mutare.Ecto.{AST, Config, Fragment, Tag}
-  alias Mutare.Mutator.Mutation
+  alias Mutare.Ecto.{Config, Fragment, Island, Tag}
 
   @doc """
   The tagged logical mutants for a hosted condition (own catalogs + island sub-contract).
 
   A **top-level-pin** condition (`where(q, [u], ^cond)`, a join `on: ^cond`) is handled no
-  differently: `own` is empty for a pin (the SQL catalogs never mutate a `^`), and `subcontracted`
-  surfaces the pin's whole interior as one island and hands it to core — so a pinned *Elixir*
-  condition (`^(if params.sort, do: a, else: b)`, `^(rem(n, 2) == 0 and flag)`) has its Elixir
-  logic mutated by core, exactly as a nested pin's parameter is. The interior's own nested
-  `dynamic(...)` calls keep their `:skip`-routed arguments raw for core — but each such call is
-  offered *whole* to this plugin's own `mutate/2` inside the sub-contract, so its SQL body
-  mutates once, under SQL semantics, by `Mutare.Ecto.Dynamic` — the SQL/Elixir boundary is
-  enforced by routing and ownership, not by refusing to look at the pin. A bare `^d` interior
-  is a variable, which core mutates nowhere, so it contributes nothing of its own.
+  differently: `own` is empty for a pin (the SQL catalogs never mutate a `^`), and
+  `Mutare.Ecto.Island.subcontracted/3` surfaces the pin's whole interior as one island and hands
+  it to core — so a pinned *Elixir* condition has its Elixir logic mutated by core, exactly as a
+  nested pin's parameter is. The SQL/Elixir boundary is enforced by routing and ownership, not
+  by refusing to look at the pin.
   """
   @spec mutants(Macro.t(), Config.t(), Mutare.Mutator.context()) :: [Mutare.Mutator.mutation()]
   def mutants(condition, config, context) do
@@ -51,36 +37,8 @@ defmodule Mutare.Ecto.Host.Catalog do
     # in the woven `^`/`dynamic` selector, never which mutants are produced or how any one branch
     # behaves — equivalent either way.
     # mutare:ignore[operand_swap] equivalent: concatenation order of two independent mutant sets is not observable
-    own(condition, config) ++ subcontracted(condition, context)
+    own(condition, config) ++ Island.subcontracted(condition, context)
   end
-
-  @doc """
-  The tagged ±1 bumps for a hosted bound value (`limit:`/`offset:`): the off-by-one boundary,
-  non-negative only (`Mutare.Ecto.AST.bumps/1`). `[]` unless the value is a literal integer (a
-  `^pinned`/expression bound is left raw; its value is mutated where it is bound, in ordinary
-  Elixir).
-  """
-  @spec bounds(Macro.t()) :: [Mutare.Mutator.mutation()]
-  def bounds(value) do
-    case AST.int_value(value) do
-      nil ->
-        []
-
-      n ->
-        for bumped <- AST.bumps(n), do: Config.tagged(Tag.new(:bound, Mutare.AST.literal(bumped)))
-    end
-  end
-
-  @doc """
-  The literal-only bound guard: whether `bounds/1` produces any bump for this value. The routing
-  classifier (`Mutare.Ecto.Host.Routing`) routes a bound `:hosted` through this predicate, so
-  routing and host are in agreement **by definition** — a value routes `:hosted` exactly when the
-  host will weave a bump for it, and there is no second encoding of "literal integer" to drift.
-  (`Mutare.Ecto.AST.bumps/1` always yields at least `n + 1`, so non-emptiness is precisely
-  literal-integer-ness.)
-  """
-  @spec bound_literal?(Macro.t()) :: boolean()
-  def bound_literal?(value), do: bounds(value) != []
 
   @doc """
   The plugin's own in-fragment catalog for a condition — `Mutare.Ecto.Fragment`'s SQL
@@ -96,98 +54,4 @@ defmodule Mutare.Ecto.Host.Catalog do
 
   # Pure production: each catalog tag becomes `Mutation.tagged(node, [family | finer])`.
   defp own(condition, config), do: Enum.map(own_catalog(condition, config), &Config.tagged/1)
-
-  @doc """
-  The island sub-contract: `Fragment.islands/1` finds each pin interior under the catalog's own
-  descent rules; the interior's mutants are generated under the user's actual configuration
-  (`:as` renames and per-instance opts included — a disabled family simply produces nothing),
-  read from `context.mutators` — the run's **full** enabled spec set, which core threads into
-  both seams this is called from (`host/2` and the whole-call `mutate/2` offer of a registered
-  macro). The full set is what makes the interior *ordinary top-level Elixir* with no special
-  case: core's families own the Elixir, and this plugin's whole surface participates too — an
-  inner `dynamic(...)` literal is offered whole-call to `Mutare.Ecto.Dynamic`, and an inner
-  `from`/clause macro's hosted conditions are **lowered** by core's collect (each hosted target
-  mutant comes back as the inner call rebuilt with the mutated condition spliced
-  `^dynamic`-pinned — the woven selector degenerated to its selected branch — so hosted
-  delivery never nests while hosted semantics are never lost). No family tagging here — and
-  the explicit `producer:` makes core skip the *relaying*
-  `finalize/2` on both paths: each mutant's own producer funnel (a core family's, or this
-  plugin's `families:` filter + equivalence note) already ran at generation, inside the seam.
-
-  `deliver` maps each rebuilt condition to the node the caller's delivery path emits: the host
-  relays the condition itself (its weave carries it — the default identity), while
-  `Mutare.Ecto.Dynamic` rebuilds the whole free-standing `dynamic` call around it (its mutants
-  are whole-call rewrites through the ordinary in-place selector).
-
-  ## The keyword-key rule's second application
-
-  A **keyword-list key** in a condition position names a **column**, never data. That rule is
-  stated once for the written shorthand — `Mutare.Ecto.Host.Routing` routes a
-  `where(q, active: true)` pair's *key* raw and only its value `:interpolated` — and applied a
-  second time here, at the only other boundary where a condition-position keyword list can
-  appear: inside a pin (`where(q, ^[active: true])`, or a *computed*
-  `^(if …, do: [active: true], else: [])`). This second application cannot ride dispatch: a
-  bare `[active: true]` — let alone one built by arbitrary Elixir — has no call shape for any
-  recognizer to classify as a filter; the fact that this value will be spliced as a condition
-  is **positional knowledge only this seam has**. So the seam applies it as a guard: a mutant
-  that changes the interior's **set of keyword keys** has renamed or dropped a field (an
-  unknown-field query error, exactly the mutants the shorthand routing skips) and is dropped;
-  a value mutation (which keeps the key-set, `[active: false]`) survives, matching the
-  shorthand's "keys raw, values mutated" contract. For a non-keyword interior the key-set is
-  empty on both sides, so the guard is a no-op.
-
-  The guard is a protection against core treating a condition-position keyword filter as plain
-  Elixir data. It must not reject mutants produced by this plugin while analyzing the island's
-  nested Ecto surface: an inner `dynamic(... exists(from(..., where: ..., select: ...)))`
-  legitimately drops a subquery filter by removing the `where:` clause key from the inner
-  `from`, and that is a valid SQL mutant rather than a renamed pinned filter field.
-
-  Known cost of the over-approximation, on the guarded (non-Ecto-producer) branch: a keyword
-  key that *is* plain data — an option list built inside the pin, say — is protected too, so a
-  core mutant that renames or deletes such a pair (e.g. `:keyword_delete`) is dropped along
-  with the field renames.
-  """
-  @spec subcontracted(Macro.t(), Mutare.Mutator.context(), (Macro.t() -> Macro.t())) ::
-          [Mutation.t()]
-  def subcontracted(condition, context, deliver \\ & &1) do
-    specs = Map.get(context, :mutators, [])
-
-    for {interior, rebuild} <- Fragment.islands(condition),
-        {spec, mutated, note, variant} <-
-          Mutare.Analyze.expression_mutations(interior, specs, context),
-        keyword_filter_keys_preserved?(spec, interior, mutated) do
-      Mutation.new(deliver.(rebuild.(mutated)), producer: spec, note: note, variant: variant)
-    end
-  end
-
-  # The plugin's own relayed mutants have already been produced under Ecto's SQL catalog. Their
-  # keyword key changes are Ecto query-shape mutations (for example an inner `where:` clause
-  # drop), not core's view of a pinned keyword filter as ordinary Elixir data. The bypass is
-  # deliberately **self-only** (matched by this plugin's module, `:as` renames included): any
-  # other producer — a core family or a third-party mutator — reasons in Elixir's semantics,
-  # where the column-rename hazard is exactly the one being guarded.
-  defp keyword_filter_keys_preserved?(
-         %Mutare.Mutator.Spec{module: Mutare.Ecto},
-         _original,
-         _mutated
-       ),
-       do: true
-
-  defp keyword_filter_keys_preserved?(_spec, original, mutated),
-    do: keyword_keys(mutated) == keyword_keys(original)
-
-  # The set of keyword-list keys anywhere in `ast`. For core-produced island mutants in a query
-  # condition, a keyword key may name a column (`^[field: value]` filter syntax), so a mutant that
-  # changes this set can have renamed or dropped a field — a broken query, not a live mutant (see
-  # `subcontracted/3`).
-  defp keyword_keys(ast) do
-    {_ast, keys} =
-      Macro.prewalk(ast, [], fn node, acc ->
-        if Mutare.AST.keyword_label?(node),
-          do: {node, [Mutare.AST.key_atom(node) | acc]},
-          else: {node, acc}
-      end)
-
-    MapSet.new(keys)
-  end
 end

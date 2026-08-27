@@ -7,7 +7,7 @@ defmodule Mutare.Ecto.SubcontractTest do
   # interpolation islands (`^expr`) — ordinary Elixir evaluated at runtime, analyzed exactly
   # like top-level Elixir. The host hands each interior to generation over the run's **full**
   # spec set (`Mutare.Analyze.expression_mutations/3` over `context.mutators`) and relays the
-  # rebuilds through its own weave with `producer:` attribution (`Mutare.Ecto.Host.Catalog`),
+  # rebuilds through its own weave with `producer:` attribution (`Mutare.Ecto.Island`),
   # so:
   #
   #   * the recorded Site belongs to the producing family — a *core* family (`:arithmetic`,
@@ -580,7 +580,7 @@ defmodule Mutare.Ecto.SubcontractTest do
     # The second consumer of the sub-contract: `dynamic` registers `:skip`, so core keeps the
     # DSL argument raw — but core threads the run's specs into the whole-call offer of a
     # registered macro (`context.mutators`), so `Mutare.Ecto.Dynamic` sub-contracts each island
-    # through the same seam as the host (`Host.Catalog.subcontracted/3`). Only delivery differs:
+    # through the same seam as the host (`Mutare.Ecto.Island.subcontracted/3`). Only delivery differs:
     # each relayed mutant is the whole `dynamic` call rebuilt, passed through
     # `Mutare.Ecto.mutate/2` untouched (no `families:` filter — the mutant is a core family's)
     # and delivered by the ordinary in-place selector (no weave — the call sits in expression
@@ -806,7 +806,7 @@ defmodule Mutare.Ecto.SubcontractTest do
       # `^[field: value]` (and a computed `^(if …, do: [field: value], else: []))`) is Ecto's
       # interpolated shorthand filter — the key names a column. Core, handed the bare keyword list,
       # would rename the key (`:views` → `:mutare`, an unknown-field query error) or drop the pair;
-      # `Host.Catalog.subcontracted/3` drops any mutant that changes the interior's keyword-key set,
+      # `Mutare.Ecto.Island.subcontracted/3` drops any mutant that changes the interior's keyword-key set,
       # exactly as the non-pinned shorthand routing skips keys — while the *value* mutation survives.
       for body <- [
             ~s{where(q, ^[views: 5])},
@@ -1060,7 +1060,7 @@ defmodule Mutare.Ecto.SubcontractTest do
     # `for` comprehension's `Mutare.Analyze.expression_mutations/3` call.
     test "a context with no :mutators key yields no sub-contracted mutants, never crashes" do
       condition = Sourceror.parse_string!("u.age > ^(min * 2)")
-      assert Mutare.Ecto.Host.Catalog.subcontracted(condition, %{}) == []
+      assert Mutare.Ecto.Island.subcontracted(condition, %{}) == []
     end
   end
 end

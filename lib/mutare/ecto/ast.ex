@@ -2,7 +2,7 @@ defmodule Mutare.Ecto.AST do
   @moduledoc false
   # Small AST helpers shared by the Ecto sub-mutators. Only what is genuinely this plugin's lives
   # here: typed literal *readers* (a sub-mutator usually wants "the atom, or nothing", not core's
-  # untyped `{:ok, value}`), the top-level-pin check, and the bound-bump arithmetic. Everything a
+  # untyped `{:ok, value}`) and the list unwrap/rewrap pair. Everything a
   # mutator *emits* into existing source comes from core's `Mutare.AST` constructors —
   # `literal/1`, `keyword_key/1`, `clean_var/1`, `absolute_alias/1`/`absolute_call/3`/
   # `remote_call/3` — which own Sourceror's emission invariants (clean/derived meta, numeric
@@ -47,14 +47,4 @@ defmodule Mutare.Ecto.AST do
   @spec rewrap_list(Macro.t(), [Macro.t()]) :: Macro.t()
   def rewrap_list({:__block__, meta, [_old]}, list), do: {:__block__, meta, [list]}
   def rewrap_list(_node, list), do: list
-
-  @doc """
-  The off-by-one boundary bumps for an integer `limit`/`offset` bound: `n+1` always, and `n-1`
-  only when it stays non-negative (a negative bound is invalid SQL). Consumed by the host's
-  bound catalog (`Mutare.Ecto.Host.Catalog.bounds/1`), which feeds it `int_value/1` and re-emits
-  each result through `Mutare.AST.literal/1` as a branch of the pin-only weave.
-  """
-  @spec bumps(integer()) :: [integer()]
-  def bumps(n) when n > 0, do: [n + 1, n - 1]
-  def bumps(n), do: [n + 1]
 end

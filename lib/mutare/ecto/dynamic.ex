@@ -31,7 +31,7 @@ defmodule Mutare.Ecto.Dynamic do
   Elixir, **sub-contracted to generation over the run's full spec set**, exactly as the host
   sub-contracts a hosted condition's islands. `dynamic` is a registered macro, so core threads
   the run's enabled specs into the whole-call offer as `context.mutators`, and the shared seam
-  (`Mutare.Ecto.Host.Catalog.subcontracted/3`) relays each interior rebuild as a
+  (`Mutare.Ecto.Island.subcontracted/3`) relays each interior rebuild as a
   `Mutare.Mutator.Mutation` with `producer:` set — the Site (and `# mutare:ignore` vocabulary)
   belongs to the producing family, while delivery stays this module's whole-call rewrite
   through the ordinary in-place selector. The full set includes this plugin itself, so a
@@ -43,7 +43,7 @@ defmodule Mutare.Ecto.Dynamic do
   nowhere by core — so it degrades to no mutants without a special case.)
   """
 
-  alias Mutare.Ecto.{Config, Tag}
+  alias Mutare.Ecto.{Config, Island, Tag}
   alias Mutare.Ecto.AST.QueryCall
   alias Mutare.Ecto.Host.{Bindings, Catalog}
 
@@ -94,9 +94,9 @@ defmodule Mutare.Ecto.Dynamic do
   end
 
   # The island sub-contract, through the same seam the host uses
-  # (`Mutare.Ecto.Host.Catalog.subcontracted/3`) — only delivery differs: each interior rebuild
+  # (`Mutare.Ecto.Island.subcontracted/3`) — only delivery differs: each interior rebuild
   # is wrapped back into the **whole call** (the free-standing `dynamic`'s in-place shape) rather
   # than relayed as a bare condition for a weave to carry.
   defp subcontracted(condition, call, index, context),
-    do: Catalog.subcontracted(condition, context, &QueryCall.replace_arg(call, index, &1))
+    do: Island.subcontracted(condition, context, &QueryCall.replace_arg(call, index, &1))
 end

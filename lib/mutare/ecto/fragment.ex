@@ -92,7 +92,7 @@ defmodule Mutare.Ecto.Fragment do
   *operators and structure*, plus the in-fragment literals core can't reach; `islands/1` hands
   each pin interior to the condition's owner — the selector host for a hosted `where`/`having`,
   `Mutare.Ecto.Dynamic` for a free-standing `dynamic` — which sub-contracts it to core's own
-  generation (`Mutare.Analyze.expression_mutations/3` — see `Mutare.Ecto.Host.Catalog`).
+  generation (`Mutare.Analyze.expression_mutations/3` — see `Mutare.Ecto.Island`).
 
   A literal arm is also suppressed at a **structural position** of a known Ecto DSL form, where the
   literal shapes the SQL the builder emits rather than carrying data (mutating it yields a broken
@@ -164,7 +164,7 @@ defmodule Mutare.Ecto.Fragment do
   selector host for a hosted `where`/`having`, `Mutare.Ecto.Dynamic` for a free-standing
   `dynamic` — feeds each interior to generation over the run's full spec set
   (`Mutare.Analyze.expression_mutations/3`) and relays the rebuilds through its own delivery
-  with `producer:` attribution (`Mutare.Ecto.Host.Catalog.subcontracted/3`), so a pin interior
+  with `producer:` attribution (`Mutare.Ecto.Island.subcontracted/3`), so a pin interior
   is analyzed exactly like top-level Elixir — core's families reason about the Elixir, and the
   plugin's whole surface reasons about any Ecto inside it: an inner `dynamic(...)` literal
   mutates once, under SQL semantics, and an inner `from`'s hosted conditions are lowered by
