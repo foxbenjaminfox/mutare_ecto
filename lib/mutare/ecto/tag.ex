@@ -18,9 +18,11 @@ defmodule Mutare.Ecto.Tag do
   #     `"sum"`, …) so `# mutare:ignore[ecto:<]` can suppress one swap; a single label, a *list*
   #     when one mutant collapses several kinds (a deduped `0` is both `pred` and `zero`), or
   #     `nil` for a structural family.
-  #   * `attribution` — a `Mutare.Mutator.Mutation.at/2`/`at_drop/1` value naming the inner node a
-  #     whole-`from` rewrite changed (`Mutare.Ecto.Query`), so core reports the site at that
-  #     clause rather than at the whole `from`; `nil` everywhere else.
+  #   * `attribution` — a `Mutare.Mutator.Mutation.at/2`/`at_drop/1` value naming the inner node
+  #     the mutant changed — the clause a whole-`from` rewrite changed (`Mutare.Ecto.Query`), or
+  #     the expression a walk mutant swapped (`Mutare.Ecto.Walk` anchors every one) — so core
+  #     reports the site there rather than at the whole rebuilt form; `nil` for a producer that
+  #     rewrites exactly the node it reports (a hosted relay discards it structurally).
 
   alias Mutare.Mutator.Mutation
 

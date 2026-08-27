@@ -7,9 +7,11 @@ defmodule Mutare.Ecto.Dynamic do
       Repo.all(where(query, ^d))
 
   The condition body is the same SQL fragment a hosted `where`/`having` owns, so the same shared
-  catalogs walk it — `Mutare.Ecto.Fragment` (operator/predicate/literal swaps, reasoned in SQL's
-  semantics, never core's) and `Mutare.Ecto.Aggregate` (`sum`↔`avg`/`min`↔`max`, for a dynamic
-  destined for a `having`). This closes the loop the `where(q, ^d)` splice site deliberately leaves
+  catalog walks it — `Mutare.Ecto.Fragment` (operator/predicate/literal swaps, reasoned in SQL's
+  semantics, never core's, with the scalar and aggregate per-node catalogs folded in:
+  `sum`↔`avg`/`min`↔`max` for a dynamic destined for a `having`). Each mutant is **reported at
+  the mutated expression** (the walk anchors it — `Mutare.Ecto.Walk`), even though what is
+  delivered is the whole rebuilt call. This closes the loop the `where(q, ^d)` splice site deliberately leaves
   open: a top-level `^dynamic` operand is routed raw there because it is *"mutated where it is
   built"* (`Mutare.Ecto.Host.Bindings`) — this module is that build site.
 
@@ -71,11 +73,14 @@ defmodule Mutare.Ecto.Dynamic do
 
     case Bindings.hosted_condition(args) do
       {_bindings, condition, index} ->
-        # The shared in-fragment catalogs, exactly the pair the hosted path composes
+        # The shared in-fragment catalog, exactly what the hosted path composes
         # (`Mutare.Ecto.Host.Catalog.own_catalog/2`) — returned as raw tags: `Mutare.Ecto.mutate/2`
         # wraps every dispatched tag (`Config.tagged/1`) and core's finalize pass applies the
-        # `families:` filter and the equivalence note. For a top-level-pin body the catalog is empty
-        # (a `^` has no SQL swap); the sub-contract below carries its interior to core.
+        # `families:` filter and the equivalence note. Each tag is anchored at the condition node
+        # it mutates (`Mutare.Ecto.Walk`), so although the *delivered* node is the whole rebuilt
+        # call, the Site reports at the operator/literal itself — a line-scoped `# mutare:ignore`
+        # reaches one comparison of a multi-line `dynamic`. For a top-level-pin body the catalog is
+        # empty (a `^` has no SQL swap); the sub-contract below carries its interior to core.
         own =
           for tag <- Catalog.own_catalog(condition, config),
               do: Tag.map_node(tag, &QueryCall.replace_arg(call, index, &1))

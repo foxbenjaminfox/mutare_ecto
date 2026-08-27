@@ -111,7 +111,8 @@ defmodule Mutare.Ecto.MacroKindParityTest do
       end
       """,
       # The whole-call in-place rewrite (`Dynamic` via the dispatcher's `:dynamic` branch).
-      dispatcher: [{"dynamic([u], u.x > ^v)", "dynamic([u], u.x >= ^v)"}],
+      # Delivered as the whole rebuilt call; reported at the comparison (the walk's anchor).
+      dispatcher: [{"u.x > ^v", "u.x >= ^v"}],
       hosted: :never_subscribed,
       routing: :registered_skip
     },

@@ -22,8 +22,8 @@ defmodule Mutare.Ecto.Fragment do
     * **NullPredicate** — `is_nil(x)`↔`not is_nil(x)`. The uniquely-SQL family with no Elixir
       analog worth borrowing; treated as one unit so `not is_nil(x)` flips back to `is_nil(x)`
       rather than producing a double-negation. Its argument is **never descended**: the value
-      families (arithmetic, the literal arms) preserve an expression's NULL-ness — they change the
-      value, never whether it is NULL — so their mutants are *provably equivalent* inside the one
+      families (arithmetic, the aggregates, the literal arms) preserve an expression's NULL-ness —
+      they change the value, never whether it is NULL — so their mutants are *provably equivalent* inside the one
       predicate that observes only NULL-ness, and the sole NULL-ness-changing mutation (the
       coalesce drop) would only apply under an `is_nil` the author already wrote constant
       (`is_nil(coalesce(x, d))` is false for every row when `d` is non-NULL). Emitting either
@@ -51,6 +51,11 @@ defmodule Mutare.Ecto.Fragment do
       `Mutare.Ecto.Scalar`, also delivered in `select`/`order_by` values). The one catalog
       mutation that *changes* an expression's NULL-ness — its entire point: the forms differ
       exactly on the rows where `x` is NULL, so a survivor carries the NULL-data note.
+    * **Aggregate** — `sum`↔`avg`, `min`↔`max` (the shared `Mutare.Ecto.Aggregate`, also
+      delivered in `select`/`order_by` values), for a `having: sum(p.x) > n`. Applied per node by
+      this walk, so a condition is walked **once** for every family — and so the `is_nil` rule
+      covers it: a value aggregate is NULL exactly when it has no non-NULL input, so
+      `is_nil(sum(x))` → `is_nil(avg(x))` is unconditionally equivalent and never offered.
     * **Temporal** — `ago(n, unit)`↔`from_now(n, unit)`, the time-direction flip of Ecto's
       interval helpers. The pair is symmetric around *now* (same distance, opposite side), so a
       comparison against them differs only for rows inside that window — the family's
@@ -113,7 +118,7 @@ defmodule Mutare.Ecto.Fragment do
   two can never disagree about which nodes a condition exposes.
   """
 
-  alias Mutare.Ecto.{Config, Scalar, Subquery, Tag, Walk}
+  alias Mutare.Ecto.{Aggregate, Config, Scalar, Subquery, Tag, Walk}
 
   # Each operator's single SQL-meaningful swap, by family. `:count`-style arity-changing or
   # NULL-equivalent rewrites are deliberately absent. The `like`/`ilike`
@@ -226,7 +231,7 @@ defmodule Mutare.Ecto.Fragment do
 
   # `is_nil`'s argument is never entered — and not because there is nothing there
   # (`is_nil(u.a + u.b)` is legal SQL): the value families preserve an expression's NULL-ness (an
-  # arithmetic/literal swap changes the value, never whether it is NULL), so inside a predicate
+  # arithmetic/aggregate/literal swap changes the value, never whether it is NULL), so inside a predicate
   # that asks *only* about NULL-ness their mutants are provably equivalent — and the coalesce
   # drop, the one NULL-ness-changing mutation, would only fire under an `is_nil` the author
   # already wrote constantly false (`is_nil(coalesce(x, d))` is false for every row when `d` is
@@ -542,11 +547,14 @@ defmodule Mutare.Ecto.Fragment do
       Map.has_key?(@temporal_swaps, form) and length(args) == 2 ->
         [Tag.new(:temporal, {@temporal_swaps[form], meta, args}, to_string(form))]
 
-      # Anything else may still be a scalar-expression operator — the arithmetic swaps and the
-      # coalesce drop owned by the shared catalog (`Mutare.Ecto.Scalar.local/1`, which carries
-      # its own arity guards). Inner literals are still reached by the walk as usual.
+      # Anything else may still be a value-expression form owned by a shared per-node catalog —
+      # the arithmetic swaps and the coalesce drop (`Mutare.Ecto.Scalar.local/1`, which carries
+      # its own arity guards) or an aggregate's ladder swap (`Mutare.Ecto.Aggregate.local/1`, for
+      # a `having: sum(p.x) > n`). A node matches at most one of the two, so at most one list is
+      # ever non-empty. Inner literals are still reached by the walk as usual.
       true ->
-        Scalar.local({form, meta, args})
+        # mutare:ignore[operand_swap] equivalent — a node matches at most one of the two catalogs, so at most one list is non-empty and concatenation order is unobservable
+        Scalar.local({form, meta, args}) ++ Aggregate.local({form, meta, args})
     end
   end
 

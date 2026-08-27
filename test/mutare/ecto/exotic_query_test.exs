@@ -769,9 +769,10 @@ defmodule Mutare.Ecto.ExoticQueryTest do
 
       diffs = ecto_diffs(src)
 
-      assert {"dynamic([p], ^d1 and ^d2)", "dynamic([p], ^d1 or ^d2)"} in diffs
-      assert {"dynamic([p], p.views > ^min)", "dynamic([p], p.views >= ^min)"} in diffs
-      assert {"dynamic([p], p.views < ^max)", "dynamic([p], p.views <= ^max)"} in diffs
+      # Each reported at the mutated expression (the walk's anchor), delivered as its whole call.
+      assert {"^d1 and ^d2", "^d1 or ^d2"} in diffs
+      assert {"p.views > ^min", "p.views >= ^min"} in diffs
+      assert {"p.views < ^max", "p.views <= ^max"} in diffs
 
       assert_compiles(src, @all)
     end

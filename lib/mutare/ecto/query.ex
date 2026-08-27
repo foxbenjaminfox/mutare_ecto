@@ -275,7 +275,8 @@ defmodule Mutare.Ecto.Query do
   # Mutate each clause value the `capability` selects through the shared `catalog` (which
   # receives the whole `Entry`, so a catalog can read the clause key) — one mutant per
   # `{family, node, label}` the catalog yields for that value, rebuilt into the whole `from` and
-  # attributed at the mutated node: a walk-based catalog (`Mutare.Ecto.ExpressionWalk`) stamps
+  # attributed at the mutated node: a walk-based catalog (`Mutare.Ecto.Walk`, under
+  # `Mutare.Ecto.ExpressionWalk`'s rules) stamps
   # node-level attribution itself — kept, so the Site lands on the exact expression — and a
   # catalog that doesn't (`Ordering.flips/1`, which replaces a whole entry) falls back to the
   # clause value. Covers the three value-position families delivered as whole-`from` rewrites,

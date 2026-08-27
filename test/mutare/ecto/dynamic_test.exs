@@ -4,11 +4,14 @@ defmodule Mutare.Ecto.DynamicTest do
   import Mutare.Ecto.TestSupport
 
   # In-fragment SQL mutations for a *free-standing* `dynamic/1,2` (`Mutare.Ecto.Dynamic`): the same
-  # `Fragment`/`Aggregate` catalogs a hosted `where`/`having` runs, but delivered as **whole-call
-  # rewrites** through Mutare's ordinary in-place selector — a free-standing `dynamic` sits in plain
-  # expression position (its value is a runtime `DynamicExpr`), so no `^`/`dynamic` weaving is
-  # needed. This is the build site the `where(q, ^d)` splice deliberately leaves raw ("mutated
-  # where it is built" — `Mutare.Ecto.Host.Bindings`).
+  # `Fragment` catalog a hosted `where`/`having` runs (scalar/aggregate per-node catalogs folded
+  # in), but delivered as **whole-call rewrites** through Mutare's ordinary in-place selector — a
+  # free-standing `dynamic` sits in plain expression position (its value is a runtime
+  # `DynamicExpr`), so no `^`/`dynamic` weaving is needed — while each Site is **reported at the
+  # mutated expression** (the walk anchors every catalog mutant at its node — `Mutare.Ecto.Walk`),
+  # so the recorded diff is the operator/literal, never the whole call. This is the build site the
+  # `where(q, ^d)` splice deliberately leaves raw ("mutated where it is built" —
+  # `Mutare.Ecto.Host.Bindings`).
 
   # The full-family plugin instance plus core's shipped routing-only fixture
   # (`Mutare.Test.Fixtures.RoutingExtension`, threaded via `extensions:`), for the nested-`:skip`
@@ -20,7 +23,7 @@ defmodule Mutare.Ecto.DynamicTest do
   defp mutated(src, opts \\ []), do: src |> ecto_diffs(opts) |> Enum.map(fn {_o, m} -> m end)
 
   describe "the binding form (dynamic/2)" do
-    test "a comparison swaps, recorded as the whole rebuilt call" do
+    test "a comparison swaps — delivered as the whole rebuilt call, reported at the operator" do
       src = """
       defmodule M do
         import Ecto.Query
@@ -28,9 +31,13 @@ defmodule Mutare.Ecto.DynamicTest do
       end
       """
 
-      # Exactly the one single-point swap — the diff is the whole call (in-place delivery), the
-      # written binding list re-emitted untouched, and the pinned interpolation left to core.
-      assert ecto_diffs(src) == [{"dynamic([p], p.views > ^v)", "dynamic([p], p.views >= ^v)"}]
+      # Exactly the one single-point swap, reported at the comparison itself (the walk's anchor);
+      # the pinned interpolation is left to core.
+      assert ecto_diffs(src) == [{"p.views > ^v", "p.views >= ^v"}]
+
+      # …while what is *delivered* is the whole call rebuilt (in-place delivery), the written
+      # binding list re-emitted untouched.
+      assert metamutant(src) =~ "dynamic([p], p.views >= ^v)"
       assert_compiles(src)
     end
 
@@ -47,8 +54,7 @@ defmodule Mutare.Ecto.DynamicTest do
       end
       """
 
-      assert ecto_diffs(src) ==
-               [{"dynamic([p], p.views > ^(min * 2))", "dynamic([p], p.views >= ^(min * 2))"}]
+      assert ecto_diffs(src) == [{"p.views > ^(min * 2)", "p.views >= ^(min * 2)"}]
 
       assert_compiles(src)
     end
@@ -63,12 +69,9 @@ defmodule Mutare.Ecto.DynamicTest do
 
       muts = MapSet.new(mutated(src))
 
+      # Each reported at its own node: the connective at the whole `and`, each comparison at itself.
       assert MapSet.subset?(
-               MapSet.new([
-                 "dynamic([p], p.a > ^x or p.b == ^y)",
-                 "dynamic([p], p.a >= ^x and p.b == ^y)",
-                 "dynamic([p], p.a > ^x and p.b != ^y)"
-               ]),
+               MapSet.new(["p.a > ^x or p.b == ^y", "p.a >= ^x", "p.b != ^y"]),
                muts
              )
 
@@ -85,15 +88,8 @@ defmodule Mutare.Ecto.DynamicTest do
 
       muts = MapSet.new(mutated(src))
 
-      assert MapSet.subset?(
-               MapSet.new([
-                 "dynamic([p], p.views >= 100)",
-                 "dynamic([p], p.views > 101)",
-                 "dynamic([p], p.views > 99)",
-                 "dynamic([p], p.views > 0)"
-               ]),
-               muts
-             )
+      # The comparison reports at the comparison, each literal arm at the literal.
+      assert MapSet.subset?(MapSet.new(["p.views >= 100", "101", "99", "0"]), muts)
 
       assert_compiles(src)
     end
@@ -106,7 +102,7 @@ defmodule Mutare.Ecto.DynamicTest do
       end
       """
 
-      assert "dynamic([p], not is_nil(p.deleted_at))" in mutated(src)
+      assert "not is_nil(p.deleted_at)" in mutated(src)
       assert_compiles(src)
     end
 
@@ -119,11 +115,11 @@ defmodule Mutare.Ecto.DynamicTest do
       """
 
       diffs = ecto_diffs(src)
-      orig = "dynamic([p], sum(p.views) > ^n)"
       # Origin pinned: the aggregate swaps down its ladder and the comparison swaps, each a
-      # distinct single-point mutant of the same rebuilt call.
+      # distinct single-point mutant of the same rebuilt call, each reported at its own node —
+      # both from the one walk (`Fragment` folds the aggregate catalog in per node).
       assert {"sum(p.views)", "avg(p.views)"} in diffs
-      assert {orig, "dynamic([p], sum(p.views) >= ^n)"} in diffs
+      assert {"sum(p.views) > ^n", "sum(p.views) >= ^n"} in diffs
       assert_compiles(src)
     end
 
@@ -162,10 +158,11 @@ defmodule Mutare.Ecto.DynamicTest do
       end
       """
 
-      # Exactly two single-point mutants, origin pinned: the operator swap and the in-place
-      # binding transposition (which swaps only the declaration — the body is byte-for-byte intact).
+      # Exactly two single-point mutants, origin pinned: the operator swap (reported at the
+      # operator) and the in-place binding transposition (reported at the call — it rewrites the
+      # declaration, and swaps only that: the body is byte-for-byte intact).
       assert ecto_diffs(src) == [
-               {"dynamic([a, b], a.id > b.id)", "dynamic([a, b], a.id >= b.id)"},
+               {"a.id > b.id", "a.id >= b.id"},
                {"dynamic([a, b], a.id > b.id)", "dynamic([b, a], a.id > b.id)"}
              ]
 
@@ -182,9 +179,7 @@ defmodule Mutare.Ecto.DynamicTest do
       end
       """
 
-      assert {"dynamic(as(:post).views > 100)", "dynamic(as(:post).views >= 100)"} in ecto_diffs(
-               src
-             )
+      assert {"as(:post).views > 100", "as(:post).views >= 100"} in ecto_diffs(src)
 
       assert_compiles(src)
     end
@@ -231,7 +226,52 @@ defmodule Mutare.Ecto.DynamicTest do
       """
 
       muts = mutated(src, mutators: [{Mutare.Ecto, repo: MyApp.Repo, families: [:comparison]}])
-      assert muts == ["dynamic([p], p.views >= 100)"]
+      assert muts == ["p.views >= 100"]
+    end
+  end
+
+  describe "the report location (the walk's anchor)" do
+    # Delivery is the whole rebuilt call, but each Site is *attributed* at the mutated expression
+    # (`Mutare.Ecto.Walk` anchors every catalog mutant), so a multi-line dynamic's comparisons
+    # report on their own lines — and a line-scoped `# mutare:ignore` reaches one of them without
+    # silencing its sibling. Before the anchor every mutant of a `dynamic` collapsed onto the
+    # `dynamic(` opener, where no directive could tell the two apart.
+    test "each comparison reports on its own line; an ignore on one leaves the other live" do
+      src = """
+      defmodule M do
+        import Ecto.Query
+
+        def d(x, y) do
+          dynamic(
+            [p],
+            p.a > ^x and # mutare:ignore[ecto:>]
+              p.b > ^y
+          )
+        end
+      end
+      """
+
+      %Mutare.Transform.Result{mutants: sites} =
+        Mutare.transform_string(src,
+          mutators: [{Mutare.Ecto, repo: MyApp.Repo, families: [:comparison]}],
+          expand_uses: true
+        )
+
+      [a, b] = sites |> Enum.filter(&(&1.mutator == :ecto)) |> Enum.sort_by(& &1.line)
+
+      # Lines 7 and 8 — not both on the `dynamic(` opener (line 5). (Sourceror attaches a
+      # trailing comment to the first node opening its line, which here *is* the directed
+      # comparison, and core renders the attribution node verbatim — so the directive's own text
+      # rides along in that one site's rendering. Cosmetic; the site, its line, and the ignore
+      # are what this pins.)
+      assert String.ends_with?(a.original_code, "p.a > ^x")
+      assert String.ends_with?(a.mutated_code, "p.a >= ^x")
+      assert a.line == 7
+      assert {b.original_code, b.mutated_code, b.line} == {"p.b > ^y", "p.b >= ^y", 8}
+
+      assert a.ignored, "the directive's line suppresses only its own comparison"
+      refute b.ignored, "the comparison on the undirected line keeps running"
+      assert_compiles(src)
     end
   end
 

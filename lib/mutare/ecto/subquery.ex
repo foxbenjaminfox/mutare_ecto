@@ -11,8 +11,8 @@ defmodule Mutare.Ecto.Subquery do
   # **What is mutated is gated by what the wrapper can observe** (`mode`):
   #
   #   * **row-set-changing families — every wrapper (`mode`-agnostic):** the inner
-  #     `where`/`having` operator/literal swaps (`Mutare.Ecto.Fragment`), aggregate swaps
-  #     (`Mutare.Ecto.Aggregate`), and the whole-`from` structural rewrites that change which rows
+  #     `where`/`having` operator/literal/aggregate swaps (`Mutare.Ecto.Fragment`, the aggregate
+  #     folded in per node), and the whole-`from` structural rewrites that change which rows
   #     the subquery returns — filter-clause drops, join-type swaps, combination-key swaps, and the
   #     source binding-reorder (reused from `Mutare.Ecto.Query`, filtered to
   #     `@structural_families`). A changed row set is observable through existence, a value set, a
@@ -106,7 +106,8 @@ defmodule Mutare.Ecto.Subquery do
   end
 
   # The caller normally reaches value-wrapper `subquery(from …)` interiors by ordinary descent:
-  # `Fragment.lift/4` mutates the `from` argument, then rebuilds the written `subquery/1` call.
+  # `Fragment`'s walk enters the `from` argument (its `local/3` recurses it here in `:value`
+  # mode) and rebuilds the written `subquery/1` call around each interior mutant.
   # EXISTS is different: its argument is a unit predicate, so `Fragment` delegates the direct
   # argument here instead of descending as a condition. Accept the `subquery(from …)` spelling only
   # in that existence-mode path to avoid double-producing the value-wrapper mutants.
@@ -144,8 +145,9 @@ defmodule Mutare.Ecto.Subquery do
   # The row-set structural families: `Query.mutations_for/2` (the config-taking entry) over the
   # inner `from`, filtered to the families every wrapper observes. `Query`'s attribution (naming
   # the inner clause the whole-`from` site is reported at) is deliberately **dropped**: here the
-  # mutant is instead wrapped back into the outer condition and delivered through the host's
-  # weave, which reports at the woven condition.
+  # mutant is wrapped back into the outer condition, so it reports where that condition's walk
+  # anchors it — the subquery node (`Mutare.Ecto.Walk.mutants/4`) for an in-place `dynamic`, and
+  # the woven condition itself on the host path, whose weave discards attribution structurally.
   defp structural(call, config) do
     for %Tag{family: family} = tag <- Query.mutations_for(call, config),
         family in @structural_families,
@@ -168,13 +170,13 @@ defmodule Mutare.Ecto.Subquery do
 
   defp clause_mutants(_call, _args, _config, _mode), do: []
 
-  # Recurse the hosted condition catalogs into each `where`/`having`/`or_where`/`or_having`
-  # condition value (the hosted-clause keys), rebuilding the whole inner `from` around each
-  # single-point condition mutant. Nesting (`exists` inside the subquery's own `where`) re-enters
-  # `Fragment`, which re-recognizes the wrapper.
+  # Recurse the hosted condition catalog (`Fragment`, the aggregate swap folded in) into each
+  # `where`/`having`/`or_where`/`or_having` condition value (the hosted-clause keys), rebuilding
+  # the whole inner `from` around each single-point condition mutant. Nesting (`exists` inside
+  # the subquery's own `where`) re-enters `Fragment`, which re-recognizes the wrapper.
   defp conditions(call, source, clauses, config) do
     KeywordList.flat_map(clauses, &Surface.from_clause?(&1, :hosted), fn entry, index ->
-      for tag <- Fragment.mutants(entry.value, config) ++ Aggregate.swaps(entry.value),
+      for tag <- Fragment.mutants(entry.value, config),
           do: Tag.map_node(tag, &rebuild_clause(call, source, clauses, index, &1))
     end)
   end

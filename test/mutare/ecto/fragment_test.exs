@@ -406,6 +406,31 @@ defmodule Mutare.Ecto.FragmentTest do
     end
   end
 
+  describe "Aggregate (folded in per node — one walk per condition)" do
+    test "an aggregate swaps along its ladder inside a condition, beside the operator swaps" do
+      assert mutants("sum(u.x) > 10") ==
+               MapSet.new([
+                 "avg(u.x) > 10",
+                 "sum(u.x) >= 10",
+                 "sum(u.x) > 11",
+                 "sum(u.x) > 9",
+                 "sum(u.x) > 0"
+               ])
+
+      assert families("min(u.x) == max(u.y)") == MapSet.new([:aggregate, :comparison])
+      assert labels("min(u.x) == max(u.y)") == MapSet.new(["min", "max", "=="])
+    end
+
+    test "never under is_nil — a value aggregate is NULL exactly when it has no non-NULL input" do
+      # `is_nil(sum(x))` ≡ `is_nil(avg(x))` on every engine (each is NULL iff the group has no
+      # non-NULL value), so the swap would be unconditionally equivalent: the `is_nil` unit claims
+      # its argument for the aggregate exactly as for the arithmetic and literal arms. (A second,
+      # separate aggregate pass used to leak it.)
+      assert mutants("is_nil(sum(u.x))") == MapSet.new(["not is_nil(sum(u.x))"])
+      assert mutants("not is_nil(min(u.x))") == MapSet.new(["is_nil(min(u.x))"])
+    end
+  end
+
   describe "Temporal" do
     test "the interval helpers flip their time direction, unit intact" do
       # `ago`/`from_now` sit the same distance on opposite sides of now — the flip re-asks the

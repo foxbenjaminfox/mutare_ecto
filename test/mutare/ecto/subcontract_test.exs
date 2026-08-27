@@ -601,9 +601,8 @@ defmodule Mutare.Ecto.SubcontractTest do
       assert {:integer, original, "dynamic([p], p.views > ^(min * 3))"} in islands
 
       # The island mutant is never `:ecto`'s: the plugin's own sites on the call are exactly its
-      # SQL catalog (the comparison swap), nothing inside the pin.
-      assert [{original, "dynamic([p], p.views >= ^(min * 2))"}] ==
-               ecto_diffs(src, @with_core)
+      # SQL catalog (the comparison swap, reported at the comparison), nothing inside the pin.
+      assert [{"p.views > ^(min * 2)", "p.views >= ^(min * 2)"}] == ecto_diffs(src, @with_core)
 
       assert_compiles(src, @with_core)
     end

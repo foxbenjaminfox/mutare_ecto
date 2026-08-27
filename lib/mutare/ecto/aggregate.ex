@@ -7,12 +7,17 @@ defmodule Mutare.Ecto.Aggregate do
   # and returns one *single-point* mutant per aggregate position — each the expression with
   # exactly one aggregate swapped.
   #
-  # Callers feed it four positions: a `select`/`select_merge` value and an `order_by` value
-  # (both whole-`from` and standalone/pipe — `Mutare.Ecto.Query`/`Mutare.Ecto.Clause`, delivered
-  # in place), a `where`/`having` condition (`Mutare.Ecto.Host`, delivered `^`/`dynamic`-hosted
-  # so a `having: sum(p.x) > n` swaps its aggregate behind the same selector as its operators),
-  # and a free-standing `dynamic/1,2` condition (`Mutare.Ecto.Dynamic`, a whole-call rewrite
-  # delivered in place).
+  # Two consumers, mirroring `Mutare.Ecto.Scalar`'s split:
+  #
+  #   * a `where`/`having` condition — hosted, or the body of a free-standing `dynamic/1,2` —
+  #     `Mutare.Ecto.Fragment` applies `local/1` per node as it walks the condition, so a
+  #     `having: sum(p.x) > n` swaps its aggregate behind the same selector as its operators
+  #     (`Mutare.Ecto.Host`), or inside the same whole-call rewrite (`Mutare.Ecto.Dynamic`) — and
+  #     never under `is_nil`, where a swap preserves NULL-ness;
+  #   * a `select`/`select_merge`/`order_by` value — `swaps/1` walks the whole expression
+  #     (`Mutare.Ecto.ExpressionWalk`) and each swap is delivered **in place**
+  #     (`Mutare.Ecto.Query` for the `from` keyword clauses, `Mutare.Ecto.Clause` for the
+  #     standalone/pipe macros).
   #
   # `count` is deliberately excluded (as in `Mutare.Ecto.RepoAggregate`): swapping it for a
   # value aggregate changes the result's meaning in a way its `:distinct`/arity contract makes
@@ -50,6 +55,14 @@ defmodule Mutare.Ecto.Aggregate do
   """
   @spec swap(atom()) :: atom() | nil
   def swap(name), do: Map.get(@agg_swaps, name)
+
+  @doc """
+  The aggregate swap of one node — **no descent** — the per-node hook `Mutare.Ecto.Fragment`
+  applies as it walks a condition (its own traversal already handles descent; a condition is a
+  `:value` position by construction).
+  """
+  @spec local(Macro.t()) :: [Tag.t()]
+  def local(node), do: local(node, :value)
 
   # An aggregate call's own swap — a same-arity rename, so it always compiles. The function name is
   # the call form atom (not a wrapped literal), so the rename keeps the call's meta and renders

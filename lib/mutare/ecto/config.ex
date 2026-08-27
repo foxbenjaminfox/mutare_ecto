@@ -250,12 +250,13 @@ defmodule Mutare.Ecto.Config do
       matching **any** label suppresses the mutant. The full vocabulary is `Mutare.Ecto.variants/0`;
       labels are recorded only because `Mutare.Ecto` declares it (an un-opted-in mutator records
       `[]`).
-    * `attribution` — carried by a whole-`from` rewrite (`Mutare.Ecto.Query`), a
-      `Mutare.Mutator.Mutation.at/2`/`at_drop/1` value naming the inner clause it changed — makes
-      core report the site (line/column + diff) at that clause rather than at the whole `from`, so
-      a clause-level `# mutare:ignore` is reachable. The mutated `node` still splices the whole
-      rewrite; attribution moves only the report, and `finalize/2` reads the family off `variant`
-      exactly as for an attribution-less tag.
+    * `attribution` — a `Mutare.Mutator.Mutation.at/2`/`at_drop/1` value naming the inner node
+      the mutant changed: carried by a whole-`from` rewrite (`Mutare.Ecto.Query`, the inner
+      clause) and by every walk mutant (`Mutare.Ecto.Walk`, the mutated expression itself) —
+      makes core report the site (line/column + diff) there rather than at the whole rebuilt
+      form, so a clause- or expression-level `# mutare:ignore` is reachable. The mutated `node`
+      still splices the whole rewrite; attribution moves only the report, and `finalize/2` reads
+      the family off `variant` exactly as for an attribution-less tag.
 
   The one normalizer both delivery paths return through — `Mutare.Ecto.mutate/2` and the host's
   `Mutare.Ecto.Host.Catalog` — so adding a finer label to a producer never touches delivery code.

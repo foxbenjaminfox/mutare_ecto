@@ -6,32 +6,20 @@ defmodule Mutare.Ecto.ExpressionWalk do
   # them — and a `local` catalog producing the tagged alternatives of *one* node, `walk/3` returns
   # every **single-point** mutant: the whole expression with exactly one position replaced by one
   # of `local`'s alternatives, threading each mutant's family/label (`Mutare.Ecto.Tag`) up
-  # unchanged while rebuilding its node.
+  # unchanged while rebuilding its node, each anchored at the node it replaces (the walk's
+  # node-level attribution — `Mutare.Ecto.Walk.mutants/4` — which is what lets an in-place
+  # `select`/`order_by` delivery report the Site at the mutated expression itself).
   #
-  # Two cross-cutting concerns live here, once, so every catalog gets them uniformly:
-  #
-  #   * **Node-level attribution.** Each mutant is stamped with
-  #     `Mutare.Mutator.Mutation.at(node, mutant)` at the moment `local` offers it — the only
-  #     point where the original node is still in hand (the walk rebuilds the surrounding form
-  #     after) — so an in-place delivery (`Mutare.Ecto.Query`/`Mutare.Ecto.Clause`, which rebuild a
-  #     whole clause or macro call around the mutant) reports the Site at the mutated
-  #     expression's own range. That is what lets a line-scoped `# mutare:ignore` reach *one* of
-  #     two same-family mutants sharing a clause: two identical `coalesce(a, b)`s in one `select`
-  #     are indistinguishable by vocabulary — position is the only discriminator. On the hosted
-  #     relay paths (`Mutare.Ecto.Host.Catalog`, `Mutare.Ecto.Subquery`) the stamp is structurally
-  #     discarded — a hosted mutant is normalized to a `{node, note, variant, producer}` quad with
-  #     no attribution slot — so the weave's own Site mechanics are untouched.
-  #
-  #   * **Ordering position.** The walk threads a `position` (`:value` | `:ordering`) down to the
-  #     catalog, so a catalog can mark a mutant whose equivalence character changes in an ordering
-  #     position (`Mutare.Ecto.Scalar`'s coalesce drop — dropping the fallback there exposes the
-  #     engine's *default* NULL placement; see `Mutare.Ecto.Ordering` on why that default is
-  #     engine-defined). Callers pass `:ordering` for an `order_by` value (the macros/keys
-  #     carrying `Mutare.Ecto.Surface`'s `:ordering` capability); the rules here refine to
-  #     `:ordering` inside the `order_by:` option of an `over/2` window — the one place an
-  #     ordering hides *inside* another expression. (`over` is matched by call shape: it is not a
-  #     routed macro, so there is no resolved identity to consult; a same-named user function
-  #     would only refine a label/note, never change a mutant.)
+  # The one concern that lives here is the **ordering position**: the walk threads a `position`
+  # (`:value` | `:ordering`) down to the catalog, so a catalog can mark a mutant whose
+  # equivalence character changes in an ordering position (`Mutare.Ecto.Scalar`'s coalesce drop —
+  # dropping the fallback there exposes the engine's *default* NULL placement; see
+  # `Mutare.Ecto.Ordering` on why that default is engine-defined). Callers pass `:ordering` for an
+  # `order_by` value (the macros/keys carrying `Mutare.Ecto.Surface`'s `:ordering` capability);
+  # the rules here refine to `:ordering` inside the `order_by:` option of an `over/2` window — the
+  # one place an ordering hides *inside* another expression. (`over` is matched by call shape: it
+  # is not a routed macro, so there is no resolved identity to consult; a same-named user function
+  # would only refine a label/note, never change a mutant.)
   #
   # Descent is otherwise `Mutare.Ecto.Walk.structural/3`'s — a call's arguments under the shared
   # author-macro rule (a nested macro the author wrote may invent its own argument grammar, so an
@@ -44,7 +32,6 @@ defmodule Mutare.Ecto.ExpressionWalk do
   # rationale).
 
   alias Mutare.Ecto.{AST, Tag, Walk}
-  alias Mutare.Mutator.Mutation
 
   @typedoc "Where the walked expression sits: an ordinary value, or an ordering (sort-key) value."
   @type position :: :value | :ordering
@@ -60,16 +47,7 @@ defmodule Mutare.Ecto.ExpressionWalk do
   """
   @spec walk(Macro.t(), local(), position()) :: [Tag.t()]
   def walk(expr, local, position \\ :value),
-    do: Walk.mutants(expr, position, &children/2, &anchored(local, &1, &2))
-
-  # The node's own alternatives, each stamped with attribution at the node it replaces — the one
-  # moment the original is still in hand (`Mutare.Ecto.Walk.mutants/4` rebuilds the surrounding
-  # form afterwards, and `Tag.map_node/2` preserves the stamp on the way up). A catalog that set
-  # its own attribution keeps it.
-  defp anchored(local, node, position) do
-    for tag <- local.(node, position),
-        do: %{tag | attribution: tag.attribution || Mutation.at(node, tag.node)}
-  end
+    do: Walk.mutants(expr, position, &children/2, local)
 
   # An `over/2` window with written options (the idiomatic trailing keyword list): its
   # `order_by:` option value is an ordering position — the window's sort key — refined by

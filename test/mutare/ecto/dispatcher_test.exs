@@ -72,9 +72,7 @@ defmodule Mutare.Ecto.DispatcherTest do
       end
       """
 
-      assert {"Ecto.Query.dynamic([u], u.x > ^v)", "Ecto.Query.dynamic([u], u.x >= ^v)"} in ecto_diffs(
-               src
-             )
+      assert {"u.x > ^v", "u.x >= ^v"} in ecto_diffs(src)
     end
 
     test "a fully-qualified is_named_binding call resolves to no mutation (the :skip kind)" do

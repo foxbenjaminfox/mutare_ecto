@@ -24,6 +24,18 @@ defmodule Mutare.Ecto.Walk do
   # (`ExpressionWalk`'s `order_by:` option of an `over/2` window). A rule can only ever
   # *narrow* what a reader sees: readers never descend on their own.
   #
+  # Every mutant `mutants/4` yields is stamped with **node-level attribution**
+  # (`Mutare.Mutator.Mutation.at/2`) at the node it replaces, so an in-place delivery
+  # (`Mutare.Ecto.Query`/`Mutare.Ecto.Clause`, which rebuild a whole clause or macro call around
+  # the mutant; `Mutare.Ecto.Dynamic`, which rebuilds the whole `dynamic` call) reports the Site at
+  # the mutated expression's own range. That is what lets a line-scoped `# mutare:ignore` reach
+  # *one* of two same-family mutants sharing a clause: two identical `coalesce(a, b)`s in one
+  # `select`, or the two comparisons of a multi-line `dynamic`, are indistinguishable by
+  # vocabulary — position is the only discriminator. On the hosted relay paths
+  # (`Mutare.Ecto.Host.Catalog`, `Mutare.Ecto.Subquery`) the stamp is structurally discarded — a
+  # hosted mutant is normalized to a `{node, note, variant, producer}` quad with no attribution
+  # slot — so the weave's own Site mechanics are untouched.
+  #
   # ## The author-macro rule
   #
   # A nested macro the author wrote may invent its own argument grammar — Mutare mutates source,
@@ -37,6 +49,7 @@ defmodule Mutare.Ecto.Walk do
 
   alias Mutare.Calls
   alias Mutare.Ecto.Tag
+  alias Mutare.Mutator.Mutation
 
   @typedoc "Reconstructs the walked root (or, for a child, its parent) around a replacement node."
   @type rebuild :: (Macro.t() -> Macro.t())
@@ -76,14 +89,26 @@ defmodule Mutare.Ecto.Walk do
   @doc """
   Every **single-point** mutant of `root` under the `local` per-node catalog: for each position
   the `children` rule admits, each of `local`'s alternatives for that one node, rebuilt into the
-  whole `root` with its family/label (`Mutare.Ecto.Tag`) carried up unchanged.
+  whole `root` with its family/label (`Mutare.Ecto.Tag`) carried up unchanged — and **anchored**
+  at the node it replaces (`Mutare.Mutator.Mutation.at/2`), so an in-place delivery reports the
+  Site at the mutated expression's own range rather than at whatever surrounding form the
+  delivery rebuilds. A tag the catalog already attributed (a subquery interior mutant, anchored
+  where the interior catalog produced it) keeps its own.
   """
   @spec mutants(Macro.t(), ctx, children(ctx), local(ctx)) :: [Tag.t()] when ctx: var
   def mutants(root, ctx, children, local) do
     for {node, node_ctx, rebuild} <- positions(root, ctx, children),
         tag <- local.(node, node_ctx),
-        do: Tag.map_node(tag, rebuild)
+        do: tag |> anchor(node) |> Tag.map_node(rebuild)
   end
+
+  # The stamp happens here — the one moment the original node is still in hand (the rebuild
+  # reconstructs the surrounding form right after; `Tag.map_node/2` preserves the stamp on the
+  # way up).
+  defp anchor(%Tag{attribution: nil, node: mutant} = tag, node),
+    do: %{tag | attribution: Mutation.at(node, mutant)}
+
+  defp anchor(tag, _node), do: tag
 
   @doc """
   The default descent: a call's arguments (only those the author-macro rule admits), a

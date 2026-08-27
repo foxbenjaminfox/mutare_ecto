@@ -348,7 +348,8 @@ defmodule Mutare.Ecto.SemanticCases do
         # The build-site path (`Mutare.Ecto.Dynamic`): the condition lives in a *free-standing*
         # `dynamic/2` spliced later with `where(q, ^d)`. Unlike every family above, the mutant is not
         # woven into a query clause — the whole `dynamic(...)` call is swapped by core's ordinary
-        # in-place selector, so this proves that delivery builds a *live* `DynamicExpr` (an inert
+        # in-place selector (the Site is reported at the comparison, so that is the diff the mutant
+        # resolves by), so this proves that delivery builds a *live* `DynamicExpr` (an inert
         # rewrite would hand back the baseline set) and that the splice site composes it unchanged.
         test "the >= mutant of a prebuilt dynamic admits the boundary rows" do
           {mod, sites} =
@@ -365,7 +366,7 @@ defmodule Mutare.Ecto.SemanticCases do
             """)
 
           {baseline, mutant} =
-            observe_ids(mod, sites, {"dynamic([u], u.age > 18)", "dynamic([u], u.age >= 18)"})
+            observe_ids(mod, sites, {"u.age > 18", "u.age >= 18"})
 
           # Same data as the hosted `>`↔`>=` test above: the `>=` mutant admits the age-18 rows.
           assert baseline == [2, 5, 6]
@@ -1982,7 +1983,7 @@ defmodule Mutare.Ecto.SemanticCases do
             """)
 
           {baseline, mutant} =
-            observe_ids(mod, sites, {"dynamic([u], ^d1 and ^d2)", "dynamic([u], ^d1 or ^d2)"})
+            observe_ids(mod, sites, {"^d1 and ^d2", "^d1 or ^d2"})
 
           # and: active AND over 18 — Bob(2), Eve(5), Frank(6). Alice is active but on the boundary.
           assert baseline == [2, 5, 6]
