@@ -24,7 +24,6 @@ defmodule Mutare.Ecto.Host.Condition do
   # top-level `^cond` pin **is** a condition in either shape: its own SQL catalog is empty, but its
   # interior is sub-contracted to core (`Mutare.Ecto.Island`).
 
-  alias Mutare.Ecto.Binding
   alias Mutare.Ecto.AST.BindingList
 
   @enforce_keys [:node, :index]
@@ -53,12 +52,12 @@ defmodule Mutare.Ecto.Host.Condition do
   end
 
   # The binding-form condition: one slot past the written binding list, or `nil` when the args carry
-  # no binding list (or nothing follows it). The `+ 1` offset lives here, not in callers.
+  # no binding list — or nothing follows it (a *trailing* binding list is not a condition;
+  # `host_test.exs`'s totality case pins that). The `+ 1` offset lives here, not in callers.
   @spec binding_form([Macro.t()]) :: t() | nil
   defp binding_form(args) do
     with {binding_index, bindings} <- BindingList.find(args),
          index = binding_index + 1,
-         # mutare:ignore[relational, conditional] equivalent — loosening/dropping this check just lets an out-of-range index through; Enum.at/2 then returns nil for it, and (as with hostable_bare_condition?/1 below) a nil condition still yields no catalog mutants downstream, so no target is produced either way
          true <- index < length(args) do
       %__MODULE__{node: Enum.at(args, index), index: index, bindings: bindings}
     else
@@ -67,14 +66,14 @@ defmodule Mutare.Ecto.Host.Condition do
   end
 
   # The trailing argument as a host-owned condition with no binding declarations, or `nil` when it is
-  # not a condition to host. The shapes that are *not* a binding-less condition: a list (a binding
-  # list like `[u]`, a keyword shorthand like `[active: true]`, or an empty `[]` — none a predicate
-  # body) and a bare variable (a degenerate non-condition call). Everything else — a
+  # not a condition to host: a list (a binding list like `[u]`, a keyword shorthand like
+  # `[active: true]`, or an empty `[]` — none a predicate body). Everything else — a
   # comparison/connective/null/membership expression, or a top-level `^cond` pin, possibly
   # referencing only named bindings — is hosted; the catalog then decides whether there is
-  # anything to mutate.
+  # anything to mutate. An argless call (`q |> where()`) has no trailing argument at all, and core
+  # still routes it (the macro registers with `:any` arity), so the empty clause keeps this total —
+  # `host_test.exs`'s totality case pins it.
   @spec bindingless_form([Macro.t()]) :: t() | nil
-  # mutare:ignore[clause_drop] equivalent — dropping this leaves `Enum.at([], -1)` (nil) as the "condition", and Host.Catalog.mutants/2 (via Fragment.mutants's total catch-all clause) already returns [] for `nil`, so `Host.condition_target/2`'s own `[_ | _] = mutants` guard rejects it downstream regardless
   defp bindingless_form([]), do: nil
 
   defp bindingless_form(args) do
@@ -83,18 +82,8 @@ defmodule Mutare.Ecto.Host.Condition do
     if hostable_bare_condition?(node), do: %__MODULE__{node: node, index: index}, else: nil
   end
 
-  # Every excluded shape here (a list, a bare variable) also reaches `Mutare.Ecto.Fragment.mutants/2`'s
-  # own total catch-all clause and yields no catalog mutants there, so `Mutare.Ecto.Host`'s
-  # `[_ | _] = mutants` guard rejects it downstream regardless of what this predicate answers —
-  # hence the ignore below. A top-level `^cond` pin *is* hosted, so it is deliberately not
-  # excluded.
-  defp hostable_bare_condition?(node) do
-    # Sourceror wraps a bare list/literal in a single-element `__block__`; unwrap one level so the
-    # list check below sees the real shape.
-    case Mutare.AST.unwrap_literal(node) do
-      list when is_list(list) -> false
-      # mutare:ignore[conditional] equivalent — see the comment above
-      other -> not Binding.variable?(other)
-    end
-  end
+  # Sourceror wraps a bare list literal in a single-element `__block__`; unwrap one level so the
+  # list check sees the real shape. A top-level `^cond` pin *is* hosted (`Mutare.Ecto.Island`), so
+  # nothing but a list is excluded.
+  defp hostable_bare_condition?(node), do: not is_list(Mutare.AST.unwrap_literal(node))
 end

@@ -55,7 +55,7 @@ defmodule Mutare.Ecto.Dispatcher do
 
   defp query_macro_mutations(kind, %QueryCall{node: node} = call, context)
        when kind in [:clause, :join] do
-    # mutare:ignore[operand_swap] equivalent — three independent sub-mutator result lists, consumed as a set regardless of concatenation grouping/order
+    # mutare:ignore[operand_swap] equivalent — three independent result lists, consumed as a set
     Clause.mutations(call, context) ++
       BindingReorder.mutations(call, context) ++ ClauseDrop.mutations(node, context)
   end
@@ -84,7 +84,10 @@ defmodule Mutare.Ecto.Dispatcher do
     do: Changeset.mutations(node, context)
 
   defp call_mutations({module, _name, _args, _rebuild}, node, %Context{config: config} = context) do
-    # mutare:ignore[conditional] equivalent — RepoAggregate/RepoWrite's own RepoCall.resolve/2 independently re-verifies the module match and yields no mutation for a mismatch either way, so skipping the invoke/2 call here is a pure optimization, not an observable difference
+    # `RepoAggregate`/`RepoWrite`'s own `RepoCall.resolve/2` re-verifies the module match and
+    # yields nothing for a mismatch, so this check is a pure short-circuit, not an observable
+    # decision.
+    # mutare:ignore[conditional] equivalent — see above
     if module == Config.repo_key(config) do
       invoke([RepoAggregate, RepoWrite], node, context)
     else

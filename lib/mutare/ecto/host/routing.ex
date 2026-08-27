@@ -138,8 +138,9 @@ defmodule Mutare.Ecto.Host.Routing do
   # an integer bound, or an ordering written directly as the first arg, which only happens in the
   # *piped* form where the real query is the `|>` left side and already routed runtime). Every
   # remaining position is raw (`:skip`). A query position carrying nothing to mutate (a bare
-  # variable) routes `:expression` harmlessly — core finds no candidates on it.
-  # mutare:ignore[clause_drop] equivalent — query_threading_route only sees `[]` for an argless macro (`where()`), which valid Ecto never writes
+  # variable) routes `:expression` harmlessly — core finds no candidates on it. An argless call
+  # (`q |> limit()`) has no first argument, and core still routes it (the macro registers with
+  # `:any` arity), so the empty route keeps this total — `host_test.exs`'s totality case pins it.
   defp query_threading_route([]), do: []
 
   defp query_threading_route([first | rest]) do
@@ -207,7 +208,10 @@ defmodule Mutare.Ecto.Host.Routing do
     Enum.map(entries, fn entry ->
       cond do
         Surface.from_clause?(entry.key, :hosted) -> condition_treatment(entry.value)
-        # mutare:ignore[logical] equivalent — even a wrongly-:hosted entry produces no observable weave: `Bound.literal?/1` is `Mutare.Ecto.Bound.bumps/1` non-emptiness, so a pin/expression bound that slipped through yields an empty target list, and a hostable non-bound key is re-gated by `Surface` checks on the host side — the weave is empty regardless of what this routing classification says
+        # Even a wrongly-`:hosted` entry weaves nothing: `Bound.literal?/1` is `Bound.bumps/1`
+        # non-emptiness, so a pin/expression bound that slipped through yields an empty target
+        # list, and a hostable non-bound key is re-gated by `Surface` on the host side.
+        # mutare:ignore[logical] equivalent — see above
         Surface.bound?(entry.key) and Bound.literal?(entry.value) -> :hosted
         true -> :skip
       end

@@ -21,8 +21,11 @@ defmodule Mutare.Ecto.Host.Bindings do
         # contiguous slot. Only a *literal* queryable (`x in Schema`, `x in "table"`, `x in {"t", S}`)
         # has no hidden bindings — its joins follow contiguously, so it must *not* anchor.
         {:in, _, [lhs, rhs]} -> {declarations(lhs), composed_source?(rhs)}
-        # mutare:ignore[literal] equivalent — a non-binding source always yields source_decls: [], which forces `join_anchor/4`'s `source_positional == []` disjunct regardless of composed?, so this default is never actually consulted
-        _ -> {[], false}
+        # A bare queryable source (`from(Post, …)`, `from("t", as: :t, …)`, `from(q, …)`) declares
+        # no binding; its composed-ness is read off the queryable itself, exactly as for an `in`
+        # rhs. (With no positional to count from, `join_anchor/4` anchors an appended join either
+        # way — the value is honest, not load-bearing.)
+        _ -> {[], composed_source?(source)}
       end
 
     # A keyword `from` join LHS is always a plain positional variable (`join: c in assoc(p, :x)`) —
@@ -53,50 +56,53 @@ defmodule Mutare.Ecto.Host.Bindings do
   @doc "The dynamic binding list visible to a standalone `join` on-condition."
   @spec join([Macro.t()]) :: [Macro.t()]
   def join(args) do
+    # The join's `x in Source` expression sits one slot past the written binding list: Ecto's
+    # `join(query, qual, binding \\ [], expr, opts \\ [])` can't skip the middle default, so a
+    # written list is always followed by the expression.
     with {index, %BindingList{} = list} <- BindingList.find(args),
-         binding_list = declarations(list),
-         # mutare:ignore[literal, arithmetic] equivalent — a written join binding list is always preceded by an explicit qualifier atom (Elixir can't skip a middle default arg), and neither an atom nor the binding list itself ever matches the {:in, _, [_, _]} shape Enum.find searches for, so any of these drop counts land on the same first real match
-         {:in, _, [lhs, _source]} <- Enum.find(Enum.drop(args, index + 1), &join_expression?/1),
+         {:in, _, [lhs, _source]} <- Enum.at(args, index + 1),
          [_ | _] = join_declarations <- declarations(lhs) do
       # A standalone `join` always composes an external query, so the new binding anchors to the tail.
-      append_positionals(binding_list, join_declarations, true)
+      append_positionals(declarations(list), join_declarations, true)
     else
       _ -> []
     end
   end
 
   @doc """
-  Normalize a lone binding or binding list for a synthesized `dynamic/2`. `nil` — the
-  binding-less form (`Mutare.Ecto.Host.Condition`) — re-declares an empty one (`dynamic([], …)`).
+  Normalize a lone binding or binding list for a synthesized `dynamic/2`: the `lhs` of a
+  `lhs in rhs` source or join — a binding list, the empty `[]`, or a single positional variable.
+  `nil` — the binding-less form (`Mutare.Ecto.Host.Condition`) — re-declares an empty one
+  (`dynamic([], …)`).
   """
   @spec declarations(Macro.t() | BindingList.t() | nil) :: [Macro.t()]
-  # mutare:ignore[clause_drop] equivalent — without this clause `nil` falls through to `BindingList.parse/1` (not a list, so `nil`) and then `declaration/1`'s catch-all, which also yields `[]`; the explicit clause states the binding-less contract rather than relying on that fallthrough
+  # The binding-less form's written list. Load-bearing, not defensive: `nil` is the one shape the
+  # general clause below can't read — no list, so `BindingList.parse/1` declines it and the
+  # lone-variable branch would try to re-declare `nil` itself.
   def declarations(nil), do: []
-  def declarations(%BindingList{entries: entries}), do: Enum.flat_map(entries, &declaration/1)
+
+  def declarations(%BindingList{entries: entries}), do: Enum.map(entries, &declaration/1)
 
   def declarations(node) do
     case BindingList.parse(node) do
-      %BindingList{} = list -> declarations(list)
-      nil -> declaration(node)
+      %BindingList{} = list ->
+        declarations(list)
+
+      nil ->
+        # `BindingList.parse/1` rejects the empty list (nothing to reorder); as a lone `[] in q`
+        # source it declares exactly nothing. Anything else lone is a positional variable.
+        if AST.unwrap_list(node) == [], do: [], else: [Mutare.AST.clean_var(node)]
     end
   end
 
-  # mutare:ignore[pattern_swap] equivalent — the body only ever uses `var` as the whole matched term, and the guard (`is_atom` of both positions) is symmetric, so which head-bound name aliases which tuple position is unobservable
-  defp declaration({name, _meta, ctx} = var) when is_atom(name) and is_atom(ctx),
-    do: [Mutare.AST.clean_var(var)]
+  # One parsed `%BindingList{}` entry, re-declared. `Mutare.Ecto.AST.BindingList.parse/1` (the
+  # only way entries are built) already validated each as a named pair, a positional variable, or
+  # the `...` anchor (`Mutare.Ecto.Binding.entry?/1`), so no shape is re-checked here.
+  defp declaration({key, var}),
+    do: {Mutare.AST.keyword_key(AST.atom_value(key)), Mutare.AST.clean_var(var)}
 
-  # Only `var` as a whole is used (pattern_swap: the guard is symmetric in name/ctx, so relabeling
-  # which sub-position binds to `name` vs `ctx` is unobservable), and every `{key, var}` entry this
-  # clause ever receives already passed `Mutare.Ecto.Binding.entry?/1`'s identical
-  # `is_atom(name) and is_atom(ctx)` check during `Mutare.Ecto.AST.BindingList.parse/1`'s
-  # validation (the only way a `%BindingList{}`'s entries are built), so the guard is always true
-  # by the time it's reached (logical/conditional).
-  # mutare:ignore[pattern_swap, logical, conditional] equivalent — see the comment above
-  defp declaration({key, {name, _meta, ctx} = var}) when is_atom(name) and is_atom(ctx),
-    do: [{Mutare.AST.keyword_key(AST.atom_value(key)), Mutare.AST.clean_var(var)}]
-
-  defp declaration({:..., _meta, _ctx}), do: [Binding.ellipsis()]
-  defp declaration(_node), do: []
+  defp declaration({:..., _meta, _ctx}), do: Binding.ellipsis()
+  defp declaration(var), do: Mutare.AST.clean_var(var)
 
   defp named?({_key, _var}), do: true
   defp named?(_node), do: false
@@ -113,17 +119,13 @@ defmodule Mutare.Ecto.Host.Bindings do
   defp literal_queryable?({:__aliases__, _meta, _parts}), do: true
   defp literal_queryable?({:__block__, _meta, [inner]}), do: literal_queryable?(inner)
 
-  # mutare:ignore[pattern_swap] equivalent — `and` is commutative, so which head-bound name maps to which tuple position doesn't change the result
+  # `and` is commutative, so which head-bound name maps to which tuple position is unobservable.
+  # mutare:ignore[pattern_swap] equivalent — see above
   defp literal_queryable?({source, schema}),
     do: literal_queryable?(source) and literal_queryable?(schema)
 
   defp literal_queryable?(node) when is_binary(node) or is_atom(node), do: true
   defp literal_queryable?(_node), do: false
-
-  defp join_expression?({:in, _, [_lhs, _source]}), do: true
-
-  # mutare:ignore[clause_drop] equivalent — in every reachable call site (Bindings.join/1's Enum.find), the join's `x in Source` expression is positionally the first element checked after the binding list, so Enum.find always matches before this catch-all would ever run; kept as a total predicate for Enum.find's contract, not for an observed false case
-  defp join_expression?(_node), do: false
 
   defp join_bindings(%KeywordList{entries: entries}) do
     for %Entry{key: key, value: {:in, _, [lhs, _src]}} <- entries,

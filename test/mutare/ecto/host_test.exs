@@ -501,6 +501,31 @@ defmodule Mutare.Ecto.HostTest do
     end
   end
 
+  describe "the from keyword form, written bracketed" do
+    # `from(p in S, [where: …])` is the same call with the keyword list written in brackets
+    # (Sourceror wraps that list in a `__block__`). Its clauses route and host exactly like the
+    # bare form — the `where:` condition is woven, and the metamutant compiles.
+    test "a bracketed clause list hosts its where condition like the bare form" do
+      bare = """
+      defmodule M do
+        import Ecto.Query
+        def q, do: from(p in MyApp.Post, where: p.views > 10)
+      end
+      """
+
+      bracketed = """
+      defmodule M do
+        import Ecto.Query
+        def q, do: from(p in MyApp.Post, [where: p.views > 10])
+      end
+      """
+
+      assert hosted(bracketed) == hosted(bare)
+      assert {"p.views > 10", "p.views >= 10"} in hosted(bracketed)
+      assert_compiles(bracketed)
+    end
+  end
+
   describe "routing the condition family (from keyword form)" do
     for key <- ~w(where or_where having or_having)a do
       test "#{key} routes :hosted and yields a localized mutant" do
@@ -703,16 +728,14 @@ defmodule Mutare.Ecto.HostTest do
     end
   end
 
-  describe "totality — a degenerate zero-arg bound macro yields no hosted target" do
-    # A piped `limit()`/`offset()` with no explicit argument never reaches `Host.host/2` at all:
-    # core's routing (`Host.Routing`) requires a literal-bound last argument to mark a position
-    # `:hosted`, and an empty `args` has none — so the call is never even offered to the host
-    # (`bound_target/2`'s own `bound_target(_macro, _args), do: []` fallback clause is therefore
-    # unreachable dead code under the current calling contract, `# mutare:ignore`d at its
-    # definition). This test instead pins the routing-level behavior: the degenerate call
-    # produces no hosted mutation and no crash.
-    test "a piped limit()/offset() with no explicit argument hosts nothing, never crashes" do
-      for code <- ["limit()", "offset()"] do
+  describe "totality — a degenerate zero-arg macro yields no hosted target" do
+    # Core routes an argless `q |> limit()` / `q |> where()` like any other call (the macros
+    # register with `:any` arity), so `Host.Routing` sees an empty `args` for real: the empty
+    # `query_threading_route/1` and `Condition.bindingless_form/1` clauses are what keep it
+    # total. Routing never marks such a call `:hosted` (there is no literal bound, no condition),
+    # so `Host.host/2` is never offered it — `bound_target/2` needs no fallback of its own.
+    test "a piped limit()/offset()/where() with no explicit argument hosts nothing, never crashes" do
+      for code <- ["limit()", "offset()", "where()"] do
         src = """
         defmodule M do
           import Ecto.Query
@@ -722,6 +745,16 @@ defmodule Mutare.Ecto.HostTest do
 
         assert hosted(src) == []
       end
+    end
+
+    # The clause-level pins for `Host.Condition.locate/1`: no argument at all, and a binding
+    # list with nothing after it (`where(q, [p])`, which Ecto itself rejects) are both "no hosted
+    # condition" — never a `%Condition{}` with a `nil` node or an out-of-range index.
+    test "locate/1 is nil for no args and for a trailing binding list" do
+      assert Host.Condition.locate([]) == nil
+
+      [q, binding_list] = Sourceror.parse_string!("f(q, [p])") |> elem(2)
+      assert Host.Condition.locate([q, binding_list]) == nil
     end
   end
 

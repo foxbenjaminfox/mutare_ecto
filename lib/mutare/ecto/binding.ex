@@ -11,10 +11,14 @@ defmodule Mutare.Ecto.Binding do
 
   @doc "A positional binding variable node — `{name, meta, ctx}` with an atom name and hygiene context."
   @spec variable?(Macro.t()) :: boolean()
-  # mutare:ignore[pattern_swap, logical, conditional] equivalent — symmetric guard with a constant body (swap is a no-op), and the guard only separates a variable from a same-shaped call node, never present in a binding list
+  # The guard is symmetric with a constant body (so the pattern swap is a no-op), and it only
+  # separates a variable from a same-shaped call node — never present in a binding list.
+  # mutare:ignore[pattern_swap, logical, conditional] equivalent — see above
   def variable?({name, _meta, ctx}) when is_atom(name) and is_atom(ctx), do: true
 
-  # mutare:ignore[literal] equivalent — flipping the fallback to true misclassifies a non-variable element as a variable, observable only for a non-binding node a binding position never holds
+  # Flipping the fallback misclassifies a non-variable element as a variable — observable only
+  # for a non-binding node a binding position never holds.
+  # mutare:ignore[literal] equivalent — see above
   def variable?(_node), do: false
 
   @doc "The name of a reorderable positional binding, excluding `_`-prefixed variables."

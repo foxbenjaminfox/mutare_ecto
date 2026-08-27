@@ -17,7 +17,6 @@ defmodule Mutare.Ecto.Config do
 
   @valid_options ~w(repo families dialects)a
   @valid_dialects ~w(postgres mysql sqlite)a
-  @empty_dialect_set MapSet.new()
 
   # Every SQL family the plugin can emit, the source of truth for `families: :all` and for
   # validating a configured subset. Grouped by the surface they mutate, each with its owner:
@@ -161,9 +160,6 @@ defmodule Mutare.Ecto.Config do
     end
   end
 
-  # mutare:ignore[clause_drop] equivalent — the general clause below matches [] too (is_list([]) and [] -- @valid_dialects == []) and returns MapSet.new([]), the same empty set
-  defp parse_dialects!([]), do: @empty_dialect_set
-
   defp parse_dialects!(dialects) when is_list(dialects) do
     case dialects -- @valid_dialects do
       [] ->
@@ -180,8 +176,7 @@ defmodule Mutare.Ecto.Config do
     raise ArgumentError, "Mutare.Ecto :dialects must be a list, got: #{inspect(other)}"
   end
 
-  # mutare:ignore[clause_drop] equivalent — nil is an atom, so the clause below would handle it via Mutare.Calls.module_key(nil), which itself returns nil unchanged (Macro.classify_atom(nil) isn't :alias)
-  defp parse_repo!(nil), do: nil
+  # An unset `repo:` is `nil`, which `Mutare.Calls.module_key/1` passes through unchanged.
   defp parse_repo!(module) when is_atom(module), do: Mutare.Calls.module_key(module)
 
   defp parse_repo!(other) do

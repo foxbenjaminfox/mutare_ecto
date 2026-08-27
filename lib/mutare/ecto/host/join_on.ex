@@ -64,19 +64,11 @@ defmodule Mutare.Ecto.Host.JoinOn do
 
   # A join source `x in assoc(p, :rel)` — its implicit join condition forces the `and` fold. Every
   # other source (a schema, table, subquery, bound query) contributes only its explicit `on:`.
-  #
-  # Sourceror only wraps a single-element `__block__` around a leaf constant (int/float/
-  # string/atom/list) — never a compound operator/call node like `:in` or `assoc(...)` — so
-  # neither `__block__` clause below is reachable from real source; kept for the same defensive
-  # totality this codebase applies elsewhere to a "descend through a transparent wrapper" step
-  # (see `Mutare.Ecto.Fragment`'s equivalent `__block__` guard).
-  # mutare:ignore[clause_drop, return_value, atom] equivalent — see the comment above
-  defp assoc_value?({:__block__, _meta, [inner]}), do: assoc_value?(inner)
+  # Neither node is ever `__block__`-wrapped: Sourceror wraps only a leaf literal, never an
+  # operator/call node — parenthesized or not.
   defp assoc_value?({:in, _meta, [_lhs, rhs]}), do: assoc_call?(rhs)
   defp assoc_value?(_node), do: false
 
-  # mutare:ignore[clause_drop, return_value, atom] equivalent — see the comment above assoc_value?/1
-  defp assoc_call?({:__block__, _meta, [inner]}), do: assoc_call?(inner)
   defp assoc_call?({:assoc, _meta, [_source, _name]}), do: true
   defp assoc_call?(_node), do: false
 end

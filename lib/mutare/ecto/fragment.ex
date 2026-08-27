@@ -400,10 +400,10 @@ defmodule Mutare.Ecto.Fragment do
     do: [Tag.new(:boolean_literal, Mutare.AST.literal(not bool), "negate")]
 
   # AtomLiteral: any other literal atom → the `:mutare` sentinel (core's `AtomLiteral` convention),
-  # dropped when the atom already is the sentinel; `true`/`false` are BooleanLiteral's (above).
+  # dropped when the atom already is the sentinel; `true`/`false` never reach here — the
+  # BooleanLiteral clause above claims them by clause order.
   defp literal_mutants({:__block__, _meta, [atom]})
-       # mutare:ignore[literal] equivalent — the preceding is_boolean/1 clause already claims every true/false atom, so by clause order neither value can ever reach this guard regardless of which of the two is named here
-       when is_atom(atom) and atom not in [true, false, nil] and atom != @atom_sentinel,
+       when is_atom(atom) and not is_nil(atom) and atom != @atom_sentinel,
        do: [Tag.new(:atom_literal, Mutare.AST.literal(@atom_sentinel), "sentinel")]
 
   # `nil` and the already-sentinel atom carry no clean swap.

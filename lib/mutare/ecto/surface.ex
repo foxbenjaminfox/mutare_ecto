@@ -237,14 +237,6 @@ defmodule Mutare.Ecto.Surface do
   @spec mutations(atom()) :: [mutation_capability()]
   def mutations(name), do: get(name, :mutations, [])
 
-  @doc """
-  Whether a routed macro accepts a written binding list eligible for positional reordering — the
-  `:condition` macros (`where`/`having`/…), `:join`, the `:clause` macros, and the free-standing
-  `dynamic/2` (each takes the list as an ordinary argument — `Mutare.Ecto.BindingReorder`).
-  """
-  @spec binding_list_macro?(atom()) :: boolean()
-  def binding_list_macro?(name), do: macro_kind(name) in [:condition, :join, :clause, :dynamic]
-
   @doc "The family used when a composable stage is removed, or `nil` when it is not droppable."
   @spec stage_drop_family(atom()) :: drop_family() | nil
   def stage_drop_family(name), do: get(name, :stage_drop)

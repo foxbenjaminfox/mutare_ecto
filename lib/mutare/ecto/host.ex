@@ -119,9 +119,12 @@ defmodule Mutare.Ecto.Host do
   # A plain clause macro is subscribed only for its bound value (`limit`/`offset` —
   # `Surface.bound?/1`); the bound is the **last argument** in both the direct and pipe forms
   # (the same last-arg convention the clause mutators use). `Bound.bumps/1` is the single
-  # literal-integer guard (`Mutare.Ecto.Bound`), so a `^pinned`/expression bound (or a degenerate
-  # `limit()`) yields no target and the call degrades safely to raw.
-  defp bound_target(macro, [_ | _] = args) do
+  # literal-integer guard (`Mutare.Ecto.Bound`), so a `^pinned`/expression bound yields no target
+  # and the call degrades safely to raw. The same guard keeps this total without a fallback clause:
+  # a degenerate `limit()` has `last_argument([]) == {nil, -1}`, no literal, so it yields no target
+  # the same way (routing never marks it `:hosted` to begin with — `host_test.exs`'s totality case
+  # pins that).
+  defp bound_target(macro, args) do
     {bound, index} = last_argument(args)
 
     with true <- Surface.bound?(macro),
@@ -131,17 +134,6 @@ defmodule Mutare.Ecto.Host do
       _ -> []
     end
   end
-
-  # Unreachable through `host/2`'s real calling contract: `Host.host/2` is only invoked once
-  # `Mutare.Transform.Analyze.Macros.attach_hosted_candidates/5` (core) already found a `:hosted`
-  # position via routing — and for a `:clause` macro, routing marks `:hosted` only when
-  # `Surface.bound?(macro) and Bound.literal?(List.last(args))`, which itself requires a
-  # non-empty `args`. So by the time core calls `bound_target/2`, `args` always matches the
-  # `[_ | _]` clause above; this fallback is a defensive totality guard against args ever being
-  # `[]` (a degenerate `limit()`), not a reachable branch — kept for safety if that calling
-  # contract ever loosens.
-  # mutare:ignore[clause_drop] unreachable: core only calls host/2 after routing confirms a non-empty, literal-bound arg list
-  defp bound_target(_macro, _args), do: []
 
   defp join_target(args, context) do
     with {arg_index, options} <- trailing_options(args),

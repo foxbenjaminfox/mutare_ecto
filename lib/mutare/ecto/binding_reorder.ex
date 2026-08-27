@@ -28,7 +28,7 @@ defmodule Mutare.Ecto.BindingReorder do
   mutant identifies a redundant binding declaration, matching core's pattern-swap policy.
   """
 
-  alias Mutare.Ecto.{Surface, Tag}
+  alias Mutare.Ecto.Tag
   alias Mutare.Ecto.AST.{BindingList, QueryCall}
 
   @behaviour Mutare.Ecto.SubMutator
@@ -37,11 +37,9 @@ defmodule Mutare.Ecto.BindingReorder do
   @spec mutations(QueryCall.t(), Mutare.Ecto.Context.t()) :: [Tag.t()]
   @impl Mutare.Ecto.SubMutator
   # Receives the Dispatcher-normalized `QueryCall` (see `Mutare.Ecto.SubMutator`), so every written
-  # form reorders alike and `rebuild` re-emits the swap as written.
-  def mutations(%QueryCall{name: macro} = call, _context) do
-    # mutare:ignore[if_condition] equivalent — Dispatcher only ever calls BindingReorder.mutations/2 for a macro of kind :condition/:join/:clause/:dynamic, which is exactly Surface.binding_list_macro?/1's true set, so the guard always holds when reached
-    if Surface.binding_list_macro?(macro), do: reorders(call), else: []
-  end
+  # form reorders alike and `rebuild` re-emits the swap as written. Dispatcher reaches here only
+  # for a binding-list macro, so there is no shape to guard against.
+  def mutations(%QueryCall{} = call, _context), do: reorders(call)
 
   # One mutant per pair of reorderable positional bindings, used or not (see the moduledoc).
   defp reorders(%QueryCall{args: args} = call) do
