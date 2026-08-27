@@ -263,9 +263,13 @@ defmodule Mutare.Ecto.Surface do
   @spec bound?(atom()) :: boolean()
   def bound?(name), do: from_clause?(name, :bound)
 
+  @doc "The mutation/routing capabilities attached to a `from` clause key (`[]` when unknown)."
+  @spec from_capabilities(atom()) :: [from_capability()]
+  def from_capabilities(name), do: get(name, :from, [])
+
   @doc "Whether a `from` clause key carries a particular mutation/routing capability."
   @spec from_clause?(atom(), from_capability()) :: boolean()
-  def from_clause?(name, capability), do: capability in get(name, :from, [])
+  def from_clause?(name, capability), do: capability in from_capabilities(name)
 
   @doc "The family used when a whole-`from` clause is removed, or `nil` when it is retained."
   @spec from_drop_family(atom()) :: drop_family() | nil

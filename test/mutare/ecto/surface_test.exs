@@ -58,6 +58,7 @@ defmodule Mutare.Ecto.SurfaceTest do
     # unspecified, so the drop tracked engine nondeterminism, not the tests (the implicit-direction
     # flip in `Mutare.Ecto.Ordering` is the reliable ordering mutant instead).
     assert Surface.stage_drop_family(:order_by) == nil
+    assert Surface.from_capabilities(:order_by) == [:ordering, :aggregate, :scalar]
     assert Surface.from_clause?(:order_by, :ordering)
     assert Surface.from_drop_family(:order_by) == nil
   end
@@ -105,6 +106,7 @@ defmodule Mutare.Ecto.SurfaceTest do
     assert Surface.macro_kind(:unknown) == nil
     assert Surface.mutations(:unknown) == []
     assert Surface.stage_drop_family(:unknown) == nil
+    assert Surface.from_capabilities(:unknown) == []
     refute Surface.from_clause?(:unknown, :hosted)
     refute Surface.query_builder?(:unknown)
   end

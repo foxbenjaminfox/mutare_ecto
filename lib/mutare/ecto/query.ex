@@ -67,7 +67,7 @@ defmodule Mutare.Ecto.Query do
   binding list (`from([a, b] in query)`) can still reorder.
   """
 
-  alias Mutare.Ecto.{Aggregate, Combination, Config, Ordering, Scalar, Surface, Tag}
+  alias Mutare.Ecto.{Combination, Config, Surface, Tag, ValueCatalog}
   alias Mutare.Ecto.AST.{BindingList, FromCall, KeywordList, QueryCall}
   alias Mutare.Ecto.AST.KeywordList.Entry
   alias Mutare.Mutator.Mutation
@@ -170,18 +170,15 @@ defmodule Mutare.Ecto.Query do
 
   defp produce(:bound, from, _config, clause?), do: drops(from, :bound, clause?)
 
-  defp produce(:ordering, from, _config, clause?),
-    do: value_swaps(from, :ordering, clause?, &Ordering.flips(&1.value))
+  defp produce(:ordering, from, _config, clause?), do: value_swaps(from, :ordering, clause?)
 
   defp produce(:join_type, from, config, clause?), do: join_swaps(from, config, clause?)
 
   defp produce(:combination, from, _config, clause?), do: combination_swaps(from, clause?)
 
-  defp produce(:aggregate, from, _config, clause?),
-    do: value_swaps(from, :aggregate, clause?, &Aggregate.swaps(&1.value))
+  defp produce(:aggregate, from, _config, clause?), do: value_swaps(from, :aggregate, clause?)
 
-  defp produce(:scalar, from, _config, clause?),
-    do: value_swaps(from, :scalar, clause?, &scalar_value_swaps/1)
+  defp produce(:scalar, from, _config, clause?), do: value_swaps(from, :scalar, clause?)
 
   defp produce(:binding_reorder, from, _config, _clause?), do: binding_reorders(from)
 
@@ -310,29 +307,27 @@ defmodule Mutare.Ecto.Query do
     end)
   end
 
-  # Mutate each clause value the `capability` selects through the shared `catalog` (which
-  # receives the whole `Entry`, so a catalog can read the clause key) — one mutant per
-  # `{family, node, label}` the catalog yields for that value, rebuilt into the whole `from` and
+  # Mutate each clause value the `capability` selects through the shared value dispatch
+  # (`Mutare.Ecto.ValueCatalog` — the same capability → catalog mapping `Mutare.Ecto.Clause`
+  # rebuilds a standalone/pipe call with, in the position the clause key's capabilities declare)
+  # — one mutant per tag the catalog yields for that value, rebuilt into the whole `from` and
   # attributed at the mutated node: a walk-based catalog (`Mutare.Ecto.Walk`, under
-  # `Mutare.Ecto.ExpressionWalk`'s rules) stamps
-  # node-level attribution itself — kept, so the Site lands on the exact expression — and a
-  # catalog that doesn't (`Ordering.flips/1`, which replaces a whole entry) falls back to the
-  # clause value. Covers the three value-position families delivered as whole-`from` rewrites,
-  # each over a `select`/`select_merge`/`order_by` clause value:
-  #
-  #   * `:ordering` (`Mutare.Ecto.Ordering.flips/1`) — an `order_by` direction/nulls flip.
-  #   * `:aggregate` (`Mutare.Ecto.Aggregate.swaps/1`) — a `sum`↔`avg`/`min`↔`max` swap.
-  #   * `:scalar` (`scalar_value_swaps/1` over `Mutare.Ecto.Scalar.swaps/2`) — an arithmetic swap
-  #     or coalesce drop, position-aware for the `order_by:` key.
+  # `Mutare.Ecto.ExpressionWalk`'s rules) stamps node-level attribution itself — kept, so the Site
+  # lands on the exact expression — and a catalog that doesn't (`Ordering.flips/1`, which replaces
+  # a whole entry) falls back to the clause value. Covers the three value-position families
+  # delivered as whole-`from` rewrites (`:ordering`/`:aggregate`/`:scalar`), each over a
+  # `select`/`select_merge`/`order_by` clause value.
   #
   # A `where`/`having` value with any of these is deliberately *not* here: its condition is hosted
   # (`^`/`dynamic`), so those mutants ride the host (`Mutare.Ecto.Fragment`/`Host.catalog/3`)
   # alongside the operator swaps rather than duplicating the whole `from`.
-  defp value_swaps(%FromCall{clauses: clauses} = from, capability, clause?, catalog) do
+  defp value_swaps(%FromCall{clauses: clauses} = from, capability, clause?) do
     admit? = &(Surface.from_clause?(&1, capability) and clause?.(&1))
 
     KeywordList.flat_map(clauses, admit?, fn entry, index ->
-      for %Tag{node: mutated} = tag <- catalog.(entry) do
+      position = entry.key |> Surface.from_capabilities() |> ValueCatalog.position()
+
+      for %Tag{node: mutated} = tag <- ValueCatalog.mutants(capability, entry.value, position) do
         %{
           tag
           | node: from |> FromCall.replace_clause(index, mutated) |> FromCall.to_ast(),
@@ -341,10 +336,4 @@ defmodule Mutare.Ecto.Query do
       end
     end)
   end
-
-  # The scalar walk over one clause value, in the position its key declares: an `order_by:` value
-  # (the one `from` key carrying `Surface`'s `:ordering` capability alongside `:scalar`) is a
-  # sort key, so its coalesce drops carry the placement-aware label/note (`Mutare.Ecto.Scalar`).
-  defp scalar_value_swaps(%Entry{key: key, value: value}),
-    do: Scalar.swaps(value, if(Surface.from_clause?(key, :ordering), do: :ordering, else: :value))
 end

@@ -39,7 +39,7 @@ defmodule Mutare.Ecto.Clause do
   (`Mutare.Ecto.ClauseDrop`) still touches a bound macro in place.
   """
 
-  alias Mutare.Ecto.{Aggregate, Combination, Ordering, Scalar, Surface, Tag}
+  alias Mutare.Ecto.{Combination, Surface, Tag, ValueCatalog}
   alias Mutare.Ecto.AST.QueryCall
 
   @behaviour Mutare.Ecto.SubMutator
@@ -58,22 +58,19 @@ defmodule Mutare.Ecto.Clause do
   def mutations(%QueryCall{args: []}, _context), do: []
 
   def mutations(%QueryCall{name: macro} = call, _context) do
-    Enum.flat_map(Surface.mutations(macro), &capability_mutations(&1, call))
+    capabilities = Surface.mutations(macro)
+    position = ValueCatalog.position(capabilities)
+
+    Enum.flat_map(capabilities, &capability_mutations(&1, call, position))
   end
 
-  defp capability_mutations(:ordering, call), do: mutate_last(call, &Ordering.flips/1)
-  defp capability_mutations(:aggregate, call), do: mutate_last(call, &Aggregate.swaps/1)
+  # `:combination` renames the call; every other capability mutates its last-argument *value*
+  # through the shared dispatch (`Mutare.Ecto.ValueCatalog` — the same one `Mutare.Ecto.Query`
+  # rebuilds a `from` clause with), in the position the macro's capabilities declare.
+  defp capability_mutations(:combination, call, _position), do: combination_swaps(call)
 
-  defp capability_mutations(:scalar, call),
-    do: mutate_last(call, &Scalar.swaps(&1, scalar_position(call)))
-
-  defp capability_mutations(:combination, call), do: combination_swaps(call)
-
-  # An `order_by`/`prepend_order_by` value is an ordering position — derived from `Surface`'s
-  # `:ordering` capability (the macros whose value *is* a sort key) so the two can't drift — so
-  # its coalesce drops carry the placement-aware label/note (`Mutare.Ecto.Scalar`).
-  defp scalar_position(%QueryCall{name: name}),
-    do: if(:ordering in Surface.mutations(name), do: :ordering, else: :value)
+  defp capability_mutations(capability, call, position),
+    do: mutate_last(call, &ValueCatalog.mutants(capability, &1, position))
 
   # The shape the last-argument clause-macro mutators share: split the mutated **last argument**
   # off (the ordering / selector — `init` keeps the binding list when one is written), map it to
