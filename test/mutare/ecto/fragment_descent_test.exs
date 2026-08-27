@@ -1,28 +1,28 @@
-defmodule Mutare.Ecto.FragmentWalkParityTest do
+defmodule Mutare.Ecto.FragmentDescentTest do
   use ExUnit.Case, async: true
 
   alias Mutare.Ecto.Fragment
 
-  # `Fragment` walks a condition twice, in two separate recursive functions: `mutants/1` (the SQL
-  # catalog's single-point mutants) and `islands/1` (the `^`-pin interiors it hands to core). They
-  # MUST make the same descend/don't-descend decision at every node — otherwise a real pin island
-  # goes uncollected (a false negative) or a pin gets mutated as SQL the catalog does not own. The
-  # moduledoc of `islands/1` leans on this agreement ("a caller cannot reach an island the catalog
-  # would not have walked past"), so it is worth a guard.
+  # `Fragment`'s two readers — `mutants/1` (the SQL catalog's single-point mutants) and
+  # `islands/1` (the `^`-pin interiors it hands to core) — read the positions of ONE walk
+  # (`Mutare.Ecto.Walk.positions/3`) under the catalog's one descent rule (`children/2`), so they
+  # agree at every node by construction: neither descends on its own. (They used to be two
+  # hand-rolled copies of the traversal, and this file guarded their parity.) What is still worth
+  # pinning is the descent **policy** itself — the decisions a condition's SQL semantics dictate,
+  # which a well-meaning edit to `children/2` could silently flip: `is_nil` claims its whole
+  # argument (never entered), the `in` operands are entered (through a written `not` too), and a
+  # written list's elements are entered. A wrong turn there is a false negative (a real pin island
+  # uncollected, a real literal never mutated) or a pin mutated as SQL the catalog does not own.
   #
-  # Two of the three descent decisions are already structurally single-sourced and don't need a
-  # probe here: the nested-author-macro rule (both walks route per-argument descent through
-  # `Mutare.Ecto.Descent`) and the subquery-interior recursion (both delegate to the same
-  # `Mutare.Ecto.Subquery` entry points — and its interiors only resolve under the full transform
-  # pipeline, so that half is exercised end-to-end in `subcontract_test.exs`/`exotic_query_test.exs`,
-  # not here). What is left, and what each walk still pattern-matches *independently*, is the
-  # STRUCTURAL recognition: `is_nil` (never entered), the `in` membership operands (entered), and a
-  # written list (entered). That is what this test pins.
+  # The nested-author-macro rule is `Mutare.Ecto.Walk`'s, and the subquery-interior recursion is
+  # `Mutare.Ecto.Subquery`'s (its interiors only resolve under the full transform pipeline, so that
+  # half is exercised end-to-end in `subcontract_test.exs`/`exotic_query_test.exs`, not here).
   #
   # The probe: at one test position each fixture places either a lone `^v` pin or a lone integer
-  # literal. `islands/1` surfaces the pin *iff* it descended to that position; `mutants/1` yields an
-  # `:integer_literal` mutant *iff* it descended to the same position (that literal is the fixture's
-  # only integer). When the two walks agree, both answers equal `descend?`.
+  # literal. `islands/1` surfaces the pin *iff* the walk reached that position; `mutants/1` yields an
+  # `:integer_literal` mutant *iff* it reached the same position (that literal is the fixture's
+  # only integer). Both readers are asserted, so a reader that grew a descent of its own — or lost
+  # one — fails here too.
   @fixtures [
     %{
       desc: "comparison operand",
@@ -63,7 +63,7 @@ defmodule Mutare.Ecto.FragmentWalkParityTest do
   ]
 
   for %{desc: desc, pinned: pinned, literal: literal, descend?: descend?} <- @fixtures do
-    test "#{desc}: both walks #{if(descend?, do: "descend", else: "stop")} in step" do
+    test "#{desc}: both readers #{if(descend?, do: "descend", else: "stop")} in step" do
       assert island_surfaced?(unquote(pinned)) == unquote(descend?),
              "islands/1 disagreed with the expected descent for: #{unquote(pinned)}"
 
@@ -72,10 +72,10 @@ defmodule Mutare.Ecto.FragmentWalkParityTest do
     end
   end
 
-  # Whether `islands/1` surfaced the fixture's single pin — i.e. its walk descended to that position.
+  # Whether `islands/1` surfaced the fixture's single pin — i.e. the walk reached that position.
   defp island_surfaced?(src), do: src |> Sourceror.parse_string!() |> Fragment.islands() != []
 
-  # Whether `mutants/1` produced an `:integer_literal` mutant — i.e. its walk descended to the
+  # Whether `mutants/1` produced an `:integer_literal` mutant — i.e. the walk reached the
   # fixture's single integer literal. Any other family (a comparison/membership flip on an outer
   # node) is not descent to the probe position, so it is ignored.
   defp literal_descended?(src) do

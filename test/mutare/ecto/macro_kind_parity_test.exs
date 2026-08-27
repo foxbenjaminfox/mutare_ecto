@@ -17,7 +17,8 @@ defmodule Mutare.Ecto.MacroKindParityTest do
   # the plugin doesn't own), but Elixir has no exhaustiveness check: add or rename a kind in
   # `Surface` and any of the three can silently degrade a whole macro family to "no mutations" —
   # for a mutation-testing tool, silent coverage loss, the worst failure mode. This is the
-  # taxonomy-level sibling of `fragment_walk_parity_test.exs`: every kind in
+  # taxonomy-level cousin of `fragment_descent_test.exs` (the condition walk's descent policy):
+  # every kind in
   # `Surface.macro_kinds/0` must carry a probe below, and each probe pins observable evidence
   # that all three loops take a real branch for that kind — or that the kind is *structurally*
   # excluded from a loop (registered `:skip`, so core never calls `route_arguments/2`; absent
