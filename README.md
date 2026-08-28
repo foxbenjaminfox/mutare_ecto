@@ -121,8 +121,9 @@ just be a broken query, not a test signal).
 | `validation_drop` | drop `validate_required`, `unique_constraint`, … | Is the rule it enforces tested? |
 | `hook_drop` | drop `prepare_changes` / `optimistic_lock` | Is the side effect / lock asserted? |
 
-Both query syntaxes are covered — the `from(u in User, where: …)` keyword form and the composable
-pipe form (`q |> where([u], …)`) — as are direct, aliased, and `import`/`use`-bundled call styles.
+Both query syntaxes are covered — the `from(u in User, where: …)` keyword form (piped too:
+`User |> from(as: :u, where: …)`) and the composable pipe form (`q |> where([u], …)`) — as are
+direct, aliased, and `import`/`use`-bundled call styles.
 Schema definitions (`schema`/`embedded_schema`) are left untouched: a mutated field name is a
 broken schema, not an interesting mutant.
 

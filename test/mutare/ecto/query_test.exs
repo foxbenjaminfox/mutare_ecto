@@ -103,6 +103,98 @@ defmodule Mutare.Ecto.QueryTest do
     assert ecto_diffs(src) == []
   end
 
+  describe "the piped from (`Post |> from(…)`)" do
+    # The source is the `|>` left side, so the whole-`from` rewrites read the call's one visible
+    # argument as the clause list (`Mutare.Ecto.AST.FromCall`, by `pipe_mode`) and rebuild only
+    # the `from(…)` half — the pipe and its source are never re-emitted.
+    test "drops each filter and the bound, rebuilding the from(…) half only" do
+      src = """
+      defmodule Posts do
+        import Ecto.Query
+        def q, do: Post |> from(where: [active: true], where: [deleted: false], limit: 10)
+      end
+      """
+
+      drops = Enum.filter(ecto_diffs(src), fn {_original, mutated} -> mutated == "" end)
+      assert drops == [{"[active: true]", ""}, {"[deleted: false]", ""}, {"10", ""}]
+
+      # Core hoists a piped stage with whole-call mutants into a closure over the pipe's left side
+      # (`Post |> (fn mutare_piped -> case … end).()`), so each drop mutant is `mutare_piped |>
+      # from(…)` with one clause fewer — the source is never re-emitted into the call.
+      mm = metamutant(src)
+      assert mm =~ "mutare_piped |> from(where: [deleted: false], limit: 10)"
+      assert mm =~ "mutare_piped |> from(where: [active: true], limit: 10)"
+      assert mm =~ "mutare_piped |> from(where: [active: true], where: [deleted: false])"
+      refute mm =~ "from(Post"
+      assert_compiles(src)
+    end
+
+    test "dropping the last clause collapses to the argless `from()`" do
+      src = """
+      defmodule Posts do
+        import Ecto.Query
+        def q, do: Post |> from(where: [active: true])
+      end
+      """
+
+      assert ecto_diffs(src) == [{"[active: true]", ""}]
+
+      # The piped twin of the `from(source)` collapse — never `from([])`. (`mutare_piped` is core's
+      # hoisted pipe-left variable — see the drop test above.)
+      assert metamutant(src) =~ "mutare_piped |> from()"
+      assert_compiles(src)
+    end
+
+    test "yields exactly the direct form's mutants" do
+      piped = """
+      defmodule Posts do
+        import Ecto.Query
+        def q do
+          Post
+          |> from(
+            as: :post,
+            left_join: c in "comments",
+            on: c.post_id == as(:post).id,
+            where: as(:post).views > 1,
+            order_by: [asc: as(:post).name],
+            limit: 10,
+            select: sum(as(:post).views)
+          )
+        end
+      end
+      """
+
+      direct = """
+      defmodule Posts do
+        import Ecto.Query
+        def q do
+          from(
+            Post,
+            as: :post,
+            left_join: c in "comments",
+            on: c.post_id == as(:post).id,
+            where: as(:post).views > 1,
+            order_by: [asc: as(:post).name],
+            limit: 10,
+            select: sum(as(:post).views)
+          )
+        end
+      end
+      """
+
+      assert ecto_diffs(piped) == ecto_diffs(direct)
+
+      # Every whole-`from` producer fires: the join narrowing, the ordering flip, the aggregate
+      # swap — and the hosted `on:` re-declares the join binding past the hidden source (`[..., c]`).
+      assert {"left_join:", "inner_join:"} in ecto_diffs(piped)
+      assert Enum.any?(ecto_diffs(piped), fn {_o, m} -> m =~ "desc: as(:post).name" end)
+      assert {"sum(as(:post).views)", "avg(as(:post).views)"} in ecto_diffs(piped)
+      assert {"c.post_id == as(:post).id", "c.post_id != as(:post).id"} in ecto_diffs(piped)
+      assert metamutant(piped) =~ "dynamic([..., c], c.post_id"
+      assert_compiles(piped)
+    end
+  end
+
   describe "Bound (limit/offset)" do
     test "drops a limit clause and bumps its value by ±1 (the bump woven pin-only)" do
       src = """

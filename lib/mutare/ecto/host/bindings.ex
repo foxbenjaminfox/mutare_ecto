@@ -21,10 +21,13 @@ defmodule Mutare.Ecto.Host.Bindings do
         # contiguous slot. Only a *literal* queryable (`x in Schema`, `x in "table"`, `x in {"t", S}`)
         # has no hidden bindings — its joins follow contiguously, so it must *not* anchor.
         {:in, _, [lhs, rhs]} -> {declarations(lhs), composed_source?(rhs)}
+        # A piped `from`'s source is the hidden `|>` left side (`Mutare.Ecto.AST.FromCall`): it
+        # declares no binding, and — unseen — may be anything, so it is read as composed.
+        nil -> {[], true}
         # A bare queryable source (`from(Post, …)`, `from("t", as: :t, …)`, `from(q, …)`) declares
         # no binding; its composed-ness is read off the queryable itself, exactly as for an `in`
         # rhs. (With no positional to count from, `join_anchor/4` anchors an appended join either
-        # way — the value is honest, not load-bearing.)
+        # way — the value is honest, not load-bearing, for this and the hidden source alike.)
         _ -> {[], composed_source?(source)}
       end
 

@@ -342,6 +342,43 @@ defmodule Mutare.Ecto.SemanticCases do
           assert mutant == [1, 2, 4, 5, 6]
           assert mutant -- baseline == [1, 4]
         end
+
+        test "the same fires in a piped `from` (hidden source, empty-binding dynamic)" do
+          # The pipe twin of the bare-queryable `from`: `User |> from(as: :user, where: …)`. The
+          # source is the `|>` left side, so the host splices into the call's one visible
+          # argument (`FromCall` rebuilt at the written arity) — a different rebuild than the
+          # two-argument direct form, so its weave needs its own liveness proof: an inert splice
+          # that recorded a perfect Site but bound the baseline on every branch would pass every
+          # unit test. The bound bump rides the same rebuild, so it is observed here too.
+          {mod, sites} =
+            build("""
+            defmodule Q do
+              import Ecto.Query
+              alias MyApp.User
+              def q do
+                User
+                |> from(
+                  as: :user,
+                  where: as(:user).age > 18,
+                  order_by: as(:user).id,
+                  limit: 2,
+                  select: as(:user).id
+                )
+              end
+            end
+            """)
+
+          {baseline, mutant} =
+            observe_ids(mod, sites, {"as(:user).age > 18", "as(:user).age >= 18"})
+
+          # Baseline: the first two ids strictly over 18 — Bob(2), Eve(5); the `>=` mutant admits
+          # Alice(1, age 18) ahead of them, shifting the window.
+          assert baseline == [2, 5]
+          assert mutant == [1, 2]
+
+          # The pin-only bound bump on the same piped `from` widens the window.
+          assert ids(mod, site_id(sites, {"2", "3"})) == [2, 5, 6]
+        end
       end
 
       describe "Comparison — free-standing `dynamic` (whole-call in-place delivery)" do

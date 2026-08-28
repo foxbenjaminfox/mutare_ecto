@@ -57,6 +57,14 @@ defmodule Mutare.Ecto.Host.Routing do
       values are left raw. So a shorthand value mutation is recorded under the *core* family that
       made it (`:literal`/`:string`/…), not `:ecto`. The non-condition clauses
       (`select`/`order_by`/… — whole-`from`'s job) are always left raw.
+    * the **piped** `from` — `Post |> from(as: :post, where: as(:post).x > v, limit: 5)`: the
+      same decisions, placed by form. The source is the hidden `|>` left side, routed `:skip` like
+      the direct form's source slot (the plugin never sees its shape, and swapping a structural
+      one is a broken query), and the one visible argument is the clause list, routed per clause
+      exactly as above — so a bare-queryable pipe hosts its `as(:_)` conditions behind an
+      empty-binding `dynamic([], …)`, pins its shorthand values, and weaves its literal bounds.
+      `Mutare.Ecto.AST.FromCall` places the clauses by `pipe_mode` for the host and the
+      whole-`from` rewrites alike, so the piped and direct spellings yield the same mutants.
     * the composable pipe/standalone form — `q |> where([p], p.x == v)` / `where(q, [p], …)`: the
       threaded query routes `:expression` by form (above), and the condition
       `Mutare.Ecto.Host.Condition` locates (binding-form or binding-less) routes `:hosted`. A
@@ -85,13 +93,26 @@ defmodule Mutare.Ecto.Host.Routing do
   per-visible-argument `treatments/3` classification, wrapped as `ArgumentRoutes`. Core hands in a
   resolved `Mutare.MacroRouting.Call`, so the written form (bare/qualified/aliased/piped) is already
   normalized, and its `pipe_mode` is what places the threaded query (see the moduledoc): a direct
-  call's first visible argument is it, while a piped call's hidden left side is — so it keeps
-  `from_visible`'s `:expression` default, and the upstream query stays mutable through the stage.
+  call's first visible argument is it, while a piped call's hidden left side is — routed
+  `:expression` (`from_visible`'s default), so the upstream query stays mutable through the stage.
+  The one exception is a piped `from`, whose hidden left side is the never-routed *source*, `:skip`
+  (`piped_treatment/1`).
   """
   @spec route_arguments(Call.t(), Mutare.MacroRouting.routing_context()) :: ArgumentRoutes.t()
   def route_arguments(%Call{name: name, arguments: args, pipe_mode: pipe_mode} = call, _context) do
-    ArgumentRoutes.from_visible(call, treatments(name, args, pipe_mode))
+    ArgumentRoutes.from_visible(call, treatments(name, args, pipe_mode),
+      piped: piped_treatment(name)
+    )
   end
+
+  # The treatment of a piped call's hidden left side. For every composable macro it is the
+  # threaded query, `:expression` (the moduledoc). For `from` it is the **source**, which is never
+  # routed in either form: written directly it is the `:skip` slot below, and piped it is the
+  # one position whose shape the classifier cannot even see (core's `Call` carries only the
+  # visible arguments) — a structural `Post |> from(…)`, by far the common spelling, would
+  # otherwise be handed to core's `:alias` family and swapped for a nonexistent module.
+  defp piped_treatment(:from), do: :skip
+  defp piped_treatment(_name), do: :expression
 
   @doc """
   Per-visible-argument treatment for a `:routing`-registered query macro (`from`, the
@@ -102,20 +123,26 @@ defmodule Mutare.Ecto.Host.Routing do
   """
   @spec treatments(atom(), [Macro.t()], Mutare.Mutator.pipe_mode()) ::
           [Mutare.MacroRouting.treatment()]
-  def treatments(:from, [_source | rest] = args, _pipe_mode) do
-    # The source slot is `:skip` in either form (see the moduledoc); each clause routes
-    # independently (`clause_treatments/1`). A piped `from` (`Post |> from(…)`) is not a shape
-    # the plugin reads (`FromCall` takes the source from the argument list), so its visible
-    # clause list lands in the source slot and stays raw.
+  def treatments(:from, args, pipe_mode) do
+    # The source is never routed (the moduledoc): written directly it is the first visible
+    # argument, `:skip`; piped (`Post |> from(…)`) it is the hidden `|>` left side, which
+    # `route_arguments/2` routes `:skip` through `piped_treatment/1`, so every visible argument
+    # is the clause list. `FromCall.parse_args/2` places the clauses by `pipe_mode`, exactly as
+    # the host and the whole-`from` rewrites will; each clause then routes independently
+    # (`clause_treatments/1`).
     clause_treatment =
-      case FromCall.parse_args(args) do
+      case FromCall.parse_args(args, pipe_mode) do
         {_source, %KeywordList{} = clauses} -> {:keyword, clause_treatments(clauses)}
         # A non-keyword clause argument (`from(source, ^clauses)`) or malformed AST routes `:skip`.
         # (A clause-less `from(Post)` parses fine but has no clause position to route.)
         nil -> :skip
       end
 
-    [:skip | List.duplicate(clause_treatment, length(rest))]
+    case {pipe_mode, args} do
+      {:unpiped, [_source | rest]} -> [:skip | List.duplicate(clause_treatment, length(rest))]
+      {:unpiped, []} -> []
+      {:piped, visible} -> List.duplicate(clause_treatment, length(visible))
+    end
   end
 
   def treatments(macro, args, pipe_mode),

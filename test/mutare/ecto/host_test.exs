@@ -767,6 +767,57 @@ defmodule Mutare.Ecto.HostTest do
       assert metamutant(src) =~ "dynamic([], as(:post).views"
       assert_compiles(src)
     end
+
+    test "a piped `from` hosts exactly what its direct twin does (hidden source)" do
+      # `Post |> from(…)`: the source is the `|>` left side, so the call's one visible argument is
+      # the clause list. Before this it landed in the source slot and the whole call stayed raw —
+      # zero mutants for a perfectly ordinary query. Now `FromCall` places the clauses by
+      # `pipe_mode`, so the named-binding condition hosts behind an empty-binding `dynamic([], …)`
+      # and the literal bound weaves pin-only, exactly as in `from(Post, …)`.
+      piped = """
+      defmodule M do
+        import Ecto.Query
+        def q, do: Post |> from(as: :post, where: as(:post).views > 100, limit: 5)
+      end
+      """
+
+      direct = """
+      defmodule M do
+        import Ecto.Query
+        def q, do: from(Post, as: :post, where: as(:post).views > 100, limit: 5)
+      end
+      """
+
+      assert hosted(piped) == hosted(direct)
+      assert {"as(:post).views > 100", "as(:post).views >= 100"} in hosted(piped)
+      assert {"5", "6"} in hosted(piped)
+
+      # Core hoists the piped stage (it also carries whole-call drop mutants) into a closure over
+      # the pipe's left side, so the woven `from(…)` reads `mutare_piped |> from(…)`: the
+      # condition pinned behind an empty-binding `dynamic`, the bound pinned bare.
+      mm = metamutant(piped)
+      assert mm =~ ~r/mutare_piped\s*\|> from\(\s*as: :post,\s*where:\s*\^case/
+      assert mm =~ "dynamic([], as(:post).views"
+      assert mm =~ ~r/limit:\s*\^case/
+      refute mm =~ "from(Post"
+      assert_compiles(piped)
+    end
+
+    test "a piped `from`'s shorthand where pins its scalar value (core's family, `^`-delivered)" do
+      # The keyword-shorthand twin: the clause list routes per pair, so core's boolean family
+      # mutates `true` behind a pin — the same delivery as `from(Post, where: [active: true])`.
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q, do: Post |> from(where: [active: true], select: [:id])
+      end
+      """
+
+      with_core = [:all, {Mutare.Ecto, repo: MyApp.Repo}]
+      assert {:boolean, "true", "false"} in diffs(src, mutators: with_core)
+      assert metamutant(src, mutators: with_core) =~ ~r/where: \[\s*active:\s*\^case/
+      assert_compiles(src, mutators: with_core)
+    end
   end
 
   describe "totality — a degenerate zero-arg macro yields no hosted target" do
@@ -1210,6 +1261,56 @@ defmodule Mutare.Ecto.HostTest do
         assert_compiles(src, mutators: @with_core)
       end
     end
+
+    test "a piped `from`'s hidden source is never routed — in the pipe as in the direct form" do
+      # `from`'s source is the one position the plugin never routes, and piped it is the one
+      # position whose shape the classifier cannot even see (core's `Call` carries only visible
+      # arguments), so `route_arguments/2` marks the pipe's left side `:skip` outright: a
+      # structural `Post |> from(…)` is never handed to core's `:alias` family (it used to be —
+      # `from_visible`'s `:expression` default), while every clause beside it is still mutated.
+      for source <- ["Post", ~S|"posts"|, ~S|{"posts", Post}|] do
+        src = """
+        defmodule Posts do
+          import Ecto.Query
+          def q, do: #{source} |> from(as: :post, where: as(:post).views > 1)
+        end
+        """
+
+        diffs = diffs(src, mutators: @with_core)
+        refute Enum.any?(diffs, fn {family, _, _} -> family in [:alias, :string, :tuple] end)
+        assert {:ecto, "as(:post).views > 1", "as(:post).views >= 1"} in diffs
+        assert_compiles(src, mutators: @with_core)
+      end
+    end
+
+    test "route_arguments/2 routes only a piped from's left side :skip" do
+      # The classifier-level pin for the test above: the `ArgumentRoutes` a piped `from` returns
+      # carries `piped: :skip`, while a piped composable macro keeps the `:expression` default
+      # (its left side is the threaded query — its upstream mutations must stay reachable).
+      alias Mutare.MacroRouting.{ArgumentRoutes, Call}
+
+      piped_call = fn name, args ->
+        %Call{
+          node: {name, [], args},
+          module: Ecto.Query,
+          name: name,
+          arguments: args,
+          pipe_mode: :piped,
+          effective_arity: length(args) + 1,
+          rebuild: fn new_name, new_args -> {new_name, [], new_args} end
+        }
+      end
+
+      [clauses] = Sourceror.parse_string!("from(as: :post, where: as(:post).x > 1)") |> elem(2)
+      from_routes = Host.Routing.route_arguments(piped_call.(:from, [clauses]), %{})
+      assert ArgumentRoutes.piped(from_routes) == :skip
+      assert ArgumentRoutes.visible(from_routes) == [{:keyword, [:skip, :hosted]}]
+
+      [bindings, cond] = Sourceror.parse_string!("where([p], p.x > 1)") |> elem(2)
+      where_routes = Host.Routing.route_arguments(piped_call.(:where, [bindings, cond]), %{})
+      assert ArgumentRoutes.piped(where_routes) == :expression
+      assert ArgumentRoutes.visible(where_routes) == [:skip, :hosted]
+    end
   end
 
   # The end-to-end tests above confirm delivery. The focused classifier checks below keep routing
@@ -1256,6 +1357,23 @@ defmodule Mutare.Ecto.HostTest do
 
       assert routing(~s|from("posts", as: :post, where: [active: true], select: [:id])|) ==
                [:skip, {:keyword, [:skip, {:keyword, [:interpolated]}, :skip]}]
+    end
+
+    test "a piped from routes its one visible argument — the clause list — per clause" do
+      # `Post |> from(…)`: the source is the `|>` left side (routed `:skip` by `route_arguments/2`,
+      # not here — `treatments/3` covers the visible arguments only), so the clause list is
+      # visible argument zero and routes exactly as the direct form's second argument does: the
+      # named-binding condition `:hosted`, the literal bound `:hosted`, the shorthand per pair,
+      # the data keys raw. Argless, there is nothing to route.
+      assert routing("Post |> from(as: :post, where: as(:post).views > 1, limit: 5)") ==
+               [{:keyword, [:skip, :hosted, :hosted]}]
+
+      assert routing("Post |> from(where: [active: true], select: [:id])") ==
+               [{:keyword, [{:keyword, [:interpolated]}, :skip]}]
+
+      assert routing("Post |> from()") == []
+      # A non-keyword clause argument stays raw, as in the direct form.
+      assert routing("Post |> from(^clauses)") == [:skip]
     end
 
     test "from keyword form hosts a top-level interpolation (its interior is sub-contracted)" do

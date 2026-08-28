@@ -70,6 +70,20 @@ would need descent-propagating marks. Proven in `structural_marks_test.exs` (hel
 plugin enabled, mutating without it — plus the piped/imported spellings and a positional
 sibling-atom control).
 
+### A binding pattern on a pipe's left (`(p in Post) |> from(…)`) is unsupported
+
+Ecto accepts `(p in Post) |> from(where: p.x > 1)` — `|>` rewrites it to `from(p in Post, …)`
+before `from` expands — but the shape is pathological, and neither core nor the plugin can
+serve it: core's pipe hoisting binds the left side to `mutare_piped` as a *value*
+(`Kernel.in/2` on an unbound `p`), and the plugin's hidden-source `FromCall` (design history
+"Piped `from`: the hidden source") declares no bindings for it, so a hosted `where:` would weave
+`dynamic([], p.x > 1)`. Either would fail the single build. The plugin cannot guard it —
+`Mutare.MacroRouting.Call` carries only the visible arguments, so the left side's shape is
+unseen — and core exposing the pipe-left is a core seam (consult before adding). Deferred until
+someone writes it: the piped `from` in the wild is a bare or computed queryable on the left
+(`Post |> from(as: :post, …)`), whose conditions reference named bindings or are keyword
+shorthand, and those are exactly the shapes now covered.
+
 ## Design history
 
 What a thing used to be, what it is now, and why. The moduledocs state only the current shape;
@@ -224,3 +238,21 @@ and it routes `:expression` whatever its shape. The only shape still read there 
 queryable (a schema alias, a table-name string, a `{"table", Schema}` pair), which stays raw
 because a table/schema swap is a broken query, not a mutant. `Surface.query_builder?/1` went with
 the heuristic.
+
+### Piped `from`: the hidden source
+
+`Post |> from(as: :post, where: as(:post).views > 5, limit: 5)` used to receive **no** mutations
+at all — no comparison, no literal, no filter drop, no bound — while the identical
+`from(Post, as: :post, …)` received eight. `Mutare.Ecto.AST.FromCall` took the source from the
+argument list, so a piped `from`'s one visible argument (the clause list) landed in the source
+slot; `Mutare.Ecto.Host.Routing` then stamped it `:skip`, and the host and `Mutare.Ecto.Query`
+each parsed a clause-less `from` and produced nothing. `FromCall` now places the clauses by the
+call's `pipe_mode` (`Mutare.Ecto.AST.QueryCall` carries core's stamp): piped, the source is
+`nil` — hidden, on the pipe's left — and every edit rebuilds the `from(…)` half at its written
+arity, so the routing classifier, the host splice, and the whole-`from` rewrites all read the same
+shape and the two spellings yield the same mutants. The hidden source itself routes `:skip`
+(`route_arguments/2`'s `piped:` override — the plugin never sees its shape, and `from`'s source
+is never routed in the direct form either), which also stops core's `:alias` family from swapping
+a structural `Post |>` for a nonexistent module, as `from_visible`'s `:expression` default had let
+it. Inside a subquery, the inline-`from` finders (`Mutare.Ecto.Subquery`) still recognise only
+the direct spelling — a `subquery(Post |> from(…))` interior stays out of reach.
