@@ -483,6 +483,32 @@ defmodule Mutare.Ecto.SemanticCases do
         end
       end
 
+      describe "FragmentLiteral — inside a tuple comparison (dynamic-injected)" do
+        # Ecto compares `{p.views, p.id} > {10, 1}` as one unit — SQL's row-value comparison,
+        # `(views, id) > (10, 1)` — so a literal element is data the engine compares against, mutated
+        # like any in-fragment literal. The probe is the *second* element: `{10, 1}` → `{10, 0}`
+        # admits P1 `(10, 1)`, which the baseline excludes on the tie-break — the one row the second
+        # element decides, so its admission is what proves the literal inside the tuple moved.
+        test "moving the tuple's second element admits the row it tie-breaks" do
+          {mod, sites} =
+            build("""
+            defmodule Q do
+              import Ecto.Query
+              alias MyApp.Post
+              def q, do: from(p in Post, where: {p.views, p.id} > {10, 1}, select: p.id)
+            end
+            """)
+
+          {baseline, mutant} =
+            observe_ids(mod, sites, {"{p.views, p.id} > {10, 1}", "{p.views, p.id} > {10, 0}"})
+
+          # Only P2 `(20, 2)` clears `(10, 1)`; P1 `(10, 1)` ties, P3 `(5, 3)` falls short.
+          assert baseline == [2]
+          # `(10, 1) > (10, 0)` — P1 joins.
+          assert mutant == [1, 2]
+        end
+      end
+
       describe "NullPredicate — `is_nil` ↔ `not is_nil` (dynamic-injected)" do
         # The uniquely-SQL family: `IS NULL` flips to `IS NOT NULL`. The result sets are
         # complements, so an inert injection (returning the baseline) is impossible to miss.

@@ -76,7 +76,10 @@ defmodule Mutare.Ecto.Fragment do
   query, not a live one): the `fragment` template, an interval unit, a cast type, a column,
   binding, or alias name — `structural_position?/1` is the registry, consulted off the
   `{parent_form, arity, index}` the walk threads down. Data literals at every *other* position
-  of those forms are still mutated.
+  of those forms are still mutated. A **tuple** is told apart the same way: at a structural
+  position it is a compound cast spec (`{:array, :string}`), skipped whole; anywhere else it is
+  Ecto's tuple comparison (`{p.views, p.id} > {1, 2}`), walked like a written list — each element
+  a data position of the comparison (`children/2`).
 
   ## Traversal
 
@@ -197,24 +200,43 @@ defmodule Mutare.Ecto.Fragment do
   # — is reached by ordinary descent and recursed the same way; only `exists` is a unit.)
   defp children({:exists, _meta, [_arg]}, _position), do: []
 
-  # A 2-tuple is not condition syntax the catalog speaks. The one place it appears is a compound
-  # cast spec — `type(x, {:array, :string})`, `{:parameterized, …}` — whose every literal is
-  # structural, and leaving the tuple unentered is what keeps a *nested* spec's literals out of
-  # reach: the structural-position registry names only a form's direct argument.
-  defp children({_left, _right}, _position), do: []
+  # A tuple — `{left, right}` (a 2-tuple is bare AST) or `{:{}, meta, elements}` (every other
+  # size) — plays two roles in a condition, told apart by its position. At a *structural*
+  # position it is a compound cast spec — `type(x, {:array, :string})`, `{:parameterized, …}` —
+  # whose every literal, at any depth, is the SQL type the builder emits: it stays unentered,
+  # which is what keeps a *nested* spec's literals out of reach (the structural-position
+  # registry names only a form's direct argument, so a walk into the spec would hand the inner
+  # literals a non-structural position). Anywhere else it is a **value tuple**: Ecto's tuple
+  # comparison, `{p.views, p.id} > {1, 2}` (SQL's row-value comparison, `(views, id) > (1, 2)`),
+  # the one value role Ecto grants a tuple (it is refused outside a comparison against a tuple
+  # of the same size). That tuple is transparent syntax like a written list — its elements keep
+  # the enclosing comparison's position (`child_position/3`) — so a literal element is data and
+  # mutated, a field/arithmetic element is walked, and a pinned element is an island. There is
+  # no element drop (unlike an in-list, the two sides must keep one size).
+  defp children({:{}, _meta, _elements} = tuple, position), do: tuple_children(tuple, position)
+  defp children({_left, _right} = tuple, position), do: tuple_children(tuple, position)
 
   # Everything else — an operator/call (its arguments under the author-macro rule), a written
   # list, a Sourceror block — descends structurally; a `^` pin is a leaf (`Mutare.Ecto.Walk`).
   defp children(node, position), do: Walk.structural(node, position, &child_position/3)
 
+  # The tuple rule's one decision (above): a cast spec is a leaf, a value tuple descends.
+  defp tuple_children(tuple, position) do
+    if structural_position?(position),
+      do: [],
+      else: Walk.structural(tuple, position, &child_position/3)
+  end
+
   # A child's `{parent_form, arity, index}` — the key the literal arms consult
-  # (`structural_position?/1`, `json_path_position?/1`). A Sourceror block and a written list are
-  # transparent syntax: their elements keep the enclosing *call's* position (the registry is keyed
-  # by call-argument positions, and a `json_extract_path` path element's constraints are the path
-  # argument's). The top-level condition has no parent (`nil`) and is never structural.
+  # (`structural_position?/1`, `json_path_position?/1`). A Sourceror block, a written list and a
+  # value tuple (either AST form) are transparent syntax: their elements keep the enclosing
+  # *call's* position (the registry is keyed by call-argument positions, and a
+  # `json_extract_path` path element's constraints are the path argument's). The top-level
+  # condition has no parent (`nil`) and is never structural.
   defp child_position({:__block__, _meta, _args}, _index, position), do: position
+  defp child_position({:{}, _meta, _elements}, _index, position), do: position
   defp child_position({form, _meta, args}, index, _position), do: {form, length(args), index}
-  defp child_position(_list, _index, position), do: position
+  defp child_position(_list_or_pair, _index, position), do: position
 
   # The unit predicates — the ones a written `not` claims as a single position.
   defp unit?({:is_nil, _meta, [_arg]}), do: true
@@ -304,6 +326,11 @@ defmodule Mutare.Ecto.Fragment do
   # (`child_position/3`), so a written in-list's literals are fragment SQL exactly like a bare one.
   defp local({:__block__, _meta, _args}, _position, _config), do: []
 
+  # A tuple in its `{:{}, …}` form has no swap of its own: a value tuple's elements are the
+  # walk's (`children/2`), a cast spec's are structural. (The 2-tuple form is bare AST, not a
+  # call, and falls to the catch-all below.)
+  defp local({:{}, _meta, _elements}, _position, _config), do: []
+
   # An operator/connective (atom form): its own swap (if any). A bare inline subquery `from(...)`
   # (the argument of a value-wrapper — `all`/`any`/`subquery`/`in` — reached by the operand descent)
   # has no swap of its own, but `Subquery` recurses its interior in `:value` mode; every other
@@ -320,8 +347,9 @@ defmodule Mutare.Ecto.Fragment do
   defp local({_form, _meta, args} = node, _position, config) when is_list(args),
     do: Subquery.interior_mutants(node, config, :value)
 
-  # Variables, a block's bare payload, 2-tuples, bare atoms: no catalog target (interpolations are
-  # core's; the `in`/`like` membership forms are handled by their own clauses above).
+  # Variables, a block's bare payload, a 2-tuple (no swap of its own — its elements are the
+  # walk's), bare atoms: no catalog target (interpolations are core's; the `in`/`like` membership
+  # forms are handled by their own clauses above).
   defp local(_node, _position, _config), do: []
 
   # ── The islands: what one position hands to core ───────────────────────────────────────────
@@ -388,8 +416,8 @@ defmodule Mutare.Ecto.Fragment do
   # `d` can be NULL (a nullable column, a pin), and a trivially killable one when it cannot (the
   # original was constantly false; the mutant merely says so). The argument is read by a
   # narrowed walk under the catalog's own descent rule (`children/2` — so a pin, a unit, a
-  # 2-tuple and the author-macro rule bound it exactly as they bound the condition walk) with a
-  # per-node reader that offers only the drop: no literal, arithmetic or aggregate mutant — nor
+  # cast-spec tuple and the author-macro rule bound it exactly as they bound the condition walk)
+  # with a per-node reader that offers only the drop: no literal, arithmetic or aggregate mutant — nor
   # an island, which stays `local_islands/1`'s — ever surfaces here. Each drop is anchored at
   # the coalesce call it collapses (`Mutare.Ecto.Walk.mutants/4`), like any other.
   defp null_interior({:is_nil, meta, [arg]}) do

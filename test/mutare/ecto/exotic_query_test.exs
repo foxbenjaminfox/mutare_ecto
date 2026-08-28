@@ -963,6 +963,32 @@ defmodule Mutare.Ecto.ExoticQueryTest do
     end
   end
 
+  describe "tuple comparison" do
+    test "a tuple compared as a unit is walked: each literal element mutates, and the weave compiles" do
+      # Ecto's `{p.views, p.id} > {^min, 1}` (SQL's row-value comparison) is hosted like any
+      # condition; the literal element inside the tuple is fragment data, not a cast spec, so it
+      # carries its integer mutants — woven behind the same selector as the operator swap.
+      src = """
+      defmodule Q do
+        import Ecto.Query
+
+        def q(min) do
+          from p in MyApp.Post,
+            where: {p.views, p.id} > {^min, 1}
+        end
+      end
+      """
+
+      diffs = ecto_diffs(src, @all)
+
+      assert {"{p.views, p.id} > {^min, 1}", "{p.views, p.id} >= {^min, 1}"} in diffs
+      assert {"{p.views, p.id} > {^min, 1}", "{p.views, p.id} > {^min, 2}"} in diffs
+      assert {"{p.views, p.id} > {^min, 1}", "{p.views, p.id} > {^min, 0}"} in diffs
+
+      assert_compiles(src, @all)
+    end
+  end
+
   describe "group_by/distinct expressions" do
     test "grouping and distinctness declarations are never mutated" do
       src = """

@@ -63,6 +63,12 @@ defmodule Mutare.Ecto.FragmentDescentTest do
       descend?: true,
       pinned: "u.a in [^v]",
       literal: "u.a in [4242]"
+    },
+    %{
+      desc: "tuple-comparison element (Ecto's row-value comparison — the tuple is transparent)",
+      descend?: true,
+      pinned: "{u.a, u.b} > {^v, u.c}",
+      literal: "{u.a, u.b} > {4242, u.c}"
     }
   ]
 

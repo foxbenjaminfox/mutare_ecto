@@ -50,6 +50,47 @@ defmodule Mutare.Ecto.FragmentTest do
     end
   end
 
+  describe "Tuple comparison" do
+    # Ecto compares a tuple against a literal tuple of the same size as one unit — SQL's row-value
+    # comparison, `(views, id) > (1, 2)`. The tuple is transparent syntax like a written list: its
+    # literals are data the engine compares against, so each keeps its own mutants alongside the
+    # comparison's swap. (The same shape at a *structural* position is a cast spec instead — see
+    # "structural positions in known Ecto DSL forms".)
+    test "each literal element of the compared tuple mutates on its own; the operator still swaps" do
+      assert mutants("{p.views, p.id} > {1, 2}") ==
+               MapSet.new([
+                 "{p.views, p.id} >= {1, 2}",
+                 "{p.views, p.id} > {2, 2}",
+                 "{p.views, p.id} > {0, 2}",
+                 "{p.views, p.id} > {1, 3}",
+                 "{p.views, p.id} > {1, 1}",
+                 "{p.views, p.id} > {1, 0}"
+               ])
+
+      assert families("{p.views, p.id} > {1, 2}") == MapSet.new([:comparison, :integer_literal])
+    end
+
+    test "a wider tuple (the `{:{}, …}` AST form) is walked the same way; pins are left to the islands" do
+      assert mutants("{p.a, p.b, p.c} == {^x, ^y, 3}") ==
+               MapSet.new([
+                 "{p.a, p.b, p.c} != {^x, ^y, 3}",
+                 "{p.a, p.b, p.c} == {^x, ^y, 4}",
+                 "{p.a, p.b, p.c} == {^x, ^y, 2}",
+                 "{p.a, p.b, p.c} == {^x, ^y, 0}"
+               ])
+    end
+
+    test "an expression element is walked too — but a tuple element is never dropped" do
+      # The arithmetic swap reaches the left side's element; there is no `{p.id}`-style shrink (the
+      # two sides must keep one size, unlike an in-list's element drop).
+      assert mutants("{p.views + p.likes, p.id} > {^v, ^w}") ==
+               MapSet.new([
+                 "{p.views + p.likes, p.id} >= {^v, ^w}",
+                 "{p.views - p.likes, p.id} > {^v, ^w}"
+               ])
+    end
+  end
+
   describe "Connective" do
     test "and/or swap, and it descends into both operands" do
       assert mutants("u.a and u.b") == MapSet.new(["u.a or u.b"])
@@ -624,6 +665,19 @@ defmodule Mutare.Ecto.FragmentTest do
       assert [{"n + 1", _}] = islands(~s|datetime_add(u.inserted_at, ^(n + 1), "month")|)
     end
 
+    test "a pinned tuple-comparison element is an island, each rebuilt inside its own slot" do
+      # Ecto's tuple comparison (`{p.views, p.id} > {^a, ^b}`): the tuple is walked like a written
+      # list, so each pinned element is a pin the sub-contract reaches — and each rebuild replaces
+      # exactly its own slot.
+      assert [{"a", rebuild_a}, {"b", rebuild_b}] = islands("{p.views, p.id} > {^a, ^b}")
+
+      assert rebuild_a.(Sourceror.parse_string!("a + 1")) |> Sourceror.to_string() ==
+               "{p.views, p.id} > {^(a + 1), ^b}"
+
+      assert rebuild_b.(Sourceror.parse_string!("b + 1")) |> Sourceror.to_string() ==
+               "{p.views, p.id} > {^a, ^(b + 1)}"
+    end
+
     test "a coalesce default is descended — the NULL-fallback pin is an island (unlike is_nil's)" do
       # The catalog descends coalesce's arguments (its own drop keeps the walk going), so the
       # island walk does too — the contrast with `is_nil`, whose argument is a hard boundary.
@@ -689,6 +743,14 @@ defmodule Mutare.Ecto.FragmentTest do
       # …and nested under a comparison only the operator swaps — the `:integer` is not collapsed
       # to the `:mutare` sentinel the way an ordinary in-fragment atom would be.
       assert mutants("u.x == type(^v, :integer)") == MapSet.new(["u.x != type(^v, :integer)"])
+    end
+
+    test "a composite cast type is skipped whole — a nested spec's literals never surface" do
+      # The registry names `type/2`'s arg 1; a tuple there is a cast spec, not a value tuple (the
+      # same shape in a tuple comparison is data), so even the inner `{:array, :integer}`'s atoms —
+      # beneath the registry's direct reach — never collapse to the sentinel.
+      assert mutants("u.x == type(^v, {:array, {:array, :integer}})") ==
+               MapSet.new(["u.x != type(^v, {:array, {:array, :integer}})"])
     end
 
     test "datetime_add/date_add's interval unit (arg 2) is skipped; the count (arg 1) is not" do

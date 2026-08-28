@@ -223,6 +223,21 @@ value-family mutant surfaces there — `fragment_descent_test.exs` pins it); the
 `null_interior/1`, the same shape as `exists`'s subquery interior) that offers exactly the
 coalesce drop, at every depth, in both polarities.
 
+### Fragment: a tuple is told by position, not refused wholesale
+
+`Mutare.Ecto.Fragment`'s walk used to refuse every 2-tuple as a leaf, on the claim that the only
+tuple a condition contains is a compound cast spec (`type(x, {:array, :string})`) — whose
+literals are structural at every depth, beyond the reach of the structural-position registry
+(which names only a form's direct argument). The claim missed Ecto's tuple comparison,
+`{p.views, p.id} > {1, 2}` (SQL's row-value comparison, supported since Ecto 3.0): the swap
+fired on the `>`, but the literals inside the tuple were never mutated and a pinned element was
+never an island — while the `{:{}, …}` form of a wider tuple, which the refusal did not match,
+*was* entered, with its elements at a `{:{}, n, i}` position no registry entry names. The walk
+now tells the two roles apart by position: at a structural position either tuple form is a cast
+spec and stays a leaf; anywhere else it is a value tuple, transparent like a written list (its
+elements inherit the comparison's position, so they are data). Pinned in `fragment_test.exs`,
+`fragment_descent_test.exs`, and live against both engines in the semantic suite.
+
 ### Routing: the threaded query by form, not shape
 
 `Mutare.Ecto.Host.Routing` used to decide whether a composable macro's first argument was the
