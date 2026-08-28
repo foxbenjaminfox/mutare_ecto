@@ -13,11 +13,10 @@ defmodule Mutare.Ecto.BindingReorder do
   The reorder is always delivered **in place** — by swapping the written list, never by rewriting the
   condition body. The list sits in an ordinary argument position (not inside a macro-expanded query
   fragment), so the whole macro call (itself an expression returning a query) rides Mutare's ordinary
-  selector `case`; no host / `dynamic` weaving is needed. This is also what keeps the mutation honest
-  about `:skip`: a `where`/`having` body may contain an author macro whose argument grammar is its
-  own, and swapping the *declaration* leaves that body byte-for-byte untouched — we mutate only the
-  list the author wrote. Wrong-schema field access from a swap surfaces at query-plan time (runtime),
-  not compile time, so a mutant never poisons the single build.
+  selector `case`; no host / `dynamic` weaving is needed. Leaving the body byte-for-byte untouched is
+  also what makes the swap safe across an opaque author macro in that body (the author-macro rule —
+  see `Mutare.Ecto.Walk`). Wrong-schema field access from a swap surfaces at query-plan time
+  (runtime), not compile time, so a mutant never poisons the single build.
 
   This covers the macros whose binding list is an **argument**. A `from`'s binding-list *source*
   (`from [a, b] in q, …`) is written at the whole-`from` level, so its reorder is delivered there
@@ -37,16 +36,14 @@ defmodule Mutare.Ecto.BindingReorder do
   @doc "Binding-reorder mutants for `node` as `:binding_reorder` tags, or `[]`."
   @spec mutations(QueryCall.t(), Mutare.Mutator.context()) :: [Tag.t()]
   @impl Mutare.Ecto.SubMutator
-  # `Mutare.Ecto.Dispatcher` normalizes the call (`Mutare.Ecto.AST.QueryCall.parse/1`) before
-  # calling here, so the qualified (`Ecto.Query.select`) and aliased (`Q.select`) forms reorder
-  # exactly like the bare/imported one; `rebuild` re-emits the swap in the source's written form.
+  # Receives the Dispatcher-normalized `QueryCall` (see `Mutare.Ecto.SubMutator`), so every written
+  # form reorders alike and `rebuild` re-emits the swap as written.
   def mutations(%QueryCall{name: macro} = call, _context) do
     # mutare:ignore[if_condition] equivalent — Dispatcher only ever calls BindingReorder.mutations/2 for a macro of kind :condition/:join/:clause/:dynamic, which is exactly Surface.binding_list_macro?/1's true set, so the guard always holds when reached
     if Surface.binding_list_macro?(macro), do: reorders(call), else: []
   end
 
-  # One mutant per pair of reorderable positional bindings. Usage is deliberately irrelevant: an
-  # unused declaration still earns a swap, as it does under core's pattern-swap mutator.
+  # One mutant per pair of reorderable positional bindings, used or not (see the moduledoc).
   defp reorders(%QueryCall{args: args} = call) do
     case BindingList.find(args) do
       {index, binding_list} ->

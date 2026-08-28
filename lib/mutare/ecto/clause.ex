@@ -20,23 +20,18 @@ defmodule Mutare.Ecto.Clause do
       via the shared `Mutare.Ecto.Combination` catalog. Unlike the others this mutates the
       call's *name*, not its last argument — the operand queries are untouched.
 
-  These macros are registered through the `:routing` classifier (`Mutare.Ecto.Host`), which keeps
-  their *data* positions (binding list, ordering, bound, selector) raw — so core never descends a
-  binding/expression into them — while marking the threaded query an `:expression`. A routed macro
-  node is still offered to every mutator's `mutate/1` — exactly like a `from` node — and the
-  mutation rides Mutare's ordinary in-place selector. No host is needed: the macro call is itself
-  an expression, so the selector `case` can wrap it whole. The orthogonal **stage removal**
-  (`q |> order_by(…)` → `q`) lives in `Mutare.Ecto.ClauseDrop`.
+  These macros route through the `:routing` classifier (`Mutare.Ecto.Host.Routing`), which keeps
+  their *data* positions raw while the routed node is still offered whole to `mutate/2`; the
+  mutation rides Mutare's ordinary in-place selector, since the macro call is itself an
+  expression. The orthogonal **stage removal** (`q |> order_by(…)` → `q`) lives in
+  `Mutare.Ecto.ClauseDrop`, and the `:bound` ±1 bump of a literal `limit`/`offset` is hosted
+  pin-only (`Mutare.Ecto.Bound`; NOTES "Bound bump: from whole-call rewrite to pin-only
+  hosting").
 
   The mutated position is always the **last argument** (the ordering / the selector), which
   is true for both the direct form (`order_by(q, binds, ordering)`) and the pipe form
   (`q |> order_by(binds, ordering)`, where `q` is the piped left side, not in `args`) — so no
   pipe-mode bookkeeping is required.
-
-  The `:bound` `±1` bump of a literal `limit(q, 10)` / `q |> offset(5)` used to live here too;
-  it is now **hosted** (a pin-only `limit(q, ^(case …))` weave — `Mutare.Ecto.Host`), so this
-  module no longer rebuilds the call for it. Only the orthogonal stage drop
-  (`Mutare.Ecto.ClauseDrop`) still touches a bound macro in place.
   """
 
   alias Mutare.Ecto.{Combination, Surface, Tag, ValueCatalog}
@@ -50,11 +45,9 @@ defmodule Mutare.Ecto.Clause do
   """
   @spec mutations(QueryCall.t(), Mutare.Mutator.context()) :: [Mutare.Ecto.SubMutator.tagged()]
   @impl Mutare.Ecto.SubMutator
-  # `Mutare.Ecto.Dispatcher` normalizes the call (`Mutare.Ecto.AST.QueryCall.parse/1`) before
-  # calling here, so the qualified (`Ecto.Query.order_by`) and aliased (`Q.order_by`) forms mutate
-  # exactly like the bare/imported one; `rebuild` re-emits each mutant in the source's written
-  # form. Each clause guards `args != []` to protect the `{init, [last]} = Enum.split(args, -1)`
-  # destructuring on a degenerate zero-arg macro node.
+  # Receives the Dispatcher-normalized call (`Mutare.Ecto.SubMutator`). The `args: []` clause
+  # protects the `{init, [last]} = Enum.split(args, -1)` destructuring on a degenerate zero-arg
+  # macro node.
   def mutations(%QueryCall{args: []}, _context), do: []
 
   def mutations(%QueryCall{name: macro} = call, _context) do

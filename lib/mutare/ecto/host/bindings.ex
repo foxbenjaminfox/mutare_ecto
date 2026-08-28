@@ -66,9 +66,8 @@ defmodule Mutare.Ecto.Host.Bindings do
   end
 
   @doc """
-  Normalize a lone binding or binding list for a synthesized `dynamic/2`. `nil` — no written list,
-  the binding-less condition form `Mutare.Ecto.Host.Condition.locate/1` reports — re-declares an
-  empty one (`dynamic([], …)`).
+  Normalize a lone binding or binding list for a synthesized `dynamic/2`. `nil` — the
+  binding-less form (`Mutare.Ecto.Host.Condition`) — re-declares an empty one (`dynamic([], …)`).
   """
   @spec declarations(Macro.t() | BindingList.t() | nil) :: [Macro.t()]
   # mutare:ignore[clause_drop] equivalent — without this clause `nil` falls through to `BindingList.parse/1` (not a list, so `nil`) and then `declaration/1`'s catch-all, which also yields `[]`; the explicit clause states the binding-less contract rather than relying on that fallthrough

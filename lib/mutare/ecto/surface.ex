@@ -2,7 +2,8 @@ defmodule Mutare.Ecto.Surface do
   @moduledoc false
   # One declarative registry for every Ecto.Query macro and `from` clause key the plugin owns.
   # Consumers derive routing, stage removal, hosted conditions, binding accumulation, and mutation
-  # capabilities from these descriptors; adding a builder no longer means updating parallel lists.
+  # capabilities from these descriptors (NOTES "Surface: one descriptor table instead of parallel
+  # lists").
 
   @macro_kinds [:from, :condition, :join, :clause, :dynamic, :skip]
   @mutation_capabilities [:ordering, :aggregate, :scalar, :combination]
@@ -49,10 +50,8 @@ defmodule Mutare.Ecto.Surface do
     Map.put(@condition, :name, :or_having),
     Map.put(@projection, :name, :select),
     Map.put(@projection, :name, :select_merge),
-    # `order_by`/`prepend_order_by` are deliberately **not** stage-droppable: dropping an `ORDER BY`
-    # yields an unordered query whose row order SQL leaves unspecified, so the mutant's survival
-    # tracked engine nondeterminism, not the tests. The implicit-direction flip in
-    # `Mutare.Ecto.Ordering` is the reliable ordering mutant instead.
+    # `order_by`/`prepend_order_by` are deliberately **not** stage-droppable — see
+    # `Mutare.Ecto.Ordering` ("Implicit-direction flip").
     %{
       name: :order_by,
       macro: :clause,
@@ -208,9 +207,7 @@ defmodule Mutare.Ecto.Surface do
 
   @doc """
   Every Ecto.Query macro registration as `{name, :routing | :skip}`. The `:dynamic` kind registers
-  `:skip` like the fully-skipped macros: a free-standing `dynamic/1,2` threads no query and its
-  DSL arguments must stay raw for core — but core still offers the *whole call* to `mutate/2`,
-  where `Mutare.Ecto.Dynamic` rewrites it in place.
+  `:skip` like the fully-skipped macros (see `Mutare.Ecto.Dynamic` for why that still mutates).
   """
   @spec macro_registrations() :: [{atom(), :routing | :skip}]
   def macro_registrations do
@@ -243,9 +240,7 @@ defmodule Mutare.Ecto.Surface do
   @doc """
   Whether a routed macro accepts a written binding list eligible for positional reordering — the
   `:condition` macros (`where`/`having`/…), `:join`, the `:clause` macros, and the free-standing
-  `dynamic/2`. Each takes the binding list as an ordinary argument, so the reorder is delivered
-  **in place** by `Mutare.Ecto.BindingReorder` (the `from`-level binding-list source reorders at
-  the whole-`from` level instead — `Mutare.Ecto.Query`).
+  `dynamic/2` (each takes the list as an ordinary argument — `Mutare.Ecto.BindingReorder`).
   """
   @spec binding_list_macro?(atom()) :: boolean()
   def binding_list_macro?(name), do: macro_kind(name) in [:condition, :join, :clause, :dynamic]
@@ -256,9 +251,8 @@ defmodule Mutare.Ecto.Surface do
 
   @doc """
   Whether `name`'s value position hosts the `:bound` ±1 bump — `limit`/`offset`, both as `from`
-  clause keys and as standalone/pipe clause macros. The bump is delivered as a **pin-only**
-  hosted target (`limit: ^(case …)` — no `dynamic/2` wrap, no bindings), which is why these
-  clause macros also appear in `hosted_macro_names/0`.
+  clause keys and as standalone/pipe clause macros (pin-only hosted — `Mutare.Ecto.Bound` — which
+  is why these clause macros also appear in `hosted_macro_names/0`).
   """
   @spec bound?(atom()) :: boolean()
   def bound?(name), do: from_clause?(name, :bound)

@@ -2,9 +2,9 @@ defmodule Mutare.Ecto.Host.Target do
   @moduledoc false
   # Builds the `Mutare.Mutator.MacroHost.Target` values consumed by Mutare core and owns every
   # delivery transform: wrapping logical fragments in `dynamic/2` (the target's `:wrap`), pinning
-  # the selector, and splicing it into the original call. The bound-bump targets are **pin-only**:
-  # no `:wrap` (core defaults the branch wrapper to identity, so each branch is a bare integer)
-  # and no bindings — the woven selector is plain Ecto interpolation, `limit: ^(case …)`.
+  # the selector, and splicing it into the original call. The bound-bump targets are **pin-only**
+  # (`Mutare.Ecto.Bound`): no `:wrap` (core defaults the branch wrapper to identity, so each
+  # branch is a bare integer) and no bindings.
 
   alias Mutare.Ecto.AST.{FromCall, KeywordList, QueryCall}
   alias Mutare.Mutator.MacroHost
@@ -48,11 +48,7 @@ defmodule Mutare.Ecto.Host.Target do
     end)
   end
 
-  @doc """
-  A pin-only target for a `from` bound clause value (`limit:`/`offset:`). No `dynamic/2` wrap and
-  no bindings: a bound is an integer parameter, so the selector interpolates directly —
-  `limit: ^(case …)` — and each branch is the bare bumped integer.
-  """
+  @doc "A pin-only target for a `from` bound clause value (`limit:`/`offset:`) — no wrap, no bindings."
   @spec bound_from_clause(Macro.t(), [Mutare.Mutator.mutation()], non_neg_integer()) :: t()
   def bound_from_clause(original, mutants, index),
     do: MacroHost.Target.new(original, mutants, from_clause_splice(index))

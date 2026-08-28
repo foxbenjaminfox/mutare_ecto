@@ -11,13 +11,12 @@ defmodule Mutare.Ecto.ValueCatalog do
   #   * `:ordering` — `Mutare.Ecto.Ordering.flips/1`: a direction/nulls flip of an ordering value.
   #   * `:aggregate` — `Mutare.Ecto.Aggregate.swaps/1`: a `sum`↔`avg`/`min`↔`max` swap.
   #   * `:scalar` — `Mutare.Ecto.Scalar.swaps/2`: an arithmetic swap or coalesce drop, aware of
-  #     the value's position (an ordering-position coalesce drop carries its own label/note).
+  #     the value's position.
   #
   # `:combination` is deliberately not a value capability: it swaps the clause *key* / macro *name*
   # and keeps the value as written (`Mutare.Ecto.Combination`), so each delivery applies it in its
-  # own shape. A `where`/`having` value is not served here either — its condition is hosted
-  # (`^`/`dynamic`), so those mutants ride the host (`Mutare.Ecto.Host.Catalog`) alongside the
-  # operator swaps rather than duplicating the whole call.
+  # own shape. Neither is a `where`/`having` value (hosted — `Mutare.Ecto.Host.Catalog`) nor a
+  # `limit`/`offset` bound (pin-only hosted — `Mutare.Ecto.Bound`).
 
   alias Mutare.Ecto.{Aggregate, ExpressionWalk, Ordering, Scalar, Surface, Tag}
 
@@ -27,9 +26,9 @@ defmodule Mutare.Ecto.ValueCatalog do
   @doc """
   The position a value sits in, read off the capabilities its clause key / macro name carries:
   `:ordering` when the value *is* a sort key — the `:ordering` capability, i.e. an
-  `order_by`/`prepend_order_by` value — so its coalesce drops carry the placement-aware
-  label/note (`Mutare.Ecto.Scalar`); `:value` otherwise. Derived from the capability list rather
-  than a hand-kept name list so it can't drift from `Surface`.
+  `order_by`/`prepend_order_by` value (where `Mutare.Ecto.Scalar`'s coalesce drop carries its
+  own label/note); `:value` otherwise. Derived from the capability list rather than a hand-kept
+  name list so it can't drift from `Surface`.
   """
   @spec position([Surface.from_capability()]) :: ExpressionWalk.position()
   def position(capabilities), do: if(:ordering in capabilities, do: :ordering, else: :value)

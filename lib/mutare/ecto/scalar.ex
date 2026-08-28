@@ -10,21 +10,16 @@ defmodule Mutare.Ecto.Scalar do
   #     an expression's NULL-ness — that is its entire point: the two forms differ exactly on the
   #     rows where `x` is NULL, so its survivors carry a NULL-data equivalence note.
   #
-  # Two consumers, mirroring `Mutare.Ecto.Aggregate`'s split:
+  # Two consumers, like `Mutare.Ecto.Aggregate`: `Mutare.Ecto.Fragment` applies `local/1` per node
+  # in a hosted condition (delivered alongside the operator swaps), and `swaps/2` walks a
+  # `select`/`select_merge`/`order_by` value (`Mutare.Ecto.ExpressionWalk`) for the in-place
+  # deliveries (`Mutare.Ecto.Query`, `Mutare.Ecto.Clause`).
   #
-  #   * a hosted `where`/`having` condition — `Mutare.Ecto.Fragment` applies `local/1` per node
-  #     as it walks the condition, so the swap is delivered `^`/`dynamic`-hosted alongside the
-  #     operator swaps;
-  #   * a `select`/`select_merge`/`order_by` value — `swaps/1` walks the whole expression
-  #     (`Mutare.Ecto.ExpressionWalk`) and each swap is delivered **in place**
-  #     (`Mutare.Ecto.Query` for the `from` keyword clauses, `Mutare.Ecto.Clause` for the
-  #     standalone/pipe macros), exactly like the aggregate swap.
-  #
-  # SQL-owned for the same reason as the fragment catalog: NULL propagates through every arm
-  # alike (a swap changes a row's computed value, never its NULL-ness), and `/` is the
-  # *database's* division — integer truncation and a zero divisor raising are the engine's
-  # behaviour, not Elixir's float `//2`. **Binary** forms only: a written negative number parses
-  # as the arity-1 `-` over the wrapped literal — sign syntax, not an operator to swap.
+  # SQL-owned (see `Mutare.Ecto.Fragment`): NULL propagates through every arm alike (a swap
+  # changes a row's computed value, never its NULL-ness), and `/` is the *database's* division —
+  # integer truncation and a zero divisor raising are the engine's behaviour, not Elixir's float
+  # `//2`. **Binary** forms only: a written negative number parses as the arity-1 `-` over the
+  # wrapped literal — sign syntax, not an operator to swap.
 
   alias Mutare.Ecto.{ExpressionWalk, Tag}
 
@@ -32,13 +27,11 @@ defmodule Mutare.Ecto.Scalar do
 
   @arithmetic_swaps %{:+ => :-, :- => :+, :* => :/, :/ => :*}
 
-  # The ordering-position coalesce drop's finer label. Named apart from the plain "coalesce"
-  # because its equivalence character differs: dropping the fallback in a sort key re-sorts only
-  # the NULL rows to the engine's *default* NULL placement — which may coincide with where the
-  # fallback put them (Postgres sorts NULL as larger than every value, SQLite/MySQL as smaller;
-  # see `Mutare.Ecto.Ordering`). The distinct label lets `Mutare.Ecto.Equivalence.note/2`
-  # attach the placement-aware note, and lets `# mutare:ignore[ecto:coalesce_in_ordering]` name
-  # exactly the ordering-position drop — while a family-level `[ecto:coalesce]` still covers both.
+  # The ordering-position coalesce drop's finer label, named apart from the plain "coalesce"
+  # because its equivalence turns on the engine's default NULL placement (see
+  # `Mutare.Ecto.Ordering`): the distinct label lets `Mutare.Ecto.Equivalence.note/2` attach the
+  # placement-aware note, and lets `# mutare:ignore[ecto:coalesce_in_ordering]` name exactly the
+  # ordering-position drop — while a family-level `[ecto:coalesce]` still covers both.
   @ordering_coalesce_label "coalesce_in_ordering"
 
   @doc """

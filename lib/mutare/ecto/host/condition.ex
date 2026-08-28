@@ -1,12 +1,12 @@
 defmodule Mutare.Ecto.Host.Condition do
   @moduledoc false
-  # Locates the condition argument a host owns in a condition macro's argument list
-  # (`where`/`having`, and the free-standing `dynamic/1,2` that shares their shape). Pure
-  # argument-shape parsing: it reports the written binding list preceding the condition but never
-  # interprets it — rendering the declarations a woven `dynamic/2` re-declares is
-  # `Mutare.Ecto.Host.Bindings`' job. Consumed by `Mutare.Ecto.Host` (the weave — `bindings` go
-  # through `Bindings.declarations/1`), `Mutare.Ecto.Host.Routing` (marks `index` `:hosted`), and
-  # `Mutare.Ecto.Dynamic` (rebuilds the whole call around `index`).
+  # The one home of the hosted-condition **shapes**: locates the condition argument a host owns in
+  # a condition macro's argument list (`where`/`having`, and the free-standing `dynamic/1,2` that
+  # shares their shape). Pure argument-shape parsing: it reports the written binding list
+  # preceding the condition but never interprets it — rendering the declarations a woven
+  # `dynamic/2` re-declares is `Mutare.Ecto.Host.Bindings`' job. Consumed by `Mutare.Ecto.Host`
+  # (the weave — `bindings` go through `Bindings.declarations/1`), `Mutare.Ecto.Host.Routing`
+  # (marks `index` `:hosted`), and `Mutare.Ecto.Dynamic` (rebuilds the whole call around `index`).
   #
   # Two shapes resolve here:
   #
@@ -20,7 +20,9 @@ defmodule Mutare.Ecto.Host.Condition do
   #     binding-less `where`/`having` still have its SQL operators/literals mutated.
   #
   # Neither shape matches the keyword-shorthand form (`where(q, col: v)`), which `locate/1` reports
-  # as `nil` — its trailing pairs route `{:keyword, …}` instead (`Mutare.Ecto.Host.Routing`).
+  # as `nil` — its trailing pairs route `{:keyword, …}` instead (`Mutare.Ecto.Host.Routing`). A
+  # top-level `^cond` pin **is** a condition in either shape: its own SQL catalog is empty, but its
+  # interior is sub-contracted to core (`Mutare.Ecto.Island`).
 
   alias Mutare.Ecto.Binding
   alias Mutare.Ecto.AST.BindingList
@@ -68,9 +70,9 @@ defmodule Mutare.Ecto.Host.Condition do
   # not a condition to host. The shapes that are *not* a binding-less condition: a list (a binding
   # list like `[u]`, a keyword shorthand like `[active: true]`, or an empty `[]` — none a predicate
   # body) and a bare variable (a degenerate non-condition call). Everything else — a
-  # comparison/connective/null/membership expression, or a top-level `^cond` pin (whose interior the
-  # host sub-contracts to core), possibly referencing only named bindings — is hosted; the catalog
-  # then decides whether there is anything to mutate.
+  # comparison/connective/null/membership expression, or a top-level `^cond` pin, possibly
+  # referencing only named bindings — is hosted; the catalog then decides whether there is
+  # anything to mutate.
   @spec bindingless_form([Macro.t()]) :: t() | nil
   # mutare:ignore[clause_drop] equivalent — dropping this leaves `Enum.at([], -1)` (nil) as the "condition", and Host.Catalog.mutants/3 (via Fragment.mutants's total catch-all clause) already returns [] for `nil`, so `Host.condition_target/3`'s own `[_ | _] = mutants` guard rejects it downstream regardless
   defp bindingless_form([]), do: nil
@@ -84,8 +86,8 @@ defmodule Mutare.Ecto.Host.Condition do
   # Every excluded shape here (a list, a bare variable) also reaches `Mutare.Ecto.Fragment.mutants/2`'s
   # own total catch-all clause and yields no catalog mutants there, so `Mutare.Ecto.Host`'s
   # `[_ | _] = mutants` guard rejects it downstream regardless of what this predicate answers —
-  # hence the ignore below. A top-level `^cond` pin *is* hosted (its interior is sub-contracted to
-  # core), so it is deliberately not excluded.
+  # hence the ignore below. A top-level `^cond` pin *is* hosted, so it is deliberately not
+  # excluded.
   defp hostable_bare_condition?(node) do
     # Sourceror wraps a bare list/literal in a single-element `__block__`; unwrap one level so the
     # list check below sees the real shape.

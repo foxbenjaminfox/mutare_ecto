@@ -4,18 +4,28 @@ defmodule Mutare.Ecto.MixProject do
   @version "0.1.0"
   @source_url "https://github.com/foxbenjaminfox/mutare_ecto"
 
-  # A few *typespecs* in visible modules reference a hidden internal type
-  # (`Mutare.Ecto.Clause`/`Query`/`BindingReorder` take `Mutare.Ecto.AST.QueryCall.t`, and
-  # `Query.mutations_for/2` a `Mutare.Ecto.AST.FromCall.t`;
-  # `Mutare.Ecto.Host` returns `Mutare.Ecto.Host.Target.t`; `Mutare.Ecto.Fragment`
-  # takes `Mutare.Ecto.Config.t`). ExDoc autolinks types in typespecs unconditionally, so a
-  # reference to a hidden type is silenced on the *referencing* module instead — keep this list tight.
-  @typespec_refs_to_hidden ~w(
+  # Visible modules whose docs reference hidden plumbing, silenced on the *referencing* module
+  # (ExDoc warns "references X but it is hidden" otherwise). Two kinds of reference land here:
+  # a typespec naming a hidden type (`Mutare.Ecto.Clause`/`Query`/`BindingReorder` take
+  # `Mutare.Ecto.AST.QueryCall.t`, `Mutare.Ecto.Host` returns `Mutare.Ecto.Host.Target.t`, …),
+  # and the docs' one-home-per-rule cross-references — a public moduledoc points at the hidden
+  # module that owns a rule (`Mutare.Ecto.Island`, `Bound`, `Equivalence`, `StageDrop`, …)
+  # instead of restating it (CLAUDE.md "Conventions and gotchas", last bullet). Keep this list to
+  # modules that actually need it; `mix docs` is the only check that exercises it.
+  @refs_to_hidden ~w(
+    Mutare.Ecto
     Mutare.Ecto.BindingReorder
+    Mutare.Ecto.Changeset
     Mutare.Ecto.Clause
+    Mutare.Ecto.ClauseDrop
+    Mutare.Ecto.Dynamic
     Mutare.Ecto.Fragment
     Mutare.Ecto.Host
+    Mutare.Ecto.Host.Routing
     Mutare.Ecto.Query
+    Mutare.Ecto.QueryTerminal
+    Mutare.Ecto.RepoAggregate
+    Mutare.Ecto.RepoWrite
   )
 
   def project do
@@ -115,14 +125,15 @@ defmodule Mutare.Ecto.MixProject do
 
   # ExDoc configuration. `mix docs` renders to `doc/` (gitignored). README is the
   # landing page. Modules are grouped along the three delivery buckets; `@moduledoc false`
-  # plumbing never appears, and the moduledocs avoid prose-linking to it.
+  # plumbing never appears, and a visible doc that points at it is silenced via
+  # `@refs_to_hidden` above.
   defp docs do
     [
       main: "readme",
       source_url: @source_url,
       source_ref: "v#{@version}",
       extras: ["README.md", "LICENSE"],
-      skip_undefined_reference_warnings_on: &(&1 in @typespec_refs_to_hidden),
+      skip_undefined_reference_warnings_on: &(&1 in @refs_to_hidden),
       groups_for_modules: [
         "Mutator front": [
           Mutare.Ecto

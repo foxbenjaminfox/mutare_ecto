@@ -33,11 +33,10 @@ defmodule Mutare.Ecto.Subquery do
   # `exists`/`in`, invisible to `min`/`max`). None is a clean, deterministic, wrapper-general
   # mutant.
   #
-  # A pinned `^expr` inside a mutated clause is **not** this catalog's — its interior is ordinary
-  # Elixir, core's to mutate — so `interior_islands/2` surfaces it (via `Fragment.islands/1`) for the
-  # caller's core sub-contract, exactly as a top-level condition's pin: from the `where`/`having`
-  # conditions under every mode, and from the `select` projection under a value-wrapper (never under
-  # `exists`, whose select is unobserved — a pin mutant there would be equivalent).
+  # A pinned `^expr` inside a mutated clause is sub-contracted to core like a top-level pin (see
+  # `Mutare.Ecto.Island`): `interior_islands/2` surfaces it from exactly the clauses each `mode`
+  # mutates — the `where`/`having` conditions under every mode, the `select` projection under a
+  # value-wrapper only (an EXISTS select's pins are as unobserved as its swaps).
   #
   # Only an inline `from(source, clauses)` is recursed. In `exists` position, the equivalent
   # `exists(subquery(from …))` spelling is normalized too, with the `subquery/1` wrapper preserved
@@ -66,13 +65,10 @@ defmodule Mutare.Ecto.Subquery do
   Every single-point interior mutant of an inline subquery `from`, each the **whole inner `from`**
   rebuilt (which the caller wraps back into the wrapper). `[]` unless `node` is an inline
   `from(source, clauses)` (or, in `:existence` mode, `subquery(from(source, clauses))`).
-  Returned as `Mutare.Ecto.Tag`s — the shared catalog contract — carrying each family's **normal**
-  tag (`:comparison`, `:filter_drop`, `:join_type`, …) so `Mutare.Ecto.Tag.to_mutation/1`, the
-  `families:` filter, and the equivalence notes apply unchanged. Each tag also keeps the
-  attribution its producer stamped (`Query`'s inner-clause attribution, the expression walks' node
-  stamp): the host's weave never reads it — a hosted Site is reported at the woven condition —
-  while `Mutare.Ecto.Dynamic`'s in-place delivery honours it, so a mutant inside a free-standing
-  `dynamic`'s subquery reports at the inner clause it changed, as a top-level `from`'s would.
+  Returned as `Mutare.Ecto.Tag`s carrying each family's **normal** tag (`:comparison`,
+  `:filter_drop`, `:join_type`, …) and the attribution its producer stamped, so an in-place
+  delivery (`Mutare.Ecto.Dynamic`) reports at the inner clause it changed while the host's weave
+  discards the stamp (see `Mutare.Ecto.Walk`).
   """
   @spec interior_mutants(Macro.t(), Config.t(), mode()) :: [Tag.t()]
   def interior_mutants(node, %Config{} = config, mode) do
@@ -93,11 +89,8 @@ defmodule Mutare.Ecto.Subquery do
   Every interpolation **island** (`^expr`) inside the subquery's own mutated clauses, as
   `{interior, rebuild}` pairs whose `rebuild` reconstructs the whole inner `from` — composed outward
   by the caller. `[]` unless `node` is an inline `from(source, clauses)` (or, in `:existence`
-  mode, `subquery(from(source, clauses))`). Which clauses' pins are
-  surfaced tracks exactly what each `mode` mutates: the `where`/`having` conditions under every
-  mode, plus the `select`/`select_merge` projection under `:value` (its pins are ordinary Elixir the
-  outer comparison evaluates). An EXISTS select is unobserved, so its pins — like its swaps — are
-  left alone.
+  mode, `subquery(from(source, clauses))`). Which clauses' pins are surfaced tracks exactly what
+  each `mode` mutates (see the module comment).
   """
   @spec interior_islands(Macro.t(), mode()) :: [{Macro.t(), (Macro.t() -> Macro.t())}]
   def interior_islands(node, mode) do
@@ -153,19 +146,16 @@ defmodule Mutare.Ecto.Subquery do
   defp island_clause?(key, mode),
     do: Surface.from_clause?(key, :hosted) or (mode == :value and key in @projection_keys)
 
-  # The row-set producers, composed straight from `Mutare.Ecto.Query` — attribution included:
-  # the outer condition's walk anchors only an *unattributed* tag (`Mutare.Ecto.Walk.mutants/4`),
-  # so an in-place delivery reports the drop at the inner clause it removed, while the host's
-  # weave discards the stamp structurally (see `interior_mutants/3`).
+  # The row-set producers, composed straight from `Mutare.Ecto.Query` — attribution included (the
+  # outer condition's walk anchors only an *unattributed* tag, so `Query`'s inner-clause stamp
+  # survives to an in-place delivery).
   defp structural(from, config), do: Query.mutations_for(from, config, @structural_producers)
 
-  # The hosted-condition catalog (`Mutare.Ecto.Host.Catalog.own_catalog/2` — `Fragment` with the
-  # aggregate swap folded in, exactly what the host weaves and `Mutare.Ecto.Dynamic` rebuilds)
-  # recursed into each `where`/`having`/`or_where`/`or_having` value (the hosted-clause keys),
-  # rebuilding the whole inner `from` around each single-point condition mutant. Nesting (`exists`
-  # inside the subquery's own `where`) re-enters `Fragment`, which re-recognizes the wrapper. A
-  # scalar/binding-list-only source (`from(Post)` — its reorder rode `structural/2`) has an empty
-  # clause list, so it contributes nothing here.
+  # The hosted-condition catalog (`Mutare.Ecto.Host.Catalog.own_catalog/2`) recursed into each
+  # hosted-clause value (`where`/`having`/`or_where`/`or_having`), rebuilding the whole inner
+  # `from` around each single-point condition mutant. Nesting (`exists` inside the subquery's own
+  # `where`) re-enters `Fragment`, which re-recognizes the wrapper. A clause-less source
+  # (`from(Post)` — its reorder rode `structural/2`) contributes nothing here.
   defp conditions(%FromCall{clauses: clauses} = from, config) do
     KeywordList.flat_map(clauses, &Surface.from_clause?(&1, :hosted), fn entry, index ->
       for tag <- Catalog.own_catalog(entry.value, config),

@@ -56,11 +56,7 @@ defmodule Mutare.Ecto.RepoWrite do
 
   use Mutare.Ecto.SubMutator
 
-  # Alias-proof reference to `Ecto.Changeset`: the metamutant recompiles in the *author's* module,
-  # whose aliases we don't control — a bare `Ecto.Changeset` there can be shadowed by a submodule
-  # (`defmodule Ecto.Changeset` nested in `Foo` aliases `Ecto`→`Foo.Ecto`) or a plain
-  # `alias Foo, as: Ecto`, silently retargeting the call. The `Elixir.`-prefixed alias resolves to
-  # the real module unconditionally (same stance as `Mutare.Ecto.StageDrop`'s `Elixir.Function`).
+  # Alias-proof `Elixir.Ecto.Changeset` reference — see `Mutare.Ecto.AST`.
   @changeset Mutare.AST.absolute_alias([:Ecto, :Changeset])
 
   # Each persisting write → the `apply_action` function (raising or not) and the action atom it
@@ -82,20 +78,9 @@ defmodule Mutare.Ecto.RepoWrite do
   # (`insert_all` has no `!` twin; `update`/`delete` take no `on_conflict`.)
   @on_conflict_writes ~w(insert insert! insert_all)a
 
-  # Each explicit `on_conflict:` atom → the *distinct* alternative it swaps to. Every target
-  # (`:raise`/`:nothing`) is valid with **no** `conflict_target` on all three dialects, so each swap
-  # is crash-free — provided the surrounding opts stay legal for the *new* value (see
-  # `drop_forbidden_target/2`: `:raise` forbids a `conflict_target:`, so that swap drops the pair):
-  #
-  #   * `:nothing` → `:raise`     — silent-skip → crash. Kill: any test that exercises the conflict path.
-  #   * `:raise`   → `:nothing`   — crash → silent-skip. Kill: a test asserting a duplicate insert fails.
-  #   * `:replace_all` → `:nothing` — overwrite-row → keep-old-row. Kill: a test inserting a conflicting
-  #     row and asserting the columns hold the *new* values.
-  #
-  # The asymmetry is deliberate: `:replace_all` is a swap **source** only, never a target — the reverse
-  # (`:nothing` → `:replace_all`) needs a `conflict_target` on Postgres, so a target-less swap would be
-  # a runtime crash (a trivially-killed non-mutant). Non-atom values (`{:replace, …}`, a keyword-list
-  # update, a query) read as `nil` via `AST.atom_value` and are skipped.
+  # Each explicit `on_conflict:` atom → the *distinct* alternative it swaps to (the table, its
+  # `:replace_all`-as-source-only asymmetry, and the `:raise`/`conflict_target` rule are explained
+  # in the moduledoc). Non-atom values read as `nil` via `AST.atom_value` and are skipped.
   @on_conflict_swaps %{nothing: :raise, raise: :nothing, replace_all: :nothing}
 
   @doc "RepoWrite mutations for `node` as `:persistence`/`:on_conflict` tags, or `[]`."
@@ -175,11 +160,8 @@ defmodule Mutare.Ecto.RepoWrite do
 
   defp swap_on_conflict(_other), do: nil
 
-  # `:raise` forbids a `conflict_target:` — Ecto's planner raises `ArgumentError` on the
-  # combination before any SQL, on every execution — so the swap to it drops the pair (whatever
-  # its value shape: atom, list, `{:unsafe_fragment, …}`), keeping the mutant's crash on the
-  # *conflict path* rather than on every insert. The other swap target (`:nothing`) accepts a
-  # target and keeps the author's arbiter.
+  # `:raise` forbids a `conflict_target:` (see the moduledoc), so the swap to it drops the pair
+  # whatever its value shape; `:nothing` keeps the author's arbiter.
   defp drop_forbidden_target(options, :raise),
     do: KeywordList.reject_key(options, :conflict_target)
 

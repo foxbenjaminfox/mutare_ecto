@@ -7,21 +7,17 @@ defmodule Mutare.Ecto.Aggregate do
   # and returns one *single-point* mutant per aggregate position — each the expression with
   # exactly one aggregate swapped.
   #
-  # Two consumers, mirroring `Mutare.Ecto.Scalar`'s split:
+  # Two consumers, like `Mutare.Ecto.Scalar`: `Mutare.Ecto.Fragment` applies `local/1` per node in
+  # a condition (a `having: sum(p.x) > n` swaps behind the same selector as its operators, or
+  # inside the same whole-call `dynamic` rewrite — and never under `is_nil`, per `Fragment`'s
+  # descent rule), and `swaps/1` walks a `select`/`select_merge`/`order_by` value
+  # (`Mutare.Ecto.ExpressionWalk`) for the in-place deliveries (`Mutare.Ecto.Query`,
+  # `Mutare.Ecto.Clause`).
   #
-  #   * a `where`/`having` condition — hosted, or the body of a free-standing `dynamic/1,2` —
-  #     `Mutare.Ecto.Fragment` applies `local/1` per node as it walks the condition, so a
-  #     `having: sum(p.x) > n` swaps its aggregate behind the same selector as its operators
-  #     (`Mutare.Ecto.Host`), or inside the same whole-call rewrite (`Mutare.Ecto.Dynamic`) — and
-  #     never under `is_nil`, where a swap preserves NULL-ness;
-  #   * a `select`/`select_merge`/`order_by` value — `swaps/1` walks the whole expression
-  #     (`Mutare.Ecto.ExpressionWalk`) and each swap is delivered **in place**
-  #     (`Mutare.Ecto.Query` for the `from` keyword clauses, `Mutare.Ecto.Clause` for the
-  #     standalone/pipe macros).
-  #
-  # `count` is deliberately excluded (as in `Mutare.Ecto.RepoAggregate`): swapping it for a
-  # value aggregate changes the result's meaning in a way its `:distinct`/arity contract makes
-  # awkward, and `count`↔a-value-aggregate is rarely a focused, killable mutation.
+  # `count` is deliberately excluded — here and in `Mutare.Ecto.RepoAggregate`, which swaps the
+  # atom form along this same ladder: it has a different arity/`:distinct` contract
+  # (`aggregate(q, :count)`), so swapping it for a value aggregate changes the call's shape, not
+  # just its meaning, and `count`↔a-value-aggregate is rarely a focused, killable mutation.
 
   alias Mutare.Ecto.{ExpressionWalk, Tag}
 

@@ -6,7 +6,15 @@ defmodule Mutare.Ecto.AST do
   # mutator *emits* into existing source comes from core's `Mutare.AST` constructors —
   # `literal/1`, `keyword_key/1`, `clean_var/1`, `absolute_alias/1`/`absolute_call/3`/
   # `remote_call/3` — which own Sourceror's emission invariants (clean/derived meta, numeric
-  # `:token`s, string delimiters, the negative-number shape, `Elixir.`-prefixed references).
+  # `:token`s, string delimiters, the negative-number shape). Never hand-build a
+  # `{:__block__, meta, [value]}`.
+  #
+  # Emitted module references are always **`Elixir.`-prefixed** (`absolute_alias/1`/
+  # `absolute_call/3`: `Elixir.Ecto.Changeset.apply_action`, `Elixir.Function.identity`). The
+  # metamutant recompiles in the *author's* module, whose aliases the plugin doesn't control — a
+  # bare `Ecto.Changeset` there can be retargeted by a nested `defmodule Ecto.Changeset` or a
+  # plain `alias Foo, as: Ecto`, silently redirecting the call — and only the absolute name
+  # resolves unconditionally.
 
   @doc "The atom value of an atom literal node (Sourceror-wrapped or bare), or `nil`."
   @spec atom_value(Macro.t()) :: atom() | nil

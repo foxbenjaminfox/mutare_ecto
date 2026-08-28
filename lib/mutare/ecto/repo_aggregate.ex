@@ -4,9 +4,8 @@ defmodule Mutare.Ecto.RepoAggregate do
   `:sum`↔`:avg`, `:min`↔`:max`. A surviving mutant means no test distinguishes, say, the
   sum of a column from its average: the aggregate is computed but its *kind* is unchecked.
 
-  `:count` is deliberately left alone — it has a different arity contract
-  (`aggregate(q, :count)`), and swapping it for a value aggregate would change the call's
-  shape, not just its meaning.
+  `:count` is deliberately left alone, here as in the query-side catalog — see
+  `Mutare.Ecto.Aggregate`.
 
   Matched by resolving the call's module to the configured `repo` (so the direct
   `MyApp.Repo.aggregate`, an aliased `Repo.aggregate`, and an imported form all match) and

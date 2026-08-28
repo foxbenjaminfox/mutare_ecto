@@ -13,9 +13,8 @@ defmodule Mutare.Ecto.Query do
     * **Order flip** — flip an `order_by` direction (`:asc`↔`:desc`, and the `*_nulls_*`
       variants). "Does any test pin the sort direction?"
     * **Bound (drop)** — drop a `limit`/`offset` clause. "Is the window tested at all?" The
-      family's other half, the `±1` bump of a literal bound, is **hosted** (a pin-only
-      `limit: ^(case …)` weave — `Mutare.Ecto.Host`), so it no longer duplicates the whole
-      `from` per mutant; only the structural drop is a whole-`from` rewrite.
+      family's other half, the `±1` bump of a literal bound, is hosted pin-only instead
+      (`Mutare.Ecto.Bound`).
     * **JoinType** — narrow a join's kind by rewriting its clause *key*: `left_join`→`inner_join`,
       and `full_join`→`left_join`/`right_join` (plus `left_join`↔`right_join` sideways). "Does any
       test exercise the orphan row this join kind keeps that a narrower kind would drop?" An outer
@@ -29,12 +28,9 @@ defmodule Mutare.Ecto.Query do
       supports `INNER`/`LEFT`); `full_join`→`right_join` and the `RIGHT` leg of `left_join`↔
       `right_join` are **dialect-gated** (`:postgres`/`:mysql` — SQLite lacks `RIGHT JOIN`).
     * **Combination** — swap a set-operation clause's *key*: `intersect:`↔`except:` and
-      `intersect_all:`↔`except_all:` (the shared `Mutare.Ecto.Combination` catalog). "Does any
-      test pin which rows the combination keeps?" `A INTERSECT B` and `A EXCEPT B` partition the
-      left query's rows, so any left-query row kills the swap. Portable (no dialect gate): it only
-      permutes forms of equal adapter support, and `_all`-ness is preserved so the set-op swap is
-      never conflated with a distinctness change. `union`/`union_all` have no principled single
-      complement, so they only get the orthogonal clause drop.
+      `intersect_all:`↔`except_all:`. "Does any test pin which rows the combination keeps?" The
+      pairing, its portability, and the `union` exclusion are the shared
+      `Mutare.Ecto.Combination` catalog's.
     * **Aggregate (in `select`/`order_by`)** — swap an aggregate inside a `select`/`select_merge`
       or `order_by` clause value (`sum`↔`avg`, `min`↔`max`), via the shared `Mutare.Ecto.Aggregate`
       walker. "Does any test pin which aggregate the column is reduced/sorted by?" (An aggregate
@@ -46,25 +42,19 @@ defmodule Mutare.Ecto.Query do
       row the default is for?"). (The same forms inside a `where`/`having` condition are hosted
       instead, alongside the operator swaps.)
     * **Binding reorder (source list)** — when the source declares a positional binding list
-      (`from [a, b] in q, …`), transpose a pair of those bindings (`[a, b]` → `[b, a]`) for every
-      pair, whether referenced or not. "Did the author bind the sources in the right order?"
-      The author wrote the list at the whole-`from` level, so the swap rewrites only that declaration
-      and leaves every clause body untouched — one mutant per pair. The standalone/pipe macros'
-      *argument* binding lists reorder in place (`Mutare.Ecto.BindingReorder`); a scalar source and
-      synthesized join bindings never reorder.
+      (`from [a, b] in q, …`), transpose each pair of those bindings (`[a, b]` → `[b, a]`). "Did
+      the author bind the sources in the right order?" The list was written at the whole-`from`
+      level, so its reorder is delivered here — the rule and its policy are
+      `Mutare.Ecto.BindingReorder`'s.
 
   Each mutation is returned as a `Mutare.Ecto.Tag`: its label is the finer operator/kind a swap
   family names (order/join/aggregate — `nil` for a structural drop), and its attribution
-  (`Mutare.Mutator.Mutation.at/2`/`at_drop/1`) names the **inner clause** the rewrite
-  changed, so core reports the site — line/column and diff — at that clause rather than at the
-  whole `from`, making a clause-level `# mutare:ignore` reachable even though the node still
-  splices the whole rewritten query. The caller (`Mutare.Ecto.Tag.to_mutation/1`) turns this into a
-  tagged `Mutation`, then filters by `families:`/a `# mutare:ignore` qualifier; `opts` carries
-  `dialects:` for the join gate. The `from` is read apart and rebuilt through
-  `Mutare.Ecto.AST.FromCall` — `from(source)` or `from(source, clauses)`, `clauses` a keyword
-  list — which keeps the written form and collapses an emptied clause list back to
-  `from(source)`. A scalar `from/1` (`from(Post)`, no clauses) yields nothing, while a source
-  binding list (`from([a, b] in query)`) can still reorder.
+  (`Mutare.Mutator.Mutation.at/2`/`at_drop/1`) names the **inner clause** the rewrite changed,
+  so the site is reported there rather than at the whole `from` (see `Mutare.Ecto.Walk` on
+  attribution). `config` carries `dialects:` for the join gate. The `from` is read apart and
+  rebuilt through `Mutare.Ecto.AST.FromCall`, which keeps the written form (and owns the
+  emptied-clause-list rule). A scalar `from/1` (`from(Post)`, no clauses) yields nothing, while
+  a source binding list (`from([a, b] in query)`) can still reorder.
   """
 
   alias Mutare.Ecto.{Combination, Config, Surface, Tag, ValueCatalog}
@@ -75,17 +65,10 @@ defmodule Mutare.Ecto.Query do
   @behaviour Mutare.Ecto.SubMutator
   @behaviour Mutare.Ecto.Vocabulary
 
-  # JoinType: each join-clause key's kind narrows (or, for left↔right, moves sideways) by
-  # rewriting its key. `join`/`inner_join` never appear as a flip *source* — widening an inner
-  # join to an outer one is the direction we deliberately don't offer (see the moduledoc). Every
-  # flip here only permutes a form already reachable from the ones in the source, so none of them
-  # is an *introducing* swap the way a widening `*`→`FULL` used to be; the dialect gates below are
-  # purely about whether the **target** kind's SQL is portable:
-  #
-  #   * `left_join`↔`right_join` and `full_join`→`right_join` need `RIGHT JOIN` —
-  #     `@right_join_dialects` (`:postgres`/`:mysql`); SQLite lacks it.
-  #   * `left_join`→`inner_join` and `full_join`→`left_join` target universally portable kinds,
-  #     so they need no dialect gate at all.
+  # JoinType flip tables (the direction policy is the moduledoc's; history in NOTES "JoinType:
+  # narrowing only, no introducing swaps"). The gate is about the **target** kind's portability:
+  # `left_join`↔`right_join` and `full_join`→`right_join` need `RIGHT JOIN` (`@right_join_dialects`
+  # — SQLite lacks it); `left_join`→`inner_join` and `full_join`→`left_join` need no gate.
   @portable_join_flips %{left_join: [:inner_join], full_join: [:left_join]}
   @right_join_flips %{
     left_join: [:right_join],
@@ -101,11 +84,9 @@ defmodule Mutare.Ecto.Query do
   """
   @spec mutations(QueryCall.t(), Mutare.Mutator.context()) :: [Mutare.Ecto.SubMutator.tagged()]
   @impl Mutare.Ecto.SubMutator
-  # `Mutare.Ecto.Dispatcher` normalizes the call (`Mutare.Ecto.AST.QueryCall.parse/1`) before
-  # calling here, so a qualified `Ecto.Query.from(…)` or aliased `Q.from(…)` is rewritten exactly
-  # like the bare/imported `from(…)`; `rebuild` re-emits each mutant in the source's written form.
-  # `FromCall.parse/1` then reads the `from` apart; one whose clauses aren't a keyword list
-  # (`from(p in Post, ^clauses)`) yields nothing.
+  # Receives the Dispatcher-normalized call (`Mutare.Ecto.SubMutator`). `FromCall.parse/1` reads
+  # the `from` apart; one whose clauses aren't a keyword list (`from(p in Post, ^clauses)`)
+  # yields nothing.
   def mutations(%QueryCall{} = call, context) do
     case FromCall.parse(call) do
       %FromCall{} = from -> mutations_for(from, Config.from_context(context))
@@ -182,13 +163,10 @@ defmodule Mutare.Ecto.Query do
 
   defp produce(:binding_reorder, from, _config, _clause?), do: binding_reorders(from)
 
-  # Whole-`from` binding-reorder: a `from` whose **source** declares a positional binding list
-  # (`from [a, b] in q, …`) wrote that list at the whole-`from` level, so its reorder belongs there —
-  # swap every pair of reorderable positional bindings, rewriting only the source declaration
-  # (`[b, a] in q`) and never a clause body. Usage is deliberately irrelevant: an unused declaration
-  # still earns a swap, as it does under core's pattern-swap mutator. A scalar source (`u in User`)
-  # declares no list and a join-introduced binding is synthesized, so neither reorders; the
-  # standalone/pipe macros' own written lists reorder in `Mutare.Ecto.BindingReorder` instead.
+  # Whole-`from` binding-reorder of a source binding list (`from [a, b] in q, …` → `[b, a] in q`),
+  # rewriting only the source declaration — the in-place rule and its policy are
+  # `Mutare.Ecto.BindingReorder`'s. A scalar source (`u in User`) declares no list, so it never
+  # reorders.
   defp binding_reorders(%FromCall{source: source} = from) do
     with {:in, meta, [lhs, rhs]} <- source,
          %BindingList{} = list <- BindingList.parse(lhs) do
@@ -308,19 +286,11 @@ defmodule Mutare.Ecto.Query do
   end
 
   # Mutate each clause value the `capability` selects through the shared value dispatch
-  # (`Mutare.Ecto.ValueCatalog` — the same capability → catalog mapping `Mutare.Ecto.Clause`
-  # rebuilds a standalone/pipe call with, in the position the clause key's capabilities declare)
-  # — one mutant per tag the catalog yields for that value, rebuilt into the whole `from` and
-  # attributed at the mutated node: a walk-based catalog (`Mutare.Ecto.Walk`, under
-  # `Mutare.Ecto.ExpressionWalk`'s rules) stamps node-level attribution itself — kept, so the Site
-  # lands on the exact expression — and a catalog that doesn't (`Ordering.flips/1`, which replaces
-  # a whole entry) falls back to the clause value. Covers the three value-position families
-  # delivered as whole-`from` rewrites (`:ordering`/`:aggregate`/`:scalar`), each over a
-  # `select`/`select_merge`/`order_by` clause value.
-  #
-  # A `where`/`having` value with any of these is deliberately *not* here: its condition is hosted
-  # (`^`/`dynamic`), so those mutants ride the host (`Mutare.Ecto.Fragment`/`Host.catalog/3`)
-  # alongside the operator swaps rather than duplicating the whole `from`.
+  # (`Mutare.Ecto.ValueCatalog`, in the position the clause key's capabilities declare) — one
+  # mutant per tag, rebuilt into the whole `from`. A walk-based catalog stamps node-level
+  # attribution itself (kept); one that doesn't (`Ordering.flips/1`, which replaces a whole
+  # entry) falls back to the clause value. A `where`/`having` value is never served here — its
+  # condition is hosted (`Mutare.Ecto.Host.Catalog`).
   defp value_swaps(%FromCall{clauses: clauses} = from, capability, clause?) do
     admit? = &(Surface.from_clause?(&1, capability) and clause?.(&1))
 

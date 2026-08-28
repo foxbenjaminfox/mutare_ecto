@@ -40,10 +40,11 @@ end
 
 It must run **as a dependency of the app under test** (not against an external source path), so
 your `Repo` and schemas are loadable in the Mutare process — that's what lets `use Ecto.Schema`
-expand and the query macros resolve. External-source operation is unsupported: the plugin raises
-at startup when the Ecto surface (`Ecto.Schema`/`Ecto.Query`) is not loadable
-(`Mutare.Ecto.ensure_ecto!/1`, run at macro-route registration). Beyond that guard, unresolved
-target-app modules can still make routing incomplete or invalid.
+expand and the query macros resolve. External-source operation is unsupported: the plugin declares
+the Ecto surface it needs (`Ecto.Schema`/`Ecto.Query`) via `Mutare.Ecto.required_modules/0`, and
+Mutare checks it once at startup, aborting with a `Mutare.EnvironmentError` when a module is not
+loadable. Beyond that guard, unresolved target-app modules can still make routing incomplete or
+invalid.
 
 ## Usage
 
@@ -94,8 +95,9 @@ broadest), a boolean because a direct boolean literal in a condition is rarely i
 them with `families: :all` or by naming them in an explicit list (see Configuration). The numeric
 arms (`integer_literal`/`float_literal`) are on by default. Whatever the selection, a literal at a
 **structural position** of a known Ecto DSL form — the `fragment` template, the interval unit of
-`datetime_add`/`date_add`/`from_now`/`ago`, the cast type of `type/2` — is never mutated (it shapes
-the SQL, so a mutant would just be a broken query, not a test signal).
+`datetime_add`/`date_add`/`from_now`/`ago`, the cast type of `type/2`, the name in `field/2`,
+`as/1`/`parent_as/1`, or `selected_as` — is never mutated (it shapes the SQL, so a mutant would
+just be a broken query, not a test signal).
 
 **Query shape** — ordering, pagination, joins, aggregates, and the query terminals:
 
@@ -105,7 +107,9 @@ the SQL, so a mutant would just be a broken query, not a test signal).
 | `ordering_nulls` | `:asc_nulls_first` → `:asc_nulls_last` |
 | `bound` | `limit: 10` → `9` / `11`, or drop the `limit`/`offset` |
 | `join_type` | `left_join` → `inner_join`, `full_join` → `left_join`/`right_join` (narrows cardinality) |
-| `aggregate` | `sum(u.x)` ↔ `avg(u.x)`, `min` ↔ `max` (in `select` or `Repo.aggregate`) |
+| `combination` | `intersect` ↔ `except`, `intersect_all` ↔ `except_all` (`union` is left alone) |
+| `aggregate` | `sum(u.x)` ↔ `avg(u.x)`, `min` ↔ `max` (in `select`/`order_by`/`having`, or `Repo.aggregate`) |
+| `clause_drop` | drop a standalone/pipe stage — `q \|> group_by(…)`, `\|> select(…)`, `\|> join(…)`, … → `q` (never `order_by`: an unordered result has no defined order to test) |
 | `query_terminal` | `Ecto.Query.first` ↔ `last` |
 
 **Repo writes and changesets** — plain calls, no query DSL involved:

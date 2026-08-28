@@ -4,17 +4,15 @@ defmodule Mutare.Ecto.Host do
 
   The companion `Mutare.Ecto.Host.Routing` identifies hosted argument positions. This module then
   coordinates four focused components: `Host.Condition` locates the condition argument a
-  `where`/`having` call owns (binding-form or binding-less), `Host.Bindings` interprets Ecto
-  binding declarations, `Host.Catalog` produces the logical mutants — the plugin's own SQL catalogs plus the mutants
-  `Mutare.Ecto.Island` sub-contracts for each `^` pin interior via
-  `Mutare.Analyze.expression_mutations/3` (which is why `context` threads down to the catalog) —
-  and `Host.Target` constructs the `dynamic/2` wrap and selector splice consumed by Mutare core.
+  `where`/`having` call owns, `Host.Bindings` interprets Ecto binding declarations, `Host.Catalog`
+  produces the logical mutants — the plugin's own SQL catalog plus the pin interiors
+  `Mutare.Ecto.Island` sub-contracts to core (which is why `context` threads down to the
+  catalog) — and `Host.Target` constructs the `dynamic/2` wrap and selector splice consumed by
+  Mutare core.
 
   Besides conditions, the host also weaves the `:bound` ±1 bump of a literal `limit`/`offset`
-  value as a **pin-only** target (`limit: ^(case …)` — no `dynamic/2` wrap, no bindings): a bound
-  is an integer parameter, so pinning the selector directly is plain Ecto interpolation with a
-  behaviorally identical baseline, and the bump never duplicates the whole query the way a
-  whole-`from` rewrite would. `Mutare.Ecto.Bound` is the bump catalog and its literal guard.
+  value, as a **pin-only** target with no `dynamic/2` wrap and no bindings — see
+  `Mutare.Ecto.Bound`, the bump catalog and its literal guard.
   """
 
   alias Mutare.Ecto.{Bound, Config, Surface}
@@ -41,11 +39,8 @@ defmodule Mutare.Ecto.Host do
           :condition -> condition_target(args, config, context)
           :join -> join_target(args, config, context)
           :clause -> bound_target(macro, args)
-          # Defensively dead: `hosted_macro_names/0` subscribes only `:from` (matched by name
-          # above), `:condition`, `:join`, and the bound `:clause` macros, so no other kind is
-          # ever offered to `host/2`. `macro_kind_parity_test.exs` probes every
-          # `Surface.macro_kinds/0` value — a new kind must take a branch here or stay
-          # structurally unsubscribed, never silently weave nothing.
+          # Defensively dead: `hosted_macro_names/0` subscribes only the kinds above. A new kind
+          # must take a branch here or stay unsubscribed (`Surface.macro_kinds/0`).
           _other -> []
         end
 
@@ -82,10 +77,8 @@ defmodule Mutare.Ecto.Host do
   end
 
   # Whether a `from` clause key's value is a hostable condition: one of the `:hosted` keys
-  # (`where`/`having`/`on` — `Mutare.Ecto.Surface`), where `where`/`having` always host (each is
-  # its own top-level clause) but an `on:` hosts only when it is its join's sole, top-level
-  # on-expression — otherwise Ecto folds it under an `and` where a `^dynamic` operand is illegal
-  # (`Mutare.Ecto.Host.JoinOn`).
+  # (`Mutare.Ecto.Surface`) — `where`/`having` always, an `on:` only when
+  # `Mutare.Ecto.Host.JoinOn` admits it.
   defp hostable_clause?(:on, index, hostable_on), do: MapSet.member?(hostable_on, index)
   defp hostable_clause?(key, _index, _hostable_on), do: Surface.from_clause?(key, :hosted)
 
@@ -100,10 +93,8 @@ defmodule Mutare.Ecto.Host do
   # as(:t).x > 1)`) declares no positional binding, so `Bindings.from/2` returns `[]` and the woven
   # `dynamic([], …)` re-declares none — valid, since such a condition can only reference a *named*
   # binding. Hostability is decided by the clause key (`hostable_clause?/3`, in the caller) and a
-  # non-empty catalog, not the binding count. A top-level-pin condition (`where: ^cond`) hosts
-  # too: its own catalog is empty, but the host sub-contracts the pin's interior to core
-  # (`Mutare.Ecto.Host.Catalog.mutants/3`), so the non-empty branch is taken whenever core has
-  # something to mutate in that interior.
+  # non-empty catalog, not the binding count — so a top-level-pin condition (`where: ^cond`)
+  # hosts whenever its sub-contract yields something (`Mutare.Ecto.Island`).
   defp from_target(condition, bindings, index, config, context) do
     case Catalog.mutants(condition, config, context) do
       [] -> []
@@ -112,7 +103,8 @@ defmodule Mutare.Ecto.Host do
   end
 
   # The woven `dynamic/2` re-declares the written binding list — or an empty one for the
-  # binding-less form (`bindings: nil`), which `Bindings.declarations/1` renders as `[]`.
+  # binding-less form (`bindings: nil` — `Mutare.Ecto.Host.Condition`), which
+  # `Bindings.declarations/1` renders as `[]`.
   defp condition_target(args, config, context) do
     with %Condition{node: condition, index: index, bindings: list} <- Condition.locate(args),
          [_ | _] = mutants <- Catalog.mutants(condition, config, context) do
@@ -124,10 +116,9 @@ defmodule Mutare.Ecto.Host do
 
   # A plain clause macro is subscribed only for its bound value (`limit`/`offset` —
   # `Surface.bound?/1`); the bound is the **last argument** in both the direct and pipe forms
-  # (the same last-arg convention the clause mutators use). Pin-only: `Bound.bumps/1` is the
-  # single literal-integer guard (the routing classifier consumes it as
-  # `Bound.literal?/1`), so a `^pinned`/expression bound (or a degenerate `limit()`)
-  # yields no target and the call degrades safely to raw.
+  # (the same last-arg convention the clause mutators use). `Bound.bumps/1` is the single
+  # literal-integer guard (`Mutare.Ecto.Bound`), so a `^pinned`/expression bound (or a degenerate
+  # `limit()`) yields no target and the call degrades safely to raw.
   defp bound_target(macro, [_ | _] = args) do
     {bound, index} = last_argument(args)
 

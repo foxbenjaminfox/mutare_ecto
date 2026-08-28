@@ -1,11 +1,13 @@
 defmodule Mutare.Ecto.Config do
   @moduledoc false
-  # Parses the plugin's per-instance options (the `opts` of a `{Mutare.Ecto, opts}` entry) once, at
-  # spec resolution — `Mutare.Ecto.init/1` calls `parse!/1`, and core delivers the result to every
-  # callback as `context.config`: which SQL **families** are enabled, which SQL **dialects** to
-  # gate dialect-specific mutations on, and which `repo:` the Repo-call families match. Listing
-  # the plugin twice with different `families:`/`as:` (and/or `repo:`) is how a user narrows the
-  # catalog, names a sub-family in the report, or covers multiple repos.
+  # Parses the plugin's per-instance options (the `opts` of a `{Mutare.Ecto, opts}` entry) **once**,
+  # at spec resolution: `Mutare.Ecto.init/1` (`c:Mutare.Mutator.init/1`) calls `parse!/1`, so a
+  # typo'd option raises at startup next to core's own option validation, and core delivers the
+  # result to every context-aware callback (`mutate/2`, `host/2`) as `context.config` — which SQL
+  # **families** are enabled, which SQL **dialects** to gate dialect-specific mutations on, and
+  # which `repo:` the Repo-call families match. Listing the plugin twice with different
+  # `families:`/`as:` (and/or `repo:`) is how a user narrows the catalog, names a sub-family in the
+  # report, or covers multiple repos.
   #
   # Production only ever holds the parsed `%Config{}` — every accessor below takes the struct, and
   # a unit test that needs one builds it through `parse!/1`. What a family *means* once selected —
@@ -17,32 +19,21 @@ defmodule Mutare.Ecto.Config do
   @empty_dialect_set MapSet.new()
 
   # Every SQL family the plugin can emit, the source of truth for `families: :all` and for
-  # validating a configured subset. Grouped by the surface they mutate:
+  # validating a configured subset. Grouped by the surface they mutate, each with its owner:
   #
-  #   * in-fragment (`where`/`having` via the host; a free-standing `dynamic/1,2` via
-  #     `Mutare.Ecto.Dynamic`, in place): comparison, connective, null_predicate,
-  #     membership, arithmetic, coalesce, temporal, integer_literal, float_literal, atom_literal,
-  #     string_literal, boolean_literal — arithmetic and coalesce (the scalar catalog,
-  #     `Mutare.Ecto.Scalar`) are also delivered in place inside `select`/`order_by` values;
-  #   * binding_reorder — a positional binding transposition (`[a, b]` → `[b, a]`), delivered **in
-  #     place** by swapping the written list: `Mutare.Ecto.BindingReorder` for every standalone/pipe
-  #     binding-list macro (`where`/`having`/`select`/`order_by`/`join`/…) and `Mutare.Ecto.Query` for
-  #     a `from` `[a, b] in q` source. Unused declarations still swap; `_`-prefixed and named
-  #     bindings do not. Never a host/body rewrite;
-  #   * whole-query / clause-macro: filter_drop (drop a where/having), bound (limit/offset — the
-  #     drop is a whole-`from`/stage rewrite, while the literal ±1 bump is hosted **pin-only**,
-  #     `limit: ^(case …)`, via `Mutare.Ecto.Host`),
-  #     ordering (sort direction), ordering_nulls (NULLs placement), join_type,
-  #     combination (`intersect`↔`except`/`intersect_all`↔`except_all`, as a `from` clause key or a
-  #     standalone/pipe macro name — `Mutare.Ecto.Combination`),
-  #     aggregate (`sum`↔`avg`/`min`↔`max` in `select`/`order_by`/`Repo.aggregate` delivered in
-  #     place, and in a hosted `having` condition via `Mutare.Ecto.Host`), query_terminal (`first`↔`last`),
-  #     clause_drop (drop a standalone/pipe select/group_by/join/… stage — `Mutare.Ecto.ClauseDrop`;
-  #     `order_by` is deliberately *not* droppable — an unordered query's row order is unspecified);
-  #   * repo write: persistence (insert/update/delete → apply_action), on_conflict (swap an explicit
-  #     `on_conflict:` atom on insert/insert!/insert_all — `:nothing`→`:raise`, `:raise`→`:nothing`,
-  #     `:replace_all`→`:nothing`; the swap to `:raise` drops the forbidden `conflict_target:` pair);
-  #   * changeset: validation_drop (validators/constraints), hook_drop (prepare_changes/optimistic_lock).
+  #   * in-fragment (hosted `where`/`having` — `Mutare.Ecto.Host`; a free-standing `dynamic` —
+  #     `Mutare.Ecto.Dynamic`): comparison, connective, null_predicate, membership, temporal, and
+  #     the literal arms (`Mutare.Ecto.Fragment`); arithmetic and coalesce (`Mutare.Ecto.Scalar`)
+  #     and aggregate (`Mutare.Ecto.Aggregate`), which are also delivered in place inside
+  #     `select`/`order_by` values (and `aggregate` in `Repo.aggregate` — `Mutare.Ecto.RepoAggregate`);
+  #   * binding_reorder — `Mutare.Ecto.BindingReorder` (a `from` source list: `Mutare.Ecto.Query`);
+  #   * whole-`from` / clause-macro: filter_drop and clause_drop (`Mutare.Ecto.Query`,
+  #     `Mutare.Ecto.ClauseDrop`), bound (the drop there, the ±1 bump hosted pin-only —
+  #     `Mutare.Ecto.Bound`), ordering and ordering_nulls (`Mutare.Ecto.Ordering`), join_type
+  #     (`Mutare.Ecto.Query`), combination (`Mutare.Ecto.Combination`), query_terminal
+  #     (`Mutare.Ecto.QueryTerminal`);
+  #   * repo write: persistence, on_conflict (`Mutare.Ecto.RepoWrite`);
+  #   * changeset: validation_drop, hook_drop (`Mutare.Ecto.Changeset`).
   #
   # Generates the catalog machinery from this one declaration: `@type family` (the union),
   # `all_families/0` (`:all`, ordered), `default_families/0` (`:all` minus `:opt_in`),
@@ -51,14 +42,9 @@ defmodule Mutare.Ecto.Config do
   # `families:` exactly as core parses `{:builtins, except: […]}`, with fail-loud errors blaming
   # "Mutare.Ecto".
   #
-  # The `:opt_in` entries are the in-fragment literal arms that are **off by default**, opt-in for
-  # safety. A string, atom, or boolean literal mutant is the most likely to be a noisy/odd
-  # survivor — a string or atom because its value space is large (an in-fragment string the
-  # broadest), a boolean because a direct boolean literal in a condition is rarely idiomatic — so
-  # they are not in the default set: a user enables them with `families: :all`, by naming them in
-  # an explicit list, or via `{:default, except: …}`/`{:all, except: …}`. Even when enabled, the
-  # structural-position guard in `Mutare.Ecto.Fragment` still suppresses them at a DSL form's
-  # structural argument.
+  # The `:opt_in` entries are the in-fragment literal arms that are **off by default** (why:
+  # `Mutare.Ecto`'s "Configuration"); a user enables them with `families: :all`, by naming them
+  # in an explicit list, or via `{:default, except: …}`/`{:all, except: …}`.
   # (The lists are plain literals — `use` options are expanded with `Macro.expand_literals/2`,
   # which leaves sigils and module attributes unexpanded.)
   use Mutare.Mutator.Families,

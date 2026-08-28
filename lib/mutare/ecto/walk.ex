@@ -11,18 +11,18 @@ defmodule Mutare.Ecto.Walk do
   # is then a per-node *reader* of those positions (`mutants/4`: the node's own alternatives,
   # each rebuilt into the root), and a second reader of the same positions
   # (`Mutare.Ecto.Fragment.islands/1`) agrees with the first about which nodes exist **by
-  # construction** — there is no second traversal to drift. Before this module, the condition
-  # catalog's mutation walk and its island walk were two hand-rolled copies of one traversal,
-  # and the select/order_by walker a third.
+  # construction** — there is no second traversal to drift (NOTES "Walk: one traversal under
+  # every catalog").
   #
   # `structural/3` is the default `children` rule — a call's arguments under the author-macro
   # rule below, a written list's elements, a 2-tuple's sides — and a `^` pin is a leaf for every
-  # SQL-side walk (its interior is ordinary Elixir, never SQL for a catalog to reason about; the
-  # condition catalog's `islands/1` hands it to core instead). A catalog's own rule wraps it to
-  # claim a **unit** (a whole subtree whose inner nodes are not positions — `Fragment`'s
-  # `not is_nil(x)`), to refuse a shape it does not speak, or to refine a child's context
-  # (`ExpressionWalk`'s `order_by:` option of an `over/2` window). A rule can only ever
-  # *narrow* what a reader sees: readers never descend on their own.
+  # SQL-side walk (its interior is sub-contracted to core — see `Mutare.Ecto.Island`). A
+  # catalog's own rule wraps it to claim a **unit** (a whole subtree whose inner nodes are not
+  # positions — `Fragment`'s `not is_nil(x)`), to refuse a shape it does not speak, or to refine
+  # a child's context (`ExpressionWalk`'s `order_by:` option of an `over/2` window). A rule can
+  # only ever *narrow* what a reader sees: readers never descend on their own.
+  #
+  # ## Node-level attribution
   #
   # Every mutant `mutants/4` yields is stamped with **node-level attribution**
   # (`Mutare.Mutator.Mutation.at/2`) at the node it replaces, so an in-place delivery
@@ -31,10 +31,11 @@ defmodule Mutare.Ecto.Walk do
   # the mutated expression's own range. That is what lets a line-scoped `# mutare:ignore` reach
   # *one* of two same-family mutants sharing a clause: two identical `coalesce(a, b)`s in one
   # `select`, or the two comparisons of a multi-line `dynamic`, are indistinguishable by
-  # vocabulary — position is the only discriminator. On the hosted relay paths
-  # (`Mutare.Ecto.Island`, `Mutare.Ecto.Subquery`) the stamp is structurally discarded — a
-  # hosted mutant is normalized to a `{node, note, variant, producer}` quad with no attribution
-  # slot — so the weave's own Site mechanics are untouched.
+  # vocabulary — position is the only discriminator. A tag a catalog already attributed (a
+  # subquery interior mutant, anchored where the interior catalog produced it) keeps its own. On
+  # the hosted relay paths (`Mutare.Ecto.Island`, `Mutare.Ecto.Subquery`) the stamp is
+  # structurally discarded — a hosted mutant is normalized to a `{node, note, variant, producer}`
+  # quad with no attribution slot — so the weave's own Site mechanics are untouched.
   #
   # ## The author-macro rule
   #
@@ -44,8 +45,12 @@ defmodule Mutare.Ecto.Walk do
   # syntax: a non-macro node (`nil` routing — an ordinary operator/call/field we own), or an
   # argument the macro routed `:expression` (the one treatment that asserts "a standard expression
   # here, mutate it"). Every other treatment — `:skip`, `:pattern`, `:binding_pattern`, `:hosted`,
-  # `:interpolated`, `{:keyword, …}` — marks an argument whose grammar is the macro's own, left raw.
-  # The per-argument routing is read from the resolve-pass stamp via `Mutare.Calls.macro_treatment/1`.
+  # `:interpolated`, `{:keyword, …}` — marks an argument whose grammar is the macro's own, left raw
+  # (e.g. a `select: clamp(sum(p.x), 10)` whose `clamp/2` is registered `:skip` never has its
+  # `sum` swapped: nothing says `sum(p.x)` even means an aggregate to `clamp`). The per-argument
+  # routing is read from the resolve-pass stamp via `Mutare.Calls.macro_treatment/1`. Every
+  # catalog (`Fragment`'s `mutants`/`islands`, `ExpressionWalk`) is a reader over this walk and
+  # never descends on its own, so the rule is applied in exactly one place.
 
   alias Mutare.Calls
   alias Mutare.Ecto.Tag
@@ -90,10 +95,7 @@ defmodule Mutare.Ecto.Walk do
   Every **single-point** mutant of `root` under the `local` per-node catalog: for each position
   the `children` rule admits, each of `local`'s alternatives for that one node, rebuilt into the
   whole `root` with its family/label (`Mutare.Ecto.Tag`) carried up unchanged — and **anchored**
-  at the node it replaces (`Mutare.Mutator.Mutation.at/2`), so an in-place delivery reports the
-  Site at the mutated expression's own range rather than at whatever surrounding form the
-  delivery rebuilds. A tag the catalog already attributed (a subquery interior mutant, anchored
-  where the interior catalog produced it) keeps its own.
+  at the node it replaces (see "Node-level attribution" in the module comment).
   """
   @spec mutants(Macro.t(), ctx, children(ctx), local(ctx)) :: [Tag.t()] when ctx: var
   def mutants(root, ctx, children, local) do

@@ -5,41 +5,53 @@ defmodule Mutare.Ecto.Host.Routing do
   `:routing`-registered query macro, how core should treat that position — `:hosted` (the plugin's
   host weaves it), `:expression` (mutate it normally), `:skip` (leave it raw), `:interpolated`
   (core mutates a scalar value, delivered through `^` interpolation), or `{:keyword, …}` (per-pair
-  shorthand routing).
-  `Mutare.Ecto.Host` then consumes the `:hosted` decision to build and weave the `^`/`dynamic` target.
+  shorthand routing). `Mutare.Ecto.Host` then consumes the `:hosted` decision to build and weave
+  the `^`/`dynamic` target.
 
-  Both query syntaxes are covered, routed by call shape:
+  ## Why every query macro routes `:routing`
 
-    * the `from` keyword form — `from(p in S, where: p.x == v, …)`: each `where`/`having` condition
-      routes by shape, the same under a binding source (`p in S`) or a bare queryable (`from("t",
-      …)`). A non-shorthand *expression* condition routes `:hosted` — under a bare source it can only
-      reference a named binding (`from("t", as: :t, where: as(:t).x == v)`), which the host weaves
-      behind an empty-binding `dynamic([], …)`. A keyword-**shorthand** condition (`where: [x: v]`)
-      instead routes its values individually `{:keyword, …}`: each scalar value `:interpolated` (core
-      mutates it, `^`-pinned — Ecto rejects a bare selector `case` there, and a shorthand value is
-      plain interpolated data, core's literal families to mutate, not the SQL catalog), while the
-      column-name keys, the `nil`-valued pairs (an `IS NULL`, never `= nil`), and compound values are
-      left raw. So a shorthand value mutation is recorded under the *core* family that made it
+  The classifier exists so core never splices a runtime selector into a query expression (which
+  would poison the single build) **without** losing the upstream query. A composable macro's
+  *data* positions (a binding list, an ordering, a selector, a bound) must stay raw — core must
+  descend nothing there — but its **threaded query** (the first argument, or the piped left side)
+  is an ordinary expression that must stay reachable: a static `:skip` registration would stamp
+  the piped value `:skip` and silently drop every upstream mutation, so the classifier marks that
+  one position `:expression` and everything else raw. A routed node is still offered whole to
+  `mutate/2`, where the plugin's own mutators fire (`Mutare.Ecto.Clause`,
+  `Mutare.Ecto.BindingReorder`, `Mutare.Ecto.ClauseDrop`, and `Mutare.Ecto.Query` for a `from`).
+
+  `dynamic` and the `is_named_binding` guard helper instead register `:skip`
+  (`Mutare.Ecto.Surface.macro_registrations/0`): neither is a query-threading stage, so core must
+  not descend into their DSL/guard arguments. A `:skip` registration still offers the *whole
+  call* to `mutate/2` — which is how a free-standing `dynamic/1,2` is mutated in place
+  (`Mutare.Ecto.Dynamic`) while `is_named_binding` stays entirely inert.
+
+  ## The decisions, by call shape
+
+    * the `from` keyword form — `from(p in S, where: p.x == v, …)`: the source is never mutated
+      (a table/schema swap is a broken query, not a mutant). Each `where`/`having` condition
+      routes by shape, the same under a binding source (`p in S`) or a bare queryable
+      (`from("t", …)`, whose conditions can only reference a named binding — the host weaves them
+      behind an empty-binding `dynamic([], …)`). A non-shorthand *expression* condition routes
+      `:hosted`; a keyword-**shorthand** condition (`where: [x: v]`) instead routes its pairs
+      individually `{:keyword, …}`: each scalar value `:interpolated` (core's literal families
+      mutate it, `^`-pinned — Ecto rejects a bare selector `case` there), while the column-name
+      keys, the `nil`-valued pairs (an `IS NULL`, never `= nil`), and compound values are left raw.
+      So a shorthand value mutation is recorded under the *core* family that made it
       (`:literal`/`:string`/…), not `:ecto`. The non-condition clauses (`select`/`order_by`/… —
       whole-`from`'s job) are always left raw.
     * the composable pipe/standalone form — `q |> where([p], p.x == v)` / `where(q, [p], …)`: the
-      binding-list argument is detected by shape, and the
-      condition that follows it routes `:hosted`. A **binding-less** condition
-      (`q |> where(as(:post).x > 1)`) — no written list, the condition is the trailing argument —
-      routes `:hosted` too (the woven `dynamic/2` re-declares an empty binding list; see
-      `Mutare.Ecto.Host.Condition`). A keyword-shorthand `where(q, x: v)` instead routes its trailing
-      pairs `{:keyword, …}`. The plain clause macros (`limit`/`order_by`/…) only thread the
-      query (first arg → `:expression`) and leave their data positions raw for the plugin's own
-      `mutate/2` mutators — with one exception: a **literal-integer bound** (`limit(q, 10)` /
-      `q |> offset(5)`, and the `limit:`/`offset:` keys of the `from` keyword form) routes
-      `:hosted`, so the `:bound` ±1 bump weaves pin-only (`limit: ^(case …)`) instead of
-      duplicating the whole call. The literal-only guard is the bump catalog's own
-      (`Mutare.Ecto.Bound.literal?/1`, defined as `bumps/1` producing mutants), so
-      routing and host agree by definition — a `^pinned`/expression bound stays raw exactly as
-      before.
+      threaded query routes `:expression` as above, and the condition
+      `Mutare.Ecto.Host.Condition` locates (binding-form or binding-less) routes `:hosted`. A
+      keyword-shorthand `where(q, x: v)` routes its trailing pairs `{:keyword, …}` as in the
+      `from` form. The plain clause macros (`limit`/`order_by`/…) thread the query and leave their
+      data positions raw — with one exception: a **literal-integer bound** (`limit(q, 10)` /
+      `q |> offset(5)`, and the `limit:`/`offset:` keys of the `from` form) routes `:hosted`, so
+      the `:bound` ±1 bump is woven pin-only. The literal-only guard is `Mutare.Ecto.Bound`'s, so
+      routing and host agree by definition.
 
-  This relies on core's recursive per-pair routing, hosted values, and `:interpolated` extensions; see
-  `c:Mutare.MacroRouting.route_arguments/2`.
+  This relies on core's recursive per-pair routing, hosted values, and `:interpolated` extensions;
+  see `c:Mutare.MacroRouting.route_arguments/2`.
   """
 
   alias Mutare.Ecto.{Binding, Bound, Surface}
@@ -67,13 +79,7 @@ defmodule Mutare.Ecto.Host.Routing do
   """
   @spec treatments(atom(), [Macro.t()]) :: [Mutare.MacroRouting.treatment()]
   def treatments(:from, [_source | rest] = args) do
-    # The source is never mutated (a table/schema swap is a broken query, not a mutant). Each clause
-    # routes independently: a binding-referencing `where`/`having` expression is hosted, while a
-    # keyword-shorthand condition routes its values per pair so core mutates them (`^`-pinned). This
-    # is the same whether the source is a binding source (`p in S`) or a bare queryable (`from("t",
-    # …)`): a non-shorthand condition under a bare source can only reference a *named* binding
-    # (`as(:_)`), which the host weaves behind an empty-binding `dynamic([], …)`. Non-condition
-    # clauses (select/order_by/… — whole-`from`'s job), keys, and nil pairs are left raw.
+    # The source is `:skip`; each clause routes independently (`clause_treatments/1`).
     clause_treatment =
       case FromCall.parse_args(args) do
         {_source, %KeywordList{} = clauses} -> {:keyword, clause_treatments(clauses)}
@@ -108,11 +114,10 @@ defmodule Mutare.Ecto.Host.Routing do
   end
 
   defp route_macro(:clause, name, args) do
-    # No hosted fragment, no shorthand: thread the query (first arg → `:expression` when it is
-    # one) and leave the data positions raw for the plugin's own `mutate/2` mutators — except a
-    # bound macro's literal-integer value (the trailing argument — `route_last/2`), which routes
-    # `:hosted` so the `:bound` bump weaves pin-only. `List.last([])` is `nil`, never a literal
-    # integer, so a degenerate `limit()` keeps the empty route.
+    # No hosted fragment, no shorthand: thread the query and leave the data positions raw —
+    # except a bound macro's literal-integer value (the trailing argument — `route_last/2`),
+    # which routes `:hosted` for the pin-only bump (`Mutare.Ecto.Bound`). `List.last([])` is
+    # `nil`, never a literal integer, so a degenerate `limit()` keeps the empty route.
     base = query_threading_route(args)
 
     if Surface.bound?(name) and Bound.literal?(List.last(args)) do
@@ -124,10 +129,8 @@ defmodule Mutare.Ecto.Host.Routing do
 
   # Only `:dynamic`/`:skip` (registered `:skip`, so core never calls `route_arguments/2` for
   # them — reachable here only through a direct `treatments/2` call) and `nil` (a name the
-  # plugin doesn't own) land here. A **new** Surface kind registers `:routing` by default
-  # (`Surface.macro_registrations/0`), so it must take a real branch above —
-  # `macro_kind_parity_test.exs` probes every `Surface.macro_kinds/0` value and fails until
-  # the routing decision for the kind is explicit.
+  # plugin doesn't own) land here. A **new** Surface kind must take a real branch above
+  # (`Surface.macro_kinds/0`).
   defp route_macro(_kind, _name, _args), do: []
 
   # The base routing for a query-threading macro: mark the first argument `:expression` **iff it is
@@ -211,14 +214,10 @@ defmodule Mutare.Ecto.Host.Routing do
     end)
   end
 
-  # The treatment for one `where`/`having` condition value. A keyword-shorthand value
-  # (`where: [active: true]`) routes its pairs individually; every other value is `:hosted` — the
-  # woven `dynamic/2` re-declares the source/join bindings, or an empty list when the source is a
-  # bare queryable whose condition references only a named binding
-  # (`Mutare.Ecto.Host.Bindings.from/2` builds that list). A top-level interpolation
-  # (`where: ^cond`) is `:hosted` too: its own SQL catalog is empty, but the host sub-contracts the
-  # pin's interior to core (a pinned Elixir condition's logic is core's to mutate), matching the
-  # standalone binding-form and free-standing `dynamic` paths.
+  # The treatment for one `where`/`having` condition value: a keyword-shorthand value
+  # (`where: [active: true]`) routes its pairs individually; every other value — a top-level
+  # interpolation `where: ^cond` included, whose interior the host sub-contracts to core
+  # (`Mutare.Ecto.Island`) — is `:hosted`.
   defp condition_treatment(value) do
     case KeywordList.nonempty(value) do
       nil -> :hosted

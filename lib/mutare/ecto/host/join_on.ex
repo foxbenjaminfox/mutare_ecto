@@ -1,6 +1,7 @@
 defmodule Mutare.Ecto.Host.JoinOn do
   @moduledoc false
-  # Decides which join `on:` conditions the host may weave a `^dynamic` into.
+  # The one home of join `on:` hostability: which `on:` conditions the host may weave a `^dynamic`
+  # into.
   #
   # Ecto accepts a `^dynamic(...)` only as the **entire, top-level** on-expression of a join. When a
   # join carries more than one on-condition — two `on:` keys, or an `assoc(...)` join whose implicit

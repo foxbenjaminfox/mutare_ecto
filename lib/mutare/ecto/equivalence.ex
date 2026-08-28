@@ -1,59 +1,29 @@
 defmodule Mutare.Ecto.Equivalence do
   @moduledoc false
-  # The families whose survivors may be **legitimately unkillable for a data reason**, not a test
-  # gap — each carrying a report *note* phrased for its **own** equivalence reason, so the report
-  # reads as honest signal — and the `finalize/2` funnel that applies the `families:` filter and
-  # attaches that note to every mutation the plugin produces.
+  # The one home of two things: the **equivalence-sensitive families** — those whose survivors
+  # may be legitimately unkillable for a data reason, not a test gap — each with a report *note*
+  # phrased for its **own** reason, so the report reads as honest signal; and the `finalize/2`
+  # funnel (below) that applies the `families:` filter and attaches that note to every mutation
+  # the plugin produces.
   #
-  # The reasons are genuinely distinct (and only the connective one is actually SQL three-valued
+  # The reasons are genuinely distinct (only the connective one is actually SQL three-valued
   # logic — the rest turn on boundary values, NULL exclusion, NULL ordering, or join cardinality),
-  # so each gets a note that names the specific data a kill needs rather than one catch-all
-  # "three-valued logic" string:
+  # so each note names the specific data a kill needs rather than one catch-all string. The
+  # `@…_note` strings below are the single statement of each family's reason — written as the
+  # report line itself, so the rationale and what the user reads cannot drift. Three families
+  # split into sub-cases that `note/2` selects by the mutant's finer label:
   #
-  #   * `:comparison` — two sub-cases, by the operator swapped. A strict↔non-strict swap
-  #     (`<`↔`<=`, `>`↔`>=`) differs only on a row sitting exactly on the bound
-  #     (`@comparison_boundary_note`); an `==`↔`!=` swap differs on every concrete value but treats
-  #     NULLs alike (both exclude them), so it survives only when no non-NULL row exists
-  #     (`@comparison_equality_note`). `note/2` picks between them from the finer operator label.
-  #   * `:connective` (`@connective_note`) — `and`↔`or`. The one genuine three-valued-logic case:
-  #     they coincide unless some row has the two operands disagreeing, a NULL operand counting as
-  #     neither true nor false.
-  #   * `:null_predicate` (`@null_predicate_note`) — `is_nil`↔`not is_nil`. Complementary row sets,
-  #     told apart only by which rows are NULL.
-  #   * `:arithmetic` — two sub-cases, by the operator swapped. `+`↔`-` compute the same value
-  #     exactly when the right operand is 0 — the shared identity — so an all-zero column makes the
-  #     swap equivalent (`@arithmetic_additive_note`); `*`↔`/` coincide when the right operand is ±1
-  #     or the left is 0 (`@arithmetic_multiplicative_note`) — a zero *divisor*, by contrast, makes
-  #     the swapped query raise, which is a kill, not an equivalence. `note/2` picks between them
-  #     from the finer operator label, like `:comparison`.
-  #   * `:coalesce` — two sub-cases, by the position of the dropped call. In a value position
-  #     (`@coalesce_note`) `coalesce(x, default)` → `x` differs exactly on the rows where `x` is
-  #     NULL (the default's whole purpose), so with no NULL row seeded the drop is legitimately
-  #     equivalent. In an **ordering** position (`@coalesce_ordering_note` — the
-  #     `"coalesce_in_ordering"` finer label `Mutare.Ecto.Scalar` attaches for an `order_by`
-  #     value or an `over/2` window's `order_by:` option) the drop needs more than NULL rows: it
-  #     re-sorts only those rows to the engine's *default* NULL placement (engine-defined, not
-  #     Ecto-defined — Postgres sorts NULL as larger than every value, SQLite/MySQL as smaller;
-  #     see `Mutare.Ecto.Ordering`), so a fallback that would rank them in that same place is
-  #     legitimately unobservable on that engine. `note/2` picks between them from the finer
-  #     label, like `:comparison`.
-  #   * `:temporal` (`@temporal_note`) — `ago(n, unit)`↔`from_now(n, unit)`. The two instants sit
-  #     the same distance on opposite sides of now, so a comparison against them differs only for
-  #     rows whose timestamp falls between them — all-historical (or all-far-future) data makes
-  #     the flip legitimately equivalent.
-  #   * `:ordering_nulls` (`@ordering_nulls_note`) — `*_nulls_first`↔`*_nulls_last`. Not three-valued
-  #     logic at all but NULL *ordering*: the placement only shows when the ordered column holds NULL
-  #     rows.
-  #   * `:join_type` (`@join_note`) — INNER↔LEFT↔RIGHT↔FULL. Differs only when an *orphan* row exists
-  #     (a preserved-side row with no match on the other); a mandatory/complete FK makes every row
-  #     match, so the swap is legitimately equivalent.
+  #   * `:comparison` — a strict↔non-strict swap needs a row on the bound; `==`↔`!=` needs a
+  #     non-NULL row (both exclude NULLs);
+  #   * `:arithmetic` — `+`↔`-` needs a nonzero right operand; `*`↔`/` a right operand off ±1 (a
+  #     zero divisor raises — a kill, not an equivalence);
+  #   * `:coalesce` — in a value position the drop needs a NULL row; under the
+  #     `"coalesce_in_ordering"` label `Mutare.Ecto.Scalar` attaches to a sort-key drop it also
+  #     needs the fallback to disagree with the engine's default NULL placement (the per-engine
+  #     table is `Mutare.Ecto.Ordering`'s).
   #
-  # The per-mutant note rides onto a Site via `finalize/2` (`c:Mutare.Mutator.finalize/2`), which
-  # core runs on **both** delivery paths — the selector host's `:mutants` and a plain `mutate/2`
-  # return. So the in-fragment families surface the advisory through the host, and the
-  # whole-`from`/clause-macro families (`:ordering_nulls`, `:join_type`) through `mutate/2`. Surfaced
-  # under their own report name via the `:as` convention (`sensitive_families/0`, public as
-  # `Mutare.Ecto.equivalence_sensitive_families/0`).
+  # The set is public as `Mutare.Ecto.equivalence_sensitive_families/0` (`sensitive_families/0`),
+  # so a user can group these survivors under their own report name via the `:as` convention.
 
   alias Mutare.Ecto.Config
   alias Mutare.Mutator.Mutation
@@ -72,10 +42,8 @@ defmodule Mutare.Ecto.Equivalence do
 
   # The note for each equivalence-sensitive family; the single source of truth for the set (a family
   # is equivalence-sensitive iff it appears here). `sensitive_families/0` derives the ordered set by
-  # filtering `Config.all_families/0`. `:comparison`, `:arithmetic`, and `:coalesce` map to their
-  # default sub-case notes; `note/2` overrides them with `@comparison_equality_note` for an
-  # `==`/`!=` swap, `@arithmetic_multiplicative_note` for a `*`/`/` swap, and
-  # `@coalesce_ordering_note` for an ordering-position drop.
+  # filtering `Config.all_families/0`. The three sub-case families map to their default arm;
+  # `note/2` selects the other by the mutant's finer label.
   @notes %{
     comparison: @comparison_boundary_note,
     connective: @connective_note,
@@ -94,11 +62,8 @@ defmodule Mutare.Ecto.Equivalence do
   @doc """
   The report note for a `family`'s mutants — a string for an equivalence-sensitive family
   (surfaced on each such mutant's Site), or `nil` for an ordinary family (a bare mutant). The
-  optional `finer` label refines the sub-case families: an `==`/`!=` swap reads `:comparison`'s
-  NULL-exclusion note (every other comparison the boundary note), a `*`/`/` swap reads
-  `:arithmetic`'s multiplicative-identity note (a `+`/`-` swap the additive one), and an
-  ordering-position drop (`"coalesce_in_ordering"`) reads `:coalesce`'s engine-default-placement
-  note (a value-position drop the plain NULL-data one).
+  optional `finer` label selects the sub-case note for `:comparison`/`:arithmetic`/`:coalesce`
+  (the module header lists them).
   """
   @spec note(Config.family(), Mutation.variant()) :: String.t() | nil
   def note(family, finer \\ nil)
@@ -110,19 +75,22 @@ defmodule Mutare.Ecto.Equivalence do
 
   @doc """
   The tag → filter → enrich funnel, defined once (`c:Mutare.Mutator.finalize/2` —
-  `Mutare.Ecto.finalize/2` delegates here). Core applies it to every mutation the plugin produces,
-  on **both** delivery paths — a `mutate/2` return and a host target's `:mutants` — just before
-  recording, so no delivery site can forget the filter or the note. It reads the mutation's
-  leading variant label (attached by `Mutare.Ecto.Tag.to_mutation/1`) as its SQL family:
+  `Mutare.Ecto.finalize/2` delegates here). Producers stay pure — every tag becomes a
+  `Mutation` carrying `variant: [family | finer]` (`Mutare.Ecto.Tag.to_mutation/1`) — and core
+  applies this funnel to every mutation the plugin produces, on **both** delivery paths (a
+  `mutate/2` return and a host target's `:mutants`), just before recording, so no delivery site
+  can forget the filter or the note. It reads the mutation's leading variant label as its SQL
+  family:
 
     * a **disabled** family (the run's `families:` selection) is dropped — `:skip`;
-    * an **enabled** one gains its equivalence advisory (`note/2`, refined for
-      `:comparison`/`:arithmetic` by the finer operator label), else a `nil` note. A survivor of an
-      equivalence-sensitive family reads "… kill may require …".
+    * an **enabled** one gains its equivalence advisory (`note/2`, refined by the finer label),
+      else a `nil` note. A survivor of an equivalence-sensitive family reads "… kill may require …".
 
-  A relayed island mutant (explicit `producer:` — the host's core sub-contract) never reaches
-  this funnel: core skips finalize for it, because the producing core family's own funnel already
-  ran when the mutation was generated.
+  This is how the in-fragment families surface their note through the host, and the
+  whole-`from`/clause-macro families (`:ordering_nulls`, `:join_type`) through `mutate/2`. A
+  relayed island mutant (explicit `producer:`, `Mutare.Ecto.Island`) never reaches this funnel:
+  core skips finalize for it, because the producing family's own funnel already ran when the
+  mutation was generated.
   """
   @spec finalize(Mutation.t(), map()) :: Mutation.t() | :skip
   def finalize(%Mutation{variant: [family | finer]} = mutation, context) do

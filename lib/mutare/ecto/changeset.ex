@@ -18,10 +18,8 @@ defmodule Mutare.Ecto.Changeset do
       compile-safe and changeset-shape-preserving, but the gap it surfaces is "this side effect /
       concurrency guard is never asserted", a different question — so it gets its own family.
 
-  **Pipe-aware.** In a pipe (`cs |> validate_required(...)`) the changeset is the left-hand
-  side, so the stage is replaced by `Function.identity/1` (`cs |> Function.identity()` ≡ `cs`,
-  exactly Mutare's `CallRemoval` delivery). Written directly (`validate_required(cs, ...)`) the
-  changeset is the first argument, so the call collapses to that argument.
+  Delivery is the shared pipe-aware stage drop (`Mutare.Ecto.StageDrop`): piped, the stage becomes
+  `Function.identity/1`; written directly, the call collapses to its changeset argument.
   """
 
   alias Mutare.Ecto.StageDrop

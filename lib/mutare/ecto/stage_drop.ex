@@ -7,8 +7,8 @@ defmodule Mutare.Ecto.StageDrop do
   # function to a family, and replace the stage with its passthrough.
   #
   #   * **piped** (`x |> step(…)`) — the value is the `|>` left side, so the stage becomes
-  #     `Function.identity/1` (`x |> Function.identity()` ≡ `x`). `Elixir.Function` is alias-proof
-  #     (a user `alias X, as: Function` can't redirect it).
+  #     `Function.identity/1` (`x |> Function.identity()` ≡ `x`), emitted `Elixir.`-prefixed so
+  #     no user alias can redirect it (see `Mutare.Ecto.AST`).
   #   * **direct** (`step(x, …)`) — the value is the first argument, so the call collapses to it.
   #
   # The owner module supplies the module it matches and a `fun -> family | nil` classifier

@@ -1,8 +1,7 @@
 defmodule Mutare.Ecto.Dispatcher do
   @moduledoc false
-  # Classifies a node once, then invokes only the sub-mutators that can apply to that Ecto surface.
-  # The previous flat dispatch offered every node to all eight sub-mutators, which repeated macro
-  # and call resolution even for ordinary literals and operators.
+  # Classifies a node once, then invokes only the sub-mutators that can apply to that Ecto surface
+  # (NOTES "Dispatcher: classify once").
 
   alias Mutare.Ecto.{
     BindingReorder,
@@ -27,9 +26,8 @@ defmodule Mutare.Ecto.Dispatcher do
   @query_key Calls.module_key(Ecto.Query)
   @changeset_key Calls.module_key(Ecto.Changeset)
   @doc "The tagged mutations applicable to one AST node."
-  # `context` is the callback context core hands `Mutare.Ecto.mutate/2`, carrying the
-  # `init/1`-parsed `%Config{}` as `:config` — a superset of `Mutare.Mutator.context()`, hence
-  # `map()`, as in `Config.from_context/1`. It threads unchanged to the sub-mutators.
+  # `context` carries the `init/1`-parsed `%Config{}` as `:config` (`Mutare.Ecto.Config`) — a
+  # superset of `Mutare.Mutator.context()`, hence `map()`. It threads unchanged to the sub-mutators.
   @spec mutations(Macro.t(), map()) :: [
           Mutare.Ecto.SubMutator.tagged() | Mutare.Mutator.Mutation.t()
         ]
@@ -45,9 +43,8 @@ defmodule Mutare.Ecto.Dispatcher do
 
   defp query_macro_mutations(:from, call, context), do: Query.mutations(call, context)
 
-  # A standalone/pipe condition macro (`where`/`having`/…) reorders its written binding list in place
-  # (`BindingReorder`), exactly like the other binding-list macros — its operator/literal swaps are
-  # the host's job, but the binding list is an ordinary argument, so it never needs the host.
+  # A condition macro's operator/literal swaps are the host's (`Mutare.Ecto.Host`); its written
+  # binding list reorders in place (`Mutare.Ecto.BindingReorder`).
   defp query_macro_mutations(:condition, %QueryCall{node: node} = call, context),
     # mutare:ignore[operand_swap] equivalent — two independent sub-mutator result lists, consumed as a set
     do: BindingReorder.mutations(call, context) ++ ClauseDrop.mutations(node, context)
@@ -59,18 +56,15 @@ defmodule Mutare.Ecto.Dispatcher do
       BindingReorder.mutations(call, context) ++ ClauseDrop.mutations(node, context)
   end
 
-  # A free-standing `dynamic/1,2` builds a condition value in ordinary expression position: its
-  # in-fragment SQL mutants are whole-call rewrites (`Dynamic`), and its written binding list
-  # reorders in place (`BindingReorder`) — but it threads no query, so it never stage-drops.
+  # A free-standing `dynamic` (`Mutare.Ecto.Dynamic`) threads no query, so it never stage-drops;
+  # its written binding list still reorders.
   defp query_macro_mutations(:dynamic, call, context),
     # mutare:ignore[operand_swap] equivalent — two independent sub-mutator result lists, consumed as a set
     do: Dynamic.mutations(call, context) ++ BindingReorder.mutations(call, context)
 
-  # Only the taxonomy's inert remainder lands here: a `:skip`-kind macro (its whole call is
-  # offered, but no sub-mutator claims it) and `nil` (an `Ecto.Query` macro the plugin doesn't
-  # own). Elixir can't exhaustiveness-check this dispatch, so `macro_kind_parity_test.exs` probes
-  # every `Surface.macro_kinds/0` value against it — a new or renamed kind must take a real
-  # branch above (or be probed inert there), never silently degrade to `[]` here.
+  # Only the inert remainder lands here — a `:skip`-kind macro and `nil` (an `Ecto.Query` macro
+  # the plugin doesn't own); exhaustiveness is pinned by `Mutare.Ecto.Surface.macro_kinds/0`'s
+  # parity test.
   defp query_macro_mutations(_kind, _node, _context), do: []
 
   # A registered Ecto.Query macro (`:condition`/`:clause`/`:join`/`:dynamic` in `Surface`) always

@@ -1,8 +1,10 @@
 # Implementation notes & deferred work
 
 A running log of decisions made and limitations discovered while building `mutare_ecto` —
-the plugin-side counterpart of core's `../mutare/NOTES.md`. `CLAUDE.md` describes what the
-plugin *is*; this file tracks what's intentionally left for later.
+the plugin-side counterpart of core's `../mutare/NOTES.md`. `CLAUDE.md` is the map and each
+module's doc says what *is*; this file holds what's intentionally left for later and the
+**design history** — what a thing used to be and why it changed — so moduledocs don't have to
+read like logbooks. Referenced from code and docs as `NOTES "title"`.
 
 ## Deferred / known limitations
 
@@ -61,3 +63,97 @@ coverable this way — the interior atoms are offered unmarked. If those ever ne
 would need descent-propagating marks. Proven in `structural_marks_test.exs` (held back with the
 plugin enabled, mutating without it — plus the piped/imported spellings and a positional
 sibling-atom control).
+
+## Design history
+
+What a thing used to be, what it is now, and why. The moduledocs state only the current shape;
+each entry here is the *before* they no longer carry.
+
+### Tag: one shape instead of three tuple arities
+
+Producers used to return a mutation as one of three tuples — `{family, node}`,
+`{family, node, label}`, `{family, node, label, attribution}` — and every consumer that bridged
+two producers (a walker rebuilding a clause, a host composing catalogs) had to pattern-match all
+three. `%Mutare.Ecto.Tag{family, node, label: nil, attribution: nil}` replaced them: one shape
+with `nil` defaults, `Tag.map_node/2` as the shared "rebuild the surrounding form around each
+mutant" step, and `Tag.to_mutation/1` as the one normalizer both delivery paths return through.
+Adding a finer label to a producer no longer touches delivery code.
+
+### Walk: one traversal under every catalog
+
+`Fragment`'s mutation walk and its island walk were two hand-rolled copies of one traversal, and
+the `select`/`order_by` expression walker a third — three descents that could disagree about
+which nodes a condition exposes (an island the catalog would never have walked past, or the
+reverse). `Mutare.Ecto.Walk.positions/3` is now the single traversal; every catalog is a per-node
+*reader* over its positions and never descends on its own (a catalog's `children/2` rule can only
+narrow what the walk admits). So `Fragment.mutants/2` and `Fragment.islands/1` agree by
+construction, not by two walks kept in step; `fragment_descent_test.exs` pins the policy.
+
+### Dispatcher: classify once
+
+The original dispatch was flat: every AST node was offered to all eight sub-mutators, each of
+which re-ran macro and call resolution — even for ordinary literals and operators that no
+producer could ever claim. `Mutare.Ecto.Dispatcher` classifies a node once (a registered query
+macro by its `Surface` kind, otherwise the resolved call's module — `Ecto.Query`,
+`Ecto.Changeset`, or the configured repo) and invokes only the producers that can apply.
+
+### Bound bump: from whole-call rewrite to pin-only hosting
+
+The `±1` bump of a literal `limit`/`offset` first lived beside the other clause mutations —
+`Mutare.Ecto.Clause` rebuilt the standalone/pipe call and `Mutare.Ecto.Query` the whole `from` —
+so each bump duplicated the entire call/query per mutant, exactly the cost the selector host
+exists to avoid. It is now **hosted, pin-only**: `limit: ^(case …)` with no `dynamic/2` wrap and
+no bindings, because a bound is an integer parameter and the pinned selector is plain Ecto
+interpolation with a behaviourally identical baseline (`Mutare.Ecto.Bound`, `Host.Target`).
+`Bound.literal?/1` is defined as `bumps/1` being non-empty, so the routing classifier and the
+host agree on "literal bound" by definition. Only the bound *drop* remains a whole-`from`/stage
+rewrite.
+
+### Ordering: implicit-direction flip replaces the order_by clause drop
+
+`order_by` used to be droppable like any other clause. But an `ORDER BY`-less query's row order
+is SQL-unspecified, so whether the drop was "killed" depended on the engine happening to return
+rows in a different order — the mutant's survival tracked engine nondeterminism, not the test
+suite. The drop was removed (`order_by`/`prepend_order_by` carry no `stage_drop`/`from_drop` in
+`Surface`) and replaced by re-tagging a bare, implicitly-ascending ordering term (`:name`,
+`u.name`) to an explicit `desc` — a `:ordering` mutant with a deterministic, behaviourally
+distinct baseline, sound because bare-means-ascending is Ecto's own guarantee, engine-independent
+(`Mutare.Ecto.Ordering`). It asks the question the drop was pretending to ask.
+
+### Ordering: one axis per mutant
+
+A nulls-qualified sort key used to flip both axes at once (`:asc_nulls_first` →
+`:desc_nulls_last`). That was a *weaker* mutant: any order-pinning test killed it, so a missing
+NULL-placement assertion never surfaced. Each axis now flips on its own — direction under
+`:ordering` (keeping the placement), placement under `:ordering_nulls` (keeping the direction,
+only for an explicitly qualified key, and equivalence-sensitive because it needs NULL rows to
+kill). A bare `:asc` yields one mutant; an `:asc_nulls_first` yields two.
+
+### JoinType: narrowing only, no introducing swaps
+
+The join family once offered *widening* swaps — `inner_join`/`join` → `left_join`, `*` →
+`full_join` — that **introduced** a join kind the author never wrote. They were mostly equivalent
+(a join written to exclude unmatched rows rarely has an orphan for the widened query to expose)
+and each needed a dialect gate for the introduced kind. The family now only narrows
+(`left_join` → `inner_join`, `full_join` → `left_join`/`right_join`) plus the sideways
+`left_join` ↔ `right_join`; every flip permutes a form already reachable from the source, so the
+remaining gates (`RIGHT JOIN` under `:postgres`/`:mysql`) are purely about the *target* kind's
+portability (`Mutare.Ecto.Query`).
+
+### Surface: one descriptor table instead of parallel lists
+
+Routing kind, stage-drop family, whole-`from` drop family, hosted/binding/join capabilities, and
+standalone mutation capabilities were once kept in parallel lists across the modules that
+consumed them; adding a query builder meant finding and updating each. `Mutare.Ecto.Surface` is
+the one descriptor table (with compile-time invariant checks per descriptor), every consumer
+derives its view from it, and `macro_kind_parity_test.exs` pins that each dispatch on
+`macro_kinds/0` takes a real branch for every kind.
+
+### ClauseDrop: the pipe form was the common one
+
+The clause drop — "is this filter/window/grouping tested at all?", the primary motivating
+mutation for a query builder — was originally only reachable in the `from`-keyword syntax, as
+`Mutare.Ecto.Query`'s whole-`from` clause drop. The composable pipe/standalone forms
+(`q |> where(…)`) are far more common in practice, so `Mutare.Ecto.ClauseDrop` added the stage
+drop over the shared `Mutare.Ecto.StageDrop` delivery, recording the **same** family as `Query`
+for the same semantic mutation regardless of which syntax wrote it.

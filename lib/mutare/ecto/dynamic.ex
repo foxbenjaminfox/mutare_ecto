@@ -6,16 +6,13 @@ defmodule Mutare.Ecto.Dynamic do
       d = dynamic([p], p.views > 100)
       Repo.all(where(query, ^d))
 
-  The condition body is the same SQL fragment a hosted `where`/`having` owns, so the same shared
-  catalog walks it — `Mutare.Ecto.Fragment` (operator/predicate/literal swaps, reasoned in SQL's
-  semantics, never core's, with the scalar and aggregate per-node catalogs folded in:
-  `sum`↔`avg`/`min`↔`max` for a dynamic destined for a `having`). Each mutant is **reported at
-  the mutated expression** (the walk anchors it — `Mutare.Ecto.Walk`), even though what is
-  delivered is the whole rebuilt call. This closes the loop the `where(q, ^d)` splice site leaves
-  open: a top-level `^d` is hosted there like any other condition (`Mutare.Ecto.Host.Routing`), but
-  the SQL catalog stops at the pin and the island sub-contract finds only a bare variable inside,
-  which core mutates nowhere (`Mutare.Ecto.Island`) — the splice contributes nothing of its own,
-  so the `dynamic` is *mutated where it is built*. This module is that build site.
+  The condition body is the same SQL fragment a hosted `where`/`having` owns, so the same catalog
+  walks it (`Mutare.Ecto.Fragment`, scalar and aggregate swaps folded in — `sum`↔`avg` for a
+  dynamic destined for a `having`). This closes the loop the `where(q, ^d)` splice site leaves
+  open: a top-level `^d` is hosted there like any other condition, but the catalog stops at the
+  pin and the island sub-contract finds only a bare variable inside, which core mutates nowhere
+  (`Mutare.Ecto.Island`) — the splice contributes nothing of its own, so the `dynamic` is
+  *mutated where it is built*. This module is that build site.
 
   **Delivery** differs from the hosted path. `dynamic` is registered `:skip`
   (`Mutare.Ecto.Surface.macro_registrations/0`), so core never descends into its DSL arguments —
@@ -25,24 +22,15 @@ defmodule Mutare.Ecto.Dynamic do
   swapped, delivered by Mutare's ordinary in-place selector `case` — the same Bucket-1 delivery as
   the whole-`from` rewrites in `Mutare.Ecto.Query`. No host / `^`-weaving is needed, each selector
   branch invokes the `dynamic` macro independently, and exactly one `DynamicExpr` builds per run.
+  Each mutant is still **reported at the mutated expression** — the walk anchors it
+  (`Mutare.Ecto.Walk`) — so a line-scoped `# mutare:ignore` reaches one comparison of a
+  multi-line `dynamic`.
 
-  The written binding list is re-emitted byte-for-byte (its positional *reorder* is
-  `Mutare.Ecto.BindingReorder`'s, exactly as for `where`/`having`). A pin's interior — whether
-  *nested* (`dynamic([p], p.x > ^(min + 1))`) or the *whole* body
-  (`dynamic([p], ^(if params.sort, do: a, else: b))`) — is never this catalog's: it is ordinary
-  Elixir, **sub-contracted to generation over the run's full spec set**, exactly as the host
-  sub-contracts a hosted condition's islands. `dynamic` is a registered macro, so core threads
-  the run's enabled specs into the whole-call offer as `context.mutators`, and the shared seam
-  (`Mutare.Ecto.Island.subcontracted/3`) relays each interior rebuild as a
-  `Mutare.Mutator.Mutation` with `producer:` set — the Site (and `# mutare:ignore` vocabulary)
-  belongs to the producing family, while delivery stays this module's whole-call rewrite
-  through the ordinary in-place selector. The full set includes this plugin itself, so a
-  further `dynamic(...)` literal buried inside the pin is offered back to **this module** —
-  its SQL mutates once, under SQL semantics, recursing one pin level at a time — and an inner
-  `from`/clause macro's hosted conditions come back **lowered** by core's collect (the inner
-  call rebuilt around the mutated condition, `^dynamic`-pinned, in place of a weave that
-  cannot nest). (A bare `^other` body contributes nothing of its own — a variable is mutated
-  nowhere by core — so it degrades to no mutants without a special case.)
+  The written binding list is re-emitted byte-for-byte (its positional reorder is
+  `Mutare.Ecto.BindingReorder`'s). A `^` pin's interior — nested (`p.x > ^(min + 1)`) or the whole
+  body (`dynamic([p], ^(if params.sort, do: a, else: b))`) — is never this catalog's: it is
+  sub-contracted to core through the same seam the host uses (`Mutare.Ecto.Island`), only
+  delivered as this module's whole-call rewrite instead of a weave.
   """
 
   alias Mutare.Ecto.{Config, Island, Tag}
@@ -55,13 +43,8 @@ defmodule Mutare.Ecto.Dynamic do
   Every single-point in-fragment mutant of a free-standing `dynamic/1,2` call, each the **whole
   call** rebuilt with one condition position swapped — the plugin's own catalog mutants as
   `Mutare.Ecto.Tag`s, the sub-contracted island mutants as producer-attributed
-  `Mutare.Mutator.Mutation`s (passed through `Mutare.Ecto.mutate/2` untouched) — or `[]` when
-  there is nothing to mutate (a body with no condition, or a top-level-pin body).
-
-  The condition is located by `Mutare.Ecto.Host.Condition.locate/1`, which resolves both
-  shapes exactly as it does for a standalone `where`: the binding form (`dynamic([p], p.x > 1)` —
-  the condition one slot past the written list) and the binding-less form
-  (`dynamic(as(:t).x > 1)` — the trailing argument).
+  `Mutare.Mutator.Mutation`s — or `[]` when there is nothing to mutate. The condition is located
+  by `Mutare.Ecto.Host.Condition.locate/1`, exactly as for a standalone `where`.
   """
   @spec mutations(QueryCall.t(), map()) :: [
           Mutare.Ecto.SubMutator.tagged() | Mutare.Mutator.Mutation.t()
@@ -75,14 +58,9 @@ defmodule Mutare.Ecto.Dynamic do
 
     case Condition.locate(args) do
       %Condition{node: condition, index: index} ->
-        # The shared in-fragment catalog, exactly what the hosted path composes
-        # (`Mutare.Ecto.Host.Catalog.own_catalog/2`) — returned as raw tags: `Mutare.Ecto.mutate/2`
-        # wraps every dispatched tag (`Tag.to_mutation/1`) and core's finalize pass applies the
-        # `families:` filter and the equivalence note. Each tag is anchored at the condition node
-        # it mutates (`Mutare.Ecto.Walk`), so although the *delivered* node is the whole rebuilt
-        # call, the Site reports at the operator/literal itself — a line-scoped `# mutare:ignore`
-        # reaches one comparison of a multi-line `dynamic`. For a top-level-pin body the catalog is
-        # empty (a `^` has no SQL swap); the sub-contract below carries its interior to core.
+        # The shared in-fragment catalog (`Mutare.Ecto.Host.Catalog.own_catalog/2`), each tag
+        # rebuilt into the whole call; its anchor survives the rebuild (`Tag.map_node/2`). For a
+        # top-level-pin body the catalog is empty — the sub-contract below carries its interior.
         own =
           for tag <- Catalog.own_catalog(condition, config),
               do: Tag.map_node(tag, &QueryCall.replace_arg(call, index, &1))
@@ -95,10 +73,7 @@ defmodule Mutare.Ecto.Dynamic do
     end
   end
 
-  # The island sub-contract, through the same seam the host uses
-  # (`Mutare.Ecto.Island.subcontracted/3`) — only delivery differs: each interior rebuild
-  # is wrapped back into the **whole call** (the free-standing `dynamic`'s in-place shape) rather
-  # than relayed as a bare condition for a weave to carry.
+  # The island sub-contract (`Mutare.Ecto.Island.subcontracted/3`), delivered as the whole call.
   defp subcontracted(condition, call, index, context),
     do: Island.subcontracted(condition, context, &QueryCall.replace_arg(call, index, &1))
 end

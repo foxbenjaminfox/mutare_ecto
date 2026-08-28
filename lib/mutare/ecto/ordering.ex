@@ -18,9 +18,8 @@ defmodule Mutare.Ecto.Ordering do
   #     so it is recorded under its own family.
   #
   # So a bare `:asc` yields one mutant (direction); an `:asc_nulls_first` yields two (direction
-  # and placement), each flipping exactly one axis. Flipping both at once — the earlier
-  # behaviour — was a *weaker* mutant: any order-pinning test killed it, so a missing
-  # NULL-placement assertion never surfaced.
+  # and placement), each flipping exactly one axis — a combined flip would be the weaker mutant
+  # (NOTES "Ordering: one axis per mutant").
   #
   # ## Why a bare direction is never nulls-qualified
   #
@@ -57,13 +56,12 @@ defmodule Mutare.Ecto.Ordering do
   # list (`[u.name, desc: u.age]`) — carries **no written key**, but Ecto sorts it ascending, so
   # the author's implicit assertion is `asc`. We flip it to an explicit `desc` re-tag (`:name` →
   # `desc: :name`), a `:ordering` mutant with a behaviourally-distinct, *deterministic* baseline.
-  # This deliberately replaces the old `order_by` **clause drop**, whose "kill" depended on the
-  # database returning rows in an order that happened to differ from the sorted one — result order
-  # without `ORDER BY` is unspecified by SQL, so that mutant's survival was a function of engine
-  # nondeterminism, not the test suite. The flip is the reliable question ("is this ordering
-  # exercised?") the drop was pretending to ask. Only a plain field is re-tagged: a `^`-pinned
-  # runtime ordering, a `fragment`, or a computed expression is left untouched (flipping it would
-  # mutate a value, not a direction).
+  # It is the plugin's one ordering-presence mutant: an `order_by` is deliberately **not**
+  # droppable (`Mutare.Ecto.Surface`, `Mutare.Ecto.ClauseDrop`), because result order without
+  # `ORDER BY` is unspecified by SQL, so a drop's survival would track engine nondeterminism, not
+  # the test suite (NOTES "Ordering: implicit-direction flip replaces the order_by clause drop").
+  # Only a plain field is re-tagged: a `^`-pinned runtime ordering, a `fragment`, or a computed
+  # expression is left untouched (flipping it would mutate a value, not a direction).
 
   alias Mutare.Ecto.{AST, Tag}
 
@@ -123,7 +121,7 @@ defmodule Mutare.Ecto.Ordering do
 
   # `Mutare.Ecto.Vocabulary`: the direction axis (`asc`/`desc`) and the nulls-placement axis
   # (`nulls_first`/`nulls_last`), each flip table's keys read through the label rule `axis_flips/1`
-  # tags with (so every qualified key repeats its axis label — the assembler dedupes).
+  # tags with (repeats allowed — the assembler dedupes).
   @impl Mutare.Ecto.Vocabulary
   def variant_labels do
     Enum.map(Map.keys(@direction_flips), &direction_label/1) ++

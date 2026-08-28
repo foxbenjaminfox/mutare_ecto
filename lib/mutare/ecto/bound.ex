@@ -1,19 +1,25 @@
 defmodule Mutare.Ecto.Bound do
   @moduledoc false
   # The `:bound` family's ±1 **bump** arm for a literal `limit`/`offset` value — the off-by-one
-  # boundary of a paging bound. (The family's other arm, the bound *drop*, is a whole-`from`/stage
-  # rewrite in `Mutare.Ecto.Query`/`Mutare.Ecto.ClauseDrop`.)
+  # boundary of a paging bound — and the one home of how it is delivered. (The family's other
+  # arm, the bound *drop*, is a whole-`from`/stage rewrite in `Mutare.Ecto.Query`/
+  # `Mutare.Ecto.ClauseDrop`.)
   #
   # A bump is delivered **hosted, pin-only**: the selector host weaves the tagged mutants as
   # `limit: ^(case …)` — no `dynamic/2` wrap, no bindings — because a bound is an integer
   # parameter, so the pinned selector is plain Ecto interpolation with a behaviorally identical
-  # baseline (`Mutare.Ecto.Host` builds the target, `Mutare.Ecto.Host.Target.bound_from_clause/3`
-  # and `bound_argument/3` the transforms). The routing classifier (`Mutare.Ecto.Host.Routing`)
-  # marks the value `:hosted` through `literal?/1`, defined as `bumps/1` being non-empty, so
-  # routing and host agree **by definition**: a value routes `:hosted` exactly when the host will
-  # weave a bump for it, and there is no second encoding of "literal integer" to drift. A
-  # `^pinned`/expression bound is left raw — its value is mutated where it is bound, in ordinary
-  # Elixir.
+  # baseline, and the bump never duplicates the whole query the way a whole-`from`/whole-call
+  # rewrite would (NOTES "Bound bump: from whole-call rewrite to pin-only hosting").
+  # `Mutare.Ecto.Host` builds the target; `Mutare.Ecto.Host.Target.bound_from_clause/3` and
+  # `bound_argument/3` are the transforms; `Mutare.Ecto.Surface.bound?/1` names the clause
+  # keys/macros whose value position hosts it (which is why `limit`/`offset` appear in
+  # `Surface.hosted_macro_names/0`).
+  #
+  # The routing classifier (`Mutare.Ecto.Host.Routing`) marks the value `:hosted` through
+  # `literal?/1`, defined as `bumps/1` being non-empty, so routing and host agree **by
+  # definition**: a value routes `:hosted` exactly when the host will weave a bump for it, and
+  # there is no second encoding of "literal integer" to drift. A `^pinned`/expression bound is
+  # left raw — its value is mutated where it is bound, in ordinary Elixir.
 
   alias Mutare.Ecto.{AST, Tag}
 

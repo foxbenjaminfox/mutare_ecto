@@ -9,21 +9,13 @@ defmodule Mutare.Ecto.ClauseDrop do
       q |> limit(10)              →  q          "is the page size pinned?"
       q |> group_by([u], u.role)  →  q          "is this grouping tested?"
 
-  A surviving mutant means **no test exercises** what that clause contributes. This is the
-  primary motivating mutation for a query builder, yet it was previously only reachable in the
-  `from`-keyword syntax — the pipe/standalone forms are far more common.
+  A surviving mutant means **no test exercises** what that clause contributes — the primary
+  motivating mutation for a query builder (NOTES "ClauseDrop: the pipe form was the common one").
 
-  ## Pipe-aware delivery
-
-  Exactly `Mutare.Ecto.Changeset`'s mechanic (itself core's `CallRemoval` delivery):
-
-    * **piped** (`q |> where(…)`) — the query is the `|>` left side, so the stage is replaced by
-      `Function.identity/1` (`q |> Function.identity()` ≡ `q`). The absolute `Elixir.Function` is
-      alias-proof (a user `alias X, as: Function` can't redirect it).
-    * **direct** (`where(q, …)`) — the query is the first argument, so the call collapses to it.
-
-  The call is resolved through `Mutare.Calls`, so it matches the direct, aliased, and
-  (common) `import Ecto.Query` forms alike, and never a same-named user function.
+  Delivery is the shared pipe-aware stage drop (`Mutare.Ecto.StageDrop`): piped, the stage becomes
+  `Function.identity/1`; written directly, the call collapses to its query argument. The call is
+  resolved through `Mutare.Calls`, so it matches the direct, aliased, and (common)
+  `import Ecto.Query` forms alike, and never a same-named user function.
 
   ## Families
 
@@ -35,10 +27,9 @@ defmodule Mutare.Ecto.ClauseDrop do
     * every other clause builder (`group_by`, `distinct`, `select`/`select_merge`, `join`,
       `preload`, `lock`, `with_cte`, `windows`, the set-operation macros) → **`:clause_drop`**.
 
-  `order_by`/`prepend_order_by` are deliberately **not** droppable: dropping an `ORDER BY` yields
-  an unordered query whose row order SQL leaves unspecified, so the mutant's survival tracked
-  engine nondeterminism rather than a test gap. Its reliable cousin — re-tagging the implicit
-  `asc` of a bare ordering to `desc` — lives in `Mutare.Ecto.Ordering` instead.
+  `order_by`/`prepend_order_by` are deliberately **not** droppable (an unordered query's row order
+  is SQL-unspecified); the implicit-direction flip in `Mutare.Ecto.Ordering` is the reliable
+  ordering mutant instead.
 
   A dropped stage can leave a later stage referencing a binding/CTE/window the query no longer
   has — but these macros build the query at *runtime*, so that surfaces as a runtime error when
