@@ -283,6 +283,61 @@ defmodule Mutare.Ecto.MacroSkipTest do
   # route — so the hosted walkers cannot tell them apart. But the configuration story is its own
   # public surface, so it gets its own pin: the same source with *no* extension anywhere, the skip
   # supplied purely by configuration.
+  # The skip rule above governs descent *into* a foreign macro's arguments. A name collision is the
+  # other half: an author's DSL may define a `sum/2` or a `max/1` of its own, and the call node
+  # itself is a walk position no `:skip` routing suppresses — so the catalog has to refuse it on
+  # ownership, not on descent. Getting this wrong is not a wasted mutant: `avg(a, b)` is a call no
+  # module defines, so Ecto's builder rejects it while expanding the query and the *whole*
+  # metamutant build fails (`Mutare.Ecto.Aggregate.local/2`). The macros come from the plugin's own
+  # `Mutare.Ecto.AuthorMacros`, which exists precisely because core's fixture is named nothing we
+  # mutate.
+  describe "an author macro wearing an aggregate's name" do
+    @author [Mutare.Ecto.AuthorMacros]
+
+    test "is never swapped along the ladder, at Ecto's arity or any other" do
+      src = """
+      defmodule M do
+        import Ecto.Query
+        import Mutare.Ecto.AuthorMacros
+        def q, do: from(p in MyApp.Post, select: {sum(p.views, p.likes), max(p.views)})
+      end
+      """
+
+      rendered =
+        for {_original, mutated} <- ecto_diffs(src, mutators: @mutators, extensions: @author),
+            into: MapSet.new(),
+            do: mutated
+
+      # An aggregate swap reports at the mutated node's own range (`Mutare.Ecto.Walk`'s node-level
+      # attribution), so the rendering to look for is the call itself, not the enclosing select.
+      # `sum/2` is off the ladder's arity outright; `max/1` matches Ecto's arity and is refused
+      # only because the resolve pass stamped it as its owner's macro.
+      refute "avg(p.views, p.likes)" in rendered
+      refute "min(p.views)" in rendered
+
+      # The build the mis-swap used to poison.
+      assert_compiles(src, mutators: @mutators, extensions: @author)
+    end
+
+    test "the same names under Ecto's own ownership still swap" do
+      # The contrast that proves the guards refuse *foreign* calls, not aggregates in general.
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q, do: from(p in MyApp.Post, select: {sum(p.views), max(p.views)})
+      end
+      """
+
+      rendered =
+        for {_original, mutated} <- ecto_diffs(src, mutators: @mutators),
+            into: MapSet.new(),
+            do: mutated
+
+      assert "avg(p.views)" in rendered
+      assert "min(p.views)" in rendered
+    end
+  end
+
   describe "the declarative `:macro_routes` config channel" do
     @config_routes [{RoutingExtension, :opaque, 1, :skip}]
 

@@ -52,6 +52,16 @@ defmodule Mutare.Ecto.AggregateTest do
     assert swaps("count(u.id)") == MapSet.new([])
   end
 
+  test "an off-arity call wearing an aggregate name is left alone" do
+    # Every rung of the ladder is `/1`, so a `sum/2` is not Ecto's `sum` — it is an author macro
+    # (or `Kernel.min/2`) that merely shares the atom. Renaming it emits `avg(a, b)`, which no
+    # module defines: Ecto's builder rejects it at expansion and the *whole* metamutant build
+    # fails. `Mutare.Ecto.Aggregate.local/2`, `Mutare.Ecto.Scalar.local/2` for the sibling guard.
+    assert swaps("sum(u.x, u.y)") == MapSet.new([])
+    assert swaps("max(u.x, u.y)") == MapSet.new([])
+    assert swaps("sum()") == MapSet.new([])
+  end
+
   test "reaches aggregates inside a map, one single-point mutant each" do
     assert swaps("%{total: sum(u.amount), peak: max(u.x)}") ==
              MapSet.new([
@@ -74,8 +84,10 @@ defmodule Mutare.Ecto.AggregateTest do
 
   test "a bare binding variable (whole-struct select) yields nothing, never a crash" do
     # `select(q, [u], u)` selects the whole struct: the value `u` is a variable node `{:u, _, ctx}`
-    # whose third slot is the atom hygiene context, not an args list. The `is_list(args)` guard on
-    # the call clause is what stops the walker from trying to descend that atom (which would raise).
+    # whose third slot is the atom hygiene context, not an args list. The single-argument list
+    # pattern on the call clause is what stops the walker from treating that atom as arguments
+    # (which would raise) — including for a variable that happens to be *named* after a rung.
     assert swaps("u") == MapSet.new([])
+    assert swaps("sum") == MapSet.new([])
   end
 end

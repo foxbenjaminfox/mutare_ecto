@@ -271,3 +271,27 @@ is never routed in the direct form either), which also stops core's `:alias` fam
 a structural `Post |>` for a nonexistent module, as `from_visible`'s `:expression` default had let
 it. Inside a subquery, the inline-`from` finders (`Mutare.Ecto.Subquery`) still recognise only
 the direct spelling — a `subquery(Post |> from(…))` interior stays out of reach.
+
+### Aggregate: only Ecto's own `/1` aggregate is on the ladder
+
+`Mutare.Ecto.Aggregate`'s per-node catalog used to match `{f, meta, args} when f in @agg_funcs
+and is_list(args)` — any call wearing the name, at any arity. The `is_list` half was only ever a
+crash guard (a bare variable's third slot is its hygiene context, not arguments); nothing checked
+that the call was Ecto's. Every rung of the ladder is `/1`, so the pattern claimed calls Ecto does
+not define, and a rename across the ladder emitted a call *nobody* defines: an author's
+`sum(a, b)` — a query DSL is free to define one, and `Kernel.min/2`/`max/2` already are two —
+became `avg(a, b)`, which Ecto's builder rejects while expanding the query
+(`** (Ecto.Query.CompileError) avg(p.views, p.likes) is not a valid query expression`). That is a
+failed **build**, not a wasted mutant: the metamutant embeds every mutant in one compilation unit,
+so a single mis-swap takes the whole run down.
+
+`Mutare.Ecto.Walk`'s author-macro rule did not cover this. It governs descent *into* a registered
+macro's arguments — `select: clamp(sum(p.x), 10)` never has its `sum` swapped — but the macro call
+node is itself a walk position, offered to the catalog by its parent, so a macro *named* `sum` was
+mutated however it was routed. The catalog now guards both halves of "is this Ecto's aggregate":
+the arity (`[_arg]`, the same binary/`/2` guard `Mutare.Ecto.Scalar` already carried for
+arithmetic and `coalesce`), and ownership — Ecto's aggregates are plain `Ecto.Query.API`
+functions, never routed macros, so a resolve-pass macro stamp (`Mutare.Calls.macro_treatment/1`)
+proves the call belongs to somebody else's grammar. The name-collision fixture is the plugin's own
+`Mutare.Ecto.AuthorMacros`; core's shipped `RoutingExtension` cannot stand in for it, because its
+macros are named nothing the plugin mutates.

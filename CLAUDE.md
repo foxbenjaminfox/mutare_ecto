@@ -171,7 +171,7 @@ Each row is role + the rule(s) that module is the **home** for.
 | `expression_walk.ex` | the value-expression rules over `walk.ex` (the `over/2` `order_by:` refinement) |
 | `value_catalog.ex` | capability → catalog dispatch for an in-place clause value, and the ordering-position rule (`position/1`) |
 | `ordering.ex` | direction / nulls-placement flips and the implicit-`asc` re-tag; home of the engine-default NULL placement table and of why `order_by` is never dropped |
-| `aggregate.ex` / `scalar.ex` | shared per-node catalogs (the aggregate ladder; arithmetic swaps + the coalesce drop); `aggregate.ex` is home of the `count` exclusion |
+| `aggregate.ex` / `scalar.ex` | shared per-node catalogs (the aggregate ladder; arithmetic swaps + the coalesce drop); `aggregate.ex` is home of the `count` exclusion and of the ladder's ownership rule (Ecto's `/1` aggregates only, never a same-named author macro) |
 | `combination.ex` | the set-operation swap table (`union` deliberately unswapped) |
 | `bound.ex` | the `:bound` ±1 bump; home of pin-only hosting and the `literal?/1` = `bumps/1` agreement |
 | `dynamic.ex` | free-standing `dynamic/1,2`; home of its whole-call in-place delivery |
