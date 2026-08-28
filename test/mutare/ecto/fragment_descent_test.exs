@@ -12,8 +12,9 @@ defmodule Mutare.Ecto.FragmentDescentTest do
   # hand-rolled copies of the traversal, and this file guarded their parity.) What is still worth
   # pinning is the descent **policy** itself — the decisions a condition's SQL semantics dictate,
   # which a well-meaning edit to `children/2` could silently flip: `is_nil` claims its whole
-  # argument (never entered), the `in` operands are entered (through a written `not` too), and a
-  # written list's elements are entered. A wrong turn there is a false negative (a real pin island
+  # argument (never entered — its one interior mutant, the coalesce drop, is read by the unit's
+  # own narrowed walk in `local/3`, not by the shared descent), the `in` operands are entered
+  # (through a written `not` too), and a written list's elements are entered. A wrong turn there is a false negative (a real pin island
   # uncollected, a real literal never mutated) or a pin mutated as SQL the catalog does not own.
   #
   # The nested-author-macro rule is `Mutare.Ecto.Walk`'s, and the subquery-interior recursion is
@@ -39,7 +40,8 @@ defmodule Mutare.Ecto.FragmentDescentTest do
       literal: "u.a and u.b > 4242"
     },
     %{
-      desc: "is_nil argument (never entered — value mutants preserve NULL-ness)",
+      desc:
+        "is_nil argument (never entered — value mutants preserve NULL-ness; the coalesce drop is the unit's, not the walk's)",
       descend?: false,
       pinned: "is_nil(u.a + ^v)",
       literal: "is_nil(u.a + 4242)"

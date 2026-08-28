@@ -16,6 +16,8 @@ defmodule MyApp.Seed do
   #                                      the difference falls short; `age * 2 > 40` keeps Bob/Eve
   #                                      where the (integer-)division mutant keeps nobody.
   #   * Coalesce drop (score)          — Bob/Dave's NULL scores take the default the drop removes.
+  #   * Coalesce drop under is_nil     — `is_nil(coalesce(score, rating))`: Dave has neither, Bob a
+  #     (score, rating)                  NULL score but a rating — the row the drop admits.
   #   * FloatLiteral (rating)          — `rating > 2.5`→`> 3.5` drops Bob (3.0), the boundary row;
   #                                      a float column, since Ecto rejects a float literal on the
   #                                      integer `score`/`age` columns.

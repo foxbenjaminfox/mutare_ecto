@@ -164,7 +164,7 @@ Each row is role + the rule(s) that module is the **home** for.
 | `host/catalog.ex` | the own-catalog + island mutants for one hosted condition |
 | `host/join_on.ex` | home of join `on:` hostability (a join's sole, top-level, non-`assoc` on-expression) |
 | `host/target.ex` | the `dynamic`-wrap / `^`-pin / splice transforms core consumes |
-| `fragment.ex` | the SQL-semantics catalog for conditions (public family table); home of the SQL side of the ownership rule, the `is_nil` no-descent rule, and the structural-position registry |
+| `fragment.ex` | the SQL-semantics catalog for conditions (public family table); home of the SQL side of the ownership rule, the `is_nil` interior rule (the walk never enters it; only the coalesce drop is read beneath it), and the structural-position registry |
 | `subquery.ex` | recurses the catalogs into an inline subquery; home of the wrapper observation modes and what is deliberately out of reach |
 | `island.ex` | the interpolation-island seam; home of the sub-contract and the pin-side keyword-key rule |
 | `walk.ex` | the one structural walk under every catalog; home of the author-macro rule and node-level attribution |

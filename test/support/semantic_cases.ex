@@ -746,6 +746,31 @@ defmodule Mutare.Ecto.SemanticCases do
         end
       end
 
+      describe "Coalesce — drop the fallback beneath `is_nil` (dynamic-injected)" do
+        # `is_nil(coalesce(u.score, u.rating))` holds only where *both* columns are NULL; the drop
+        # (`is_nil(u.score)`) holds wherever `score` alone is — the rows the fallback would have
+        # covered. Bob (NULL score, rating 3.0) is the difference: a coalesce under `is_nil` is
+        # constantly false only for a non-NULL *literal* default, not for a nullable column.
+        test "without the fallback the NULL-score-but-rated row joins the result" do
+          {mod, sites} =
+            build("""
+            defmodule Q do
+              import Ecto.Query
+              alias MyApp.User
+              def q, do: from(u in User, where: is_nil(coalesce(u.score, u.rating)), select: u.id)
+            end
+            """)
+
+          {baseline, mutant} =
+            observe_ids(mod, sites, {"is_nil(coalesce(u.score, u.rating))", "is_nil(u.score)"})
+
+          # Only Dave has both a NULL score and a NULL rating.
+          assert baseline == [4]
+          # Dropping the fallback: every NULL score — Bob (rated 3.0) joins Dave.
+          assert mutant == [2, 4]
+        end
+      end
+
       describe "Coalesce — drop the fallback in a `select` (whole-`from`)" do
         # The in-place twin: a `select` coalesce is rewritten as a whole-`from` mutant
         # (`Mutare.Ecto.Scalar` via `Mutare.Ecto.Query`), so the selected value itself goes NULL.

@@ -194,3 +194,17 @@ mutation for a query builder — was originally only reachable in the `from`-key
 (`q |> where(…)`) are far more common in practice, so `Mutare.Ecto.ClauseDrop` added the stage
 drop over the shared `Mutare.Ecto.StageDrop` delivery, recording the **same** family as `Query`
 for the same semantic mutation regardless of which syntax wrote it.
+
+### Fragment: the coalesce drop is read beneath `is_nil`
+
+`is_nil`'s argument used to be a hard boundary for every family: the walk never entered it, on
+two claims — that the value families preserve NULL-ness (true: an arithmetic, aggregate or
+literal swap under `is_nil` is provably equivalent), and that the coalesce drop, the one
+NULL-ness-changing mutation, could only fire under an `is_nil` the author had written constantly
+false. The second assumed a non-NULL default; with a nullable `d` — a column, a pin —
+`is_nil(coalesce(u.name, u.role))` is live, and `is_nil(u.name)` differs on every row where
+`name` is NULL and `role` is not. The walk still never enters the argument (no island and no
+value-family mutant surfaces there — `fragment_descent_test.exs` pins it); the unit's own
+`local/3` now reads the argument through a narrowed walk (`Mutare.Ecto.Fragment`'s
+`null_interior/1`, the same shape as `exists`'s subquery interior) that offers exactly the
+coalesce drop, at every depth, in both polarities.

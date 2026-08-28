@@ -383,9 +383,9 @@ defmodule Mutare.Ecto.SubcontractTest do
     end
 
     test "an island under is_nil is not sub-contracted (value mutants preserve NULL-ness)" do
-      # The catalog never descends an `is_nil` argument — a parameter's value mutants keep a
+      # The walk never descends an `is_nil` argument — a parameter's value mutants keep a
       # non-NULL value non-NULL, so inside the one predicate that observes only NULL-ness they
-      # are provably equivalent. The island walk honors the same boundary.
+      # are provably equivalent. The island walk honors the same boundary…
       src = """
       defmodule M do
         import Ecto.Query
@@ -394,6 +394,11 @@ defmodule Mutare.Ecto.SubcontractTest do
       """
 
       assert island_diffs(src, @with_core) == []
+
+      # …while the coalesce drop beneath the predicate — the plugin's own SQL mutant, which
+      # removes the pin rather than mutating it — is still offered.
+      assert {"is_nil(coalesce(u.age, ^(d + 1)))", "is_nil(u.age)"} in ecto_diffs(src, @with_core)
+
       assert_compiles(src, @with_core)
     end
 
@@ -640,7 +645,8 @@ defmodule Mutare.Ecto.SubcontractTest do
 
     test "the islands honor the catalog's descent rules inside a dynamic too" do
       # The same `Fragment.islands/1` walk serves both consumers — an `is_nil` argument is a
-      # hard boundary in a dynamic exactly as in a hosted where.
+      # hard boundary in a dynamic exactly as in a hosted where (the coalesce drop beneath it is
+      # the catalog's own, delivered in place at the collapsing call, not an island).
       src = """
       defmodule M do
         import Ecto.Query
@@ -649,6 +655,7 @@ defmodule Mutare.Ecto.SubcontractTest do
       """
 
       assert island_diffs(src, @with_core) == []
+      assert {"coalesce(p.views, ^(v + 1))", "p.views"} in ecto_diffs(src, @with_core)
       assert_compiles(src, @with_core)
     end
 

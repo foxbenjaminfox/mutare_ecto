@@ -37,8 +37,9 @@ defmodule Mutare.Ecto.Fragment do
       false), so its equivalences differ from Elixir's.
     * **NullPredicate** — `is_nil(x)`↔`not is_nil(x)`, treated as one unit so `not is_nil(x)`
       flips back rather than double-negating. Its argument is **never descended** — the value
-      families preserve NULL-ness, so their mutants are provably equivalent there (see the
-      `children/2` `is_nil` clause).
+      families preserve NULL-ness, so their mutants are provably equivalent there — with one
+      exception the unit reads itself: the coalesce drop, the one mutation that changes
+      NULL-ness (see the `children/2` `is_nil` clause and `null_interior/1`).
     * **Membership** — `x in ^list`↔`x not in ^list` and `exists(subquery)`↔`not exists(subquery)`
       (unit polarity flips, no double negation), one **element drop** per entry of a *written*
       in-list (`x in [1, 2, 3]` → `x in [2, 3]`/…), and `like`↔`ilike` — **dialect-gated** on
@@ -49,7 +50,9 @@ defmodule Mutare.Ecto.Fragment do
     * **Arithmetic** — `+`↔`-`, `*`↔`/`, the shared `Mutare.Ecto.Scalar` catalog (also delivered
       in `select`/`order_by` values); binary forms only.
     * **Coalesce** — `coalesce(x, default)` → `x` (also `Mutare.Ecto.Scalar`): the one catalog
-      mutation that *changes* NULL-ness, differing exactly on the rows where `x` is NULL.
+      mutation that *changes* NULL-ness, differing exactly on the rows where `x` is NULL — which
+      is why it is also the one family offered beneath `is_nil`: `is_nil(coalesce(x, d))` →
+      `is_nil(x)` differs on every row where `x` is NULL and `d` is not.
     * **Aggregate** — `sum`↔`avg`, `min`↔`max` (the shared `Mutare.Ecto.Aggregate`), for a
       `having: sum(p.x) > n`. Applied per node by this walk, so a condition is walked **once**
       for every family and the `is_nil` rule covers it.
@@ -178,13 +181,14 @@ defmodule Mutare.Ecto.Fragment do
     end
   end
 
-  # `is_nil`'s argument is never entered — and not because there is nothing there
+  # `is_nil`'s argument is never entered by the walk — and not because there is nothing there
   # (`is_nil(u.a + u.b)` is legal SQL): the value families preserve an expression's NULL-ness (an
-  # arithmetic/aggregate/literal swap changes the value, never whether it is NULL), so inside a predicate
-  # that asks *only* about NULL-ness their mutants are provably equivalent — and the coalesce
-  # drop, the one NULL-ness-changing mutation, would only fire under an `is_nil` the author
-  # already wrote constantly false (`is_nil(coalesce(x, d))` is false for every row when `d` is
-  # non-NULL). The same holds of a pin's value mutants, so no island surfaces beneath it either.
+  # arithmetic/aggregate/literal swap changes the value, never whether it is NULL), so inside a
+  # predicate that asks *only* about NULL-ness their mutants are provably equivalent. The same
+  # holds of a pin's value mutants, so no island surfaces beneath it either. The one mutation
+  # that *does* change NULL-ness — the coalesce drop — is the unit's own to offer (`local/3` via
+  # `null_interior/1`), read over the argument by a narrowed walk rather than by admitting the
+  # argument's positions here: that way the drop reaches every depth while nothing else does.
   defp children({:is_nil, _meta, [_arg]}, _position), do: []
 
   # `exists`'s argument is a subquery — a query, not this condition's syntax — so it is never
@@ -226,16 +230,18 @@ defmodule Mutare.Ecto.Fragment do
 
   # NullPredicate, as a unit. `not is_nil(x)` → `is_nil(x)`: flip the whole predicate (the inner
   # `is_nil` is not a position — `children/2` — so it never also offers `is_nil` → `not is_nil`,
-  # a redundant `not not is_nil(x)`).
+  # a redundant `not not is_nil(x)`), plus the argument's coalesce drops (`null_interior/1`),
+  # each rebuilt inside the written `not` so it stays a single-point variant of the full predicate.
   # Both directions are tagged `"is_nil"` (`not is_nil` has a space — not a wire-safe label), so
   # `# mutare:ignore[ecto:is_nil]` suppresses the null-predicate flip whichever way it points.
-  defp local({:not, _meta, [{:is_nil, _, [_arg]} = inner]}, _position, _config),
-    do: [Tag.new(:null_predicate, inner, "is_nil")]
+  defp local({:not, meta, [{:is_nil, _, [_arg]} = inner]}, _position, _config),
+    do: [Tag.new(:null_predicate, inner, "is_nil") | rewrap(null_interior(inner), meta)]
 
-  # `is_nil(x)` → `not is_nil(x)`, clean meta on the fresh `not`. (Why its argument is never
-  # descended: `children/2`.)
+  # `is_nil(x)` → `not is_nil(x)`, clean meta on the fresh `not`, plus the argument's coalesce
+  # drops. (Why the walk never descends the argument, and why the drop is the one exception:
+  # `children/2`.)
   defp local({:is_nil, _meta, [_arg]} = node, _position, _config),
-    do: [Tag.new(:null_predicate, {:not, [], [node]}, "is_nil")]
+    do: [Tag.new(:null_predicate, {:not, [], [node]}, "is_nil") | null_interior(node)]
 
   # Membership. `x not in list` → `x in list`: flip the whole predicate as a unit (no double
   # negation), plus the element drops of a written list, rebuilt inside the `not` so each stays a
@@ -375,6 +381,25 @@ defmodule Mutare.Ecto.Fragment do
   # written `not`, keeping the tag — so the emitted node is the full condition, single-point.
   defp rewrap(mutants, meta),
     do: Enum.map(mutants, &Tag.map_node(&1, fn m -> {:not, meta, [m]} end))
+
+  # The one family read beneath `is_nil`: the coalesce drop (`Mutare.Ecto.Scalar`), at every
+  # depth of the argument, each rebuilt inside the `is_nil`. `is_nil(coalesce(x, d))` →
+  # `is_nil(x)` differs on every row where `x` is NULL and `d` is not — a live mutant whenever
+  # `d` can be NULL (a nullable column, a pin), and a trivially killable one when it cannot (the
+  # original was constantly false; the mutant merely says so). The argument is read by a
+  # narrowed walk under the catalog's own descent rule (`children/2` — so a pin, a unit, a
+  # 2-tuple and the author-macro rule bound it exactly as they bound the condition walk) with a
+  # per-node reader that offers only the drop: no literal, arithmetic or aggregate mutant — nor
+  # an island, which stays `local_islands/1`'s — ever surfaces here. Each drop is anchored at
+  # the coalesce call it collapses (`Mutare.Ecto.Walk.mutants/4`), like any other.
+  defp null_interior({:is_nil, meta, [arg]}) do
+    for tag <- Walk.mutants(arg, {:is_nil, 1, 0}, &children/2, &coalesce_drop/2),
+        do: Tag.map_node(tag, &{:is_nil, meta, [&1]})
+  end
+
+  # `Mutare.Ecto.Scalar.local/1` narrowed to its coalesce arm (its arity guard included).
+  defp coalesce_drop({:coalesce, _meta, [_x, _default]} = node, _position), do: Scalar.local(node)
+  defp coalesce_drop(_node, _position), do: []
 
   # IntegerLiteral: core's own off-by-one/zero table (`Mutare.AST.numeric_alternatives/3`: `n±1`
   # plus the zero sentinel, deduped and never equal to `n`, a collapse carrying both labels).

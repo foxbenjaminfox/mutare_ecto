@@ -71,13 +71,53 @@ defmodule Mutare.Ecto.FragmentTest do
       assert mutants("not is_nil(u.name)") == MapSet.new(["is_nil(u.name)"])
     end
 
-    test "the is_nil argument is never descended — an argument mutant is provably equivalent" do
+    test "the is_nil argument is never descended — a value mutant there is provably equivalent" do
       # `is_nil(u.a + u.b)` is legal SQL, but an arithmetic (or literal) swap inside it can never
       # change the predicate: NULL propagates through every arm alike, so the mutant's NULL-ness —
       # the only thing `is_nil` observes — is exactly the original's. Only the polarity flips.
       assert mutants("is_nil(u.a + u.b)") == MapSet.new(["not is_nil(u.a + u.b)"])
       assert mutants("not is_nil(u.a + u.b)") == MapSet.new(["is_nil(u.a + u.b)"])
       assert mutants("is_nil(u.a + 5)") == MapSet.new(["not is_nil(u.a + 5)"])
+    end
+
+    test "the coalesce drop is the one mutant read beneath is_nil — it changes NULL-ness" do
+      # `is_nil(coalesce(u.name, u.role))` asks about the *fallback chain*; dropping the fallback
+      # asks about `u.name` alone, which differs on every row where `name` is NULL and `role` is
+      # not. Both polarities offer it (rebuilt inside the written `not`), and nothing else
+      # beneath the predicate does.
+      assert mutants("is_nil(coalesce(u.name, u.role))") ==
+               MapSet.new(["not is_nil(coalesce(u.name, u.role))", "is_nil(u.name)"])
+
+      assert mutants("not is_nil(coalesce(u.name, u.role))") ==
+               MapSet.new(["is_nil(coalesce(u.name, u.role))", "not is_nil(u.name)"])
+
+      # A written default is data elsewhere, but not here: `coalesce(u.score, 1)` is non-NULL on
+      # exactly the rows `coalesce(u.score, 0)` is, so no literal mutant rides along — only the
+      # drop (the original is constantly false; the mutant is what says so).
+      assert mutants("is_nil(coalesce(u.score, 0))") ==
+               MapSet.new(["not is_nil(coalesce(u.score, 0))", "is_nil(u.score)"])
+    end
+
+    test "the drop is read at every depth of the is_nil argument, and only the drop" do
+      # Nested fallbacks drop one layer per mutant, the default's own chain included…
+      assert mutants("is_nil(coalesce(u.a, coalesce(u.b, u.c)))") ==
+               MapSet.new([
+                 "not is_nil(coalesce(u.a, coalesce(u.b, u.c)))",
+                 "is_nil(u.a)",
+                 "is_nil(coalesce(u.a, u.b))"
+               ])
+
+      # …and a coalesce under an arithmetic wrapper still drops (`is_nil(u.a + u.b)` differs
+      # where `a` is NULL and `b` is not), while the `+` keeps its swap to itself and the written
+      # `0` its literal mutants: NULL propagates through `+` and `-`, `0` and `1`, alike.
+      assert mutants("is_nil(coalesce(u.a, 0) + u.b)") ==
+               MapSet.new(["not is_nil(coalesce(u.a, 0) + u.b)", "is_nil(u.a + u.b)"])
+
+      # A pinned default is a leaf for the narrowed walk as for the full one: the drop removes
+      # the pin, and the pin's interior is never this catalog's (nor an island here — see the
+      # island tests below).
+      assert mutants("is_nil(coalesce(u.a, ^d))") ==
+               MapSet.new(["not is_nil(coalesce(u.a, ^d))", "is_nil(u.a)"])
     end
   end
 
@@ -233,6 +273,7 @@ defmodule Mutare.Ecto.FragmentTest do
       assert families("u.a + u.b") == MapSet.new([:arithmetic])
       assert families("u.a / u.b") == MapSet.new([:arithmetic])
       assert families("is_nil(u.x)") == MapSet.new([:null_predicate])
+      assert families("is_nil(coalesce(u.x, u.y))") == MapSet.new([:null_predicate, :coalesce])
       assert families("u.role in ^r") == MapSet.new([:membership])
       assert families("like(u.x, ^q)", dialects: [:postgres]) == MapSet.new([:membership])
     end
@@ -243,6 +284,10 @@ defmodule Mutare.Ecto.FragmentTest do
       # `atom` mutation of the family name on the reverse clause survives unnoticed.
       assert families("u.role not in ^r") == MapSet.new([:membership])
       assert families("not is_nil(u.x)") == MapSet.new([:null_predicate])
+
+      assert families("not is_nil(coalesce(u.x, u.y))") ==
+               MapSet.new([:null_predicate, :coalesce])
+
       assert families("exists(subquery(sq))") == MapSet.new([:membership])
       assert families("not exists(subquery(sq))") == MapSet.new([:membership])
     end
@@ -529,7 +574,9 @@ defmodule Mutare.Ecto.FragmentTest do
 
     test "islands honor the catalog's no-descent predicates (is_nil) and a pinned subquery" do
       # `is_nil`: value mutants of a parameter preserve its NULL-ness — provably equivalent inside the
-      # one predicate that observes only NULL-ness, so its argument is never entered.
+      # one predicate that observes only NULL-ness, so its argument is never entered. (The coalesce
+      # drop the unit reads beneath itself — `is_nil(u.age)` — is the catalog's own mutant, not an
+      # island: the pin is gone from it.)
       assert islands("is_nil(coalesce(u.age, ^default))") == []
       assert islands("not is_nil(coalesce(u.age, ^default))") == []
 
