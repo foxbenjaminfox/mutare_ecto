@@ -90,7 +90,7 @@ defmodule Mutare.Ecto.SurfaceTest do
       assert Surface.from_clause?(join, :join_type)
     end
 
-    for join <- ~w(cross_join inner_lateral_join left_lateral_join)a do
+    for join <- ~w(cross_join cross_lateral_join inner_lateral_join left_lateral_join)a do
       assert Surface.from_clause?(join, :join_binding)
       refute Surface.from_clause?(join, :join_type)
     end

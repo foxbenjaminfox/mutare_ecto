@@ -110,6 +110,7 @@ defmodule Mutare.Ecto.Surface do
     %{name: :right_join, from: [:join_binding, :join_type]},
     %{name: :full_join, from: [:join_binding, :join_type]},
     %{name: :cross_join, from: [:join_binding]},
+    %{name: :cross_lateral_join, from: [:join_binding]},
     %{name: :inner_lateral_join, from: [:join_binding]},
     %{name: :left_lateral_join, from: [:join_binding]}
   ]

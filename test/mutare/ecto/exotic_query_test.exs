@@ -397,6 +397,39 @@ defmodule Mutare.Ecto.ExoticQueryTest do
 
       assert_compiles(@lateral_src, @all)
     end
+
+    @cross_lateral_src """
+    defmodule Q do
+      import Ecto.Query
+
+      def q do
+        from p in MyApp.Post,
+          as: :p,
+          cross_lateral_join:
+            c in subquery(
+              from(p2 in MyApp.Post,
+                where: p2.user_id == parent_as(:p).user_id,
+                select: %{views: p2.views}
+              )
+            ),
+          where: c.views > 1
+      end
+    end
+    """
+
+    test "a cross_lateral_join contributes its binding to the woven dynamic" do
+      # Every join kind Ecto spells out as a `from` key must carry `:join_binding`, or the
+      # host re-declares a short binding list and the woven `dynamic/2` references an unbound
+      # variable — a *build* failure that poisons every mutant in the file, not one dead mutant.
+      diffs = ecto_diffs(@cross_lateral_src, @all)
+
+      assert {"c.views > 1", "c.views >= 1"} in diffs
+
+      # Laterality is still not a cardinality knob: the key itself never swaps.
+      refute Enum.any?(mutated(diffs), &(&1 =~ "cross_join:"))
+
+      assert_compiles(@cross_lateral_src, @all)
+    end
   end
 
   describe "hints and prefixes" do
