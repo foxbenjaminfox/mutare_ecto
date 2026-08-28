@@ -31,6 +31,36 @@ defmodule Mutare.Ecto.RepoWriteTest do
       assert_compiles(src, persistence())
     end
 
+    test "stamps the configured repo, which apply_action alone would leave nil" do
+      # A real write records the Repo on the error changeset (`put_repo_and_action/4`), so the
+      # non-persisting stand-in has to as well or it diverges on the *invalid* path — the path the
+      # mutation is not about. Alias-proof, like every module reference the plugin emits.
+      src = """
+      defmodule Accounts do
+        alias MyApp.Repo
+        def create(cs), do: Repo.insert(cs)
+      end
+      """
+
+      assert [{_o, mutated}] = ecto_diffs(src, persistence())
+
+      assert mutated =~
+               "Elixir.Map.replace!(Elixir.Ecto.Changeset.change(cs), :repo, Elixir.MyApp.Repo)"
+    end
+
+    test "the stamped repo follows the configured repo:, not the written alias" do
+      src = """
+      defmodule Accounts do
+        alias MyApp.PgRepo, as: Repo
+        def create(cs), do: Repo.insert(cs)
+      end
+      """
+
+      opts = [mutators: [{Mutare.Ecto, repo: MyApp.PgRepo, families: [:persistence]}]]
+      assert [{_o, mutated}] = ecto_diffs(src, opts)
+      assert mutated =~ ":repo, Elixir.MyApp.PgRepo"
+    end
+
     test "maps the bang twin to apply_action! and the action to the write" do
       src = """
       defmodule Accounts do
@@ -58,7 +88,10 @@ defmodule Mutare.Ecto.RepoWriteTest do
       assert mutated =~ ":delete"
     end
 
-    test "insert_or_update is covered" do
+    test "insert_or_update reads its action at runtime, as Ecto does" do
+      # The one write whose action is not fixed: Ecto routes it on the changeset data's state, so
+      # a hard-coded atom would mis-stamp `changeset.action` on the error path (`:insert` where the
+      # baseline said `:update`) and kill the mutant with tests that never persist anything.
       src = """
       defmodule Accounts do
         alias MyApp.Repo
@@ -67,7 +100,26 @@ defmodule Mutare.Ecto.RepoWriteTest do
       """
 
       assert [{_o, mutated}] = ecto_diffs(src, persistence())
-      assert mutated =~ "apply_action("
+      assert mutated =~ "Elixir.Kernel.then("
+      assert mutated =~ "fn changeset ->"
+      assert mutated =~ "Elixir.Ecto.get_meta(changeset.data, :state) == :loaded"
+      assert mutated =~ "do: :update"
+      assert mutated =~ "else: :insert"
+      assert_compiles(src, persistence())
+    end
+
+    test "the bang twin of insert_or_update keeps the same runtime action, through apply_action!" do
+      src = """
+      defmodule Accounts do
+        alias MyApp.Repo
+        def upsert!(cs), do: cs |> Repo.insert_or_update!()
+      end
+      """
+
+      assert [{_o, mutated}] = ecto_diffs(src, persistence())
+      assert mutated =~ "Elixir.Ecto.Changeset.apply_action!("
+      assert mutated =~ "Elixir.Ecto.get_meta(changeset.data, :state) == :loaded"
+      assert_compiles(src, persistence())
     end
 
     test "the piped form becomes a right-nested change/apply_action pipe stage" do
@@ -80,6 +132,7 @@ defmodule Mutare.Ecto.RepoWriteTest do
 
       assert [{_o, mutated}] = ecto_diffs(src, persistence())
       assert mutated =~ "Elixir.Ecto.Changeset.change()"
+      assert mutated =~ "|> Elixir.Map.replace!(:repo, Elixir.MyApp.Repo)"
       assert mutated =~ "apply_action!(:insert)"
       assert_compiles(src, persistence())
     end

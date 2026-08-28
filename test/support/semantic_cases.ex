@@ -1578,6 +1578,92 @@ defmodule Mutare.Ecto.SemanticCases do
         end
       end
 
+      describe "Persistence — the mutant's *failed* write is byte-for-byte the baseline's" do
+        # The flip side of the fixture above, and what makes its kill condition precise: the mutant
+        # may only differ on a **successful** write, so an invalid changeset has to come back
+        # indistinguishable. The hard case is `insert_or_update`, whose action Ecto picks per call
+        # from the changeset data's state — a row already loaded from the DB routes to `update`, so
+        # the error changeset is stamped `action: :update`. (It was hard-coded `:insert`; see NOTES
+        # "Persistence: the rewrite restates the write's Repo and action".)
+        @upsert_src """
+        defmodule W do
+          alias #{inspect(@repo)}, as: Repo
+          def upsert(cs), do: Repo.insert_or_update(cs)
+        end
+        """
+
+        # An invalid changeset over the seeded `a@x` row — `:loaded`, so Ecto routes it to `update`.
+        defp invalid_loaded_changeset do
+          reset_accounts!()
+
+          account("a@x")
+          |> Ecto.Changeset.cast(%{"name" => nil}, [:name])
+          |> Ecto.Changeset.validate_required([:name])
+        end
+
+        # An invalid changeset over an unsaved struct — `:built`, so Ecto routes it to `insert`.
+        defp invalid_built_changeset do
+          %MyApp.Account{}
+          |> Ecto.Changeset.cast(%{"email" => "built@x"}, [:email, :name])
+          |> Ecto.Changeset.validate_required([:name])
+        end
+
+        setup do
+          {mod, sites} =
+            H.compile(@upsert_src,
+              mutators: [{Mutare.Ecto, repo: @repo, families: [:persistence]}]
+            )
+
+          %{mod: mod, swap: site_id(sites, {~r/Repo\.insert_or_update/, ~r/apply_action/})}
+        end
+
+        test "a loaded changeset keeps the :update action Ecto chose", %{mod: mod, swap: swap} do
+          run = fn id -> H.activate(id, fn -> mod.upsert(invalid_loaded_changeset()) end) end
+
+          assert {:error, baseline} = run.(0)
+          assert {:error, mutant} = run.(swap)
+
+          # The action is *dynamic*: `:update`, not the write's name.
+          assert baseline.action == :update
+          assert {mutant.action, mutant.repo} == {baseline.action, baseline.repo}
+          assert mutant.repo == @repo
+          assert {mutant.errors, mutant.valid?} == {baseline.errors, baseline.valid?}
+        end
+
+        test "a built changeset still takes the :insert branch", %{mod: mod, swap: swap} do
+          run = fn id -> H.activate(id, fn -> mod.upsert(invalid_built_changeset()) end) end
+
+          assert {:error, baseline} = run.(0)
+          assert {:error, mutant} = run.(swap)
+
+          assert baseline.action == :insert
+          assert {mutant.action, mutant.repo} == {baseline.action, baseline.repo}
+        end
+
+        test "the bang twin raises the baseline's exception, message included" do
+          {mod, sites} =
+            H.compile(String.replace(@upsert_src, "insert_or_update(", "insert_or_update!("),
+              mutators: [{Mutare.Ecto, repo: @repo, families: [:persistence]}]
+            )
+
+          swap = site_id(sites, {~r/Repo\.insert_or_update!/, ~r/apply_action!/})
+
+          raised = fn id ->
+            try do
+              H.activate(id, fn -> mod.upsert(invalid_loaded_changeset()) end)
+            rescue
+              e -> {e.__struct__, Exception.message(e)}
+            end
+          end
+
+          # `Ecto.InvalidChangesetError` names the action in its message ("could not perform
+          # update"), so a hard-coded `:insert` would surface right here.
+          assert {Ecto.InvalidChangesetError, message} = raised.(0)
+          assert message =~ "could not perform update"
+          assert raised.(swap) == raised.(0)
+        end
+      end
+
       describe "ValidationDrop — a dropped `validate_required` admits the write it rejected" do
         # The changeset stage drop, observed through the write it gates: with `:name` missing the
         # baseline pipeline returns `{:error, changeset}` and inserts nothing; the mutant (validator

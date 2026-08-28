@@ -7,8 +7,27 @@ defmodule Mutare.Ecto.RepoWrite do
     * **`:persistence`** — replace the write with the equivalent *non-persisting*
       `Ecto.Changeset.apply_action/2`, surfacing **untested persistence**:
 
-          Repo.insert(cs)   →   Elixir.Ecto.Changeset.apply_action(Elixir.Ecto.Changeset.change(cs), :insert)
-          Repo.delete!(x)   →   x |> Elixir.Ecto.Changeset.change() |> Elixir.Ecto.Changeset.apply_action!(:delete)
+          Repo.insert(cs)
+          →
+          Elixir.Ecto.Changeset.apply_action(
+            Elixir.Map.replace!(Elixir.Ecto.Changeset.change(cs), :repo, Elixir.MyApp.Repo),
+            :insert
+          )
+
+          Repo.insert_or_update!(cs)
+          →
+          Elixir.Kernel.then(
+            Elixir.Map.replace!(Elixir.Ecto.Changeset.change(cs), :repo, Elixir.MyApp.Repo),
+            fn changeset ->
+              Elixir.Ecto.Changeset.apply_action!(
+                changeset,
+                Elixir.Kernel.if(Elixir.Ecto.get_meta(changeset.data, :state) == :loaded,
+                  do: :update,
+                  else: :insert
+                )
+              )
+            end
+          )
 
       The argument is normalised through `Ecto.Changeset.change/1`, which is **total over both
       shapes** Repo writes accept — a bare struct (`insert`/`delete`) *and* a changeset
@@ -19,9 +38,32 @@ defmodule Mutare.Ecto.RepoWrite do
       DB-enforced constraints (`unique_constraint`, `foreign_key_constraint`, …) that fire only on
       the real call. So it survives unless a test drives a *successful* write and asserts a
       persistence consequence (a row present, `id`/timestamps assigned, a constraint violated) —
-      a precise, well-defined kill condition. On an *invalid* changeset both return `{:error, cs}`
-      identically, so there is no spurious kill there. Excludes `insert_all`/`update_all` (bulk,
-      no changeset).
+      a precise, well-defined kill condition. Excludes `insert_all`/`update_all` (bulk, no
+      changeset).
+
+      **Error-path parity is what makes that kill condition precise**, so the rewrite reproduces
+      the two pieces of metadata a real write stamps on the changeset it hands back
+      (`Ecto.Repo.Schema`'s `put_repo_and_action/4`), which `apply_action/2` on its own does not:
+
+        * the **Repo** — hence the `Map.replace!(…, :repo, …)` stage, carrying the configured
+          `repo:`. (A plain call, not `%{… | repo: …}`, so the one stage composes into the nested
+          and piped forms alike.)
+        * the **action** — fixed per write for `insert`/`update`/`delete`, but *chosen at runtime*
+          for `insert_or_update`, which Ecto routes to insert or update on the changeset data's
+          `__meta__` state. The mutant reads that same state, so an invalid **loaded** changeset
+          still comes back `action: :update` (and `insert_or_update!` still raises
+          `Ecto.InvalidChangesetError` saying "could not perform **update**"). Hard-coding
+          `:insert` there made the mutant differ from the baseline on the *invalid* path, killing
+          it with tests that never exercise persistence at all — see NOTES "Persistence: the
+          rewrite restates the write's Repo and action".
+
+      With those restored, an invalid changeset yields the same `{:error, changeset}` in mutant
+      and baseline. Two residual divergences are deliberate: `changeset.repo_opts` stays `[]` (the
+      real value carries the write's options *and*, when the Repo enables `:stacktrace`, a live
+      process stacktrace — unreproducible, and varying run to run), and Ecto's own argument
+      guards are not restated (`insert_or_update` raises `ArgumentError` for a bare struct or a
+      changeset in a state other than `:built`/`:loaded`, where the mutant returns a result).
+      Both are programmer-error paths no persistence test asserts on.
 
     * **`:on_conflict`** — swap an explicit `on_conflict:` atom on an `insert`/`insert!`/`insert_all`
       (the writes that take the option) for the *distinct* alternative it conflicts-handles to:
@@ -43,15 +85,19 @@ defmodule Mutare.Ecto.RepoWrite do
       would be a runtime crash (a trivially-killed non-mutant). Non-atom `on_conflict:` values (a
       `{:replace, …}` tuple, a keyword-list update, a query) are left untouched.
 
-  **Pipe-aware.** Piped (`cs |> Repo.insert()`) the changeset is the `|>` left-hand side, so the
-  `:persistence` mutant is delivered as a right-nested pipe stage
-  (`Elixir.Ecto.Changeset.change() |> Elixir.Ecto.Changeset.apply_action(:insert)`) that Mutare
-  splices onto the piped value — `cs |> (change() |> apply_action(:insert))`, which flattens to
-  the intended two-stage pipe. The `:on_conflict` swap rebuilds the call in its written form via
-  `Mutare.Calls`, so it is pipe-position-agnostic.
+  **Pipe-aware.** The `:persistence` rewrite is one **stage chain** over the value the write would
+  have persisted — `change()`, then the `:repo` stamp, then the `apply_action` call — rendered
+  from a single table (`stages/3`) in whichever form the source wrote. Piped
+  (`cs |> Repo.insert()`) the value is the `|>` left-hand side, so the chain ships as a
+  right-nested pipe stage Mutare splices onto it — `cs |> (change() |> Map.replace!(…) |>
+  apply_action(:insert))`, which flattens to the intended pipe. Unpiped the same stages nest as
+  calls around the written argument, *not* as a pipe on it: `|>` binds tighter than most
+  operators, so piping an argument that is itself an operator expression would re-associate it,
+  where a nested call's parentheses cannot. The `:on_conflict` swap rebuilds the call in its
+  written form via `Mutare.Calls`, so it is pipe-position-agnostic.
   """
 
-  alias Mutare.Ecto.{AST, Context, RepoCall, Tag}
+  alias Mutare.Ecto.{AST, Config, Context, RepoCall, Tag}
   alias Mutare.Ecto.AST.KeywordList
 
   @behaviour Mutare.Ecto.SubMutator
@@ -59,19 +105,24 @@ defmodule Mutare.Ecto.RepoWrite do
   # Alias-proof `Elixir.Ecto.Changeset` reference — see `Mutare.Ecto.AST`.
   @changeset Mutare.AST.absolute_alias([:Ecto, :Changeset])
 
+  # The variable the dynamic-action mutant binds its staged changeset to (`dynamic_apply/1`). A
+  # plain source-AST var: it is read only inside the `fn` that introduces it, so shadowing an
+  # outer binding of the same name is unobservable.
+  @staged {:changeset, [], nil}
+
   # Each persisting write → the `apply_action` function (raising or not) and the action atom it
-  # passes. The action mirrors the write; `insert_or_update` chooses insert/update at runtime from
-  # the changeset state, and the atom only colours an error changeset's `:action`, so `:insert` is
-  # a fine fixed choice for it.
+  # passes. The action mirrors the write, except for `insert_or_update`, which Ecto routes to an
+  # insert or an update per call: `:dynamic` marks it as read from the changeset at runtime
+  # (`dynamic_apply/1`) rather than fixed here.
   @writes %{
     insert: {:apply_action, :insert},
     update: {:apply_action, :update},
     delete: {:apply_action, :delete},
-    insert_or_update: {:apply_action, :insert},
+    insert_or_update: {:apply_action, :dynamic},
     insert!: {:apply_action!, :insert},
     update!: {:apply_action!, :update},
     delete!: {:apply_action!, :delete},
-    insert_or_update!: {:apply_action!, :insert}
+    insert_or_update!: {:apply_action!, :dynamic}
   }
 
   # Writes that accept an `on_conflict:` option: the single-row insert family and bulk `insert_all`.
@@ -86,40 +137,112 @@ defmodule Mutare.Ecto.RepoWrite do
   @doc "RepoWrite mutations for `node` as `:persistence`/`:on_conflict` tags, or `[]`."
   @spec mutations(Macro.t(), Context.t()) :: [Tag.t()]
   @impl Mutare.Ecto.SubMutator
-  def mutations(node, %Context{pipe_mode: pipe_mode} = context) do
+  def mutations(node, %Context{config: config, pipe_mode: pipe_mode} = context) do
     case RepoCall.resolve(node, context) do
-      # mutare:ignore[operand_swap] family order is irrelevant — mutations are consumed as a set
-      {fun, args, rebuild} -> persistence(fun, args, pipe_mode) ++ on_conflict(fun, args, rebuild)
-      nil -> []
+      {fun, args, rebuild} ->
+        repo = Config.repo_key(config)
+
+        # mutare:ignore[operand_swap] family order is irrelevant — mutations are consumed as a set
+        persistence(fun, args, pipe_mode, repo) ++ on_conflict(fun, args, rebuild)
+
+      nil ->
+        []
     end
   end
 
-  # `:persistence` — replace the write with `apply_action(change(arg), action)`.
-  defp persistence(fun, args, pipe_mode) do
+  # `:persistence` — replace the write with the non-persisting `apply_action` chain.
+  defp persistence(fun, args, pipe_mode, repo) do
     case @writes[fun] do
       nil -> []
-      {action_fun, action} -> wrap(apply_action(action_fun, action, args, pipe_mode))
+      {action_fun, action} -> wrap(chain(stages(action_fun, action, repo), args, pipe_mode))
     end
   end
 
   defp wrap(nil), do: []
   defp wrap(node), do: [Tag.new(:persistence, node)]
 
-  # Piped: the changeset is the pipe's LHS (not in `args`), so emit a right-nested pipe stage —
-  # `change() |> apply_action(action)` — that Mutare splices onto the piped value. Opts are dropped.
-  defp apply_action(action_fun, action, _args, :piped) do
-    {:|>, [], [changeset(:change, []), changeset(action_fun, [Mutare.AST.literal(action)])]}
+  # The mutant as one chain over the value the write would have persisted:
+  #
+  #     value |> Ecto.Changeset.change() |> Map.replace!(:repo, Repo) |> <apply the action>
+  #
+  # Each stage builds itself from its *leading* arguments — `[]` as a pipe stage, `[value]` as a
+  # nested call — so `chain/3` renders this one table into either written form and the piped and
+  # unpiped mutants cannot drift apart. Why `change/1` normalises the value, why the `:repo` stamp
+  # is here at all, and what stays unreproduced: the moduledoc.
+  defp stages(action_fun, action, repo) do
+    [
+      fn lead -> changeset(:change, lead) end,
+      fn lead -> repo_stamp(lead, repo) end,
+      apply_stage(action_fun, action)
+    ]
   end
 
-  # Unpiped: the changeset is the first argument; wrap it in `change/1` and pass to `apply_action`.
-  # Remaining args (the write's opts) are dropped — a non-persisting stub takes none.
-  defp apply_action(action_fun, action, [arg | _opts], :unpiped) do
-    changeset(action_fun, [changeset(:change, [arg]), Mutare.AST.literal(action)])
+  # `Map.replace!(value, :repo, Repo)` — the Repo a real write records on the changeset it returns.
+  # `Map.replace!/3` rather than `%{value | repo: Repo}` because a plain call is what composes into
+  # both written forms, and it raises loudly if `Ecto.Changeset` ever drops the field.
+  defp repo_stamp(lead, repo) do
+    Mutare.AST.absolute_call([:Map], :replace!, lead ++ [literal(:repo), repo_module(repo)])
   end
 
-  defp apply_action(_action_fun, _action, [], :unpiped), do: nil
+  # The closing stage. A write that names its action applies it directly; `insert_or_update` binds
+  # the staged changeset through `Kernel.then/2` first, because its action is read off that
+  # changeset and the written argument must not be evaluated a second time to get at it.
+  defp apply_stage(action_fun, :dynamic) do
+    fn lead -> Mutare.AST.absolute_call([:Kernel], :then, lead ++ [dynamic_apply(action_fun)]) end
+  end
+
+  defp apply_stage(action_fun, action) do
+    fn lead -> changeset(action_fun, lead ++ [literal(action)]) end
+  end
+
+  # Piped: the value is the pipe's LHS (not in `args`), so fold the stages into a right-nested pipe
+  # that Mutare splices onto it. Unpiped: fold them into calls nested around the written argument
+  # (never a pipe on it — see the moduledoc). Either way the write's opts are dropped; a
+  # non-persisting stub takes none.
+  defp chain([head | rest], _args, :piped),
+    do: Enum.reduce(rest, head.([]), fn stage, acc -> {:|>, [], [acc, stage.([])]} end)
+
+  defp chain(stages, [arg | _opts], :unpiped),
+    do: Enum.reduce(stages, arg, fn stage, acc -> stage.([acc]) end)
+
+  # A write with no visible argument has no value to restate: no mutant, rather than a broken one.
+  defp chain(_stages, [], :unpiped), do: nil
+
+  # `fn changeset -> apply_action(changeset, <the action Ecto would have chosen>) end`. Ecto routes
+  # `insert_or_update` on the changeset data's `__meta__` state — `:loaded` is an existing row (an
+  # update), anything else a new one (an insert) — so the mutant reads the same state through
+  # `Ecto.get_meta/2` and stamps the same `changeset.action` on the error path.
+  defp dynamic_apply(action_fun) do
+    {:fn, [], [{:->, [], [[@staged], changeset(action_fun, [@staged, dynamic_action()])]}]}
+  end
+
+  # The action itself: `:update` for a changeset over a row already loaded from the DB, `:insert`
+  # otherwise — Ecto's own `insert_or_update` dispatch. Written `Kernel.if/2` in full because `if`
+  # is an ordinary `Kernel` macro a target app is free to exclude from its imports.
+  defp dynamic_action do
+    state = Mutare.AST.absolute_call([:Ecto], :get_meta, [data(@staged), literal(:state)])
+
+    Mutare.AST.absolute_call([:Kernel], :if, [
+      {:==, [], [state, literal(:loaded)]},
+      [
+        {Mutare.AST.keyword_key(:do), literal(:update)},
+        {Mutare.AST.keyword_key(:else), literal(:insert)}
+      ]
+    ])
+  end
+
+  # `changeset.data` — the schema struct Ecto reads the persistence state off.
+  defp data(node), do: {{:., [], [node, :data]}, [no_parens: true], []}
+
+  # The configured `repo:` as an alias-proof module reference — the module a real write records on
+  # the changeset. `Config.repo_key/1` returns `Mutare.Calls.module_key/1`'s encoding: a segment
+  # path for an Elixir module, a bare atom for an Erlang one.
+  defp repo_module(path) when is_list(path), do: Mutare.AST.absolute_alias(path)
+  defp repo_module(erlang) when is_atom(erlang), do: literal(erlang)
 
   defp changeset(fun, args), do: Mutare.AST.remote_call(@changeset, fun, args)
+
+  defp literal(value), do: Mutare.AST.literal(value)
 
   # `:on_conflict` — flip `on_conflict: :nothing` → `:raise` in the trailing keyword-list arg,
   # rebuilding the call in its written form. Pipe-agnostic: the opts list is the last visible arg

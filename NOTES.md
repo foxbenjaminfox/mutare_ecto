@@ -43,11 +43,17 @@ should also stop **core** from doing so when core's families run alongside. The 
 semantically inert where it matters: on a valid changeset it is never consulted
 (`{:ok, apply_changes(changeset)}`), on an invalid one it only stamps `changeset.action` —
 metadata whose one real consumer, Phoenix's form-error display, gates on `action != nil`, not on
-*which* action. A swapped atom is therefore killable only by asserting the label itself, and the
-plugin already commits to the inertness in writing: `RepoWrite`'s `@writes` table fixes `:insert`
-for `insert_or_update` *because* "the atom only colours an error changeset's `:action`". The
-discriminator against the superficially similar `:on_conflict` swaps: those fork real persistence
-behaviour (raise/skip/overwrite) with precise kill conditions; this forks nothing observable.
+*which* action. A swapped atom is therefore killable only by asserting the label itself — a test
+about a name rather than about behaviour. The discriminator against the superficially similar
+`:on_conflict` swaps: those fork real persistence behaviour (raise/skip/overwrite) with precise
+kill conditions; this forks nothing observable.
+
+Note the direction this cuts, which is not "the atom does not matter": tests *do* occasionally
+read `changeset.action` (and `Ecto.InvalidChangesetError` prints it), which is exactly why
+`RepoWrite`'s own rewrite has to reproduce whichever atom the real write would have stamped —
+see the design-history entry "Persistence: the rewrite restates the write's Repo and action".
+Mutating the atom is a cheap mutant we decline to offer; getting it *wrong* inside another
+family's mutant is a spurious kill. Both say: reproduce it, never fork it.
 
 So the surface is suppression shipped by the plugin, not mutation: `argument_marks/1` on
 `Mutare.Ecto` declares `{Ecto.Changeset, :apply_action(!), 2, [1]}` under core's shared
@@ -68,6 +74,37 @@ sibling-atom control).
 
 What a thing used to be, what it is now, and why. The moduledocs state only the current shape;
 each entry here is the *before* they no longer carry.
+
+### Persistence: the rewrite restates the write's Repo and action
+
+`:persistence` swaps a Repo write for `Ecto.Changeset.apply_action/2`, on the promise that the
+mutant differs from the real write **only when the write would have succeeded** — that is what
+makes its kill condition ("a test drives a successful write and asserts a persistence
+consequence") precise rather than incidental. The first rewrite emitted
+`apply_action(change(arg), <action>)` and nothing else, which broke the promise twice on the
+*failure* path, where the two are supposed to be indistinguishable:
+
+  * `Ecto.Repo.Schema.put_repo_and_action/4` stamps the **Repo** on the error changeset;
+    `apply_action/2` does not, so every persistence mutant returned `repo: nil`.
+  * the `@writes` table fixed `:insert` as `insert_or_update`'s action, reasoning that "the atom
+    only colours an error changeset's `:action`". But Ecto chooses that action **per call**, from
+    the changeset data's `__meta__` state — a changeset over a row loaded from the DB routes to
+    `update`. So an invalid *loaded* changeset came back `action: :insert` where the baseline said
+    `:update`, and `insert_or_update!` raised "could not perform **insert**" against the
+    baseline's "update". Any test asserting the rejection killed the mutant without ever
+    exercising persistence: a spurious kill, and the expensive kind — it reports the write as
+    tested when nothing tested it.
+
+Both are now restated by the rewrite: a `Map.replace!(…, :repo, …)` stage carrying the configured
+`repo:`, and — for `insert_or_update` only — a `Kernel.then/2` binding whose `fn` reads
+`Ecto.get_meta(changeset.data, :state)` and picks the same action Ecto would (binding rather than
+re-reading the argument, which must not be evaluated twice). The two written forms come from one
+`stages/3` table folded either into nested calls or into a pipe, so the piped and unpiped mutants
+cannot drift apart the way a hand-written pair can. Deliberately still unreproduced:
+`changeset.repo_opts` (the real value can carry a live process stacktrace) and Ecto's argument
+guards on `insert_or_update` — see `Mutare.Ecto.RepoWrite`'s moduledoc. Proven in
+`repo_write_test.exs` and, against both engines, by the semantic suite's "the mutant's *failed*
+write is byte-for-byte the baseline's".
 
 ### Tag: one shape instead of three tuple arities
 

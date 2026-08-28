@@ -180,7 +180,7 @@ Each row is role + the rule(s) that module is the **home** for.
 | `clause_drop.ex` / `changeset.ex` | stage drops (a query clause / a changeset validator or hook) over `stage_drop.ex` |
 | `stage_drop.ex` | home of pipe-aware stage-drop delivery |
 | `binding_reorder.ex` | home of the in-place binding-reorder rule |
-| `repo_aggregate.ex` / `repo_write.ex` / `query_terminal.ex` | bucket-1 families; `repo_write.ex` is home of the `on_conflict` swap rules |
+| `repo_aggregate.ex` / `repo_write.ex` / `query_terminal.ex` | bucket-1 families; `repo_write.ex` is home of the `on_conflict` swap rules and of the persistence rewrite's error-path parity rule (the mutant restates the write's Repo and action, so it may differ only on a *successful* write) |
 | `repo_call.ex` | the resolve-on-the-configured-`repo:` preamble |
 | `config.ex` | option parsing into `%Config{}`; home of parse-once / `context.config` |
 | `equivalence.ex` | home of the equivalence-sensitive set, each family's note, and the `finalize/2` funnel (context-free, over a `%Config{}`) |
