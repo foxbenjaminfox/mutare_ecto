@@ -12,7 +12,8 @@ defmodule Mutare.Ecto.Host do
 
   Besides conditions, the host also weaves the `:bound` ±1 bump of a literal `limit`/`offset`
   value, as a **pin-only** target with no `dynamic/2` wrap and no bindings — see
-  `Mutare.Ecto.Bound`, the bump catalog and its literal guard.
+  `Mutare.Ecto.Bound`, the bump catalog and its literal guard. In a `from`, only the
+  *effective* occurrence of a repeated bound weaves (`Mutare.Ecto.AST.FromCall.effective_clause?/2`).
   """
 
   alias Mutare.Ecto.{Bound, Context, Surface}
@@ -55,7 +56,7 @@ defmodule Mutare.Ecto.Host do
   # no clause to host.
   defp from_targets(nil, _context), do: []
 
-  defp from_targets(%FromCall{source: source, clauses: clauses}, context) do
+  defp from_targets(%FromCall{source: source, clauses: clauses} = from, context) do
     hostable_on = JoinOn.hostable_from_indices(clauses.entries)
 
     KeywordList.flat_map(clauses, fn %Entry{key: key, value: value}, index ->
@@ -63,7 +64,7 @@ defmodule Mutare.Ecto.Host do
         # A bound clause (`limit:`/`offset:`) weaves pin-only — no `dynamic/2` wrap, so no
         # bindings to accumulate.
         Surface.bound?(key) ->
-          bound_from_target(value, index)
+          bound_from_target(from, value, index)
 
         # A hostable condition clause. `Bindings.visible_to/2` owns the truncation offset (and
         # why it includes the current entry itself); each clause sees only the join bindings
@@ -84,10 +85,16 @@ defmodule Mutare.Ecto.Host do
   defp hostable_clause?(:on, index, hostable_on), do: MapSet.member?(hostable_on, index)
   defp hostable_clause?(key, _index, _hostable_on), do: Surface.from_clause?(key, :hosted)
 
-  defp bound_from_target(value, index) do
-    case Bound.bumps(value) do
-      [] -> []
-      mutants -> [Target.bound_from_clause(value, mutants, index)]
+  # A bound weaves at its *effective* occurrence only: one a later same-key clause overrides
+  # (`limit: 5, limit: 10`'s `5`) never reaches the query, so its bump would be equivalent
+  # (`FromCall.effective_clause?/2`). It routed `:hosted` by shape and is declined here, exactly
+  # as a non-hostable `on:` is — hostability is the host's call, not the classifier's.
+  defp bound_from_target(from, value, index) do
+    with true <- FromCall.effective_clause?(from, index),
+         [_ | _] = mutants <- Bound.bumps(value) do
+      [Target.bound_from_clause(value, mutants, index)]
+    else
+      _ -> []
     end
   end
 

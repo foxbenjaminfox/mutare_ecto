@@ -14,7 +14,9 @@ defmodule Mutare.Ecto.Query do
       variants). "Does any test pin the sort direction?"
     * **Bound (drop)** — drop a `limit`/`offset` clause. "Is the window tested at all?" The
       family's other half, the `±1` bump of a literal bound, is hosted pin-only instead
-      (`Mutare.Ecto.Bound`).
+      (`Mutare.Ecto.Bound`). Of a repeated bound (`limit: 5, limit: 10`) only the last — the one
+      Ecto keeps — drops, uncovering the previous; the overridden one never reaches the query,
+      so its drop would be equivalent (`Mutare.Ecto.AST.FromCall.effective_clause?/2`).
     * **JoinType** — narrow a join's kind by rewriting its clause *key*: `left_join`→`inner_join`,
       and `full_join`→`left_join`/`right_join` (plus `left_join`↔`right_join` sideways). "Does any
       test exercise the orphan row this join kind keeps that a narrower kind would drop?" An outer
@@ -187,21 +189,28 @@ defmodule Mutare.Ecto.Query do
 
   # Remove each clause whose key is in `keys`, keeping the others — so the query still
   # compiles (it reuses the surviving clauses). Used for both the filter drops (where/having,
-  # tagged `:filter_drop`) and the bound drops (limit/offset, tagged `:bound`).
+  # tagged `:filter_drop`) and the bound drops (limit/offset, tagged `:bound`). Only an
+  # *effective* clause drops: a last-wins key's overridden occurrence (`limit: 5, limit: 10`'s
+  # `5`) never reaches the query, so its drop would be equivalent — `FromCall.effective_clause?/2`
+  # (a filter always is; only the bound keys are last-wins).
   defp drops(%FromCall{clauses: clauses} = from, family, clause?) do
     admit? = &(Surface.from_drop_family(&1) == family and clause?.(&1))
 
     KeywordList.flat_map(clauses, admit?, fn entry, index ->
-      dropped = dropped_indices(clauses, entry, index)
+      if FromCall.effective_clause?(from, index) do
+        dropped = dropped_indices(clauses, entry, index)
 
-      [
-        Tag.new(
-          family,
-          from |> FromCall.delete_clauses(dropped) |> FromCall.to_ast(),
-          nil,
-          Mutation.at_drop(entry.value)
-        )
-      ]
+        [
+          Tag.new(
+            family,
+            from |> FromCall.delete_clauses(dropped) |> FromCall.to_ast(),
+            nil,
+            Mutation.at_drop(entry.value)
+          )
+        ]
+      else
+        []
+      end
     end)
   end
 

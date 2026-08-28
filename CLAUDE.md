@@ -153,7 +153,7 @@ Each row is role + the rule(s) that module is the **home** for.
 |---|---|
 | `ecto.ex` | the `Mutare.Mutator`/`MacroRouting`/`MacroHost` front (see Architecture above) and the public configuration doc (`families:`/`dialects:`/`repo:`/`as:`) |
 | `dispatcher.ex` | unpacks core's context into `%Context{}`, classifies a node once, and invokes only the relevant sub-mutators |
-| `surface.ex` | the one descriptor table for every owned query macro / `from` key (routing kind, capabilities, drop families); home of the macro-kind taxonomy and its dispatch-exhaustiveness rule (`macro_kinds/0`) |
+| `surface.ex` | the one descriptor table for every owned query macro / `from` key (routing kind, capabilities, drop families, last-wins repetition); home of the macro-kind taxonomy and its dispatch-exhaustiveness rule (`macro_kinds/0`) |
 | `sub_mutator.ex` | the `mutations(node, %Context{})` behaviour every producer implements |
 | `context.ex` | `%Context{config, pipe_mode, mutators}`, the plugin's view of core's callback context; home of the unpack-once boundary rule (`new/1` is the only reader of core's map, and the struct is total, so no producer guards a context shape) |
 | `tag.ex` | `%Tag{family, node, label, attribution}` — the one shape every producer emits; `to_mutation/1`; home of what the `attribution` field means |
@@ -186,7 +186,7 @@ Each row is role + the rule(s) that module is the **home** for.
 | `equivalence.ex` | home of the equivalence-sensitive set, each family's note, and the `finalize/2` funnel (context-free, over a `%Config{}`) |
 | `vocabulary.ex` | the `variant_labels/0` callback; home of vocabulary canonicalisation |
 | `ast.ex` | typed literal readers + list unwrap/rewrap; home of "emit through core's `Mutare.AST`, `Elixir.`-prefixed" |
-| `ast/query_call.ex` / `ast/from_call.ex` / `ast/binding_list.ex` / `ast/keyword_list.ex` | normalized values that preserve the written form; `FromCall` is home of the empty-clause-list collapse |
+| `ast/query_call.ex` / `ast/from_call.ex` / `ast/binding_list.ex` / `ast/keyword_list.ex` | normalized values that preserve the written form; `FromCall` is home of the empty-clause-list collapse and of the effective-clause rule (a last-wins key's overridden occurrence is never mutated) |
 | `binding.ex` | the primitive binding-entry vocabulary |
 
 ### Families and configuration

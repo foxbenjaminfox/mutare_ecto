@@ -19,7 +19,10 @@ defmodule Mutare.Ecto.Bound do
   # `literal?/1`, defined as `bumps/1` being non-empty, so routing and host agree **by
   # definition**: a value routes `:hosted` exactly when the host will weave a bump for it, and
   # there is no second encoding of "literal integer" to drift. A `^pinned`/expression bound is
-  # left raw — its value is mutated where it is bound, in ordinary Elixir.
+  # left raw — its value is mutated where it is bound, in ordinary Elixir. So is an *overridden*
+  # bound — `limit: 5, limit: 10`'s `5`, which Ecto never puts in the query
+  # (`Mutare.Ecto.AST.FromCall.effective_clause?/2`): both arms of the family skip it, the host
+  # declining its bump and `Mutare.Ecto.Query` its drop.
 
   alias Mutare.Ecto.{AST, Tag}
 

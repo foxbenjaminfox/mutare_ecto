@@ -18,7 +18,7 @@ defmodule Mutare.Ecto.Surface do
     :combination
   ]
   @drop_families [:filter_drop, :bound, :clause_drop]
-  @descriptor_keys [:name, :macro, :mutations, :stage_drop, :from, :from_drop]
+  @descriptor_keys [:name, :macro, :mutations, :stage_drop, :from, :from_drop, :last_wins]
 
   # Shared descriptor shapes for the families of near-identical clause keys, so "what a condition
   # (set-operation / projection) clause looks like" lives in one place; each `@surface` entry below
@@ -65,19 +65,27 @@ defmodule Mutare.Ecto.Surface do
     },
     %{name: :group_by, macro: :clause, stage_drop: :clause_drop},
     %{name: :distinct, macro: :clause, stage_drop: :clause_drop},
+    # `limit`/`offset` (and `lock`, below) are **last-wins** keys: Ecto applies a `from`'s pairs
+    # in written order and each of these *replaces* its predecessor ("if `limit` is given twice,
+    # it overrides the previous value"), where every other clause accumulates. So of
+    # `limit: 5, limit: 10` only the `10` reaches the query — `last_wins?/1` is what
+    # `Mutare.Ecto.AST.FromCall.effective_clause?/2` reads to skip the overridden occurrence,
+    # whose mutants would be equivalent.
     %{
       name: :limit,
       macro: :clause,
       stage_drop: :bound,
       from: [:bound],
-      from_drop: :bound
+      from_drop: :bound,
+      last_wins: true
     },
     %{
       name: :offset,
       macro: :clause,
       stage_drop: :bound,
       from: [:bound],
-      from_drop: :bound
+      from_drop: :bound,
+      last_wins: true
     },
     %{name: :with_ties, macro: :clause, stage_drop: :clause_drop},
     %{
@@ -87,7 +95,7 @@ defmodule Mutare.Ecto.Surface do
       from: [:join_binding, :join_type]
     },
     %{name: :preload, macro: :clause, stage_drop: :clause_drop},
-    %{name: :lock, macro: :clause, stage_drop: :clause_drop},
+    %{name: :lock, macro: :clause, stage_drop: :clause_drop, last_wins: true},
     %{name: :update, macro: :clause, stage_drop: :clause_drop},
     %{name: :with_cte, macro: :clause, stage_drop: :clause_drop},
     %{name: :windows, macro: :clause, stage_drop: :clause_drop},
@@ -130,6 +138,7 @@ defmodule Mutare.Ecto.Surface do
     from = Map.get(descriptor, :from, [])
     stage_drop = Map.get(descriptor, :stage_drop)
     from_drop = Map.get(descriptor, :from_drop)
+    last_wins = Map.get(descriptor, :last_wins)
 
     # Each rule is `{ok?, why}`; the first violated one raises, naming the specific invariant rather
     # than dumping the whole descriptor. Compile-time only, and every condition is a plain boolean,
@@ -146,6 +155,7 @@ defmodule Mutare.Ecto.Surface do
        "unknown :stage_drop #{inspect(stage_drop)}"},
       {is_nil(from_drop) or from_drop in @drop_families,
        "unknown :from_drop #{inspect(from_drop)}"},
+      {is_nil(last_wins) or last_wins == true, ":last_wins is declared only as true"},
       {mutations == [] or macro_kind == :clause, ":mutations require macro :clause"},
       {is_nil(stage_drop) or macro_kind in [:condition, :join, :clause],
        ":stage_drop requires a composable macro (:condition/:join/:clause)"},
@@ -180,7 +190,8 @@ defmodule Mutare.Ecto.Surface do
           optional(:mutations) => [mutation_capability()],
           optional(:stage_drop) => drop_family(),
           optional(:from) => [from_capability()],
-          optional(:from_drop) => drop_family()
+          optional(:from_drop) => drop_family(),
+          optional(:last_wins) => true
         }
 
   @doc "Every registered surface descriptor, in macro-registration order."
@@ -257,6 +268,16 @@ defmodule Mutare.Ecto.Surface do
   @doc "The family used when a whole-`from` clause is removed, or `nil` when it is retained."
   @spec from_drop_family(atom()) :: drop_family() | nil
   def from_drop_family(name), do: get(name, :from_drop)
+
+  @doc """
+  Whether a repeated `from` clause key **replaces** its earlier occurrence rather than
+  accumulating — `limit`/`offset`/`lock`, per Ecto ("if `limit` is given twice, it overrides the
+  previous value"); `where`/`order_by`/the joins and every other key accumulate. Read by
+  `Mutare.Ecto.AST.FromCall.effective_clause?/2`, which skips a last-wins key's non-final
+  occurrence: it never reaches the built query, so its mutants would be equivalent.
+  """
+  @spec last_wins?(atom()) :: boolean()
+  def last_wins?(name), do: get(name, :last_wins, false)
 
   defp get(name, key, default \\ nil) do
     case descriptor(name) do

@@ -84,6 +84,15 @@ defmodule Mutare.Ecto.SurfaceTest do
     refute :select in Surface.hosted_macro_names()
   end
 
+  test "last-wins keys are exactly the ones Ecto documents as overriding a repeat" do
+    # `limit`/`offset`/`lock` replace their predecessor; every other clause accumulates (or, for
+    # `select`/`distinct`, cannot be repeated at all).
+    for key <- [:limit, :offset, :lock], do: assert(Surface.last_wins?(key))
+
+    for key <- ~w(where or_where having order_by group_by select distinct join preload on)a,
+        do: refute(Surface.last_wins?(key))
+  end
+
   test "join descriptors distinguish binding accumulation from join-type mutation" do
     for join <- ~w(join inner_join left_join right_join full_join)a do
       assert Surface.from_clause?(join, :join_binding)
@@ -106,5 +115,6 @@ defmodule Mutare.Ecto.SurfaceTest do
     assert Surface.stage_drop_family(:unknown) == nil
     assert Surface.from_capabilities(:unknown) == []
     refute Surface.from_clause?(:unknown, :hosted)
+    refute Surface.last_wins?(:unknown)
   end
 end

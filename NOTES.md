@@ -309,3 +309,21 @@ functions, never routed macros, so a resolve-pass macro stamp (`Mutare.Calls.mac
 proves the call belongs to somebody else's grammar. The name-collision fixture is the plugin's own
 `Mutare.Ecto.AuthorMacros`; core's shipped `RoutingExtension` cannot stand in for it, because its
 macros are named nothing the plugin mutates.
+
+### Bound: only the effective occurrence of a repeated bound is mutated
+
+Both arms of the `:bound` family used to fire on **every** `limit:`/`offset:` clause of a `from`.
+But Ecto applies a `from`'s pairs in written order, and `limit`/`offset` (and `lock`) *replace*
+their predecessor — "if `limit` is given twice, it overrides the previous value" — where every
+other key accumulates. So for `limit: 5, limit: 10` the built query only ever held the `10`, and
+the three mutants on the `5` (both bumps and its drop) were equivalent by construction: no test
+could tell them from the original. `Mutare.Ecto.Surface` now declares the last-wins keys
+(`last_wins?/1`), `Mutare.Ecto.AST.FromCall.effective_clause?/2` turns that into "the clause at
+this index reaches the query", and both producers consult it — `Mutare.Ecto.Query` before a drop,
+`Mutare.Ecto.Host` before weaving a bump. The final occurrence keeps all three mutants; its drop is
+live because it uncovers the previous one. The rule follows the same reasoning as the `IN`-list
+element dedupe above: a mutation that provably leaves the built query unchanged is not offered.
+Only the `from` keyword form is in view — a bound repeated across a pipe
+(`q |> limit(5) |> limit(10)`) or across functions composes at runtime, where no single node sees
+both occurrences, so those stay mutated (suppressing the pipe form would need a sibling-aware
+seam in core).

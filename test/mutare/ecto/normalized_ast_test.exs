@@ -88,6 +88,14 @@ defmodule Mutare.Ecto.NormalizedASTTest do
                "[]"
     end
 
+    test "last_of_key? asks whether a later entry repeats the key" do
+      list = KeywordList.parse(parse("[limit: 5, where: u.active, limit: 10]"))
+
+      refute KeywordList.last_of_key?(list, 0)
+      assert KeywordList.last_of_key?(list, 1)
+      assert KeywordList.last_of_key?(list, 2)
+    end
+
     test "distinguishes a keyword list from mixed and non-list AST" do
       assert %KeywordList{entries: [_]} = KeywordList.nonempty(parse("[active: true]"))
       assert KeywordList.nonempty(parse("[]")) == nil
@@ -157,6 +165,20 @@ defmodule Mutare.Ecto.NormalizedASTTest do
       {head, meta, args} = parse("limit(q, 10)")
       meta = Meta.stamp_macro_call(meta, {Mutare.Calls.module_key(Ecto.Query), :limit, :unpiped})
       assert FromCall.parse({head, meta, args}) == nil
+    end
+
+    test "effective_clause? admits every clause but a last-wins key's overridden occurrence" do
+      # `where` accumulates, so both occurrences reach the query; `limit` is last-wins
+      # (`Surface.last_wins?/1`), so only its final occurrence does.
+      from = from("from(p in Post, where: p.x > 1, limit: 5, where: p.y, limit: 10)")
+
+      assert FromCall.effective_clause?(from, 0)
+      refute FromCall.effective_clause?(from, 1)
+      assert FromCall.effective_clause?(from, 2)
+      assert FromCall.effective_clause?(from, 3)
+
+      # A lone bound is its own last occurrence.
+      assert FromCall.effective_clause?(from("from(p in Post, limit: 5)"), 0)
     end
 
     test "parse_args reads the shape without call identity" do

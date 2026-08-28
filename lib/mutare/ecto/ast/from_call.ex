@@ -24,15 +24,19 @@ defmodule Mutare.Ecto.AST.FromCall do
   #
   # Every edit (`replace_source/2`, `replace_clause/3`, `rekey_clause/3`, `delete_clauses/2`)
   # returns a new value, so edits compose; `to_ast/1` renders through the call's own `rebuild`,
-  # keeping the written form (bare/qualified/aliased, direct/piped), and owns the one shape rule: a
-  # `from` whose clause list is **empty** renders as the single-argument `from(source)` — or the
-  # argless `source |> from()` — never `from(source, [])`. The two are semantically identical, but
-  # the empty keyword-args list is both noisier and — nested inside a subquery expression
-  # (`exists(from(c, []))`) — unrenderable by the Elixir formatter, so the clean form is the only
-  # safe shape. The list is empty only when the `from` was written clause-less or a drop removed
-  # its last clause; every swap replaces a clause, keeping it non-empty.
+  # keeping the written form (bare/qualified/aliased, direct/piped). This module owns two
+  # `from`-shape rules: which written clauses are **effective** (`effective_clause?/2` — a
+  # last-wins key's overridden occurrence never reaches the built query), and the empty-list
+  # collapse: a `from` whose clause list is **empty** renders as the single-argument
+  # `from(source)` — or the argless `source |> from()` — never `from(source, [])`. The two are
+  # semantically identical, but the empty keyword-args list is both noisier and — nested inside a
+  # subquery expression (`exists(from(c, []))`) — unrenderable by the Elixir formatter, so the
+  # clean form is the only safe shape. The list is empty only when the `from` was written
+  # clause-less or a drop removed its last clause; every swap replaces a clause, keeping it
+  # non-empty.
 
   alias Mutare.Ecto.AST.{KeywordList, QueryCall}
+  alias Mutare.Ecto.Surface
 
   @enforce_keys [:call, :source, :clauses]
   defstruct [:call, :source, :clauses]
@@ -89,6 +93,26 @@ defmodule Mutare.Ecto.AST.FromCall do
       %KeywordList{} = clauses -> {source, clauses}
       nil -> nil
     end
+  end
+
+  @doc """
+  Whether the clause at `index` **reaches the built query**. Ecto applies a `from`'s keyword pairs
+  in written order, and a *last-wins* key (`Mutare.Ecto.Surface.last_wins?/1` —
+  `limit`/`offset`/`lock`) replaces its predecessor where every other key accumulates: of
+  `limit: 5, limit: 10` only the `10` is ever in the query. So every clause is effective except
+  a last-wins key's non-final occurrence. A mutation of an ineffective clause — its drop, its
+  bound bump — leaves the built query unchanged, an equivalent mutant by construction, so the
+  whole-`from` producers (`Mutare.Ecto.Query`) and the host (`Mutare.Ecto.Host`) skip it; the
+  final occurrence keeps every mutant, and its drop is live (it uncovers the previous one).
+
+  Only the `from` keyword form is in view: a bound repeated across a pipe
+  (`q |> limit(5) |> limit(10)`) or across functions composes at runtime, where no single node
+  sees both occurrences, so those stay mutated.
+  """
+  @spec effective_clause?(t(), non_neg_integer()) :: boolean()
+  def effective_clause?(%__MODULE__{clauses: %KeywordList{entries: entries} = clauses}, index) do
+    %KeywordList.Entry{key: key} = Enum.at(entries, index)
+    not Surface.last_wins?(key) or KeywordList.last_of_key?(clauses, index)
   end
 
   @doc "The `from` with `source` in place of its written source, the clauses untouched."

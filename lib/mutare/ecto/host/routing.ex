@@ -280,7 +280,10 @@ defmodule Mutare.Ecto.Host.Routing do
         Surface.from_clause?(entry.key, :hosted) -> condition_treatment(entry.value)
         # Even a wrongly-`:hosted` entry weaves nothing: `Bound.literal?/1` is `Bound.bumps/1`
         # non-emptiness, so a pin/expression bound that slipped through yields an empty target
-        # list, and a hostable non-bound key is re-gated by `Surface` on the host side.
+        # list, and a hostable non-bound key is re-gated by `Surface` on the host side. An
+        # *overridden* bound (`limit: 5, limit: 10`'s `5`) likewise routes `:hosted` by shape and
+        # is declined by the host (`FromCall.effective_clause?/2`) — like a non-hostable `on:`,
+        # hostability is not re-decided here.
         # mutare:ignore[logical] equivalent — see above
         Surface.bound?(entry.key) and Bound.literal?(entry.value) -> :hosted
         true -> :skip

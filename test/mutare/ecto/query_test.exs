@@ -290,6 +290,41 @@ defmodule Mutare.Ecto.QueryTest do
       refute {"0", "-1"} in diffs
     end
 
+    test "mutates only the last of a repeated bound — Ecto lets a later limit/offset override" do
+      # Ecto applies a `from`'s pairs in order and `limit`/`offset` *replace* their predecessor, so
+      # of `limit: 5, limit: 10` only the `10` is ever in the query: every mutant of the `5` — both
+      # bumps and its drop — would leave the built query unchanged. The last occurrence keeps all
+      # three, and its drop is live: it uncovers the `5` (`FromCall.effective_clause?/2`).
+      src = """
+      defmodule Posts do
+        import Ecto.Query
+        def q, do: from(p in "posts", limit: 5, limit: 10, offset: 1, offset: 2, select: p.id)
+      end
+      """
+
+      diffs = ecto_diffs(src)
+
+      # The effective bounds carry their bumps…
+      assert {"10", "11"} in diffs
+      assert {"10", "9"} in diffs
+      assert {"2", "3"} in diffs
+      assert {"2", "1"} in diffs
+      # …and their drops, reported at the dropped value…
+      assert {"10", ""} in diffs
+      assert {"2", ""} in diffs
+      # …while the overridden ones yield nothing at all: no bump, no drop.
+      refute Enum.any?(diffs, fn {original, _mutated} -> original in ["5", "1"] end)
+
+      # Delivery: one pin-only weave per effective bound; the overridden literals stay as written.
+      mm = metamutant(src)
+      assert length(Regex.scan(~r/limit:\s*\^case/, mm)) == 1
+      assert length(Regex.scan(~r/offset:\s*\^case/, mm)) == 1
+      assert mm =~ "limit: 5"
+      assert mm =~ "offset: 1"
+
+      assert_compiles(src)
+    end
+
     test "leaves a pinned limit's value to core (no literal bump)" do
       src = """
       defmodule Posts do

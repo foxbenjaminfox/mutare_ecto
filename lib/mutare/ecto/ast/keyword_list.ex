@@ -74,6 +74,17 @@ defmodule Mutare.Ecto.AST.KeywordList do
     end)
   end
 
+  @doc """
+  Whether the entry at `index` is the last one carrying its key — no later entry repeats it. A
+  purely structural question; what a repeated key *means* is the caller's
+  (`Mutare.Ecto.AST.FromCall.effective_clause?/2`).
+  """
+  @spec last_of_key?(t(), non_neg_integer()) :: boolean()
+  def last_of_key?(%__MODULE__{entries: entries}, index) do
+    [%Entry{key: key} | later] = Enum.drop(entries, index)
+    not Enum.any?(later, &(&1.key == key))
+  end
+
   @doc "The list with a new `value` for the entry at `index` — same wrapper, one value swapped."
   @spec put_value(t(), non_neg_integer(), Macro.t()) :: t()
   def put_value(%__MODULE__{entries: entries} = list, index, value) do
