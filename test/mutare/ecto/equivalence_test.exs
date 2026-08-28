@@ -127,6 +127,30 @@ defmodule Mutare.Ecto.EquivalenceTest do
       refute value.note == ordering.note
     end
 
+    test "a window's bracketed options list reads the placement note for its sort-key drop" do
+      # `over(x, [order_by: …])` spells the window's options in brackets; the drop beneath its
+      # `order_by:` is the same sort-key drop as the bare keyword form's and reads the same note
+      # (and answers to the same `[ecto:coalesce_in_ordering]` qualifier).
+      src = """
+      defmodule M do
+        import Ecto.Query
+
+        def q do
+          from(u in User,
+            select: {u.id, over(sum(u.score), [order_by: [asc: coalesce(u.score, 0)]])}
+          )
+        end
+      end
+      """
+
+      sites = sites(src)
+
+      [window] = Enum.filter(sites, &(&1.mutator == :ecto and "coalesce" in &1.variant))
+
+      assert "coalesce_in_ordering" in window.variant
+      assert window.note =~ "default NULL placement"
+    end
+
     test "the / -> * direction reads the same multiplicative-identity note (finer tags the source operator)" do
       # Mirrors the comparison case above: the `"/"` guard arm is reached only when the *written*
       # operator is `/` (swapped to `*`) — the earlier test's `u.a * u.b` only ever exercises the

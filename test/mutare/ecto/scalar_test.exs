@@ -140,6 +140,30 @@ defmodule Mutare.Ecto.ScalarTest do
       assert [%Tag{family: :coalesce, label: "coalesce_in_ordering"}] = tagged
     end
 
+    test "a bracketed options list refines the window's order_by: like the bare keyword form" do
+      # `over(x, [order_by: …])` is the same call with its keyword list written in brackets
+      # (Sourceror wraps that one in a `__block__`): the sort key keeps the placement-aware label,
+      # the partitioning keeps the plain one — the bare form's mutants exactly (Sourceror renders
+      # both spellings alike) — and each mutant keeps the written wrapper.
+      bare = "over(sum(u.x), partition_by: coalesce(u.g, 0), order_by: [asc: coalesce(u.x, 0)])"
+
+      bracketed =
+        "over(sum(u.x), [partition_by: coalesce(u.g, 0), order_by: [asc: coalesce(u.x, 0)]])"
+
+      assert swap_labels(bracketed) == %{
+               "over(sum(u.x), partition_by: u.g, order_by: [asc: coalesce(u.x, 0)])" =>
+                 "coalesce",
+               "over(sum(u.x), partition_by: coalesce(u.g, 0), order_by: [asc: u.x])" =>
+                 "coalesce_in_ordering"
+             }
+
+      assert swap_labels(bracketed) == swap_labels(bare)
+
+      for tag <- bracketed |> Sourceror.parse_string!() |> Scalar.swaps() do
+        assert {:over, _meta, [_window_expr, {:__block__, _wrap, [[_ | _]]}]} = tag.node
+      end
+    end
+
     test "an over/2 window expression and partition_by: stay value positions" do
       # Only the sort key is an ordering: a coalesce under the window function or in the
       # partitioning keeps the plain label.

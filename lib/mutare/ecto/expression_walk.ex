@@ -39,34 +39,40 @@ defmodule Mutare.Ecto.ExpressionWalk do
   def walk(expr, local, position \\ :value),
     do: Walk.mutants(expr, position, &children/2, local)
 
-  # An `over/2` window with written options (the idiomatic trailing keyword list): its
-  # `order_by:` option value is an ordering position — the window's sort key — refined by
-  # `window_option/1`. A bracketed-list options argument arrives `__block__`-wrapped and falls to
-  # the structural rule: its mutants are still produced, only without the ordering refinement.
-  defp children({:over, _meta, [_window_expr, options]} = node, position) when is_list(options),
+  # An `over/2` window with written options — the idiomatic trailing keyword list, or the same
+  # list written in brackets (`over(x, [order_by: …])`, which Sourceror wraps in a `__block__`;
+  # `AST.unwrap_list/1` reads through either spelling): its `order_by:` option value is an
+  # ordering position — the window's sort key — refined by `window_option/1`.
+  defp children({:over, _meta, [_window_expr, _options]} = node, position),
     do: over_children(node, position)
 
-  defp children({{:., _dot, [_receiver, :over]}, _meta, [_expr, options]} = node, position)
-       when is_list(options),
-       do: over_children(node, position)
+  defp children({{:., _dot, [_receiver, :over]}, _meta, [_expr, _options]} = node, position),
+    do: over_children(node, position)
 
   # Everything else descends structurally, each child inheriting the surrounding position.
   defp children(node, position), do: Walk.structural(node, position)
 
   # An `over/2` window's children: the window expression inherits the surrounding position (an
   # `over` can itself sit in an ordering value); each option's *value* is a child in the position
-  # its key declares (the key names the option, and is never a position). `over` itself is a
-  # position too, like any node (no catalog matches it today; the walk stays uniform).
-  defp over_children({form, meta, [window_expr, options]}, position) do
-    option_children =
-      for {option, index} <- Enum.with_index(options) do
-        {value, value_position, rewrap} = window_option(option)
+  # its key declares (the key names the option, and is never a position), spliced back under
+  # the list's written wrapper (`AST.rewrap_list/2`). `over` itself is a position too, like any
+  # node (no catalog matches it today; the walk stays uniform). A named window (`over(x, :w)`)
+  # has no option list and descends structurally.
+  defp over_children({form, meta, [window_expr, options]} = node, position) do
+    case AST.unwrap_list(options) do
+      nil ->
+        Walk.structural(node, position)
 
-        {value, value_position,
-         &{form, meta, [window_expr, List.replace_at(options, index, rewrap.(&1))]}}
-      end
+      list ->
+        option_children =
+          for {option, index} <- Enum.with_index(list) do
+            {value, value_position, rewrap} = window_option(option)
+            splice = &AST.rewrap_list(options, List.replace_at(list, index, rewrap.(&1)))
+            {value, value_position, &{form, meta, [window_expr, splice.(&1)]}}
+          end
 
-    [{window_expr, position, &{form, meta, [&1, options]}} | option_children]
+        [{window_expr, position, &{form, meta, [&1, options]}} | option_children]
+    end
   end
 
   # One window option pair: the `order_by:` value is the window's sort key — an ordering
