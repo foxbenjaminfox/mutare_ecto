@@ -1351,6 +1351,32 @@ defmodule Mutare.Ecto.SemanticCases do
           # The `>=` mutant admits the boundary post P1 (views 10) into the join.
           assert mutant == [1, 2]
         end
+
+        test "an empty binding list still weaves the on-condition, tail-anchoring the joined binding" do
+          # `[]` declares no prior binding, so the woven dynamic re-declares only the joined `p`,
+          # anchored to the tail (`dynamic([..., p], …)`). Under a wrong contiguous `[p]` the
+          # dynamic's `p` would resolve to position 0 — `users` — and the query would fail on
+          # `users.views`; a live boundary flip proves the anchor lands on `posts`.
+          {mod, sites} =
+            build("""
+            defmodule Q do
+              import Ecto.Query
+              alias MyApp.{Post, User}
+
+              def q do
+                User
+                |> where([u], u.id == 1)
+                |> join(:inner, [], p in Post, on: p.views > 10)
+                |> select([u, p], p.id)
+              end
+            end
+            """)
+
+          {baseline, mutant} = observe_ids(mod, sites, {"p.views > 10", "p.views >= 10"})
+
+          assert baseline == [2]
+          assert mutant == [1, 2]
+        end
       end
 
       describe "Aggregate — `sum` ↔ `avg` in `select` (whole-`from`)" do

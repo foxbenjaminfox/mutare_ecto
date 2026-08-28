@@ -58,15 +58,32 @@ defmodule Mutare.Ecto.Host.Bindings do
   def join(args) do
     # The join's `x in Source` expression sits one slot past the written binding list: Ecto's
     # `join(query, qual, binding \\ [], expr, opts \\ [])` can't skip the middle default, so a
-    # written list is always followed by the expression.
-    with {index, %BindingList{} = list} <- BindingList.find(args),
+    # join written with options (the `on:` the host weaves) always writes its list too — and may
+    # legally write it **empty** (`join(q, :inner, [], p in Post, on: p.views > 1)`: the
+    # condition references only the joined binding). The list is located through `written/1`,
+    # not `BindingList.find/1`, precisely so that `[]` counts as the declaration it is; located
+    # through `find/1` it fell through here, and the join kept only its stage drop.
+    with {index, written} <- find_written(args),
          {:in, _, [lhs, _source]} <- Enum.at(args, index + 1),
          [_ | _] = join_declarations <- declarations(lhs) do
       # A standalone `join` always composes an external query, so the new binding anchors to the tail.
-      append_positionals(declarations(list), join_declarations, true)
+      append_positionals(written, join_declarations, true)
     else
       _ -> []
     end
+  end
+
+  # The first written binding list in `args` with its index, or `nil` — `written/1` decides what
+  # counts, so the empty list is found exactly as a populated one is.
+  defp find_written(args) do
+    args
+    |> Enum.with_index()
+    |> Enum.find_value(fn {node, index} ->
+      case written(node) do
+        nil -> nil
+        declarations -> {index, declarations}
+      end
+    end)
   end
 
   @doc """
@@ -77,21 +94,28 @@ defmodule Mutare.Ecto.Host.Bindings do
   """
   @spec declarations(Macro.t() | BindingList.t() | nil) :: [Macro.t()]
   # The binding-less form's written list. Load-bearing, not defensive: `nil` is the one shape the
-  # general clause below can't read — no list, so `BindingList.parse/1` declines it and the
-  # lone-variable branch would try to re-declare `nil` itself.
+  # general clause below can't read — no list, so `written/1` declines it and the lone-variable
+  # branch would try to re-declare `nil` itself.
   def declarations(nil), do: []
 
   def declarations(%BindingList{entries: entries}), do: Enum.map(entries, &declaration/1)
 
   def declarations(node) do
-    case BindingList.parse(node) do
-      %BindingList{} = list ->
-        declarations(list)
+    case written(node) do
+      # Not a list at all: a lone positional variable (`x in q`).
+      nil -> [Mutare.AST.clean_var(node)]
+      declarations -> declarations
+    end
+  end
 
-      nil ->
-        # `BindingList.parse/1` rejects the empty list (nothing to reorder); as a lone `[] in q`
-        # source it declares exactly nothing. Anything else lone is a positional variable.
-        if AST.unwrap_list(node) == [], do: [], else: [Mutare.AST.clean_var(node)]
+  # The declarations of a *written* binding list, or `nil` for any other node. A written list is a
+  # `BindingList` — or the empty `[]`, which `BindingList.parse/1` declines (it is the *reorderable*
+  # list, and `[]` has nothing to reorder) but which is a legal declaration of exactly nothing: a
+  # lone `[] in q` source, or a standalone join's prior bindings (`join/1`).
+  defp written(node) do
+    case BindingList.parse(node) do
+      %BindingList{} = list -> declarations(list)
+      nil -> if AST.unwrap_list(node) == [], do: [], else: nil
     end
   end
 

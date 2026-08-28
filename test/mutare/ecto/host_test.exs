@@ -603,6 +603,47 @@ defmodule Mutare.Ecto.HostTest do
       assert metamutant(src) =~ "dynamic([u, ..., p]"
       assert_compiles(src)
     end
+
+    test "a standalone join with an empty binding list hosts its on condition ([..., p])" do
+      # `join(q, :inner, [], p in Post, on: …)` is the legal way to write "the on-condition
+      # references no prior binding": Ecto's `join/5` can't skip its middle `binding \\ []`
+      # default once `opts` is written, so the empty list is a real declaration, not an absent
+      # one. Before, the host located the written list through `BindingList.find/1` — which
+      # declines `[]` (nothing to reorder) — so the join fell through to raw and only its stage
+      # drop was recorded: the comparison and literal mutants on `p.views > 1` vanished. The
+      # woven dynamic re-declares exactly the joined binding, tail-anchored: `dynamic([..., p], …)`.
+      src = """
+      defmodule M do
+        import Ecto.Query
+
+        def q(query) do
+          join(query, :inner, [], p in Post, on: p.views > 1)
+        end
+      end
+      """
+
+      assert {"p.views > 1", "p.views >= 1"} in hosted(src)
+      assert {"p.views > 1", "p.views > 2"} in hosted(src)
+      assert metamutant(src) =~ "dynamic([..., p]"
+      assert_compiles(src)
+    end
+
+    test "the piped empty-binding join hosts its on condition too" do
+      src = """
+      defmodule M do
+        import Ecto.Query
+
+        def q(query) do
+          query
+          |> join(:inner, [], p in Post, on: p.views > 1)
+        end
+      end
+      """
+
+      assert {"p.views > 1", "p.views >= 1"} in hosted(src)
+      assert metamutant(src) =~ "dynamic([..., p]"
+      assert_compiles(src)
+    end
   end
 
   describe "binding-less conditions (no written binding list)" do
@@ -1252,6 +1293,12 @@ defmodule Mutare.Ecto.HostTest do
 
       assert routing("join(:inner, [u], p in Post, on: p.user_id == u.id)") ==
                [:skip, :skip, :skip, {:keyword, [:hosted]}]
+
+      # An empty binding list is a written declaration too (the on-condition references no prior
+      # binding); the trailing `on:` still routes per-pair with its `:hosted` condition, and the
+      # host re-declares `[..., p]`.
+      assert routing("join(query, :inner, [], p in Post, on: p.views > 1)") ==
+               [:expression, :skip, :skip, :skip, {:keyword, [:hosted]}]
 
       # A non-`on:` option is never the condition, whatever it sits next to.
       assert routing("join(query, :inner, [u], p in Post, as: :p, on: p.user_id == u.id)") ==
