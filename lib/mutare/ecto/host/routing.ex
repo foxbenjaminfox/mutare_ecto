@@ -49,6 +49,10 @@ defmodule Mutare.Ecto.Host.Routing do
       `q |> offset(5)`, and the `limit:`/`offset:` keys of the `from` form) routes `:hosted`, so
       the `:bound` ±1 bump is woven pin-only. The literal-only guard is `Mutare.Ecto.Bound`'s, so
       routing and host agree by definition.
+    * the standalone `join/4,5` — `join(q, :inner, [u], p in Post, on: …)`: the threaded query
+      routes `:expression` and the trailing **options list routes per-pair**, so its `on:` value
+      routes by the same shape rule as the `from` form's (`:hosted` expression condition, per-pair
+      `{:keyword, …}` shorthand) and the remaining options (`as:`/`prefix:`/`hints:`) stay raw.
 
   This relies on core's recursive per-pair routing, hosted values, and `:interpolated` extensions;
   see `c:Mutare.MacroRouting.route_arguments/2`.
@@ -110,7 +114,7 @@ defmodule Mutare.Ecto.Host.Routing do
   defp route_macro(:join, _name, args) do
     args
     |> query_threading_route()
-    |> host_join_options(args)
+    |> route_join_options(args)
   end
 
   defp route_macro(:clause, name, args) do
@@ -172,13 +176,33 @@ defmodule Mutare.Ecto.Host.Routing do
     end
   end
 
-  defp host_join_options(routing, args) do
-    with %KeywordList{entries: entries} <- KeywordList.nonempty(List.last(args)),
-         true <- Enum.any?(entries, &(&1.key == :on)) do
-      route_last(routing, :hosted)
-    else
-      _ -> routing
+  # A standalone `join/4,5`'s trailing options list (`on:`, plus the DSL data keys `as:`/`prefix:`/
+  # `hints:`) routes **per-pair**, exactly as the `from` form's clause list does: only the `on:`
+  # value carries a condition, and it routes by shape through the same `condition_treatment/1` —
+  # `:hosted` for an expression condition (nested `:hosted` is delivered to `host/2` like any
+  # other), per-pair `{:keyword, …}` for the keyword shorthand (`on: [views: 5]`), whose scalar
+  # values core then mutates `^`-pinned. Routing the whole list `:hosted` instead would leave a
+  # shorthand `on:` unmutated in every family: the host's catalog reads SQL conditions, not keyword
+  # pairs, so it produces nothing there, while the `:hosted` mark keeps core out.
+  #
+  # Hostability is *not* re-decided here — a non-hostable `on:` (a multi-`on:` or `assoc` join,
+  # `Mutare.Ecto.Host.JoinOn`) still routes `:hosted` and the host declines it, as in the `from`
+  # form. A trailing argument that is no keyword list (`join(q, :inner, [u], p in Post)`) keeps the
+  # base routing.
+  defp route_join_options(routing, args) do
+    case args |> List.last() |> KeywordList.nonempty() do
+      %KeywordList{entries: entries} ->
+        route_last(routing, {:keyword, Enum.map(entries, &join_option_treatment/1)})
+
+      nil ->
+        routing
     end
+  end
+
+  # One join option's treatment: `on:` is the condition (routed by shape); every other option names
+  # DSL data (`as: :post`, `prefix: "x"`, `hints:`) and stays raw.
+  defp join_option_treatment(entry) do
+    if entry.key == :on, do: condition_treatment(entry.value), else: :skip
   end
 
   # Overlay `treatment` on the trailing argument's slot. Every overlay the classifier places
@@ -218,10 +242,11 @@ defmodule Mutare.Ecto.Host.Routing do
     end)
   end
 
-  # The treatment for one `where`/`having` condition value: a keyword-shorthand value
-  # (`where: [active: true]`) routes its pairs individually; every other value — a top-level
-  # interpolation `where: ^cond` included, whose interior the host sub-contracts to core
-  # (`Mutare.Ecto.Island`) — is `:hosted`.
+  # The treatment for one condition value, wherever a condition is written as a keyword value — a
+  # `from` clause (`where:`/`having:`/`on:`) or a standalone `join`'s `on:` option: a
+  # keyword-shorthand value (`where: [active: true]`, `on: [views: 5]`) routes its pairs
+  # individually; every other value — a top-level interpolation `where: ^cond` included, whose
+  # interior the host sub-contracts to core (`Mutare.Ecto.Island`) — is `:hosted`.
   defp condition_treatment(value) do
     case KeywordList.nonempty(value) do
       nil -> :hosted

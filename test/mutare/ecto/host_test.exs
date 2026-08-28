@@ -1243,17 +1243,42 @@ defmodule Mutare.Ecto.HostTest do
       assert routing("order_by(asc: :name)") == [:skip]
     end
 
-    test "join hosts the trailing on option in direct and piped forms" do
+    test "join routes its options per-pair, hosting the on: condition in direct and piped forms" do
+      # The trailing options list routes like the `from` clause list: the `on:` value carries the
+      # condition (`:hosted`, nested — core delivers a nested `:hosted` to `host/2` the same way),
+      # every other option is data.
       assert routing("join(query, :inner, [u], p in Post, on: p.user_id == u.id)") ==
-               [:expression, :skip, :skip, :skip, :hosted]
+               [:expression, :skip, :skip, :skip, {:keyword, [:hosted]}]
 
       assert routing("join(:inner, [u], p in Post, on: p.user_id == u.id)") ==
-               [:skip, :skip, :skip, :hosted]
+               [:skip, :skip, :skip, {:keyword, [:hosted]}]
+
+      # A non-`on:` option is never the condition, whatever it sits next to.
+      assert routing("join(query, :inner, [u], p in Post, as: :p, on: p.user_id == u.id)") ==
+               [:expression, :skip, :skip, :skip, {:keyword, [:skip, :hosted]}]
+    end
+
+    test "a join's keyword-shorthand on: routes its pairs, like the from form's" do
+      # `on: [views: 5]` is data, not an SQL fragment — the host's catalog reads conditions, so
+      # routing the whole options list `:hosted` would leave the `5` unmutated by *everything*.
+      # Per-pair routing hands it to core's literal families, `^`-pinned.
+      assert routing("join(query, :inner, [u], p in Post, on: [views: 5])") ==
+               [:expression, :skip, :skip, :skip, {:keyword, [{:keyword, [:interpolated]}]}]
+
+      # The same nil/compound exclusions the `where` shorthand applies (`pair_treatment/1`).
+      assert routing("join(query, :inner, [u], p in Post, on: [views: nil, id: u.id])") ==
+               [:expression, :skip, :skip, :skip, {:keyword, [{:keyword, [:skip, :skip]}]}]
     end
 
     test "join with no on: key at all keeps its trailing options raw" do
+      # Per-pair routing with no condition among the pairs: every value `:skip`, keys raw — the
+      # same "nothing here is mutable" answer the whole-argument `:skip` gave.
       assert routing("join(query, :inner, [u], p in Post, as: :p)") ==
-               [:expression, :skip, :skip, :skip, :skip]
+               [:expression, :skip, :skip, :skip, {:keyword, [:skip]}]
+
+      # No trailing keyword list at all — the base routing stands.
+      assert routing("join(query, :inner, [u], p in Post)") ==
+               [:expression, :skip, :skip, :skip]
     end
 
     test "a non-routing macro yields []" do

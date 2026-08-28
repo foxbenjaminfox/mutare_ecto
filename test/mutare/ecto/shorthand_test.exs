@@ -5,12 +5,12 @@ defmodule Mutare.Ecto.ShorthandTest do
 
   alias Mutare.Ecto.Host
 
-  # The keyword-shorthand split: `where(q, col: val)` and the bindingless `from(S, where: [col:
-  # val])` carry *data* values (not binding-referencing fragments), so they are mutated by core's
-  # literal families — but delivered `^`-pinned (Ecto rejects a bare selector `case` in a query
-  # value position), with the column-name keys left raw. This rides core's per-keyword-pair
-  # routing + `:interpolated` extensions; here we assert the routing the plugin emits and the end-to-end
-  # behaviour (value mutated, keys raw, metamutant compiles).
+  # The keyword-shorthand split: `where(q, col: val)`, the bindingless `from(S, where: [col:
+  # val])`, and a join's `on: [col: val]` carry *data* values (not binding-referencing fragments),
+  # so they are mutated by core's literal families — but delivered `^`-pinned (Ecto rejects a bare
+  # selector `case` in a query value position), with the column-name keys left raw. This rides
+  # core's per-keyword-pair routing + `:interpolated` extensions; here we assert the routing the
+  # plugin emits and the end-to-end behaviour (value mutated, keys raw, metamutant compiles).
 
   @all [:all, {Mutare.Ecto, repo: MyApp.Repo}]
 
@@ -67,6 +67,22 @@ defmodule Mutare.Ecto.ShorthandTest do
     test "a binding from can mix hosted expressions with shorthand values" do
       assert routing(~s|from(p in "posts", where: p.x == p.y, where: [active: true])|) ==
                [:skip, {:keyword, [:hosted, {:keyword, [:interpolated]}]}]
+    end
+
+    test "a standalone join's on: shorthand routes per-pair, like the from form's" do
+      # A join's options list routes per-pair too, so its `on:` value takes the same shape rule as
+      # a `from` clause's: an expression condition hosts, a shorthand routes its pairs.
+      assert routing(~s|join(q, :inner, [u], p in Post, on: [views: 5])|) ==
+               [:expression, :skip, :skip, :skip, {:keyword, [{:keyword, [:interpolated]}]}]
+
+      assert routing(~s|join(q, :inner, [u], p in Post, on: p.user_id == u.id)|) ==
+               [:expression, :skip, :skip, :skip, {:keyword, [:hosted]}]
+
+      # Hostability is not re-decided by routing: an `assoc` join's `on:` is one Ecto folds under
+      # an `and` (so `Mutare.Ecto.Host.JoinOn` refuses to weave a `^dynamic` there), but a
+      # shorthand *value* pin is plain interpolation and stays legal — so the pairs still route.
+      assert routing(~s|join(q, :inner, [u], p in assoc(u, :posts), on: [views: 5])|) ==
+               [:expression, :skip, :skip, :skip, {:keyword, [{:keyword, [:interpolated]}]}]
     end
   end
 
@@ -129,6 +145,51 @@ defmodule Mutare.Ecto.ShorthandTest do
       assert Enum.any?(all_diffs, fn {_family, original, mutated} ->
                original == "true" and mutated == "false"
              end)
+
+      assert_compiles(src, mutators: @all)
+    end
+
+    test "a standalone join's on: shorthand value is mutated; the column key is not" do
+      # The `from` form (`join: …, on: [views: 5]`) always routed this per-pair; the standalone
+      # `join/5` used to mark its whole options list `:hosted`, which left the value unreachable
+      # for *every* family — the host's catalog reads SQL conditions, not keyword pairs.
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q(query), do: join(query, :inner, [u], p in MyApp.Post, on: [views: 5])
+      end
+      """
+
+      diffs = diffs(src, mutators: @all)
+
+      assert Enum.any?(diffs, fn {_m, original, mutated} ->
+               original == "5" and mutated == "6"
+             end)
+
+      refute Enum.any?(diffs, fn {_m, original, _mutated} -> original == "views" end)
+
+      # Delivered `^`-pinned inside the `on:` shorthand (a bare selector `case` there is poison).
+      assert metamutant(src, mutators: @all) =~ "^case mutare_active"
+      assert_compiles(src, mutators: @all)
+    end
+
+    test "an expression on: still hosts while a sibling option stays raw" do
+      # The per-pair routing must not cost the hosted weave: the `on:` expression is still the
+      # host's (an `:ecto` in-fragment swap), and `as:` is still untouched data.
+      src = """
+      defmodule M do
+        import Ecto.Query
+
+        def q(query) do
+          join(query, :inner, [u], p in MyApp.Post, as: :p, on: p.user_id == u.id)
+        end
+      end
+      """
+
+      diffs = diffs(src, mutators: @all)
+
+      assert {:ecto, "p.user_id == u.id", "p.user_id != u.id"} in diffs
+      refute Enum.any?(diffs, fn {_m, original, _mutated} -> original == ":p" end)
 
       assert_compiles(src, mutators: @all)
     end

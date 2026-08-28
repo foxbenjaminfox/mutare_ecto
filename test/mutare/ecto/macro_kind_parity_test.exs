@@ -80,9 +80,12 @@ defmodule Mutare.Ecto.MacroKindParityTest do
       """,
       dispatcher: [{~s|join(query, :inner, [u], p in "posts", on: p.user_id == u.id)|, "query"}],
       hosted: [{"p.user_id == u.id", "p.user_id != u.id"}],
+      # The options list routes per-pair (as the `from` clause list does), so the `on:` condition's
+      # `:hosted` sits nested under `{:keyword, …}` — still the routing branch's own answer, never
+      # the `[]` catch-all.
       routing:
         {~s|join(query, :inner, [u], p in "posts", on: p.user_id == u.id)|,
-         [:expression, :skip, :skip, :skip, :hosted]}
+         [:expression, :skip, :skip, :skip, {:keyword, [:hosted]}]}
     },
     # `:limit` is the one `:clause` shape with a host arm (the pin-only `:bound` bump —
     # `Host.host/2`'s `:clause` branch guards on `Surface.bound?/1`), so it exercises all three
