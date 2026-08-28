@@ -261,8 +261,11 @@ defmodule Mutare.Ecto.RepoWrite do
   # Find the swappable `on_conflict:` pair and flip its value in one pass (`:nothing` → `:raise`),
   # reading the pair's value once. A non-`:on_conflict` pair or an unswappable value yields `nil`
   # (skipped via the `else`, never mistaken for a result), so a list with no such pair returns `nil`.
-  defp swap_on_conflict(list) when is_list(list) do
-    case KeywordList.parse(list) do
+  # The shape gate is `KeywordList.parse/1`'s alone — it unwraps Sourceror's `__block__` around an
+  # explicitly bracketed list, so `insert(cs, [on_conflict: :nothing])` mutates like the bare
+  # keyword form, and any non-list argument reads as `nil` here.
+  defp swap_on_conflict(node) do
+    case KeywordList.parse(node) do
       %KeywordList{entries: entries} = options ->
         Enum.find_value(Enum.with_index(entries), fn {entry, index} ->
           with :on_conflict <- entry.key,
@@ -280,8 +283,6 @@ defmodule Mutare.Ecto.RepoWrite do
         nil
     end
   end
-
-  defp swap_on_conflict(_other), do: nil
 
   # `:raise` forbids a `conflict_target:` (see the moduledoc), so the swap to it drops the pair
   # whatever its value shape; `:nothing` keeps the author's arbiter.

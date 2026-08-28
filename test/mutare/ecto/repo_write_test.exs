@@ -284,6 +284,23 @@ defmodule Mutare.Ecto.RepoWriteTest do
       refute mutated =~ "on_conflict: :replace_all"
     end
 
+    test "fires on an explicitly bracketed opts list, exactly as on the bare keyword form" do
+      # Sourceror wraps a written `[...]` in a `__block__`, so the swap must read the list through
+      # the normalized parser rather than a bare-list gate — both spellings are the same call.
+      src = """
+      defmodule Accounts do
+        alias MyApp.Repo
+        def upsert(cs), do: Repo.insert(cs, [on_conflict: :nothing, conflict_target: :email])
+      end
+      """
+
+      assert [{original, mutated}] = ecto_diffs(src, on_conflict())
+      assert original =~ "on_conflict: :nothing"
+      assert mutated =~ "on_conflict: :raise"
+      refute mutated =~ "conflict_target"
+      assert_compiles(src, on_conflict())
+    end
+
     test "leaves a non-atom on_conflict alone (e.g. a {:replace, fields} tuple)" do
       src = """
       defmodule Accounts do
