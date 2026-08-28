@@ -14,9 +14,12 @@ defmodule Mutare.Ecto.ShorthandTest do
 
   @all [:all, {Mutare.Ecto, repo: MyApp.Repo}]
 
+  # A `q |> macro(…)` snippet routes `:piped` — its visible args exclude the query, as core's do.
   defp routing(code) do
-    {name, _meta, args} = Sourceror.parse_string!(code)
-    Host.Routing.treatments(name, args)
+    case Sourceror.parse_string!(code) do
+      {:|>, _meta, [_query, {name, _, args}]} -> Host.Routing.treatments(name, args, :piped)
+      {name, _meta, args} -> Host.Routing.treatments(name, args, :unpiped)
+    end
   end
 
   describe "treatments — the per-pair treatment the plugin emits" do
@@ -29,7 +32,7 @@ defmodule Mutare.Ecto.ShorthandTest do
     test "the piped shorthand routes its sole keyword argument" do
       # Piped: the query is the `|>` left side (routed runtime separately), so the only visible
       # argument is the shorthand keyword list.
-      assert routing(~s|where(category: "Foo")|) == [{:keyword, [:interpolated]}]
+      assert routing(~s{q |> where(category: "Foo")}) == [{:keyword, [:interpolated]}]
     end
 
     test "a nil-valued pair is skipped (IS NULL, never = nil)" do
@@ -44,16 +47,16 @@ defmodule Mutare.Ecto.ShorthandTest do
       assert routing(~s|where(q, [u], u.x == u.y)|) == [:expression, :skip, :hosted]
     end
 
-    test "a plain clause macro's non-query first argument is never :expression" do
+    test "a piped clause macro's visible first argument is never :expression" do
       # In the piped form the threaded query is the `|>` LHS (routed separately); the only visible
       # argument is data — a literal bound, an ordering. It must never route `:expression`: core
       # would mutate the bound/ordering, duplicating the plugin's own families and (for an
-      # ordering) poisoning the query position. Pins `query_arg?/1` distinguishing a real query
-      # argument from such data. A literal bound routes `:hosted` (the plugin's own pin-only
+      # ordering) poisoning the query position. Pins that the pipe mode, not the argument's
+      # shape, is what says so. A literal bound routes `:hosted` (the plugin's own pin-only
       # `:bound` bump — still not core's); an ordering stays raw.
-      assert routing(~s|limit(10)|) == [:hosted]
-      assert routing(~s|offset(5)|) == [:hosted]
-      assert routing(~s|order_by(asc: :name)|) == [:skip]
+      assert routing("q |> limit(10)") == [:hosted]
+      assert routing("q |> offset(5)") == [:hosted]
+      assert routing("q |> order_by(asc: :name)") == [:skip]
     end
 
     test "a bindingless from routes where/having values per-pair, other clauses raw" do

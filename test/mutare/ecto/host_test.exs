@@ -1162,16 +1162,69 @@ defmodule Mutare.Ecto.HostTest do
     end
   end
 
+  describe "the threaded query is routed by form, not shape" do
+    # `Host.Routing` marks a directly written queryable `:expression` whatever it is: the upstream
+    # mutations of a *computed* query must stay reachable through the stage exactly as a bare
+    # variable's or a nested `from(…)`'s are, and the direct and piped forms must agree. Only a
+    # structural queryable stays raw.
+    @with_core [:all, {Mutare.Ecto, repo: MyApp.Repo}]
+
+    test "a computed query's interior is mutated by core, in the direct form as in the piped" do
+      for call <- [
+            "where(base_query(2), [p], p.views > 1)",
+            "base_query(2) |> where([p], p.views > 1)"
+          ] do
+        src = """
+        defmodule Posts do
+          import Ecto.Query
+          def base_query(n), do: from(p in "posts", where: p.id > ^n)
+          def q, do: #{call}
+        end
+        """
+
+        diffs = diffs(src, mutators: @with_core)
+        # core's integer family reaches the computed query's argument …
+        assert {:integer, "2", "3"} in diffs
+        assert {:integer, "2", "0"} in diffs
+        # … while the plugin still hosts the condition beside it.
+        assert {:ecto, "p.views > 1", "p.views >= 1"} in diffs
+        assert_compiles(src, mutators: @with_core)
+      end
+    end
+
+    test "a structural queryable is never mutated" do
+      # A schema alias, a table-name string, or a `{"table", Schema}` pair names a table rather
+      # than computing a query: none of core's `:alias`/`:string`/`:tuple` families reach it,
+      # while the condition beside it is still hosted.
+      for source <- ["Post", ~S|"posts"|, ~S|{"posts", Post}|] do
+        src = """
+        defmodule Posts do
+          import Ecto.Query
+          def q, do: where(#{source}, [p], p.views > 1)
+        end
+        """
+
+        diffs = diffs(src, mutators: @with_core)
+        refute Enum.any?(diffs, fn {family, _, _} -> family in [:alias, :string, :tuple] end)
+        assert {:ecto, "p.views > 1", "p.views >= 1"} in diffs
+        assert_compiles(src, mutators: @with_core)
+      end
+    end
+  end
+
   # The end-to-end tests above confirm delivery. The focused classifier checks below keep routing
   # shape failures easy to diagnose without manufacturing resolver metadata or bypassing the
   # public transform for mutation delivery.
 
-  describe "treatments/2 — per-argument treatment" do
-    # The classifier takes the resolved macro name and visible args (what core reads off a
-    # `Mutare.MacroRouting.Call`); a bare call's own head and args stand in for them here.
+  describe "treatments/3 — per-argument treatment" do
+    # The classifier takes the resolved macro name, visible args, and pipe mode (what core reads
+    # off a `Mutare.MacroRouting.Call`); a snippet's own head and args stand in for them here, and
+    # a `q |> macro(…)` snippet routes `:piped` — its visible args exclude the query, as core's do.
     defp routing(code) do
-      {name, _meta, args} = Sourceror.parse_string!(code)
-      Host.Routing.treatments(name, args)
+      case Sourceror.parse_string!(code) do
+        {:|>, _meta, [_query, {name, _, args}]} -> Host.Routing.treatments(name, args, :piped)
+        {name, _meta, args} -> Host.Routing.treatments(name, args, :unpiped)
+      end
     end
 
     test "from keyword form routes each binding condition independently" do
@@ -1232,27 +1285,43 @@ defmodule Mutare.Ecto.HostTest do
       assert routing("where(query, [post: p], p.x == p.y)") == [:expression, :skip, :hosted]
       assert routing("where(query, [u, post: p], p.x == u.y)") == [:expression, :skip, :hosted]
       # piped form — the binding list is the first *argument* (the query is the `|>` LHS).
-      assert routing("where([u], u.x == u.y)") == [:skip, :hosted]
-      # a piped query as the first arg is still recognized as the threaded expression.
+      assert routing("q |> where([u], u.x == u.y)") == [:skip, :hosted]
+      # a nested pipe as the first arg is the threaded query, like any expression.
       assert routing("where(q |> sub(), [u], u.x == u.y)") == [:expression, :skip, :hosted]
       # a `...`-anchored binding list is recognized too, so its condition routes `:hosted`.
       assert routing("where(query, [..., c], c.x == c.y)") == [:expression, :skip, :hosted]
     end
 
-    test "a qualified Ecto.Query call that isn't a query builder is not the threaded query" do
-      # `Ecto.Query.exclude/2` resolves to the `Ecto.Query` module (so `query_builder_call?/1`
-      # reaches `Surface.query_builder?/1`) but isn't one of the registered query-builder macro
-      # names — unlike `Ecto.Query.where(...)` or a nested `from(...)`, so it must route `:skip`,
-      # not `:expression` (which would let core descend into its own arguments as if it were the
-      # threaded query).
+    test "a computed threaded query routes :expression — by form, not shape" do
+      # Written directly, the first argument is the queryable whatever its shape: a function call
+      # (`Ecto.Query.exclude/2` resolves to `Ecto.Query` yet is no query builder — it is still
+      # the threaded query), a conditional, a map read. Core descends it as ordinary Elixir, so
+      # `base_query(2)`'s `2` is mutated exactly as it is anywhere else.
+      assert routing("where(base_query(2), [p], p.views > 1)") == [:expression, :skip, :hosted]
+
       assert routing("where(Ecto.Query.exclude(query, :order_by), [u], u.x == u.y)") ==
-               [:skip, :skip, :hosted]
+               [:expression, :skip, :hosted]
+
+      assert routing("where(if(f, do: a, else: b), [u], u.x == u.y)") ==
+               [:expression, :skip, :hosted]
+
+      assert routing("select(Map.fetch!(queries, :a), [u], u.id)") == [:expression, :skip, :skip]
+    end
+
+    test "a structural queryable in the query slot stays raw" do
+      # A schema alias, a table-name string (plain or interpolated), or a `{"table", Schema}` pair
+      # names a table rather than computing a query; a swap there is a broken query, not a mutant.
+      assert routing("where(Post, [p], p.views > 1)") == [:skip, :skip, :hosted]
+      assert routing(~S|where("posts", [p], p.views > 1)|) == [:skip, :skip, :hosted]
+      assert routing(~S|where("posts_#{shard}", [p], p.views > 1)|) == [:skip, :skip, :hosted]
+      assert routing(~S|where({"posts", Post}, [p], p.views > 1)|) == [:skip, :skip, :hosted]
+      assert routing("limit(Post, 10)") == [:skip, :hosted]
     end
 
     test "condition macro with no condition after the binding list hosts nothing" do
       # `Host.Condition.locate/1` requires an argument *after* the binding list, so a binding-only call
       # never marks a position `:hosted`.
-      assert routing("where([u])") == [:skip]
+      assert routing("q |> where([u])") == [:skip]
       assert routing("where(q, [u])") == [:expression, :skip]
     end
 
@@ -1263,7 +1332,8 @@ defmodule Mutare.Ecto.HostTest do
     test "plain clause macros thread the query and leave their data positions raw" do
       assert routing("order_by(query, [u], asc: u.x)") == [:expression, :skip, :skip]
 
-      # the threaded query is recognized as a bare var, a from(…), or a pipe — each → :expression.
+      # the threaded query is whatever is written first — a bare var, a from(…), a pipe — each
+      # → :expression.
       assert routing("select(q, [u], u.id)") == [:expression, :skip, :skip]
       assert routing("select(from(u in User), [u], u.id)") == [:expression, :skip, :skip]
       assert routing("select(q |> base(), [u], u.id)") == [:expression, :skip, :skip]
@@ -1277,11 +1347,12 @@ defmodule Mutare.Ecto.HostTest do
       assert routing("limit(query, n + 1)") == [:expression, :skip]
     end
 
-    test "a piped clause macro's first data argument is not the query" do
-      # `q |> limit(10)` → `limit(10)`: the `10` is a bound — hosted for the pin-only bump,
-      # never `:expression` (the threaded query is the `|>` left side, routed separately).
-      assert routing("limit(10)") == [:hosted]
-      assert routing("order_by(asc: :name)") == [:skip]
+    test "a piped clause macro's visible first argument is not the query" do
+      # `q |> limit(10)`: the `10` is a bound — hosted for the pin-only bump, never `:expression`
+      # (the threaded query is the `|>` left side, routed separately); the pipe mode says so, not
+      # the argument's shape.
+      assert routing("q |> limit(10)") == [:hosted]
+      assert routing("q |> order_by(asc: :name)") == [:skip]
     end
 
     test "join routes its options per-pair, hosting the on: condition in direct and piped forms" do
@@ -1291,7 +1362,7 @@ defmodule Mutare.Ecto.HostTest do
       assert routing("join(query, :inner, [u], p in Post, on: p.user_id == u.id)") ==
                [:expression, :skip, :skip, :skip, {:keyword, [:hosted]}]
 
-      assert routing("join(:inner, [u], p in Post, on: p.user_id == u.id)") ==
+      assert routing("q |> join(:inner, [u], p in Post, on: p.user_id == u.id)") ==
                [:skip, :skip, :skip, {:keyword, [:hosted]}]
 
       # An empty binding list is a written declaration too (the on-condition references no prior

@@ -189,7 +189,7 @@ defmodule Mutare.Ecto.Surface do
   @doc """
   The closed macro-kind taxonomy `macro_kind/1` answers from. Three consumers dispatch on it
   independently — `Mutare.Ecto.Dispatcher.query_macro_mutations/3`, `Mutare.Ecto.Host.host/2`,
-  and `Mutare.Ecto.Host.Routing.route_macro/3` — each ending in a catch-all Elixir cannot
+  and `Mutare.Ecto.Host.Routing.route_macro/4` — each ending in a catch-all Elixir cannot
   exhaustiveness-check, so `macro_kind_parity_test.exs` probes every kind listed here against
   all three: adding or renaming a kind fails that test until each dispatch takes a real branch
   for it (or is structurally excluded), instead of silently dropping the kind's mutations.
@@ -228,10 +228,6 @@ defmodule Mutare.Ecto.Surface do
         kind in [:from, :condition, :join] or (kind == :clause and bound?(name)),
         do: name
   end
-
-  @doc "Whether `name` is a query-building macro whose nested query should remain reachable."
-  @spec query_builder?(atom()) :: boolean()
-  def query_builder?(name), do: macro_kind(name) in [:from, :condition, :join, :clause]
 
   @doc "The standalone mutation capabilities attached to a query macro."
   @spec mutations(atom()) :: [mutation_capability()]

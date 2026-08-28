@@ -10,8 +10,8 @@ defmodule Mutare.Ecto.MacroKindParityTest do
   #
   #   * `Mutare.Ecto.Dispatcher.query_macro_mutations/3` — which sub-mutators see the whole call
   #   * `Mutare.Ecto.Host.host/2` — which hosted-target builder weaves the call
-  #   * `Mutare.Ecto.Host.Routing.route_macro/3` — how core treats each argument position
-  #     (`:from` short-circuits earlier, in `treatments/2`'s dedicated clause)
+  #   * `Mutare.Ecto.Host.Routing.route_macro/4` — how core treats each argument position
+  #     (`:from` short-circuits earlier, in `treatments/3`'s dedicated clause)
   #
   # The catch-alls are correct for today's inert cases (`:skip`-kind macros, and `nil` for a name
   # the plugin doesn't own), but Elixir has no exhaustiveness check: add or rename a kind in
@@ -36,7 +36,8 @@ defmodule Mutare.Ecto.MacroKindParityTest do
   #     `:deliberately_empty`
   #   * `hosted` — diff pairs only the host's weave delivers (in-condition operator swaps and
   #     bound bumps — no `mutate/2` sub-mutator emits those), or `:never_subscribed`
-  #   * `routing` — `{snippet, expected}` for `Host.Routing.treatments/2`, whose
+  #   * `routing` — `{snippet, expected}` for `Host.Routing.treatments/3` (every probe is a
+  #     direct call, so `:unpiped`), whose
   #     position-specific answer (a `:hosted` overlay) proves the kind matched a real routing
   #     branch rather than the `[]` catch-all, or `:registered_skip`
   @probes %{
@@ -140,7 +141,7 @@ defmodule Mutare.Ecto.MacroKindParityTest do
            renamed, or removed. Each of the three kind dispatches ends in a silent catch-all,
            so extend the taxonomy by first adding a probe here that decides, for the new kind,
            what `Dispatcher.query_macro_mutations/3`, `Host.host/2`, and
-           `Host.Routing.route_macro/3` must each do with it — a real branch, or an asserted
+           `Host.Routing.route_macro/4` must each do with it — a real branch, or an asserted
            structural exclusion (`:registered_skip` / `:never_subscribed`).
            """
   end
@@ -217,7 +218,7 @@ defmodule Mutare.Ecto.MacroKindParityTest do
 
             for name <- names do
               assert {name, :skip} in registrations,
-                     "#{name} registers :routing but route_macro/3 has no #{unquote(kind)} branch"
+                     "#{name} registers :routing but route_macro/4 has no #{unquote(kind)} branch"
             end
           end
 
@@ -231,8 +232,9 @@ defmodule Mutare.Ecto.MacroKindParityTest do
 
             {name, _meta, args} = Sourceror.parse_string!(unquote(snippet))
 
-            assert Host.Routing.treatments(name, args) == unquote(Macro.escape(expected)),
-                   "treatments/2 fell through to a catch-all for: #{unquote(snippet)}"
+            assert Host.Routing.treatments(name, args, :unpiped) ==
+                     unquote(Macro.escape(expected)),
+                   "treatments/3 fell through to a catch-all for: #{unquote(snippet)}"
           end
       end
     end

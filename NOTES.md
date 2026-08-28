@@ -208,3 +208,19 @@ value-family mutant surfaces there — `fragment_descent_test.exs` pins it); the
 `local/3` now reads the argument through a narrowed walk (`Mutare.Ecto.Fragment`'s
 `null_interior/1`, the same shape as `exists`'s subquery interior) that offers exactly the
 coalesce drop, at every depth, in both polarities.
+
+### Routing: the threaded query by form, not shape
+
+`Mutare.Ecto.Host.Routing` used to decide whether a composable macro's first argument was the
+threaded query by **shape** — a bare variable, a nested pipe, or a call whose name was a
+registered query builder (`Surface.query_builder?/1`) routed `:expression`; anything else
+`:skip`. The shape test stood in for the one fact that actually places the query — whether the
+call is piped — and it was wrong for every legal computed queryable: `where(base_query(2), …)`,
+`where(if(…), …)`, `where(Ecto.Query.exclude(q, :order_by), …)` all routed `:skip`, so core never
+descended them and `base_query(2)`'s `2 → 3/1/0` silently vanished (while the same call piped,
+`base_query(2) |> where(…)`, kept them through `from_visible`'s default). The classifier now
+routes by core's `pipe_mode`: piped, no visible argument is the query; direct, the first one is,
+and it routes `:expression` whatever its shape. The only shape still read there is the structural
+queryable (a schema alias, a table-name string, a `{"table", Schema}` pair), which stays raw
+because a table/schema swap is a broken query, not a mutant. `Surface.query_builder?/1` went with
+the heuristic.

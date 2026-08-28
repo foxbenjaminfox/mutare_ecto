@@ -39,7 +39,6 @@ defmodule Mutare.Ecto.SurfaceTest do
     # written binding list.
     assert Surface.macro_kind(:dynamic) == :dynamic
     refute :dynamic in Surface.hosted_macro_names()
-    refute Surface.query_builder?(:dynamic)
     assert Surface.stage_drop_family(:dynamic) == nil
   end
 
@@ -107,6 +106,5 @@ defmodule Mutare.Ecto.SurfaceTest do
     assert Surface.stage_drop_family(:unknown) == nil
     assert Surface.from_capabilities(:unknown) == []
     refute Surface.from_clause?(:unknown, :hosted)
-    refute Surface.query_builder?(:unknown)
   end
 end
