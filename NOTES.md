@@ -238,6 +238,20 @@ spec and stays a leaf; anywhere else it is a value tuple, transparent like a wri
 elements inherit the comparison's position, so they are data). Pinned in `fragment_test.exs`,
 `fragment_descent_test.exs`, and live against both engines in the semantic suite.
 
+### Fragment: element drops shrink the set, not the written list
+
+The in-list element drop used to be one mutant per *index* of a written list, deleting that
+position: `p.id in [1, 1, 2]` offered `[1, 2]` twice and `[1, 1]` once. SQL `IN` is set
+membership, so a duplicated member made the per-index drop dead by construction — deleting one
+`1` leaves the other, the set `{1, 2}` is unchanged, and no test can tell the mutant from the
+original (twice over). The drop is now one mutant per *distinct* written element, removing every
+occurrence (`Mutare.Ecto.Fragment`'s `element_drops/1`): `[1, 1, 2]` shrinks to `[2]` and
+`[1, 1]`, each a different set. Elements are compared as written expressions with their source
+metadata stripped, so `^a`/`^a` and `u.x`/`u.x` are one member exactly as `1`/`1` are; a
+duplicate-free list is unchanged. The literal bumps *inside* a duplicated list are still per
+node (bumping one `1` of `[1, 1, 2]` to `2` gives `[2, 1, 2]`, the original set): rewriting every
+occurrence would be a multi-point rebuild the walk does not offer.
+
 ### Routing: the threaded query by form, not shape
 
 `Mutare.Ecto.Host.Routing` used to decide whether a composable macro's first argument was the

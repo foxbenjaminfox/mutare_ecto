@@ -612,6 +612,35 @@ defmodule Mutare.Ecto.SemanticCases do
           # Without ^mod, Carol drops out.
           assert dropped == [1, 5]
         end
+
+        test "a duplicated member drops every occurrence at once — the shrink is live" do
+          # `IN` is set membership: dropping only one `^admin` would leave the set, and the rows,
+          # unchanged. The one drop of `admin` removes both occurrences, so only Carol (`mod`)
+          # remains.
+          {mod, sites} =
+            build("""
+            defmodule Q do
+              import Ecto.Query
+              alias MyApp.User
+
+              def q do
+                admin = "admin"
+                mod = "mod"
+                from(u in User, where: u.role in [^admin, ^admin, ^mod], select: u.id)
+              end
+            end
+            """)
+
+          {baseline, dropped} =
+            observe_ids(
+              mod,
+              sites,
+              {~s(u.role in [^admin, ^admin, ^mod]), ~s(u.role in [^mod])}
+            )
+
+          assert baseline == [1, 3, 5]
+          assert dropped == [3]
+        end
       end
 
       describe "Membership — `exists` ↔ `not exists` (dynamic-injected)" do

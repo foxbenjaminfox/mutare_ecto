@@ -20,6 +20,17 @@ defmodule Mutare.Ecto.FragmentTest do
     |> MapSet.new()
   end
 
+  # The `"element"`-labelled mutants of `code` — the written in-list drops alone, apart from the
+  # polarity flip and the list literals' own value mutants — rendered, as a set.
+  defp drops(code) do
+    code
+    |> Sourceror.parse_string!()
+    |> Fragment.mutants(@config)
+    |> Enum.filter(&(&1.label == "element"))
+    |> Enum.map(&Sourceror.to_string(&1.node))
+    |> MapSet.new()
+  end
+
   # The families tagged on `code`'s mutants, as a set.
   defp families(code, opts \\ []) do
     code
@@ -205,6 +216,17 @@ defmodule Mutare.Ecto.FragmentTest do
                  ~s|u.status in [""]|,
                  ~s|u.status in ["mutare"]|
                ])
+    end
+
+    test "a duplicated member drops once, every occurrence at once" do
+      # `IN` is set membership: `[1, 1, 2]` denotes `{1, 2}`, so a per-index drop that left the
+      # other `1` (`[1, 2]`) would be equivalent to the original — and offered twice. One drop
+      # per distinct written value, removing every occurrence; a pinned or referenced member
+      # duplicates by the same written-expression test as a literal.
+      assert drops("u.x in [1, 1, 2]") == MapSet.new(["u.x in [2]", "u.x in [1, 1]"])
+      assert drops("u.x not in [1, 1, 2]") == MapSet.new(["u.x not in [2]", "u.x not in [1, 1]"])
+      assert drops("u.x in [^a, ^a, ^b]") == MapSet.new(["u.x in [^b]", "u.x in [^a, ^a]"])
+      assert drops("u.x in [u.y, u.y]") == MapSet.new(["u.x in []"])
     end
 
     test "a pinned or referenced right-hand side has no written elements to drop" do

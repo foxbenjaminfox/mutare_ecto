@@ -41,8 +41,10 @@ defmodule Mutare.Ecto.Fragment do
       exception the unit reads itself: the coalesce drop, the one mutation that changes
       NULL-ness (see the `children/2` `is_nil` clause and `null_interior/1`).
     * **Membership** — `x in ^list`↔`x not in ^list` and `exists(subquery)`↔`not exists(subquery)`
-      (unit polarity flips, no double negation), one **element drop** per entry of a *written*
-      in-list (`x in [1, 2, 3]` → `x in [2, 3]`/…), and `like`↔`ilike` — **dialect-gated** on
+      (unit polarity flips, no double negation), one **element drop** per *distinct* entry of a
+      *written* in-list, removing every occurrence (`x in [1, 2, 3]` → `x in [2, 3]`/…; `IN` is
+      set membership, so `[1, 1, 2]` shrinks to `[2]`/`[1, 1]`, never to the equivalent
+      `[1, 2]`), and `like`↔`ilike` — **dialect-gated** on
       `:postgres` (`ilike` is Postgres-specific; the rest is portable). Unlike `is_nil`, the `in`
       operands **are** descended (a swap on the left or a literal in the written list changes
       which rows match). A subquery argument is not descended *as a condition*; its interior is
@@ -390,16 +392,24 @@ defmodule Mutare.Ecto.Fragment do
   # Variables, field references, literals: no pin can hide here.
   defp local_islands(_node), do: []
 
-  # Membership set shrink: one mutant per element of a **written** in-list, each dropping that
-  # single element (`x in [1, 2, 3]` → `x in [2, 3]` / `[1, 3]` / `[1, 2]`) — "does any test pin
-  # this member?". Only a literal list the author wrote qualifies: a pinned `^list`, a field
-  # reference, or a subquery right-hand side has no written elements to drop. A singleton drops
-  # to `x in []` (constantly false — still valid, trivially killable SQL). Tagged `"element"`
-  # so `# mutare:ignore[ecto:element]` names the drops apart from the polarity flip.
+  # Membership set shrink: one mutant per **distinct** element of a **written** in-list, each
+  # dropping every occurrence of that element (`x in [1, 2, 3]` → `x in [2, 3]` / `[1, 3]` /
+  # `[1, 2]`) — "does any test pin this member?". SQL `IN` is set membership, so the written
+  # list denotes the set of its distinct values (`[1, 1, 2]` is `{1, 2}`): a drop that left
+  # another occurrence of the same value (`[1, 1, 2]` → `[1, 2]`) would leave the set unchanged —
+  # equivalent to the original by construction — so `[1, 1, 2]` shrinks exactly to `[2]` and
+  # `[1, 1]`. Two elements are one member when they are the same written expression
+  # (structurally, source metadata ignored): `1`/`1`, `^a`/`^a`, `u.x`/`u.x`. Only a literal list
+  # the author wrote qualifies: a pinned `^list`, a field reference, or a subquery right-hand
+  # side has no written elements to drop. A singleton drops to `x in []` (constantly false —
+  # still valid, trivially killable SQL). Tagged `"element"` so `# mutare:ignore[ecto:element]`
+  # names the drops apart from the polarity flip.
   defp element_drops({:in, meta, [l, {:__block__, lmeta, [elems]}]}) when is_list(elems) do
-    for index <- 0..(length(elems) - 1)//1 do
-      dropped = {:__block__, lmeta, [List.delete_at(elems, index)]}
-      Tag.new(:membership, {:in, meta, [l, dropped]}, "element")
+    keys = Enum.map(elems, &Sourceror.strip_meta/1)
+
+    for key <- Enum.uniq(keys) do
+      kept = for {elem, k} <- Enum.zip(elems, keys), k != key, do: elem
+      Tag.new(:membership, {:in, meta, [l, {:__block__, lmeta, [kept]}]}, "element")
     end
   end
 
