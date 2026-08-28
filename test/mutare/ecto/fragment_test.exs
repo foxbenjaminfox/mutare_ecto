@@ -744,6 +744,30 @@ defmodule Mutare.Ecto.FragmentTest do
                ])
     end
 
+    test "count/2's distinctness modifier (arg 1) is never mutated — only the condition around it" do
+      # `count/2` pattern-matches the literal `:distinct`, so `count(u.id, :mutare)` is an
+      # unsupported-expression raise at query build, not a live mutant. The comparison and its
+      # data literal keep their ordinary treatment, and `count` itself stays off the aggregate
+      # ladder (`Mutare.Ecto.Aggregate`'s exclusion).
+      assert mutants("count(u.id, :distinct) > 1") ==
+               MapSet.new([
+                 "count(u.id, :distinct) >= 1",
+                 "count(u.id, :distinct) > 2",
+                 "count(u.id, :distinct) > 0"
+               ])
+
+      # The skip is keyed to arg 1 only: `count/1`'s operand is an ordinary expression whose own
+      # literals still mutate.
+      assert mutants(~s|count(u.meta["k"]) > 1|) ==
+               MapSet.new([
+                 ~s|count(u.meta["k"]) >= 1|,
+                 ~s|count(u.meta["k"]) > 2|,
+                 ~s|count(u.meta["k"]) > 0|,
+                 ~s|count(u.meta[""]) > 1|,
+                 ~s|count(u.meta["mutare"]) > 1|
+               ])
+    end
+
     test "as/parent_as binding names (arg 0) are never mutated" do
       # A mutated binding name is an unknown-binding error at query build. Bare calls pin the
       # registry entries directly (in real source the calls are usually dot-accessed, whose

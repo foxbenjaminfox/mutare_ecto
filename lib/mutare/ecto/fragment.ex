@@ -470,6 +470,10 @@ defmodule Mutare.Ecto.Fragment do
   #   * `type(_, type)`                — arg 1 is the cast type
   #   * `field(_, name)`               — arg 1 is the column name (a mutated name is a wrong —
   #                                      usually nonexistent — column, not a live mutant)
+  #   * `count(_, :distinct)`          — arg 1 is the distinctness modifier, the only value Ecto's
+  #                                      `count/2` accepts (it pattern-matches the literal atom),
+  #                                      so any swap is an unsupported-expression raise, never a
+  #                                      live mutant
   #   * `as(name)` / `parent_as(name)` — arg 0 names a query binding (a mutated name is an
   #                                      unknown-binding error at query build)
   #   * `selected_as(name)` /
@@ -482,6 +486,7 @@ defmodule Mutare.Ecto.Fragment do
   defp structural_position?({:ago, 2, 1}), do: true
   defp structural_position?({:type, 2, 1}), do: true
   defp structural_position?({:field, 2, 1}), do: true
+  defp structural_position?({:count, 2, 1}), do: true
   defp structural_position?({:as, 1, 0}), do: true
   defp structural_position?({:parent_as, 1, 0}), do: true
   defp structural_position?({:selected_as, 1, 0}), do: true
