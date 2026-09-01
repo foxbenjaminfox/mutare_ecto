@@ -59,8 +59,12 @@ defmodule Mutare.Ecto.MixProject do
     [
       licenses: ["MIT"],
       maintainers: ["Benjamin Fox"],
-      links: %{"GitHub" => @source_url},
-      files: ~w(lib mix.exs README.md LICENSE)
+      links: %{
+        "GitHub" => @source_url,
+        "Mutare" => "https://hexdocs.pm/mutare",
+        "Changelog" => "https://hexdocs.pm/mutare_ecto/changelog.html"
+      },
+      files: ~w(lib mix.exs README.md CHANGELOG.md LICENSE)
     ]
   end
 
@@ -132,7 +136,7 @@ defmodule Mutare.Ecto.MixProject do
       main: "readme",
       source_url: @source_url,
       source_ref: "v#{@version}",
-      extras: ["README.md", "LICENSE"],
+      extras: ["README.md", "CHANGELOG.md", "LICENSE"],
       skip_undefined_reference_warnings_on: &(&1 in @refs_to_hidden),
       groups_for_modules: [
         "Mutator front": [
