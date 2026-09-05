@@ -194,7 +194,8 @@ Each row is role + the rule(s) that module is the **home** for.
 - Every mutation is tagged with an SQL **family**; `Mutare.Ecto.Config` (via
   `use Mutare.Mutator.Families`) holds the canonical `:all` list and the opt-in set.
 - The user-facing grammar — `families:` (`:default`/`:all`/list/`{base, except: […]}`),
-  `dialects:`, `repo:`, `as:` (multi-repo and per-family report naming) — is documented once, in
+  `dialects:`, `repo:` (a module or a list), `as:` (per-family and per-repo report naming) — is
+  documented once, in
   `Mutare.Ecto`'s moduledoc (and the README).
 - The equivalence-sensitive families, each family's `… kill may require …` note, and the
   `finalize/2` funnel that applies the `families:` filter and the note on both delivery paths:

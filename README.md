@@ -61,8 +61,9 @@ Enable it in `.mutare.exs`, naming your Repo when Repo-call mutations are needed
 ```
 
 Then run Mutare as usual. Listing the entry both registers the plugin's query-DSL routing and
-enables its mutations; `repo:` is optional for query and changeset mutations, and is what lets it
-recognise `Repo.*` calls regardless of how they're aliased or imported.
+enables its mutations; `repo:` (one module, or a list when the app has several) is optional for
+query and changeset mutations, and is what lets it recognise `Repo.*` calls regardless of how
+they're aliased or imported.
 
 ## What it mutates
 
@@ -133,12 +134,13 @@ Each `{Mutare.Ecto, …}` entry takes:
 
 ```elixir
 {Mutare.Ecto,
- repo: MyApp.Repo,                 # optional — identifies Repo.* calls
+ repo: MyApp.Repo,                 # optional — identifies Repo.* calls; a module or a list
  families: :default,               # the default; or :all, a list, or {:default | :all, except: […]}
  dialects: [:postgres]}            # gate dialect-specific mutations (default: portable core)
 ```
 
-- **`repo:`** — identify the Repo module for aggregate and write-call mutations. Omit it when only
+- **`repo:`** — identify the Repo module for aggregate and write-call mutations — one module, or a
+  list (`repo: [MyApp.Repo, MyApp.ReplicaRepo]`) when the app has several. Omit it when only
   query/changeset families are needed; Repo-call families then produce no mutations.
 - **`families:`** — select the catalog. Every family above is independently toggleable; an unknown
   name fails loudly. Accepts:
@@ -155,8 +157,8 @@ Each `{Mutare.Ecto, …}` entry takes:
   the portable core (safe on SQLite, Postgres, MySQL alike). `:postgres` adds `like`↔`ilike`;
   `:postgres`/`:mysql` add the `LEFT`↔`RIGHT` join swap (SQLite has no `RIGHT JOIN`).
 - **`as:`** — rename the family in the report. List the plugin more than once with different
-  `repo:`/`as:` to cover **multiple repos**, or different `families:`/`as:` to report a sub-family
-  under its own name.
+  `families:`/`as:` to report a sub-family under its own name, or different `repo:`/`as:` to report
+  each repo's mutants separately (a single `repo: [A, B]` entry reports both as `ecto`).
 
 Unknown plugin option names raise an `ArgumentError`; `as:` is handled and removed by Mutare before
 the remaining options reach this plugin.

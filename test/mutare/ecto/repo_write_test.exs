@@ -61,6 +61,27 @@ defmodule Mutare.Ecto.RepoWriteTest do
       assert mutated =~ ":repo, Elixir.MyApp.PgRepo"
     end
 
+    test "with several repos configured, the stamp is the repo the write resolved to" do
+      # A `repo:` list is one instance, so the stamp cannot come from "the configured repo" — it
+      # has to be whichever listed repo *this* call is on (`Mutare.Ecto.RepoCall.resolve/2`).
+      src = """
+      defmodule Accounts do
+        def create(cs), do: MyApp.Repo.insert(cs)
+        def mirror(cs), do: MyApp.PgRepo.insert(cs)
+      end
+      """
+
+      opts = [
+        mutators: [{Mutare.Ecto, repo: [MyApp.Repo, MyApp.PgRepo], families: [:persistence]}]
+      ]
+
+      mutated = src |> ecto_diffs(opts) |> Enum.map(&elem(&1, 1))
+      assert length(mutated) == 2
+      assert Enum.any?(mutated, &(&1 =~ ":repo, Elixir.MyApp.Repo)"))
+      assert Enum.any?(mutated, &(&1 =~ ":repo, Elixir.MyApp.PgRepo)"))
+      assert_compiles(src, opts)
+    end
+
     test "maps the bang twin to apply_action! and the action to the write" do
       src = """
       defmodule Accounts do

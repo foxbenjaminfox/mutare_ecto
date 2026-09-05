@@ -161,10 +161,14 @@ defmodule Mutare.Ecto.ConfigTest do
              )
     end
 
-    test "repo_key/1 reads the configured repo's resolved module key (nil when unset)" do
-      config = Mutare.Ecto.Config.parse!(repo: MyApp.Repo)
-      assert Mutare.Ecto.Config.repo_key(config) == Mutare.Calls.module_key(MyApp.Repo)
-      assert Mutare.Ecto.Config.repo_key(Mutare.Ecto.Config.parse!([])) == nil
+    test "repo_keys/1 reads the configured repo(s) as resolved module keys ([] when unset)" do
+      key = &Mutare.Calls.module_key/1
+      keys = &Mutare.Ecto.Config.repo_keys(Mutare.Ecto.Config.parse!(&1))
+
+      assert keys.(repo: MyApp.Repo) == [key.(MyApp.Repo)]
+      assert keys.(repo: [MyApp.Repo, MyApp.PgRepo]) == [key.(MyApp.Repo), key.(MyApp.PgRepo)]
+      assert keys.([]) == []
+      assert keys.(repo: nil) == []
     end
   end
 
@@ -383,8 +387,17 @@ defmodule Mutare.Ecto.ConfigTest do
     end
 
     test "a malformed repo and non-keyword options fail deliberately" do
-      assert_raise ArgumentError, ~r/:repo must be a module atom/, fn ->
+      assert_raise ArgumentError, ~r/:repo must be a module or a list of modules/, fn ->
         Mutare.Ecto.Config.parse!(repo: "MyApp.Repo")
+      end
+
+      # One bad member spoils the list; `nil` inside a list names no module.
+      assert_raise ArgumentError, ~r/:repo must be a module or a list of modules/, fn ->
+        Mutare.Ecto.Config.parse!(repo: [MyApp.Repo, "MyApp.Other"])
+      end
+
+      assert_raise ArgumentError, ~r/:repo must be a module or a list of modules/, fn ->
+        Mutare.Ecto.Config.parse!(repo: [MyApp.Repo, nil])
       end
 
       # A non-keyword list and a non-list each get their own message.
@@ -399,7 +412,25 @@ defmodule Mutare.Ecto.ConfigTest do
   end
 
   describe "multiple repos" do
-    test "an aggregate is matched against each configured repo, under its own name" do
+    test "one entry with a repo: list covers every listed repo, under the one name" do
+      src = """
+      defmodule M do
+        def a(q), do: Accounts.Repo.aggregate(q, :sum, :amount)
+        def b(q), do: Billing.Repo.aggregate(q, :sum, :total)
+      end
+      """
+
+      diffs =
+        diffs(src,
+          mutators: [{Mutare.Ecto, repo: [Accounts.Repo, Billing.Repo], families: [:aggregate]}]
+        )
+
+      assert [{:ecto, a, a_mut}, {:ecto, b, b_mut}] = Enum.sort_by(diffs, &elem(&1, 1))
+      assert a =~ "Accounts.Repo" and a_mut =~ ":avg"
+      assert b =~ "Billing.Repo" and b_mut =~ ":avg"
+    end
+
+    test "listed twice with repo:/as:, each repo's aggregate reports under its own name" do
       src = """
       defmodule M do
         def a(q), do: Accounts.Repo.aggregate(q, :sum, :amount)

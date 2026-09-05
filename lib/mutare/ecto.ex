@@ -11,7 +11,7 @@ defmodule Mutare.Ecto do
 
   Listing it both registers the plugin's macro routing (via `c:Mutare.MacroRouting.macro_routes/0`,
   discovered automatically) and enables its mutations. Query, changeset, and schema handling do
-  not require `repo:`; that option only identifies the module matched by the Repo-call families.
+  not require `repo:`; that option only identifies the module(s) matched by the Repo-call families.
 
   This module is a thin front for a family of sub-mutators, dispatched by the node it
   sees (`Mutare.Ecto.Dispatcher`): `Mutare.Ecto.RepoAggregate` and `Mutare.Ecto.RepoWrite` (Repo calls), `Mutare.Ecto.Changeset`
@@ -27,8 +27,10 @@ defmodule Mutare.Ecto do
 
   Each entry takes:
 
-    * `repo:` — the Repo module recognized by `Repo.aggregate` and write-call families. Optional
-      when only query/changeset mutations are wanted; without it, Repo-call families are inert.
+    * `repo:` — the Repo module recognized by the `Repo.aggregate` and write-call families: one
+      module, or a list (`repo: [MyApp.Repo, MyApp.ReplicaRepo]`) when the app has several.
+      Optional when only query/changeset mutations are wanted; without it, Repo-call families are
+      inert.
 
     * `families:` — narrow the SQL catalog. Accepts `:default` (the unset default — every family
       **except** the opt-in `:string_literal`/`:atom_literal`/`:boolean_literal` arms, which are off
@@ -58,9 +60,10 @@ defmodule Mutare.Ecto do
       lacks `RIGHT JOIN`).
 
     * `as:` — rename the recorded family (a core convention; `:as` is consumed by Mutare and never
-      reaches the plugin). List the plugin twice with different `repo:`/`as:` to cover **multiple
-      repos**, or with different `families:`/`as:` to split the catalog into separately-named
-      report families.
+      reaches the plugin). List the plugin twice with different `families:`/`as:` to split the
+      catalog into separately-named report families, or with different `repo:`/`as:` to report
+      each repo's mutants under its own name (a single entry with `repo: [A, B]` covers both under
+      one name).
 
   **Structural positions held back from core's families.** Listing the plugin also *suppresses* a
   little noise elsewhere: `argument_marks/1` (`c:Mutare.Mutator.argument_marks/1`) pins the action

@@ -27,7 +27,7 @@ Initial release.
   composable pipe form — across direct, aliased, and `import`/`use`-bundled
   call styles; schema definitions are left untouched.
 - **Configuration** per `{Mutare.Ecto, …}` entry: `repo:` (Repo-call
-  recognition), `families:` (`:default`, `:all`, an explicit list, or
+  recognition — one module or a list), `families:` (`:default`, `:all`, an explicit list, or
   `{base, except: […]}`), `dialects:` (portable core by default; `:postgres` /
   `:mysql` gate dialect-specific swaps), and `as:` report renaming.
 - **Equivalence reporting**: boundary/NULL-sensitive families annotate each

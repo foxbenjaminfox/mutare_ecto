@@ -5,7 +5,8 @@ defmodule Mutare.Ecto.MultiInstanceTest do
 
   # The headline configuration story: **list the plugin twice**. Per the `:as` convention
   # (consumed by core, never reaching the plugin), two instances split the catalog into
-  # separately-named report families, or cover two repos — each instance parses its own
+  # separately-named report families, or report two repos separately (one entry with
+  # `repo: [A, B]` covers both under one name — `config_test.exs`) — each instance parses its own
   # `families:`/`repo:` via `init/1` and filters through its own `finalize/2` funnel. These are
   # the only tests exercising two live instances at once; everything else runs one. The sharp
   # edges: an instance must never record a family outside its own selection (else the split
@@ -67,7 +68,7 @@ defmodule Mutare.Ecto.MultiInstanceTest do
     end
   end
 
-  describe "a multi-repo split (two instances with their own repo: and as:)" do
+  describe "a per-repo report split (two instances with their own repo: and as:)" do
     test "each instance covers exactly its own repo's calls" do
       src = """
       defmodule M do

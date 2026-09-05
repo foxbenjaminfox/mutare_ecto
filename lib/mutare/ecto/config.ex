@@ -6,9 +6,10 @@ defmodule Mutare.Ecto.Config do
   # result to every context-aware callback (`mutate/2`, `host/2`) as `context.config`, unpacked
   # once per callback into the plugin's `%Mutare.Ecto.Context{}` — which SQL
   # **families** are enabled, which SQL **dialects** to gate dialect-specific mutations on, and
-  # which `repo:` the Repo-call families match. Listing the plugin twice with different
-  # `families:`/`as:` (and/or `repo:`) is how a user narrows the catalog, names a sub-family in the
-  # report, or covers multiple repos.
+  # which `repo:` modules the Repo-call families match (one entry covers several repos; each is
+  # normalised to a `Mutare.Calls.module_key/1`). Listing the plugin twice with different
+  # `families:`/`as:` (and/or `repo:`) is how a user narrows the catalog, or names a sub-family's —
+  # or one repo's — mutants separately in the report.
   #
   # Production only ever holds the parsed `%Config{}` — every accessor below takes the struct, and
   # a unit test that needs one builds it through `parse!/1`. What a family *means* once selected —
@@ -79,13 +80,13 @@ defmodule Mutare.Ecto.Config do
     ],
     opt_in: [:string_literal, :atom_literal, :boolean_literal]
 
-  @enforce_keys [:families, :dialects, :repo_key]
-  defstruct [:families, :dialects, :repo_key]
+  @enforce_keys [:families, :dialects, :repo_keys]
+  defstruct [:families, :dialects, :repo_keys]
 
   @type t :: %__MODULE__{
           families: MapSet.t(atom()),
           dialects: MapSet.t(atom()),
-          repo_key: [atom()] | atom() | nil
+          repo_keys: [Mutare.Calls.module_key()]
         }
 
   @doc "Validate and normalize one plugin option list."
@@ -101,7 +102,7 @@ defmodule Mutare.Ecto.Config do
     %__MODULE__{
       families: opts |> Keyword.get(:families, :default) |> parse_families!(),
       dialects: opts |> Keyword.get(:dialects, []) |> parse_dialects!(),
-      repo_key: opts |> Keyword.get(:repo) |> parse_repo!()
+      repo_keys: opts |> Keyword.get(:repo, []) |> parse_repo!()
     }
   end
 
@@ -123,13 +124,12 @@ defmodule Mutare.Ecto.Config do
   def family_enabled?(%__MODULE__{families: enabled}, family), do: MapSet.member?(enabled, family)
 
   @doc """
-  The configured `repo`'s resolved module key (`Mutare.Calls.module_key/1`), ready to compare
-  against a `Mutare.Calls.resolved_call/1` module (or to hand to
-  `Mutare.Calls.resolved_call_to/3`, which accepts an encoded key), or `nil` when no `repo:` is
-  set. Shared by the Repo-call families (`Mutare.Ecto.RepoWrite`, `Mutare.Ecto.RepoAggregate`).
+  The configured `repo:` modules as resolved module keys (`Mutare.Calls.module_key/1`), ready to
+  compare against a `Mutare.Calls.resolved_call/1` module; `[]` when no `repo:` is set. Read by
+  the Repo-call preamble (`Mutare.Ecto.RepoCall`) and the Dispatcher's short-circuit.
   """
-  @spec repo_key(t()) :: [atom()] | atom() | nil
-  def repo_key(%__MODULE__{repo_key: repo_key}), do: repo_key
+  @spec repo_keys(t()) :: [Mutare.Calls.module_key()]
+  def repo_keys(%__MODULE__{repo_keys: repo_keys}), do: repo_keys
 
   @doc "The dialects `config` enables (default `[]` — the portable core only)."
   @spec dialects(t()) :: [atom()]
@@ -176,10 +176,23 @@ defmodule Mutare.Ecto.Config do
     raise ArgumentError, "Mutare.Ecto :dialects must be a list, got: #{inspect(other)}"
   end
 
-  # An unset `repo:` is `nil`, which `Mutare.Calls.module_key/1` passes through unchanged.
-  defp parse_repo!(module) when is_atom(module), do: Mutare.Calls.module_key(module)
+  # One module or a list of modules, each normalised to its module key. An unset `repo:` reads as
+  # `[]` — no Repo-call family fires — and so does an explicit `repo: nil`; `nil` *inside* a list is
+  # a malformed option (it is `is_atom/1`-true, but names no module).
+  defp parse_repo!(nil), do: []
+  defp parse_repo!(module) when is_atom(module), do: [Mutare.Calls.module_key(module)]
 
-  defp parse_repo!(other) do
-    raise ArgumentError, "Mutare.Ecto :repo must be a module atom, got: #{inspect(other)}"
+  defp parse_repo!(modules) when is_list(modules) do
+    if Enum.all?(modules, &(is_atom(&1) and not is_nil(&1))),
+      do: Enum.map(modules, &Mutare.Calls.module_key/1),
+      else: raise_repo!(modules)
+  end
+
+  defp parse_repo!(other), do: raise_repo!(other)
+
+  @spec raise_repo!(term()) :: no_return()
+  defp raise_repo!(value) do
+    raise ArgumentError,
+          "Mutare.Ecto :repo must be a module or a list of modules, got: #{inspect(value)}"
   end
 end

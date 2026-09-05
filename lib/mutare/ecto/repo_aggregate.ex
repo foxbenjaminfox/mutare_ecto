@@ -7,7 +7,7 @@ defmodule Mutare.Ecto.RepoAggregate do
   `:count` is deliberately left alone, here as in the query-side catalog — see
   `Mutare.Ecto.Aggregate`.
 
-  Matched by resolving the call's module to the configured `repo` (so the direct
+  Matched by resolving the call's module to one of the configured `repo:` modules (so the direct
   `MyApp.Repo.aggregate`, an aliased `Repo.aggregate`, and an imported form all match) and
   the function to `aggregate`. **Pipe-aware**: `q |> Repo.aggregate(:sum, :col)` carries the
   queryable as the piped left-hand side, so the aggregate atom sits one position earlier in
@@ -26,7 +26,7 @@ defmodule Mutare.Ecto.RepoAggregate do
   @impl Mutare.Ecto.SubMutator
   def mutations(node, %Context{pipe_mode: pipe_mode} = context) do
     case RepoCall.resolve(node, context) do
-      {:aggregate, args, rebuild} -> swap(args, rebuild, pipe_mode)
+      {_repo, :aggregate, args, rebuild} -> swap(args, rebuild, pipe_mode)
       _ -> []
     end
   end

@@ -1,8 +1,8 @@
 defmodule Mutare.Ecto.RepoWrite do
   @moduledoc """
   Mutations on the **persisting Repo writes** — `insert`/`update`/`delete`/`insert_or_update`
-  and their `!` twins. Two families, both matched by resolving the call's module to the
-  configured `repo` (so direct, aliased, and `use Ecto.Repo`-defined forms all match):
+  and their `!` twins. Two families, both matched by resolving the call's module to one of the
+  configured `repo:` modules (so direct, aliased, and `use Ecto.Repo`-defined forms all match):
 
     * **`:persistence`** — replace the write with the equivalent *non-persisting*
       `Ecto.Changeset.apply_action/2`, surfacing **untested persistence**:
@@ -46,8 +46,9 @@ defmodule Mutare.Ecto.RepoWrite do
       (`Ecto.Repo.Schema`'s `put_repo_and_action/4`), which `apply_action/2` on its own does not:
 
         * the **Repo** — hence the `Map.replace!(…, :repo, …)` stage, carrying the configured
-          `repo:`. (A plain call, not `%{… | repo: …}`, so the one stage composes into the nested
-          and piped forms alike.)
+          `repo:` the call resolved to (with several configured, the one this write is on). (A
+          plain call, not `%{… | repo: …}`, so the one stage composes into the nested and piped
+          forms alike.)
         * the **action** — fixed per write for `insert`/`update`/`delete`, but *chosen at runtime*
           for `insert_or_update`, which Ecto routes to insert or update on the changeset data's
           `__meta__` state. The mutant reads that same state, so an invalid **loaded** changeset
@@ -97,7 +98,7 @@ defmodule Mutare.Ecto.RepoWrite do
   written form via `Mutare.Calls`, so it is pipe-position-agnostic.
   """
 
-  alias Mutare.Ecto.{AST, Config, Context, RepoCall, Tag}
+  alias Mutare.Ecto.{AST, Context, RepoCall, Tag}
   alias Mutare.Ecto.AST.KeywordList
 
   @behaviour Mutare.Ecto.SubMutator
@@ -137,11 +138,9 @@ defmodule Mutare.Ecto.RepoWrite do
   @doc "RepoWrite mutations for `node` as `:persistence`/`:on_conflict` tags, or `[]`."
   @spec mutations(Macro.t(), Context.t()) :: [Tag.t()]
   @impl Mutare.Ecto.SubMutator
-  def mutations(node, %Context{config: config, pipe_mode: pipe_mode} = context) do
+  def mutations(node, %Context{pipe_mode: pipe_mode} = context) do
     case RepoCall.resolve(node, context) do
-      {fun, args, rebuild} ->
-        repo = Config.repo_key(config)
-
+      {repo, fun, args, rebuild} ->
         # mutare:ignore[operand_swap] family order is irrelevant — mutations are consumed as a set
         persistence(fun, args, pipe_mode, repo) ++ on_conflict(fun, args, rebuild)
 
@@ -234,9 +233,9 @@ defmodule Mutare.Ecto.RepoWrite do
   # `changeset.data` — the schema struct Ecto reads the persistence state off.
   defp data(node), do: {{:., [], [node, :data]}, [no_parens: true], []}
 
-  # The configured `repo:` as an alias-proof module reference — the module a real write records on
-  # the changeset. `Config.repo_key/1` returns `Mutare.Calls.module_key/1`'s encoding: a segment
-  # path for an Elixir module, a bare atom for an Erlang one.
+  # The matched `repo:` as an alias-proof module reference — the module a real write records on the
+  # changeset. `RepoCall.resolve/2` hands it over in `Mutare.Calls.module_key/1`'s encoding: a
+  # segment path for an Elixir module, a bare atom for an Erlang one.
   defp repo_module(path) when is_list(path), do: Mutare.AST.absolute_alias(path)
   defp repo_module(erlang) when is_atom(erlang), do: literal(erlang)
 

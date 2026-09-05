@@ -88,7 +88,7 @@ defmodule Mutare.Ecto.Dispatcher do
     # yields nothing for a mismatch, so this check is a pure short-circuit, not an observable
     # decision.
     # mutare:ignore[conditional] equivalent — see above
-    if module == Config.repo_key(config) do
+    if module in Config.repo_keys(config) do
       invoke([RepoAggregate, RepoWrite], node, context)
     else
       []

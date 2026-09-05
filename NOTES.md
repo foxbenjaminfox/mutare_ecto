@@ -120,6 +120,19 @@ guards on `insert_or_update` — see `Mutare.Ecto.RepoWrite`'s moduledoc. Proven
 `repo_write_test.exs` and, against both engines, by the semantic suite's "the mutant's *failed*
 write is byte-for-byte the baseline's".
 
+### `repo:` takes a list; `:as` only names
+
+`repo:` accepted exactly one module, and the documented way to cover a second repo was to list the
+plugin twice with `repo:`/`as:` — which also split the report into two families and doubled every
+`# mutare:ignore[…]` label, though a survivor's file:line already says which repo it hit. The
+sibling `mutare_swoosh` plugin took a list for its `mailer:` from the start, so the two gave a
+third plugin author two rules to copy. Now both take one module or a list, normalised at `init/1`
+into `Mutare.Calls.module_key/1`s, and `:as` is reserved for what it does everywhere in Mutare:
+naming the report family. The one place the single-repo assumption had leaked into a mutant — the
+`:persistence` rewrite's `Map.replace!(…, :repo, …)` stamp, which read the *configured* repo — now
+takes the repo the call *resolved to*, which `Mutare.Ecto.RepoCall.resolve/2` returns alongside the
+call for exactly that purpose (`repo_write_test.exs`, "with several repos configured").
+
 ### Tag: one shape instead of three tuple arities
 
 Producers used to return a mutation as one of three tuples — `{family, node}`,
