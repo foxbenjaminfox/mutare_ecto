@@ -1265,7 +1265,7 @@ defmodule Mutare.Ecto.HostTest do
     test "a piped `from`'s hidden source is never routed — in the pipe as in the direct form" do
       # `from`'s source is the one position the plugin never routes, and piped it is the one
       # position whose shape the classifier cannot even see (core's `Call` carries only visible
-      # arguments), so `route_arguments/2` marks the pipe's left side `:skip` outright: a
+      # arguments), so `route_arguments/2` marks the pipe's left side `:raw` outright: a
       # structural `Post |> from(…)` is never handed to core's `:alias` family (it used to be —
       # `from_visible`'s `:expression` default), while every clause beside it is still mutated.
       for source <- ["Post", ~S|"posts"|, ~S|{"posts", Post}|] do
@@ -1287,7 +1287,7 @@ defmodule Mutare.Ecto.HostTest do
       # The classifier-level pin for the test above: the `ArgumentRoutes` a piped `from` returns
       # carries `piped: :skip`, while a piped composable macro keeps the `:expression` default
       # (its left side is the threaded query — its upstream mutations must stay reachable).
-      alias Mutare.MacroRouting.{ArgumentRoutes, Call}
+      alias Mutare.CallRouting.{ArgumentRoutes, Call}
 
       piped_call = fn name, args ->
         %Call{
@@ -1303,13 +1303,13 @@ defmodule Mutare.Ecto.HostTest do
 
       [clauses] = Sourceror.parse_string!("from(as: :post, where: as(:post).x > 1)") |> elem(2)
       from_routes = Host.Routing.route_arguments(piped_call.(:from, [clauses]), %{})
-      assert ArgumentRoutes.piped(from_routes) == :skip
-      assert ArgumentRoutes.visible(from_routes) == [{:keyword, [:skip, :hosted]}]
+      assert ArgumentRoutes.piped(from_routes) == :raw
+      assert ArgumentRoutes.visible(from_routes) == [{:keyword, [:raw, :hosted]}]
 
       [bindings, cond] = Sourceror.parse_string!("where([p], p.x > 1)") |> elem(2)
       where_routes = Host.Routing.route_arguments(piped_call.(:where, [bindings, cond]), %{})
       assert ArgumentRoutes.piped(where_routes) == :expression
-      assert ArgumentRoutes.visible(where_routes) == [:skip, :hosted]
+      assert ArgumentRoutes.visible(where_routes) == [:raw, :hosted]
     end
   end
 
@@ -1319,7 +1319,7 @@ defmodule Mutare.Ecto.HostTest do
 
   describe "treatments/3 — per-argument treatment" do
     # The classifier takes the resolved macro name, visible args, and pipe mode (what core reads
-    # off a `Mutare.MacroRouting.Call`); a snippet's own head and args stand in for them here, and
+    # off a `Mutare.CallRouting.Call`); a snippet's own head and args stand in for them here, and
     # a `q |> macro(…)` snippet routes `:piped` — its visible args exclude the query, as core's do.
     defp routing(code) do
       case Sourceror.parse_string!(code) do
@@ -1330,21 +1330,21 @@ defmodule Mutare.Ecto.HostTest do
 
     test "from keyword form routes each binding condition independently" do
       assert routing("from(u in User, where: u.x == u.y, select: u.id)") ==
-               [:skip, {:keyword, [:hosted, :skip]}]
+               [:raw, {:keyword, [:hosted, :raw]}]
     end
 
     test "from keyword form: a bindingless source routes where-shorthand values per-pair" do
       # The `where:` value is a keyword list → `{:keyword, [:interpolated]}` (core mutates the scalar,
-      # `^`-pinned); `select:` is not a condition key → `:skip`. The order_by variant proves a
-      # *non-condition* clause whose value is itself a keyword list still routes `:skip`, not the
+      # `^`-pinned); `select:` is not a condition key → `:raw`. The order_by variant proves a
+      # *non-condition* clause whose value is itself a keyword list still routes `:raw`, not the
       # condition treatment (pins the `key in @condition_keys` test, not just "has a kw value").
       assert routing(~s|from("users", where: [active: true], select: [:id])|) ==
-               [:skip, {:keyword, [{:keyword, [:interpolated]}, :skip]}]
+               [:raw, {:keyword, [{:keyword, [:interpolated]}, :raw]}]
 
       assert routing(~s|from("t", where: [a: 1], order_by: [asc: :x])|) ==
-               [:skip, {:keyword, [{:keyword, [:interpolated]}, :skip]}]
+               [:raw, {:keyword, [{:keyword, [:interpolated]}, :raw]}]
 
-      assert routing(~s|from("users", select: [:id])|) == [:skip, {:keyword, [:skip]}]
+      assert routing(~s|from("users", select: [:id])|) == [:raw, {:keyword, [:raw]}]
     end
 
     test "from bare source: a named-binding condition hosts; shorthand still routes per-pair" do
@@ -1353,27 +1353,27 @@ defmodule Mutare.Ecto.HostTest do
       # weaves an empty-binding `dynamic([], …)`), exactly as it would under a binding source. A
       # shorthand value is still plain data, routed per pair. The `as:`/`select:` keys stay raw.
       assert routing(~s|from("posts", as: :post, where: as(:post).views > 1, select: [:id])|) ==
-               [:skip, {:keyword, [:skip, :hosted, :skip]}]
+               [:raw, {:keyword, [:raw, :hosted, :raw]}]
 
       assert routing(~s|from("posts", as: :post, where: [active: true], select: [:id])|) ==
-               [:skip, {:keyword, [:skip, {:keyword, [:interpolated]}, :skip]}]
+               [:raw, {:keyword, [:raw, {:keyword, [:interpolated]}, :raw]}]
     end
 
     test "a piped from routes its one visible argument — the clause list — per clause" do
-      # `Post |> from(…)`: the source is the `|>` left side (routed `:skip` by `route_arguments/2`,
+      # `Post |> from(…)`: the source is the `|>` left side (routed `:raw` by `route_arguments/2`,
       # not here — `treatments/3` covers the visible arguments only), so the clause list is
       # visible argument zero and routes exactly as the direct form's second argument does: the
       # named-binding condition `:hosted`, the literal bound `:hosted`, the shorthand per pair,
       # the data keys raw. Argless, there is nothing to route.
       assert routing("Post |> from(as: :post, where: as(:post).views > 1, limit: 5)") ==
-               [{:keyword, [:skip, :hosted, :hosted]}]
+               [{:keyword, [:raw, :hosted, :hosted]}]
 
       assert routing("Post |> from(where: [active: true], select: [:id])") ==
-               [{:keyword, [{:keyword, [:interpolated]}, :skip]}]
+               [{:keyword, [{:keyword, [:interpolated]}, :raw]}]
 
       assert routing("Post |> from()") == []
       # A non-keyword clause argument stays raw, as in the direct form.
-      assert routing("Post |> from(^clauses)") == [:skip]
+      assert routing("Post |> from(^clauses)") == [:raw]
     end
 
     test "from keyword form hosts a top-level interpolation (its interior is sub-contracted)" do
@@ -1381,7 +1381,7 @@ defmodule Mutare.Ecto.HostTest do
       # hands the pin's Elixir interior to core (a pinned Elixir condition's logic is core's to
       # mutate), matching the standalone binding-form and free-standing `dynamic` paths.
       assert routing(~s|from(User, where: ^(x > 1))|) ==
-               [:skip, {:keyword, [:hosted]}]
+               [:raw, {:keyword, [:hosted]}]
     end
 
     test "shorthand pair values: scalars pin, nil/interpolation/compound stay raw" do
@@ -1394,20 +1394,20 @@ defmodule Mutare.Ecto.HostTest do
       # nil is an `IS NULL` (never `= nil`); `^v` is already interpolated; a list/field is compound
       # — all raw. (Pins scalar_literal?'s nil exclusion and pair_treatment.)
       assert routing(~s|where(q, a: nil, b: ^v, c: [1, 2], d: u.x)|) ==
-               [:expression, {:keyword, [:skip, :skip, :skip, :skip]}]
+               [:expression, {:keyword, [:raw, :raw, :raw, :raw]}]
     end
 
     test "condition macros (direct + piped) host the condition after the binding list" do
-      assert routing("where(query, [u], u.x == u.y)") == [:expression, :skip, :hosted]
-      assert routing("having(query, [u], u.x == u.y)") == [:expression, :skip, :hosted]
-      assert routing("where(query, [post: p], p.x == p.y)") == [:expression, :skip, :hosted]
-      assert routing("where(query, [u, post: p], p.x == u.y)") == [:expression, :skip, :hosted]
+      assert routing("where(query, [u], u.x == u.y)") == [:expression, :raw, :hosted]
+      assert routing("having(query, [u], u.x == u.y)") == [:expression, :raw, :hosted]
+      assert routing("where(query, [post: p], p.x == p.y)") == [:expression, :raw, :hosted]
+      assert routing("where(query, [u, post: p], p.x == u.y)") == [:expression, :raw, :hosted]
       # piped form — the binding list is the first *argument* (the query is the `|>` LHS).
-      assert routing("q |> where([u], u.x == u.y)") == [:skip, :hosted]
+      assert routing("q |> where([u], u.x == u.y)") == [:raw, :hosted]
       # a nested pipe as the first arg is the threaded query, like any expression.
-      assert routing("where(q |> sub(), [u], u.x == u.y)") == [:expression, :skip, :hosted]
+      assert routing("where(q |> sub(), [u], u.x == u.y)") == [:expression, :raw, :hosted]
       # a `...`-anchored binding list is recognized too, so its condition routes `:hosted`.
-      assert routing("where(query, [..., c], c.x == c.y)") == [:expression, :skip, :hosted]
+      assert routing("where(query, [..., c], c.x == c.y)") == [:expression, :raw, :hosted]
     end
 
     test "a computed threaded query routes :expression — by form, not shape" do
@@ -1415,32 +1415,32 @@ defmodule Mutare.Ecto.HostTest do
       # (`Ecto.Query.exclude/2` resolves to `Ecto.Query` yet is no query builder — it is still
       # the threaded query), a conditional, a map read. Core descends it as ordinary Elixir, so
       # `base_query(2)`'s `2` is mutated exactly as it is anywhere else.
-      assert routing("where(base_query(2), [p], p.views > 1)") == [:expression, :skip, :hosted]
+      assert routing("where(base_query(2), [p], p.views > 1)") == [:expression, :raw, :hosted]
 
       assert routing("where(Ecto.Query.exclude(query, :order_by), [u], u.x == u.y)") ==
-               [:expression, :skip, :hosted]
+               [:expression, :raw, :hosted]
 
       assert routing("where(if(f, do: a, else: b), [u], u.x == u.y)") ==
-               [:expression, :skip, :hosted]
+               [:expression, :raw, :hosted]
 
-      assert routing("select(Map.fetch!(queries, :a), [u], u.id)") == [:expression, :skip, :skip]
+      assert routing("select(Map.fetch!(queries, :a), [u], u.id)") == [:expression, :raw, :raw]
     end
 
     test "a structural queryable in the query slot stays raw" do
       # A schema alias, a table-name string (plain or interpolated), or a `{"table", Schema}` pair
       # names a table rather than computing a query; a swap there is a broken query, not a mutant.
-      assert routing("where(Post, [p], p.views > 1)") == [:skip, :skip, :hosted]
-      assert routing(~S|where("posts", [p], p.views > 1)|) == [:skip, :skip, :hosted]
-      assert routing(~S|where("posts_#{shard}", [p], p.views > 1)|) == [:skip, :skip, :hosted]
-      assert routing(~S|where({"posts", Post}, [p], p.views > 1)|) == [:skip, :skip, :hosted]
-      assert routing("limit(Post, 10)") == [:skip, :hosted]
+      assert routing("where(Post, [p], p.views > 1)") == [:raw, :raw, :hosted]
+      assert routing(~S|where("posts", [p], p.views > 1)|) == [:raw, :raw, :hosted]
+      assert routing(~S|where("posts_#{shard}", [p], p.views > 1)|) == [:raw, :raw, :hosted]
+      assert routing(~S|where({"posts", Post}, [p], p.views > 1)|) == [:raw, :raw, :hosted]
+      assert routing("limit(Post, 10)") == [:raw, :hosted]
     end
 
     test "condition macro with no condition after the binding list hosts nothing" do
       # `Host.Condition.locate/1` requires an argument *after* the binding list, so a binding-only call
       # never marks a position `:hosted`.
-      assert routing("q |> where([u])") == [:skip]
-      assert routing("where(q, [u])") == [:expression, :skip]
+      assert routing("q |> where([u])") == [:raw]
+      assert routing("where(q, [u])") == [:expression, :raw]
     end
 
     test "a shorthand condition macro routes its trailing pairs per-pair" do
@@ -1448,21 +1448,21 @@ defmodule Mutare.Ecto.HostTest do
     end
 
     test "plain clause macros thread the query and leave their data positions raw" do
-      assert routing("order_by(query, [u], asc: u.x)") == [:expression, :skip, :skip]
+      assert routing("order_by(query, [u], asc: u.x)") == [:expression, :raw, :raw]
 
       # the threaded query is whatever is written first — a bare var, a from(…), a pipe — each
       # → :expression.
-      assert routing("select(q, [u], u.id)") == [:expression, :skip, :skip]
-      assert routing("select(from(u in User), [u], u.id)") == [:expression, :skip, :skip]
-      assert routing("select(q |> base(), [u], u.id)") == [:expression, :skip, :skip]
+      assert routing("select(q, [u], u.id)") == [:expression, :raw, :raw]
+      assert routing("select(from(u in User), [u], u.id)") == [:expression, :raw, :raw]
+      assert routing("select(q |> base(), [u], u.id)") == [:expression, :raw, :raw]
     end
 
     test "a literal bound routes :hosted (the pin-only bound bump); a non-literal stays raw" do
       assert routing("limit(query, 10)") == [:expression, :hosted]
       assert routing("offset(query, 5)") == [:expression, :hosted]
       # A pinned/expression bound has no literal to bump — raw, exactly as before.
-      assert routing("limit(query, ^n)") == [:expression, :skip]
-      assert routing("limit(query, n + 1)") == [:expression, :skip]
+      assert routing("limit(query, ^n)") == [:expression, :raw]
+      assert routing("limit(query, n + 1)") == [:expression, :raw]
     end
 
     test "a piped clause macro's visible first argument is not the query" do
@@ -1470,7 +1470,7 @@ defmodule Mutare.Ecto.HostTest do
       # (the threaded query is the `|>` left side, routed separately); the pipe mode says so, not
       # the argument's shape.
       assert routing("q |> limit(10)") == [:hosted]
-      assert routing("q |> order_by(asc: :name)") == [:skip]
+      assert routing("q |> order_by(asc: :name)") == [:raw]
     end
 
     test "join routes its options per-pair, hosting the on: condition in direct and piped forms" do
@@ -1478,20 +1478,20 @@ defmodule Mutare.Ecto.HostTest do
       # condition (`:hosted`, nested — core delivers a nested `:hosted` to `host/2` the same way),
       # every other option is data.
       assert routing("join(query, :inner, [u], p in Post, on: p.user_id == u.id)") ==
-               [:expression, :skip, :skip, :skip, {:keyword, [:hosted]}]
+               [:expression, :raw, :raw, :raw, {:keyword, [:hosted]}]
 
       assert routing("q |> join(:inner, [u], p in Post, on: p.user_id == u.id)") ==
-               [:skip, :skip, :skip, {:keyword, [:hosted]}]
+               [:raw, :raw, :raw, {:keyword, [:hosted]}]
 
       # An empty binding list is a written declaration too (the on-condition references no prior
       # binding); the trailing `on:` still routes per-pair with its `:hosted` condition, and the
       # host re-declares `[..., p]`.
       assert routing("join(query, :inner, [], p in Post, on: p.views > 1)") ==
-               [:expression, :skip, :skip, :skip, {:keyword, [:hosted]}]
+               [:expression, :raw, :raw, :raw, {:keyword, [:hosted]}]
 
       # A non-`on:` option is never the condition, whatever it sits next to.
       assert routing("join(query, :inner, [u], p in Post, as: :p, on: p.user_id == u.id)") ==
-               [:expression, :skip, :skip, :skip, {:keyword, [:skip, :hosted]}]
+               [:expression, :raw, :raw, :raw, {:keyword, [:raw, :hosted]}]
     end
 
     test "a join's keyword-shorthand on: routes its pairs, like the from form's" do
@@ -1499,22 +1499,22 @@ defmodule Mutare.Ecto.HostTest do
       # routing the whole options list `:hosted` would leave the `5` unmutated by *everything*.
       # Per-pair routing hands it to core's literal families, `^`-pinned.
       assert routing("join(query, :inner, [u], p in Post, on: [views: 5])") ==
-               [:expression, :skip, :skip, :skip, {:keyword, [{:keyword, [:interpolated]}]}]
+               [:expression, :raw, :raw, :raw, {:keyword, [{:keyword, [:interpolated]}]}]
 
       # The same nil/compound exclusions the `where` shorthand applies (`pair_treatment/1`).
       assert routing("join(query, :inner, [u], p in Post, on: [views: nil, id: u.id])") ==
-               [:expression, :skip, :skip, :skip, {:keyword, [{:keyword, [:skip, :skip]}]}]
+               [:expression, :raw, :raw, :raw, {:keyword, [{:keyword, [:raw, :raw]}]}]
     end
 
     test "join with no on: key at all keeps its trailing options raw" do
-      # Per-pair routing with no condition among the pairs: every value `:skip`, keys raw — the
-      # same "nothing here is mutable" answer the whole-argument `:skip` gave.
+      # Per-pair routing with no condition among the pairs: every value `:raw`, keys raw — the
+      # same "nothing here is mutable" answer the whole-argument `:raw` gave.
       assert routing("join(query, :inner, [u], p in Post, as: :p)") ==
-               [:expression, :skip, :skip, :skip, {:keyword, [:skip]}]
+               [:expression, :raw, :raw, :raw, {:keyword, [:raw]}]
 
       # No trailing keyword list at all — the base routing stands.
       assert routing("join(query, :inner, [u], p in Post)") ==
-               [:expression, :skip, :skip, :skip]
+               [:expression, :raw, :raw, :raw]
     end
 
     test "a non-routing macro yields []" do
@@ -1522,22 +1522,22 @@ defmodule Mutare.Ecto.HostTest do
     end
 
     test "a clause-less from(Post) routes :skip (nothing to host)" do
-      assert routing("from(Post)") == [:skip]
+      assert routing("from(Post)") == [:raw]
     end
 
     test "a from with a malformed (non-list) second argument routes it :skip" do
       # `rest` is `[clauses]` for the ordinary `from(source, kw)` shape; a non-list single trailing
-      # argument is malformed AST that still routes `:skip`, same as a clause-less `from(Post)` —
+      # argument is malformed AST that still routes `:raw`, same as a clause-less `from(Post)` —
       # but unlike the clause-less case (`rest = []`, where `List.duplicate(_, 0)` never places the
       # computed value in the output at all), this shape actually has one position to fill, so it's
       # the one that observes what the fallback branch's value actually is.
-      assert routing("from(Post, :not_a_list)") == [:skip, :skip]
+      assert routing("from(Post, :not_a_list)") == [:raw, :raw]
     end
 
     test "an empty list is neither a binding list nor a shorthand keyword list" do
       # `[]` must not be mistaken for a binding list (so the `[]` slot itself is never `:hosted`) nor
       # for shorthand pairs (so it never becomes a `{:keyword, …}` overlay) — it is a raw data arg.
-      assert routing("where(q, [])") == [:expression, :skip]
+      assert routing("where(q, [])") == [:expression, :raw]
     end
 
     test "an empty binding list still hosts the condition that follows it (binding-less)" do
@@ -1545,7 +1545,7 @@ defmodule Mutare.Ecto.HostTest do
       # the trailing condition is the binding-less hosted form (woven `dynamic([], …)`). The `[]`
       # slot stays raw; only the condition routes `:hosted`. (A condition written here can only
       # reference *named* bindings — `as(:_)` — which the empty-binding dynamic resolves.)
-      assert routing("where(q, [], as(:post).x == as(:post).y)") == [:expression, :skip, :hosted]
+      assert routing("where(q, [], as(:post).x == as(:post).y)") == [:expression, :raw, :hosted]
     end
   end
 

@@ -15,7 +15,7 @@ defmodule Mutare.Ecto.DynamicTest do
   # where it is built.
 
   # The full-family plugin instance plus core's shipped routing-only fixture
-  # (`Mutare.Test.Fixtures.RoutingExtension`, threaded via `extensions:`), for the nested-`:skip`
+  # (`Mutare.Test.Fixtures.RoutingExtension`, threaded via `extensions:`), for the nested-`:raw`
   # opacity test — foreign macro routing shipped by an independent module, no hand-rolled provider.
   @all_families [{Mutare.Ecto, repo: MyApp.Repo, families: :all}]
   @routing [Mutare.Test.Fixtures.RoutingExtension]
@@ -213,7 +213,7 @@ defmodule Mutare.Ecto.DynamicTest do
       # The sibling positions still mutate (the anchor that proves the walk ran)…
       assert Enum.any?(muts, &(&1 =~ "or u.role"))
       assert Enum.any?(muts, &(&1 =~ "u.role != ^v"))
-      # …but `opaque/1`'s argument is its DSL (routed fully `:skip`), never descended.
+      # …but `opaque/1`'s argument is its DSL (routed fully `:raw`), never descended.
       refute Enum.any?(muts, &(&1 =~ "u.age >= 18" or &1 =~ "17" or &1 =~ "19"))
       assert_compiles(src, extensions: @routing)
     end

@@ -20,7 +20,7 @@ defmodule Mutare.Ecto.Host do
   alias Mutare.Ecto.AST.{FromCall, KeywordList, QueryCall}
   alias Mutare.Ecto.AST.KeywordList.Entry
   alias Mutare.Ecto.Host.{Bindings, Catalog, Condition, JoinOn, Target}
-  alias Mutare.MacroRouting.Call
+  alias Mutare.CallRouting.Call
 
   @doc """
   `c:Mutare.Mutator.MacroHost.host/2`: the selector-host targets for a resolved Ecto.Query macro

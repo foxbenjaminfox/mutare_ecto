@@ -44,11 +44,11 @@ defmodule Mutare.Ecto.Walk do
   # standard Ecto syntax. So a call's argument is descended **only** when it is plainly standard
   # syntax: a non-macro node (`nil` routing — an ordinary operator/call/field we own), or an
   # argument the macro routed `:expression` (the one treatment that asserts "a standard expression
-  # here, mutate it"). Every other treatment — `:skip`, `:pattern`, `:binding_pattern`, `:hosted`,
+  # here, mutate it"). Every other treatment — `:raw`, `:pattern`, `:binding_pattern`, `:hosted`,
   # `:interpolated`, `{:keyword, …}` — marks an argument whose grammar is the macro's own, left raw
-  # (e.g. a `select: clamp(sum(p.x), 10)` whose `clamp/2` is registered `:skip` never has its
+  # (e.g. a `select: clamp(sum(p.x), 10)` whose `clamp/2` is registered `:raw` never has its
   # `sum` swapped: nothing says `sum(p.x)` even means an aggregate to `clamp`). The per-argument
-  # routing is read from the resolve-pass stamp via `Mutare.Calls.macro_treatment/1`. Every
+  # routing is read from the resolve-pass stamp via `Mutare.Calls.routed_treatments/1`. Every
   # catalog (`Fragment`'s `mutants`/`islands`, `ExpressionWalk`) is a reader over this walk and
   # never descends on its own, so the rule is applied in exactly one place.
 
@@ -124,7 +124,7 @@ defmodule Mutare.Ecto.Walk do
   def structural({:^, _meta, _args}, _ctx, _child_ctx), do: []
 
   def structural({form, meta, args} = node, ctx, child_ctx) when is_list(args) do
-    routing = Calls.macro_treatment(node)
+    routing = Calls.routed_treatments(node)
 
     for {arg, index} <- Enum.with_index(args),
         descend_arg?(routing, index),

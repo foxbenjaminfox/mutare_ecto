@@ -11,16 +11,16 @@ defmodule Mutare.Ecto.SurfaceTest do
     assert {:where, :routing} in registrations
     assert {:join, :routing} in registrations
     assert {:order_by, :routing} in registrations
-    assert {:dynamic, :skip} in registrations
-    assert {:is_named_binding, :skip} in registrations
+    assert {:dynamic, :raw} in registrations
+    assert {:is_named_binding, :raw} in registrations
 
     assert Enum.count(registrations, fn {name, _routing} -> name == :join end) == 1
   end
 
   test "is_named_binding is entirely inert — its whole call is offered but yields no mutation" do
-    # Unlike `dynamic`, `is_named_binding`'s `:skip` registration still offers the whole call to
-    # `Mutare.Ecto.Dispatcher.mutations/2` (every `:skip`-registered macro does), but no Ecto
-    # sub-mutator claims a `:skip`-kind macro — `Dispatcher`'s `query_macro_mutations/3` catch-all
+    # Unlike `dynamic`, `is_named_binding`'s `:raw` registration still offers the whole call to
+    # `Mutare.Ecto.Dispatcher.mutations/2` (every `:raw`-registered macro does), but no Ecto
+    # sub-mutator claims a `:raw`-kind macro — `Dispatcher`'s `query_macro_mutations/3` catch-all
     # degrades it to `[]` rather than crashing or accidentally delegating to some other family.
     src = """
     defmodule M do
@@ -32,8 +32,8 @@ defmodule Mutare.Ecto.SurfaceTest do
     assert ecto_diffs(src) == []
   end
 
-  test "dynamic registers :skip for core but keeps its own mutation surface" do
-    # Core must never descend into the DSL arguments (hence the `:skip` registration above), and
+  test "dynamic registers :raw for core but keeps its own mutation surface" do
+    # Core must never descend into the DSL arguments (hence the `:raw` registration above), and
     # the host never sees it — but the whole call is offered to `mutate/2`, where
     # `Mutare.Ecto.Dynamic` rewrites the condition and `Mutare.Ecto.BindingReorder` transposes the
     # written binding list.

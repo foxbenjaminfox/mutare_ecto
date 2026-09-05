@@ -3,7 +3,7 @@ defmodule Mutare.Ecto.AST.QueryCall do
   # Normalized identity and reconstruction for a resolved Ecto.Query macro call.
 
   alias Mutare.Calls
-  alias Mutare.MacroRouting.Call
+  alias Mutare.CallRouting.Call
 
   @enforce_keys [:node, :name, :args, :pipe_mode, :rebuild]
   defstruct [:node, :name, :args, :pipe_mode, :rebuild]
@@ -25,7 +25,7 @@ defmodule Mutare.Ecto.AST.QueryCall do
   """
   @spec parse(Macro.t()) :: t() | nil
   def parse(node) do
-    case Calls.resolved_macro_call(node) do
+    case Calls.resolved_routed_call(node) do
       %Call{module: Ecto.Query, name: name, arguments: args, pipe_mode: mode, rebuild: rebuild} ->
         %__MODULE__{node: node, name: name, args: args, pipe_mode: mode, rebuild: rebuild}
 

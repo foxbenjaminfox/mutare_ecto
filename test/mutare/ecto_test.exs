@@ -26,13 +26,13 @@ defmodule Mutare.EctoTest do
     end
   end
 
-  describe "macro_routes/0" do
+  describe "call_routes/0" do
     test "skips schema, routes the host macros and the clause macros, skips dynamic" do
-      macros = Mutare.Ecto.macro_routes()
+      macros = Mutare.Ecto.call_routes()
 
       # Schema bodies are never mutated.
-      assert {Ecto.Schema, :schema, :skip} in macros
-      assert {Ecto.Schema, :embedded_schema, :skip} in macros
+      assert {Ecto.Schema, :schema, :raw} in macros
+      assert {Ecto.Schema, :embedded_schema, :raw} in macros
 
       # The `from` opener and the where/having family route through the selector host
       # (`:routing` → `route_arguments/2` → `host/2`).
@@ -50,12 +50,12 @@ defmodule Mutare.EctoTest do
       assert {Ecto.Query, :join, :any, :routing} in macros
 
       # `dynamic` is an in-fragment helper, not a query-threading stage, so it stays :skip.
-      assert {Ecto.Query, :dynamic, :any, :skip} in macros
+      assert {Ecto.Query, :dynamic, :any, :raw} in macros
     end
 
     test "classifies every macro exported by the supported Ecto.Query version" do
       registered =
-        Mutare.Ecto.macro_routes()
+        Mutare.Ecto.call_routes()
         |> Enum.flat_map(fn
           {Ecto.Query, name, _treatment} -> [name]
           {Ecto.Query, name, _arity, _treatment} -> [name]

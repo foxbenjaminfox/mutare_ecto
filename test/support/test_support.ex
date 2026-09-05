@@ -6,7 +6,7 @@ defmodule Mutare.Ecto.TestSupport do
   # shape (`diffs`/`diffs_for`/`assert_metamutant_compiles`/`metamutant_source`) — except `sites`,
   # which has no core counterpart (the `diffs` projections drop the Site) and reads
   # `Mutare.transform_string/2`'s result directly. Every remaining option (`:extensions`,
-  # `:macro_routes`, `:file`, `expand_uses: false`, …) is forwarded to `Mutare.transform_string/2`
+  # `:call_routes`, `:file`, `expand_uses: false`, …) is forwarded to `Mutare.transform_string/2`
   # through the trailing `opts`.
   #
   # `expand_uses: true` is the transform default the source helpers inherit — the

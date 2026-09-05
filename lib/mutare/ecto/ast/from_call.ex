@@ -13,7 +13,7 @@ defmodule Mutare.Ecto.AST.FromCall do
   #
   # Written directly, the source is the first argument. Piped (`Post |> from(as: :post, where: …)`),
   # the source is the `|>` left side — core's effective argument zero, which is **not** part of
-  # the call node (`Mutare.MacroRouting.Call`) — so the visible argument list holds only the clause
+  # the call node (`Mutare.CallRouting.Call`) — so the visible argument list holds only the clause
   # list (or nothing). The call's `pipe_mode` (stamped by core, carried by `QueryCall`) is what
   # places the clauses; nothing here reads an argument's *shape* to guess. A piped `from` parses
   # with `source: nil` — "hidden, on the pipe's left" — and rebuilds to the same visible arity it

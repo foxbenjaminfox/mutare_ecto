@@ -42,7 +42,7 @@ defmodule Mutare.Ecto.Subquery do
   # `exists(subquery(from …))` spelling is normalized too, with the `subquery/1` wrapper preserved
   # around each rebuilt mutant. A `subquery(var)`, a scalar `from(Post)`, a piped subquery
   # (`exists(q |> where(…))`), and a *from-source* subquery (`from s in subquery(…)`, routed
-  # `:skip` and never walked) all yield nothing.
+  # `:raw` and never walked) all yield nothing.
 
   alias Mutare.Calls
   alias Mutare.Ecto.{Config, Fragment, Query, Surface, Tag}

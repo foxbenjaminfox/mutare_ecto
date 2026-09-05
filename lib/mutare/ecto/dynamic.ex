@@ -14,9 +14,10 @@ defmodule Mutare.Ecto.Dynamic do
   (`Mutare.Ecto.Island`) — the splice contributes nothing of its own, so the `dynamic` is
   *mutated where it is built*. This module is that build site.
 
-  **Delivery** differs from the hosted path. `dynamic` is registered `:skip`
+  **Delivery** differs from the hosted path. `dynamic` is registered `:raw`
   (`Mutare.Ecto.Surface.macro_registrations/0`), so core never descends into its DSL arguments —
-  but core still offers the *whole call* to `mutate/2`, and a free-standing `dynamic` sits in an
+  but core still offers the *whole call* to `mutate/2` (which is why it is `:raw`, not the
+  call-level `:skip`: a skipped call is an inert leaf nobody is offered), and a free-standing `dynamic` sits in an
   ordinary expression position (its value is a runtime `%Ecto.Query.DynamicExpr{}`, not a spliced
   query clause). So each mutant is the whole call rebuilt with exactly one point of the condition
   swapped, delivered by Mutare's ordinary in-place selector `case` — the same Bucket-1 delivery as

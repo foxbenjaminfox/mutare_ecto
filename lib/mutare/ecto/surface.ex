@@ -5,7 +5,7 @@ defmodule Mutare.Ecto.Surface do
   # capabilities from these descriptors (NOTES "Surface: one descriptor table instead of parallel
   # lists").
 
-  @macro_kinds [:from, :condition, :join, :clause, :dynamic, :skip]
+  @macro_kinds [:from, :condition, :join, :clause, :dynamic, :raw]
   @mutation_capabilities [:ordering, :aggregate, :scalar, :combination]
   @from_capabilities [
     :hosted,
@@ -106,7 +106,7 @@ defmodule Mutare.Ecto.Surface do
     Map.put(@combination, :name, :intersect),
     Map.put(@combination, :name, :intersect_all),
     %{name: :dynamic, macro: :dynamic},
-    %{name: :is_named_binding, macro: :skip},
+    %{name: :is_named_binding, macro: :raw},
     # ── from-clause-only keys ─────────────────────────────────────────────────────────────────
     # The rows below are not standalone query macros — each name exists only as a `from` keyword
     # key (`on:` and the spelled-out join kinds), so it carries `from:` capabilities but no
@@ -218,13 +218,13 @@ defmodule Mutare.Ecto.Surface do
   def macro_kind(name), do: get(name, :macro)
 
   @doc """
-  Every Ecto.Query macro registration as `{name, :routing | :skip}`. The `:dynamic` kind registers
-  `:skip` like the fully-skipped macros (see `Mutare.Ecto.Dynamic` for why that still mutates).
+  Every Ecto.Query macro registration as `{name, :routing | :raw}`. The `:dynamic` kind registers
+  `:raw` like the fully-raw macros (see `Mutare.Ecto.Dynamic` for why that still mutates).
   """
-  @spec macro_registrations() :: [{atom(), :routing | :skip}]
+  @spec macro_registrations() :: [{atom(), :routing | :raw}]
   def macro_registrations do
     for %{name: name, macro: kind} <- @surface do
-      {name, if(kind in [:dynamic, :skip], do: :skip, else: :routing)}
+      {name, if(kind in [:dynamic, :raw], do: :raw, else: :routing)}
     end
   end
 

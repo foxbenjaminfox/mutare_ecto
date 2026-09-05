@@ -13,7 +13,7 @@ defmodule Mutare.Ecto.AuthorMacros do
   # Each macro expands to something valid inside a query, so a fixture using it compiles both
   # before and after mutation, and `assert_compiles/2` is a real net rather than a tautology.
 
-  @behaviour Mutare.MacroRouting
+  @behaviour Mutare.CallRouting
 
   @doc "An author's two-argument `sum` — an arity Ecto's aggregate ladder does not have."
   defmacro sum(a, b), do: quote(do: unquote(a) + unquote(b))
@@ -21,8 +21,8 @@ defmodule Mutare.Ecto.AuthorMacros do
   @doc "An author's one-argument `max` — Ecto's aggregate arity, under a foreign owner."
   defmacro max(x), do: quote(do: unquote(x) * 2)
 
-  @impl Mutare.MacroRouting
-  def macro_routes do
+  @impl Mutare.CallRouting
+  def call_routes do
     [
       {__MODULE__, :sum, 2, [:expression, :expression]},
       {__MODULE__, :max, 1, [:expression]}

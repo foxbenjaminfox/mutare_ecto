@@ -9,7 +9,7 @@ defmodule Mutare.Ecto.NormalizedASTTest do
   describe "QueryCall" do
     test "normalizes a stamped Ecto.Query macro and rebuilds its written form" do
       {head, meta, args} = parse("Ecto.Query.limit(q, 10)")
-      meta = Meta.stamp_macro_call(meta, {Mutare.Calls.module_key(Ecto.Query), :limit, :unpiped})
+      meta = Meta.stamp_routed_call(meta, {Mutare.Calls.module_key(Ecto.Query), :limit, :unpiped})
       call = QueryCall.parse({head, meta, args})
 
       assert %QueryCall{name: :limit, args: [_query, _bound]} = call
@@ -23,7 +23,7 @@ defmodule Mutare.Ecto.NormalizedASTTest do
       assert QueryCall.parse(parse("limit(q, 10)")) == nil
 
       {head, meta, args} = parse("Other.limit(q, 10)")
-      meta = Meta.stamp_macro_call(meta, {[:Other], :limit, :unpiped})
+      meta = Meta.stamp_routed_call(meta, {[:Other], :limit, :unpiped})
       assert QueryCall.parse({head, meta, args}) == nil
     end
   end
@@ -108,7 +108,7 @@ defmodule Mutare.Ecto.NormalizedASTTest do
     # A stamped `from`, as the resolve pre-pass leaves it for `QueryCall.parse/1`.
     defp from(code) do
       {head, meta, args} = parse(code)
-      meta = Meta.stamp_macro_call(meta, {Mutare.Calls.module_key(Ecto.Query), :from, :unpiped})
+      meta = Meta.stamp_routed_call(meta, {Mutare.Calls.module_key(Ecto.Query), :from, :unpiped})
       FromCall.parse({head, meta, args})
     end
 
@@ -163,7 +163,7 @@ defmodule Mutare.Ecto.NormalizedASTTest do
       assert FromCall.parse(parse("from(p in Post, where: p.x > 1)")) == nil
 
       {head, meta, args} = parse("limit(q, 10)")
-      meta = Meta.stamp_macro_call(meta, {Mutare.Calls.module_key(Ecto.Query), :limit, :unpiped})
+      meta = Meta.stamp_routed_call(meta, {Mutare.Calls.module_key(Ecto.Query), :limit, :unpiped})
       assert FromCall.parse({head, meta, args}) == nil
     end
 
@@ -196,7 +196,7 @@ defmodule Mutare.Ecto.NormalizedASTTest do
     # alone, its source the hidden `|>` left — exactly what core's resolver leaves behind.
     defp piped_from(code) do
       {:|>, _pipe_meta, [_source, {head, meta, args}]} = parse(code)
-      meta = Meta.stamp_macro_call(meta, {Mutare.Calls.module_key(Ecto.Query), :from, :piped})
+      meta = Meta.stamp_routed_call(meta, {Mutare.Calls.module_key(Ecto.Query), :from, :piped})
       FromCall.parse({head, meta, args})
     end
 

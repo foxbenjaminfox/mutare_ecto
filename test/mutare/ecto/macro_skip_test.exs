@@ -6,21 +6,21 @@ defmodule Mutare.Ecto.MacroSkipTest do
   alias Mutare.Test.Fixtures.RoutingExtension
 
   # A user can define their own macros and use them *inside* an Ecto `where`/`having` fragment. When
-  # they register such a macro `:skip` (or some of its arguments `:skip`), the plugin must leave that
+  # they register such a macro `:raw` (or some of its arguments `:raw`), the plugin must leave that
   # argument opaque rather than mutating into the body the author owns — the SQL the macro expands to
   # is the author's, not the catalog's to rewrite. The plugin honours this by reading each nested
-  # call's resolved per-argument routing (`Mutare.Calls.macro_treatment/1`, stamped by the
+  # call's resolved per-argument routing (`Mutare.Calls.routed_treatments/1`, stamped by the
   # resolve pre-pass) as `Mutare.Ecto.Fragment`/`Mutare.Ecto.Aggregate` walk the hosted condition.
   #
   # The author macros and their routing come from core's shipped routing-only fixture,
-  # `Mutare.Test.Fixtures.RoutingExtension` — `opaque/1` (fully `:skip`) and `tagged/2`
-  # (`[:expression, :skip]`) — enabled through the `:extensions` channel, exactly how an independent
+  # `Mutare.Test.Fixtures.RoutingExtension` — `opaque/1` (fully `:raw`) and `tagged/2`
+  # (`[:expression, :raw]`) — enabled through the `:extensions` channel, exactly how an independent
   # library ships the registration its DSL relies on. Routing applies only when the extension is
   # enabled, so every test pins the contrast: the same source *without* it still mutates into the
   # macro, showing the skip is what suppresses it (not some unrelated gap).
   #
   # `families: :all` turns on the opt-in literal arms (string/atom/boolean) too, so the partial-skip
-  # test can pin that an atom in a `:skip` position is left raw *even when atom mutation is enabled*.
+  # test can pin that an atom in a `:raw` position is left raw *even when atom mutation is enabled*.
 
   @mutators [{Mutare.Ecto, repo: MyApp.Repo, families: :all}]
   @routing [RoutingExtension]
@@ -31,7 +31,7 @@ defmodule Mutare.Ecto.MacroSkipTest do
   # diffs (a hosted condition mutation always renders a non-empty replacement, so this hides a
   # legitimate clause drop without masking a real hosted regression). `opts` rides through
   # `Mutare.Ecto.TestSupport.diffs/2` to `Mutare.transform_string/2`, so the routed cases thread
-  # `extensions:` (and the config-channel test `:macro_routes`) alongside `:mutators`.
+  # `extensions:` (and the config-channel test `:call_routes`) alongside `:mutators`.
   defp hosted_mutateds(source, opts) do
     for {mutator, _original, mutated} <- diffs(source, opts),
         mutator == :ecto,
@@ -55,14 +55,14 @@ defmodule Mutare.Ecto.MacroSkipTest do
       assert "opaque(u.age >= 18)" in bare
       assert "opaque(u.age > 19)" in bare
 
-      # Registered `:skip`, the whole call is opaque, so nothing inside is mutated and the host
+      # Registered `:raw`, the whole call is opaque, so nothing inside is mutated and the host
       # weaves nothing into this `where` at all.
       assert hosted_mutateds(src, mutators: @mutators, extensions: @routing) == MapSet.new()
       assert_compiles(src, mutators: @mutators, extensions: @routing)
     end
   end
 
-  describe "a partially-routed nested macro (`[:expression, :skip]`)" do
+  describe "a partially-routed nested macro (`[:expression, :raw]`)" do
     test "mutates the :expression argument but leaves the :skip argument raw" do
       src = """
       defmodule M do
@@ -192,7 +192,7 @@ defmodule Mutare.Ecto.MacroSkipTest do
   # accepts a `^dynamic` as a join's *sole, top-level* on-expression), reached two ways: the `on:` key
   # of a `from`'s `join:` clause (`Host.from_targets`) and the trailing `on:` option of a standalone
   # `join/5` call (`Host.join_target`). Both walk the on-condition through the shared catalog, so both
-  # must honour a nested `:skip` macro. Each anchors on the sibling comparison that *does* mutate.
+  # must honour a nested `:raw` macro. Each anchors on the sibling comparison that *does* mutate.
   describe "the join `on:` condition path" do
     test "a from(..., join:, on:) keyword clause leaves a nested :skip macro opaque" do
       src = """
@@ -248,7 +248,7 @@ defmodule Mutare.Ecto.MacroSkipTest do
   end
 
   # A binding reorder is delivered **in place** — it swaps the written binding list, never the
-  # condition body. So when a `:skip` macro spans both bindings, the reorder still fires (it's a real,
+  # condition body. So when a `:raw` macro spans both bindings, the reorder still fires (it's a real,
   # safe mutation) by transposing the list, and the macro's argument source is left exactly as the
   # author wrote it. This is what makes reordering safe across an opaque macro: we never need to
   # rewrite — or even understand — the macro's arguments.
@@ -264,12 +264,12 @@ defmodule Mutare.Ecto.MacroSkipTest do
 
       muts = hosted_mutateds(src, mutators: @mutators, extensions: @routing)
 
-      # The reorder swaps the declared list; the body (the `:skip` macro call) rides along verbatim.
+      # The reorder swaps the declared list; the body (the `:raw` macro call) rides along verbatim.
       assert Enum.any?(muts, &(&1 =~ "where(query, [b, a], opaque(a.age > b.score))"))
 
       # The macro's arguments are never rewritten — no `a`/`b` reference swap reaches into the body…
       refute Enum.any?(muts, &(&1 =~ "opaque(b.age > a.score)"))
-      # …and `:skip` still suppresses the comparison inside the opaque macro.
+      # …and `:raw` still suppresses the comparison inside the opaque macro.
       refute Enum.any?(muts, &(&1 =~ "opaque(a.age >= b.score)"))
 
       assert_compiles(src, mutators: @mutators, extensions: @routing)
@@ -278,14 +278,14 @@ defmodule Mutare.Ecto.MacroSkipTest do
 
   # Everything above registers the routing the way an independent *library* ships it — a routing
   # extension listed under `:extensions`. An end user writes the same skip *declaratively*, via the
-  # `:macro_routes` option (`{module, name, arity, :skip}` in config). Both channels funnel into the
+  # `:call_routes` option (`{module, name, arity, :raw}` in config). Both channels funnel into the
   # same registry and the same resolve-pass stamp — a config entry even overrides a code-provided
   # route — so the hosted walkers cannot tell them apart. But the configuration story is its own
   # public surface, so it gets its own pin: the same source with *no* extension anywhere, the skip
   # supplied purely by configuration.
   # The skip rule above governs descent *into* a foreign macro's arguments. A name collision is the
   # other half: an author's DSL may define a `sum/2` or a `max/1` of its own, and the call node
-  # itself is a walk position no `:skip` routing suppresses — so the catalog has to refuse it on
+  # itself is a walk position no `:raw` routing suppresses — so the catalog has to refuse it on
   # ownership, not on descent. Getting this wrong is not a wasted mutant: `avg(a, b)` is a call no
   # module defines, so Ecto's builder rejects it while expanding the query and the *whole*
   # metamutant build fails (`Mutare.Ecto.Aggregate.local/2`). The macros come from the plugin's own
@@ -338,8 +338,8 @@ defmodule Mutare.Ecto.MacroSkipTest do
     end
   end
 
-  describe "the declarative `:macro_routes` config channel" do
-    @config_routes [{RoutingExtension, :opaque, 1, :skip}]
+  describe "the declarative `:call_routes` config channel" do
+    @config_routes [{RoutingExtension, :opaque, 1, :raw}]
 
     test "a config-registered :skip is honored inside a hosted where" do
       src = """
@@ -355,14 +355,14 @@ defmodule Mutare.Ecto.MacroSkipTest do
 
       # With only the declarative entry, the macro is opaque: the sibling comparison still
       # mutates, while nothing inside the skipped call ever does.
-      muts = hosted_mutateds(src, mutators: @mutators, macro_routes: @config_routes)
+      muts = hosted_mutateds(src, mutators: @mutators, call_routes: @config_routes)
       assert "opaque(u.age > 18) and u.score >= 5" in muts
       refute "opaque(u.age > 19) and u.score > 5" in muts
       refute "opaque(u.age >= 18) and u.score > 5" in muts
 
       # The single-build net still holds with the route applied — `assert_compiles` forwards
-      # `:macro_routes` to the transform, like every other option.
-      assert_compiles(src, mutators: @mutators, macro_routes: @config_routes)
+      # `:call_routes` to the transform, like every other option.
+      assert_compiles(src, mutators: @mutators, call_routes: @config_routes)
     end
   end
 end

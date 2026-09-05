@@ -374,7 +374,7 @@ defmodule Mutare.Ecto.ClauseTest do
     test "an empty-args order_by / limit / select returns []" do
       for name <- [:order_by, :limit, :offset, :select, :select_merge, :intersect] do
         {head, meta, args} = Sourceror.parse_string!("#{name}()")
-        meta = Meta.stamp_macro_call(meta, {Mutare.Calls.module_key(Ecto.Query), name, :unpiped})
+        meta = Meta.stamp_routed_call(meta, {Mutare.Calls.module_key(Ecto.Query), name, :unpiped})
         call = QueryCall.parse({head, meta, args})
 
         assert %QueryCall{name: ^name, args: []} = call

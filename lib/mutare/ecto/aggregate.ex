@@ -83,7 +83,7 @@ defmodule Mutare.Ecto.Aggregate do
   #     is the shape. The sibling catalog guards its arities the same way and for the same reason
   #     (`Mutare.Ecto.Scalar.local/2`: binary arithmetic, `coalesce/2`).
   #   * **Unstamped** — Ecto's aggregates are plain `Ecto.Query.API` *functions*, never routed
-  #     macros, so a resolve-pass macro stamp (`Mutare.Calls.macro_treatment/1`) proves the call
+  #     macros, so a resolve-pass macro stamp (`Mutare.Calls.routed_treatments/1`) proves the call
   #     belongs to a **registered author macro** whose grammar is its owner's, not this ladder's.
   #     This is the node-level twin of `Mutare.Ecto.Walk`'s author-macro rule, which governs only
   #     descent *into* such a call's arguments — the call node itself is still a position, so the
@@ -97,7 +97,7 @@ defmodule Mutare.Ecto.Aggregate do
   defp local(_node, _position), do: []
 
   # Stamped by the resolve pass as a registered macro call ⇒ an author's macro, not Ecto's
-  # aggregate. `macro_treatment/1` is `nil` for every unregistered node, which is what a genuine
+  # aggregate. `routed_treatments/1` is `nil` for every unregistered node, which is what a genuine
   # `sum(p.views)` is.
-  defp author_macro?(node), do: Calls.macro_treatment(node) != nil
+  defp author_macro?(node), do: Calls.routed_treatments(node) != nil
 end

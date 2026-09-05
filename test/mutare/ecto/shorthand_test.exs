@@ -36,15 +36,15 @@ defmodule Mutare.Ecto.ShorthandTest do
     end
 
     test "a nil-valued pair is skipped (IS NULL, never = nil)" do
-      assert routing(~s|where(q, deleted_at: nil)|) == [:expression, {:keyword, [:skip]}]
+      assert routing(~s|where(q, deleted_at: nil)|) == [:expression, {:keyword, [:raw]}]
     end
 
     test "a compound (non-scalar) value is skipped (interpolation routing is scalar-only)" do
-      assert routing(~s|where(q, ids: [1, 2])|) == [:expression, {:keyword, [:skip]}]
+      assert routing(~s|where(q, ids: [1, 2])|) == [:expression, {:keyword, [:raw]}]
     end
 
     test "the binding form still hosts its condition (not shorthand), query :expression" do
-      assert routing(~s|where(q, [u], u.x == u.y)|) == [:expression, :skip, :hosted]
+      assert routing(~s|where(q, [u], u.x == u.y)|) == [:expression, :raw, :hosted]
     end
 
     test "a piped clause macro's visible first argument is never :expression" do
@@ -56,36 +56,36 @@ defmodule Mutare.Ecto.ShorthandTest do
       # `:bound` bump — still not core's); an ordering stays raw.
       assert routing("q |> limit(10)") == [:hosted]
       assert routing("q |> offset(5)") == [:hosted]
-      assert routing("q |> order_by(asc: :name)") == [:skip]
+      assert routing("q |> order_by(asc: :name)") == [:raw]
     end
 
     test "a bindingless from routes where/having values per-pair, other clauses raw" do
-      assert [:skip, {:keyword, treatments}] =
+      assert [:raw, {:keyword, treatments}] =
                routing(~s|from("posts", where: [a: 1], select: [:id])|)
 
       # where value → nested {:keyword, [:interpolated]}; select → :skip.
-      assert treatments == [{:keyword, [:interpolated]}, :skip]
+      assert treatments == [{:keyword, [:interpolated]}, :raw]
     end
 
     test "a binding from can mix hosted expressions with shorthand values" do
       assert routing(~s|from(p in "posts", where: p.x == p.y, where: [active: true])|) ==
-               [:skip, {:keyword, [:hosted, {:keyword, [:interpolated]}]}]
+               [:raw, {:keyword, [:hosted, {:keyword, [:interpolated]}]}]
     end
 
     test "a standalone join's on: shorthand routes per-pair, like the from form's" do
       # A join's options list routes per-pair too, so its `on:` value takes the same shape rule as
       # a `from` clause's: an expression condition hosts, a shorthand routes its pairs.
       assert routing(~s|join(q, :inner, [u], p in Post, on: [views: 5])|) ==
-               [:expression, :skip, :skip, :skip, {:keyword, [{:keyword, [:interpolated]}]}]
+               [:expression, :raw, :raw, :raw, {:keyword, [{:keyword, [:interpolated]}]}]
 
       assert routing(~s|join(q, :inner, [u], p in Post, on: p.user_id == u.id)|) ==
-               [:expression, :skip, :skip, :skip, {:keyword, [:hosted]}]
+               [:expression, :raw, :raw, :raw, {:keyword, [:hosted]}]
 
       # Hostability is not re-decided by routing: an `assoc` join's `on:` is one Ecto folds under
       # an `and` (so `Mutare.Ecto.Host.JoinOn` refuses to weave a `^dynamic` there), but a
       # shorthand *value* pin is plain interpolation and stays legal — so the pairs still route.
       assert routing(~s|join(q, :inner, [u], p in assoc(u, :posts), on: [views: 5])|) ==
-               [:expression, :skip, :skip, :skip, {:keyword, [{:keyword, [:interpolated]}]}]
+               [:expression, :raw, :raw, :raw, {:keyword, [{:keyword, [:interpolated]}]}]
     end
   end
 

@@ -81,7 +81,7 @@ defmodule Mutare.Ecto.InterpolationTest do
     test "a pinned shorthand pair value stays raw while a scalar sibling interpolates" do
       # The per-pair routing (`{:keyword, …}`): a *scalar* shorthand value is `:interpolated`
       # (core's literal families mutate it, `^`-pinned by core's delivery), while a pinned or
-      # compound value is `:skip` — its interior is nobody's. Both halves in one clause list.
+      # compound value is `:raw` — its interior is nobody's. Both halves in one clause list.
       src = """
       defmodule M do
         import Ecto.Query

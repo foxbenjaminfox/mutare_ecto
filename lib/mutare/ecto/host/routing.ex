@@ -1,9 +1,9 @@
 defmodule Mutare.Ecto.Host.Routing do
   @moduledoc """
   The **routing classifier** half of the selector host (`Mutare.Ecto.Host`): the
-  `c:Mutare.MacroRouting.route_arguments/2` callback that decides, per visible argument of a
+  `c:Mutare.CallRouting.route_arguments/2` callback that decides, per visible argument of a
   `:routing`-registered query macro, how core should treat that position — `:hosted` (the plugin's
-  host weaves it), `:expression` (mutate it normally), `:skip` (leave it raw), `:interpolated`
+  host weaves it), `:expression` (mutate it normally), `:raw` (leave it raw), `:interpolated`
   (core mutates a scalar value, delivered through `^` interpolation), or `{:keyword, …}` (per-pair
   shorthand routing). `Mutare.Ecto.Host` then consumes the `:hosted` decision to build and weave
   the `^`/`dynamic` target.
@@ -14,7 +14,7 @@ defmodule Mutare.Ecto.Host.Routing do
   would poison the single build) **without** losing the upstream query. A composable macro's
   *data* positions (a binding list, an ordering, a selector, a bound) must stay raw — core must
   descend nothing there — but its **threaded query** is an ordinary expression that must stay
-  reachable: a static `:skip` registration would stamp the piped value `:skip` and silently drop
+  reachable: a static `:raw` registration would stamp the piped value `:raw` and silently drop
   every upstream mutation, so the classifier marks that one position `:expression` and everything
   else raw. A routed node is still offered whole to `mutate/2`, where the plugin's own mutators
   fire (`Mutare.Ecto.Clause`, `Mutare.Ecto.BindingReorder`, `Mutare.Ecto.ClauseDrop`, and
@@ -34,9 +34,9 @@ defmodule Mutare.Ecto.Host.Routing do
   pair — which stays raw: a table/schema swap is a broken query, not a mutant (core's `:alias` and
   `:string` families would otherwise name a nonexistent module or table).
 
-  `dynamic` and the `is_named_binding` guard helper instead register `:skip`
+  `dynamic` and the `is_named_binding` guard helper instead register `:raw`
   (`Mutare.Ecto.Surface.macro_registrations/0`): neither is a query-threading stage, so core must
-  not descend into their DSL/guard arguments. A `:skip` registration still offers the *whole
+  not descend into their DSL/guard arguments. A `:raw` registration still offers the *whole
   call* to `mutate/2` — which is how a free-standing `dynamic/1,2` is mutated in place
   (`Mutare.Ecto.Dynamic`) while `is_named_binding` stays entirely inert.
 
@@ -58,7 +58,7 @@ defmodule Mutare.Ecto.Host.Routing do
       made it (`:literal`/`:string`/…), not `:ecto`. The non-condition clauses
       (`select`/`order_by`/… — whole-`from`'s job) are always left raw.
     * the **piped** `from` — `Post |> from(as: :post, where: as(:post).x > v, limit: 5)`: the
-      same decisions, placed by form. The source is the hidden `|>` left side, routed `:skip` like
+      same decisions, placed by form. The source is the hidden `|>` left side, routed `:raw` like
       the direct form's source slot (the plugin never sees its shape, and swapping a structural
       one is a broken query), and the one visible argument is the clause list, routed per clause
       exactly as above — so a bare-queryable pipe hosts its `as(:_)` conditions behind an
@@ -80,25 +80,25 @@ defmodule Mutare.Ecto.Host.Routing do
       `{:keyword, …}` shorthand) and the remaining options (`as:`/`prefix:`/`hints:`) stay raw.
 
   This relies on core's recursive per-pair routing, hosted values, and `:interpolated` extensions;
-  see `c:Mutare.MacroRouting.route_arguments/2`.
+  see `c:Mutare.CallRouting.route_arguments/2`.
   """
 
   alias Mutare.Ecto.{Bound, Surface}
   alias Mutare.Ecto.AST.{FromCall, KeywordList}
   alias Mutare.Ecto.Host.Condition
-  alias Mutare.MacroRouting.{ArgumentRoutes, Call}
+  alias Mutare.CallRouting.{ArgumentRoutes, Call}
 
   @doc """
-  `c:Mutare.MacroRouting.route_arguments/2` for a `:routing`-registered query macro: the
+  `c:Mutare.CallRouting.route_arguments/2` for a `:routing`-registered query macro: the
   per-visible-argument `treatments/3` classification, wrapped as `ArgumentRoutes`. Core hands in a
-  resolved `Mutare.MacroRouting.Call`, so the written form (bare/qualified/aliased/piped) is already
+  resolved `Mutare.CallRouting.Call`, so the written form (bare/qualified/aliased/piped) is already
   normalized, and its `pipe_mode` is what places the threaded query (see the moduledoc): a direct
   call's first visible argument is it, while a piped call's hidden left side is — routed
   `:expression` (`from_visible`'s default), so the upstream query stays mutable through the stage.
-  The one exception is a piped `from`, whose hidden left side is the never-routed *source*, `:skip`
+  The one exception is a piped `from`, whose hidden left side is the never-routed *source*, `:raw`
   (`piped_treatment/1`).
   """
-  @spec route_arguments(Call.t(), Mutare.MacroRouting.routing_context()) :: ArgumentRoutes.t()
+  @spec route_arguments(Call.t(), Mutare.CallRouting.routing_context()) :: ArgumentRoutes.t()
   def route_arguments(%Call{name: name, arguments: args, pipe_mode: pipe_mode} = call, _context) do
     ArgumentRoutes.from_visible(call, treatments(name, args, pipe_mode),
       piped: piped_treatment(name)
@@ -107,11 +107,11 @@ defmodule Mutare.Ecto.Host.Routing do
 
   # The treatment of a piped call's hidden left side. For every composable macro it is the
   # threaded query, `:expression` (the moduledoc). For `from` it is the **source**, which is never
-  # routed in either form: written directly it is the `:skip` slot below, and piped it is the
+  # routed in either form: written directly it is the `:raw` slot below, and piped it is the
   # one position whose shape the classifier cannot even see (core's `Call` carries only the
   # visible arguments) — a structural `Post |> from(…)`, by far the common spelling, would
   # otherwise be handed to core's `:alias` family and swapped for a nonexistent module.
-  defp piped_treatment(:from), do: :skip
+  defp piped_treatment(:from), do: :raw
   defp piped_treatment(_name), do: :expression
 
   @doc """
@@ -122,24 +122,24 @@ defmodule Mutare.Ecto.Host.Routing do
   name the plugin doesn't route.
   """
   @spec treatments(atom(), [Macro.t()], Mutare.Mutator.pipe_mode()) ::
-          [Mutare.MacroRouting.treatment()]
+          [Mutare.CallRouting.treatment()]
   def treatments(:from, args, pipe_mode) do
     # The source is never routed (the moduledoc): written directly it is the first visible
-    # argument, `:skip`; piped (`Post |> from(…)`) it is the hidden `|>` left side, which
-    # `route_arguments/2` routes `:skip` through `piped_treatment/1`, so every visible argument
+    # argument, `:raw`; piped (`Post |> from(…)`) it is the hidden `|>` left side, which
+    # `route_arguments/2` routes `:raw` through `piped_treatment/1`, so every visible argument
     # is the clause list. `FromCall.parse_args/2` places the clauses by `pipe_mode`, exactly as
     # the host and the whole-`from` rewrites will; each clause then routes independently
     # (`clause_treatments/1`).
     clause_treatment =
       case FromCall.parse_args(args, pipe_mode) do
         {_source, %KeywordList{} = clauses} -> {:keyword, clause_treatments(clauses)}
-        # A non-keyword clause argument (`from(source, ^clauses)`) or malformed AST routes `:skip`.
+        # A non-keyword clause argument (`from(source, ^clauses)`) or malformed AST routes `:raw`.
         # (A clause-less `from(Post)` parses fine but has no clause position to route.)
-        nil -> :skip
+        nil -> :raw
       end
 
     case {pipe_mode, args} do
-      {:unpiped, [_source | rest]} -> [:skip | List.duplicate(clause_treatment, length(rest))]
+      {:unpiped, [_source | rest]} -> [:raw | List.duplicate(clause_treatment, length(rest))]
       {:unpiped, []} -> []
       {:piped, visible} -> List.duplicate(clause_treatment, length(visible))
     end
@@ -182,13 +182,13 @@ defmodule Mutare.Ecto.Host.Routing do
     end
   end
 
-  # Only `:dynamic`/`:skip` (registered `:skip`, so core never calls `route_arguments/2` for
+  # Only `:dynamic`/`:raw` (registered `:raw`, so core never calls `route_arguments/2` for
   # them — reachable here only through a direct `treatments/3` call) and `nil` (a name the
   # plugin doesn't own) land here. A **new** Surface kind must take a real branch above
   # (`Surface.macro_kinds/0`).
   defp route_macro(_kind, _name, _args, _pipe_mode), do: []
 
-  # The base routing for a query-threading macro: every visible position raw (`:skip`) except
+  # The base routing for a query-threading macro: every visible position raw (`:raw`) except
   # the threaded query, which routes `:expression`. Which position that is follows the call's
   # form, not any argument's shape (the moduledoc): piped, no visible argument is the query (the
   # `|>` left side is, routed `:expression` by `route_arguments/2` through `from_visible`'s
@@ -196,18 +196,18 @@ defmodule Mutare.Ecto.Host.Routing do
   # argless call (`q |> limit()`) has no first argument, and core still routes it (the macro
   # registers with `:any` arity), so the empty route keeps this total — `host_test.exs`'s
   # totality case pins it.
-  defp query_threading_route(args, :piped), do: List.duplicate(:skip, length(args))
+  defp query_threading_route(args, :piped), do: List.duplicate(:raw, length(args))
   defp query_threading_route([], :unpiped), do: []
 
   defp query_threading_route([queryable | rest], :unpiped),
-    do: [queryable_treatment(queryable) | List.duplicate(:skip, length(rest))]
+    do: [queryable_treatment(queryable) | List.duplicate(:raw, length(rest))]
 
   # The directly written queryable: an ordinary expression — a variable, a `from(…)`, a nested
   # pipe, a function call, a conditional — whose upstream mutations core reaches by descending
   # it (a bare variable routes `:expression` harmlessly: core finds no candidates on it), unless
   # it is a structural queryable, which stays raw.
   defp queryable_treatment(node),
-    do: if(structural_queryable?(node), do: :skip, else: :expression)
+    do: if(structural_queryable?(node), do: :raw, else: :expression)
 
   # An `Ecto.Queryable` written as a table/schema *name* rather than computed: a schema alias
   # (`Post` — core's `:alias` family would swap it for a nonexistent module), a table-name string
@@ -248,7 +248,7 @@ defmodule Mutare.Ecto.Host.Routing do
   # One join option's treatment: `on:` is the condition (routed by shape); every other option names
   # DSL data (`as: :post`, `prefix: "x"`, `hints:`) and stays raw.
   defp join_option_treatment(entry) do
-    if entry.key == :on, do: condition_treatment(entry.value), else: :skip
+    if entry.key == :on, do: condition_treatment(entry.value), else: :raw
   end
 
   # Overlay `treatment` on the trailing argument's slot. Every overlay the classifier places
@@ -286,7 +286,7 @@ defmodule Mutare.Ecto.Host.Routing do
         # hostability is not re-decided here.
         # mutare:ignore[logical] equivalent — see above
         Surface.bound?(entry.key) and Bound.literal?(entry.value) -> :hosted
-        true -> :skip
+        true -> :raw
       end
     end)
   end
@@ -314,10 +314,10 @@ defmodule Mutare.Ecto.Host.Routing do
   # The treatment for one shorthand pair's *value*: a scalar literal (string, number, boolean — but
   # not `nil`) is routed `:interpolated`: core's literal families mutate it, delivered through `^`
   # interpolation (the query position needs the pin). A `nil` (an `IS NULL` predicate, never
-  # `= nil`) and any compound/interpolated value are left raw (`:skip`) — interpolation routing is
+  # `= nil`) and any compound/interpolated value are left raw (`:raw`) — interpolation routing is
   # scalar-only, since a compound value would mutate nested nodes where an inner `^` still poisons.
   defp pair_treatment(value) do
-    if scalar_literal?(value), do: :interpolated, else: :skip
+    if scalar_literal?(value), do: :interpolated, else: :raw
   end
 
   # A scalar literal, excluding `nil` — an atom, but an `IS NULL`, not core's to pin. `true`/`false`

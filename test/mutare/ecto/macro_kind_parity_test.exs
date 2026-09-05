@@ -13,7 +13,7 @@ defmodule Mutare.Ecto.MacroKindParityTest do
   #   * `Mutare.Ecto.Host.Routing.route_macro/4` — how core treats each argument position
   #     (`:from` short-circuits earlier, in `treatments/3`'s dedicated clause)
   #
-  # The catch-alls are correct for today's inert cases (`:skip`-kind macros, and `nil` for a name
+  # The catch-alls are correct for today's inert cases (`:raw`-kind macros, and `nil` for a name
   # the plugin doesn't own), but Elixir has no exhaustiveness check: add or rename a kind in
   # `Surface` and any of the three can silently degrade a whole macro family to "no mutations" —
   # for a mutation-testing tool, silent coverage loss, the worst failure mode. This is the
@@ -21,7 +21,7 @@ defmodule Mutare.Ecto.MacroKindParityTest do
   # every kind in
   # `Surface.macro_kinds/0` must carry a probe below, and each probe pins observable evidence
   # that all three loops take a real branch for that kind — or that the kind is *structurally*
-  # excluded from a loop (registered `:skip`, so core never calls `route_arguments/2`; absent
+  # excluded from a loop (registered `:raw`, so core never calls `route_arguments/2`; absent
   # from `hosted_macro_names/0`, so the host is never offered the call), which is stronger than
   # trusting the catch-all.
   #
@@ -39,7 +39,7 @@ defmodule Mutare.Ecto.MacroKindParityTest do
   #   * `routing` — `{snippet, expected}` for `Host.Routing.treatments/3` (every probe is a
   #     direct call, so `:unpiped`), whose
   #     position-specific answer (a `:hosted` overlay) proves the kind matched a real routing
-  #     branch rather than the `[]` catch-all, or `:registered_skip`
+  #     branch rather than the `[]` catch-all, or `:registered_raw`
   @probes %{
     from: %{
       representative: :from,
@@ -56,7 +56,7 @@ defmodule Mutare.Ecto.MacroKindParityTest do
       hosted: [{"p.x > 1", "p.x >= 1"}],
       routing:
         {~s|from(p in "posts", where: p.x > 1, select: p.id)|,
-         [:skip, {:keyword, [:hosted, :skip]}]}
+         [:raw, {:keyword, [:hosted, :raw]}]}
     },
     condition: %{
       representative: :where,
@@ -69,7 +69,7 @@ defmodule Mutare.Ecto.MacroKindParityTest do
       # The stage drop (`ClauseDrop` via the dispatcher's `:condition` branch).
       dispatcher: [{"where(query, [u], u.x == u.y)", "query"}],
       hosted: [{"u.x == u.y", "u.x != u.y"}],
-      routing: {"where(query, [u], u.x == u.y)", [:expression, :skip, :hosted]}
+      routing: {"where(query, [u], u.x == u.y)", [:expression, :raw, :hosted]}
     },
     join: %{
       representative: :join,
@@ -86,7 +86,7 @@ defmodule Mutare.Ecto.MacroKindParityTest do
       # the `[]` catch-all.
       routing:
         {~s|join(query, :inner, [u], p in "posts", on: p.user_id == u.id)|,
-         [:expression, :skip, :skip, :skip, {:keyword, [:hosted]}]}
+         [:expression, :raw, :raw, :raw, {:keyword, [:hosted]}]}
     },
     # `:limit` is the one `:clause` shape with a host arm (the pin-only `:bound` bump —
     # `Host.host/2`'s `:clause` branch guards on `Surface.bound?/1`), so it exercises all three
@@ -118,9 +118,9 @@ defmodule Mutare.Ecto.MacroKindParityTest do
       # Delivered as the whole rebuilt call; reported at the comparison (the walk's anchor).
       dispatcher: [{"u.x > ^v", "u.x >= ^v"}],
       hosted: :never_subscribed,
-      routing: :registered_skip
+      routing: :registered_raw
     },
-    skip: %{
+    raw: %{
       representative: :is_named_binding,
       fixture: """
       defmodule Posts do
@@ -130,7 +130,7 @@ defmodule Mutare.Ecto.MacroKindParityTest do
       """,
       dispatcher: :deliberately_empty,
       hosted: :never_subscribed,
-      routing: :registered_skip
+      routing: :registered_raw
     }
   }
 
@@ -142,7 +142,7 @@ defmodule Mutare.Ecto.MacroKindParityTest do
            so extend the taxonomy by first adding a probe here that decides, for the new kind,
            what `Dispatcher.query_macro_mutations/3`, `Host.host/2`, and
            `Host.Routing.route_macro/4` must each do with it — a real branch, or an asserted
-           structural exclusion (`:registered_skip` / `:never_subscribed`).
+           structural exclusion (`:registered_raw` / `:never_subscribed`).
            """
   end
 
@@ -207,8 +207,8 @@ defmodule Mutare.Ecto.MacroKindParityTest do
   describe "Host.Routing takes a real branch per kind" do
     for {kind, probe} <- @probes do
       case probe.routing do
-        :registered_skip ->
-          test "#{kind}: structurally excluded — every #{kind}-kind macro registers :skip" do
+        :registered_raw ->
+          test "#{kind}: structurally excluded — every #{kind}-kind macro registers :raw" do
             names = names_of(unquote(kind))
 
             assert names != [],
@@ -217,7 +217,7 @@ defmodule Mutare.Ecto.MacroKindParityTest do
             registrations = Surface.macro_registrations()
 
             for name <- names do
-              assert {name, :skip} in registrations,
+              assert {name, :raw} in registrations,
                      "#{name} registers :routing but route_macro/4 has no #{unquote(kind)} branch"
             end
           end

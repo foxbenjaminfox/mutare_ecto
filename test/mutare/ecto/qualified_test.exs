@@ -10,7 +10,7 @@ defmodule Mutare.Ecto.QualifiedTest do
   # core then descended into the raw query fragment, splicing selector `case`s into binding-list /
   # fragment positions (poisoning the single build) and mutating SQL conditions with its own
   # two-valued families. The fix routes every form through `Mutare.Ecto.AST.QueryCall.parse/1`
-  # (core's `Mutare.Calls.resolved_macro_call/1`), so the written form is transparent.
+  # (core's `Mutare.Calls.resolved_routed_call/1`), so the written form is transparent.
   #
   # These tests pin (1) the metamutant still compiles for the qualified/aliased forms under the full
   # mutator set — the original crash — and (2) the qualified/aliased forms produce the *same logical*

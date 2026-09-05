@@ -496,7 +496,7 @@ defmodule Mutare.Ecto.SubcontractTest do
     test "an author macro's :expression argument sub-contracts; its :skip argument never does" do
       # The island walk reads the same per-argument routing as the catalogs — the routing shipped
       # by core's `Mutare.Test.Fixtures.RoutingExtension`: `tagged/2` routes its condition
-      # `:expression` (standard syntax — descend), `opaque/1` is fully `:skip` (the macro's own
+      # `:expression` (standard syntax — descend), `opaque/1` is fully `:raw` (the macro's own
       # grammar — opaque). The same sources *without* the extension both sub-contract, isolating
       # the routing as what suppresses the second.
       helper = @with_core ++ [extensions: [Mutare.Test.Fixtures.RoutingExtension]]
@@ -572,7 +572,7 @@ defmodule Mutare.Ecto.SubcontractTest do
   end
 
   describe "the whole-call seam — a free-standing dynamic's islands" do
-    # The second consumer of the sub-contract: `dynamic` registers `:skip`, so core keeps the
+    # The second consumer of the sub-contract: `dynamic` registers `:raw`, so core keeps the
     # DSL argument raw — but core threads the run's specs into the whole-call offer of a
     # registered macro (`context.mutators`), so `Mutare.Ecto.Dynamic` sub-contracts each island
     # through the same seam as the host (`Mutare.Ecto.Island.subcontracted/3`). Only delivery differs:
@@ -661,7 +661,7 @@ defmodule Mutare.Ecto.SubcontractTest do
 
     test "a :skip author macro's pin inside a dynamic never sub-contracts" do
       # The author-macro rule rides the shared walk: `opaque/1` (core's shipped
-      # `RoutingExtension` fixture, threaded via `extensions:`) is registered fully `:skip` —
+      # `RoutingExtension` fixture, threaded via `extensions:`) is registered fully `:raw` —
       # its argument is the macro's own grammar, opaque to the island walk. Without the
       # extension the same pin is reached (the contrast that isolates the routing).
       helper = @with_core ++ [extensions: [Mutare.Test.Fixtures.RoutingExtension]]

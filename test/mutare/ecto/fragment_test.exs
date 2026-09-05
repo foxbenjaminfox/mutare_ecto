@@ -650,7 +650,7 @@ defmodule Mutare.Ecto.FragmentTest do
 
     test "islands honor the author-macro rule — only :expression arguments are entered" do
       # An unregistered call (`nil` routing) is descended; the macro-routing overlay for a
-      # `:skip`-routed author macro is exercised end to end in `macro_skip_test.exs`.
+      # `:raw`-routed author macro is exercised end to end in `macro_skip_test.exs`.
       assert [{"n", _rebuild}] = islands("clamp(u.age, ^n) > 10")
     end
 

@@ -9,7 +9,7 @@ defmodule Mutare.Ecto do
       # .mutare.exs
       [mutators: [:all, {Mutare.Ecto, repo: MyApp.Repo}]]
 
-  Listing it both registers the plugin's macro routing (via `c:Mutare.MacroRouting.macro_routes/0`,
+  Listing it both registers the plugin's macro routing (via `c:Mutare.CallRouting.call_routes/0`,
   discovered automatically) and enables its mutations. Query, changeset, and schema handling do
   not require `repo:`; that option only identifies the module(s) matched by the Repo-call families.
 
@@ -66,11 +66,10 @@ defmodule Mutare.Ecto do
       one name).
 
   **Structural positions held back from core's families.** Listing the plugin also *suppresses* a
-  little noise elsewhere: `argument_marks/1` (`c:Mutare.Mutator.argument_marks/1`) pins the action
-  atom of `Ecto.Changeset.apply_action/2` and `apply_action!/2` under core's shared `:structural`
-  label, so core's value families never mutate it — the atom is metadata (it only stamps an error
-  changeset's `action`), never behaviour. This is **not** gated by `families:`, which selects what
-  the plugin *produces*; the declaration applies whenever the plugin is listed.
+  little noise elsewhere: `call_routes/0` routes the action atom of `Ecto.Changeset.apply_action/2`
+  and `apply_action!/2` `:raw`, so no core family ever mutates it — the atom is metadata (it only
+  stamps an error changeset's `action`), never behaviour. This is **not** gated by `families:`,
+  which selects what the plugin *produces*; the route applies whenever the plugin is listed.
 
   **Equivalence-sensitive families.** Some mutants carry a **report note** — a survivor reads
   `… SURVIVED  — kill may require …` — so it is recognised as honest signal, not a plain test gap.
@@ -86,15 +85,16 @@ defmodule Mutare.Ecto do
 
   ## Macro routing
 
-  `macro_routes/0` registers the compile-time DSL so Mutare core never splices a runtime selector
+  `call_routes/0` registers the compile-time DSL so Mutare core never splices a runtime selector
   into a query expression (which would poison the single build). `schema`/`embedded_schema` are
-  `:skip`ped — a mutated field name or type is a broken schema, not a mutant. Every query-building
+  routed `:raw` — a mutated field name or type is a broken schema, not a mutant. Every query-building
   macro (`from`, `where`/`having`, `join`, `order_by`, `limit`, …) routes through the per-argument
   classifier `Mutare.Ecto.Host.Routing`, whose `:hosted` positions the selector host
   `Mutare.Ecto.Host` weaves behind Ecto's `^`/`dynamic` injection — a `where`/`having` condition,
   or a literal `limit`/`offset` bound (pin-only — `Mutare.Ecto.Bound`); every routed node is still
   offered whole to `mutate/2` for the in-place families. A free-standing `dynamic/1,2` registers
-  `:skip` and is mutated whole-call by `Mutare.Ecto.Dynamic`.
+  `:raw` (its arguments are left as written, the call itself still offered) and is mutated
+  whole-call by `Mutare.Ecto.Dynamic`.
 
   Resolution of these macros relies on Mutare's `use`-expansion (so the
   `use Ecto.Schema`-injected `import Ecto.Schema`, and a `use MyAppWeb, :live_view`-bundled
@@ -103,7 +103,7 @@ defmodule Mutare.Ecto do
   """
 
   @behaviour Mutare.Mutator
-  @behaviour Mutare.MacroRouting
+  @behaviour Mutare.CallRouting
   @behaviour Mutare.Mutator.MacroHost
 
   alias Mutare.Ecto.{
@@ -186,35 +186,34 @@ defmodule Mutare.Ecto do
   @impl Mutare.Mutator
   def required_modules, do: [Ecto.Schema, Ecto.Query]
 
-  # The `apply_action`/`apply_action!` action atom, pinned for core's value families under the
-  # shared `:structural` mark (see the moduledoc; the reasoning is NOTES "`apply_action`'s action
-  # atom: pinned against core's value families, never mutated").
-  @impl Mutare.Mutator
-  def argument_marks(_config) do
-    for fun <- [:apply_action, :apply_action!] do
-      {Ecto.Changeset, fun, 2, [1], Mutare.Mutator.structural_label()}
-    end
-  end
-
-  @impl Mutare.MacroRouting
-  def macro_routes do
+  @impl Mutare.CallRouting
+  def call_routes do
     schema = [
-      {Ecto.Schema, :schema, :skip},
-      {Ecto.Schema, :embedded_schema, :skip}
+      {Ecto.Schema, :schema, :raw},
+      {Ecto.Schema, :embedded_schema, :raw}
     ]
+
+    # The `apply_action`/`apply_action!` action atom, held back from every core family by a `:raw`
+    # route on argument 1 (see the moduledoc; the reasoning is NOTES "`apply_action`'s action
+    # atom: pinned against core's value families, never mutated"). The changeset itself (argument
+    # 0) stays an ordinary expression.
+    changeset =
+      for fun <- [:apply_action, :apply_action!] do
+        {Ecto.Changeset, fun, 2, [:expression, :raw]}
+      end
 
     query =
       Enum.map(Surface.macro_registrations(), fn
         {macro, :routing} -> {Ecto.Query, macro, :any, :routing}
-        {macro, :skip} -> {Ecto.Query, macro, :any, :skip}
+        {macro, :raw} -> {Ecto.Query, macro, :any, :raw}
       end)
 
     # mutare:ignore[operand_swap] concat order is irrelevant — entries registered as a set
-    schema ++ query
+    schema ++ changeset ++ query
   end
 
   # The per-argument routing classifier — see `Mutare.Ecto.Host.Routing`.
-  @impl Mutare.MacroRouting
+  @impl Mutare.CallRouting
   defdelegate route_arguments(call, context), to: Host.Routing
 
   # Exactly the macros the classifier can route a position `:hosted`
