@@ -78,7 +78,7 @@ serve it: core's pipe hoisting binds the left side to `mutare_piped` as a *value
 (`Kernel.in/2` on an unbound `p`), and the plugin's hidden-source `FromCall` (design history
 "Piped `from`: the hidden source") declares no bindings for it, so a hosted `where:` would weave
 `dynamic([], p.x > 1)`. Either would fail the single build. The plugin cannot guard it —
-`Mutare.MacroRouting.Call` carries only the visible arguments, so the left side's shape is
+`Mutare.CallRouting.Call` carries only the visible arguments, so the left side's shape is
 unseen — and core exposing the pipe-left is a core seam (consult before adding). Deferred until
 someone writes it: the piped `from` in the wild is a bare or computed queryable on the left
 (`Post |> from(as: :post, …)`), whose conditions reference named bindings or are keyword

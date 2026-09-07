@@ -120,9 +120,9 @@ gives each entry its own isolated generated lockfile; normal local commands cont
 ## Architecture
 
 `Mutare.Ecto` (`lib/mutare/ecto.ex`) is a thin `Mutare.Mutator` front that also implements core's
-two adapter behaviours, `Mutare.MacroRouting` and `Mutare.Mutator.MacroHost`. Every callback
+two adapter behaviours, `Mutare.CallRouting` and `Mutare.Mutator.MacroHost`. Every callback
 delegates: `init/1` → `Mutare.Ecto.Config` (options parsed once, delivered as `context.config`);
-`macro_routes/0`/`hosted_macros/0` are derived from `Mutare.Ecto.Surface`; `route_arguments/2` →
+`call_routes/0`/`hosted_macros/0` are derived from `Mutare.Ecto.Surface`; `route_arguments/2` →
 `Mutare.Ecto.Host.Routing`; `host/2` → `Mutare.Ecto.Host`; `mutate/2` → `Mutare.Ecto.Dispatcher`
 (tags → `Mutare.Ecto.Tag.to_mutation/1`); `finalize/2` → `Mutare.Ecto.Equivalence` (the one
 filter + note funnel); `argument_marks/1` pins `apply_action`'s action atom
@@ -154,7 +154,7 @@ Each row is role + the rule(s) that module is the **home** for.
 
 | Module | Role |
 |---|---|
-| `ecto.ex` | the `Mutare.Mutator`/`MacroRouting`/`MacroHost` front (see Architecture above) and the public configuration doc (`families:`/`dialects:`/`repo:`/`as:`) |
+| `ecto.ex` | the `Mutare.Mutator`/`CallRouting`/`MacroHost` front (see Architecture above) and the public configuration doc (`families:`/`dialects:`/`repo:`/`as:`) |
 | `dispatcher.ex` | unpacks core's context into `%Context{}`, classifies a node once, and invokes only the relevant sub-mutators |
 | `surface.ex` | the one descriptor table for every owned query macro / `from` key (routing kind, capabilities, drop families, last-wins repetition); home of the macro-kind taxonomy and its dispatch-exhaustiveness rule (`macro_kinds/0`) |
 | `sub_mutator.ex` | the `mutations(node, %Context{})` behaviour every producer implements |
