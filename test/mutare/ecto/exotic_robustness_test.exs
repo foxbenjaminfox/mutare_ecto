@@ -364,19 +364,29 @@ defmodule Mutare.Ecto.ExoticRobustnessTest do
     """
   ]
 
+  # `fragment_zoo` uses `identifier/1`, which Ecto added in 3.13; below that the fixture itself
+  # cannot compile, so its tests are excluded there (see `test_helper.exs`).
+  @needs_ecto_313 [:fragment_zoo]
+
   for {name, source} <- @corpus do
+    tags = if name in @needs_ecto_313, do: [needs_ecto: "~> 3.13"], else: []
+
+    @tag tags
     test "#{name}: metamutant compiles under plugin defaults" do
       assert_compiles(unquote(source))
     end
 
+    @tag tags
     test "#{name}: metamutant compiles with every family and dialect enabled" do
       assert_compiles(unquote(source), @plugin_all)
     end
 
+    @tag tags
     test "#{name}: metamutant compiles alongside all of core's mutators" do
       assert_compiles(unquote(source), @with_core)
     end
 
+    @tag tags
     test "#{name}: sites are unique, non-identity, and range-faithful" do
       assert_site_invariants(unquote(source))
     end

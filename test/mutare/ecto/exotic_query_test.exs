@@ -877,6 +877,8 @@ defmodule Mutare.Ecto.ExoticQueryTest do
   end
 
   describe "fragment interpolation helpers (identifier/literal/splice)" do
+    # `identifier/1` is Ecto 3.13+ (see `test_helper.exs`).
+    @tag needs_ecto: "~> 3.13"
     test "the helper calls stay raw while the surrounding condition mutates" do
       src = """
       defmodule Q do

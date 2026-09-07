@@ -257,7 +257,7 @@ Each is the conclusion; the canonical statement is in the named module.
 - The fixtures and assertions are engine-agnostic: every DB helper takes the Repo module first,
   `H.full_join_supported?/1` runtime-gates the one FULL-JOIN fixture, and aggregate values route
   through `to_number/1` (Postgres hands back `Decimal` where SQLite gives a float). Fixtures:
-  `test/support/myapp.ex` (schemas + both Repos) and `test/support/seed.ex` (adapter-typed DDL;
+  `test/support/myapp.ex` (both Repos) and `test/support/myapp/*.ex` (one schema per file — Ecto 3.12 checks association targets at `@after_compile`, so they cannot share a file) and `test/support/seed.ex` (adapter-typed DDL;
   boundary/NULL rows chosen so each family is distinguishable).
 - Because `Code.compile_string` is global, Mutare's public test helpers compile fixtures inside
   uniquely named wrapper modules so async tests defining the same module name do not race.
