@@ -5,7 +5,9 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## 0.1.0 - Unreleased
+## [Unreleased]
+
+## [0.1.0] - 2026-09-07
 
 Initial release.
 
@@ -36,3 +38,6 @@ Initial release.
 - **Structural-position safety**: literals that shape the SQL (fragment
   templates, interval units, cast types, field/binding names) are never
   mutated, so no mutant can poison the single metamutant build.
+
+[Unreleased]: https://github.com/foxbenjaminfox/mutare_ecto/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/foxbenjaminfox/mutare_ecto/releases/tag/v0.1.0

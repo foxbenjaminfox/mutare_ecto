@@ -12,10 +12,6 @@ concurrency:
 permissions:
   contents: read
 
-# NOTE: while mutare core is still a `path:` dependency (pre-Hex), these jobs
-# fail at `mix deps.get` — expected. They go green once the dep is swapped to
-# the published `{:mutare, "~> ..."}` release.
-
 jobs:
   check:
     name: mix check

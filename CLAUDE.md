@@ -71,10 +71,13 @@ analyzes `lib/`, not the test-only fixtures.
 [Credo]: https://github.com/rrrene/credo
 [Dialyxir]: https://github.com/jeremyjh/dialyxir
 
-## The `../mutare` path dependency
+## The `mutare` dependency and the `../mutare` checkout
 
-`mix.exs` uses `{:mutare, path: "../mutare"}`, so both local development and CI use the sibling
-checkout (until Mutare is published to Hex). When a task seems to need core machinery that doesn't
+`mix.exs` depends on the published `{:mutare, "~> 0.1"}`, so local development and CI both build
+against the Hex release. The sibling checkout at `../mutare` is still where to read the exact
+contract of a core callback or helper. To develop against unreleased core, switch the dep to
+`{:mutare, path: "../mutare"}` locally and switch it back before committing (the compile hook
+runs against whichever is declared). When a task seems to need core machinery that doesn't
 exist yet, extending `../mutare` is an **option**, not the default — **consult the user before
 adding anything to core** (the alternatives: a plugin-side approach, or narrowing the task).
 Core seams that have gone that route after such a decision:

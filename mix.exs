@@ -35,7 +35,7 @@ defmodule Mutare.Ecto.MixProject do
       elixir: "~> 1.18",
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
-      description: "Mutation-testing plugin for Ecto — a Mutare custom mutator.",
+      description: "Mutare mutators for Ecto",
       package: package(),
       lockfile: System.get_env("MIX_LOCKFILE", "mix.lock"),
       deps: deps(),
@@ -49,9 +49,7 @@ defmodule Mutare.Ecto.MixProject do
     [extra_applications: [:logger]]
   end
 
-  # Hex package metadata. The `mutare` core is still a `path:` dependency, so an actual
-  # `mix hex.publish` stays blocked until Mutare itself ships to Hex — this section keeps
-  # the manifest (license, links, the files that ship) ready for that day. Only runtime
+  # Hex package metadata. Only runtime
   # and doc artifacts ship: `lib/`, the README extra ExDoc renders, the license, and
   # `mix.exs` — never the test suite, fixtures, the examples app, the CI config, or the
   # agent-facing CLAUDE.md.
@@ -73,7 +71,7 @@ defmodule Mutare.Ecto.MixProject do
 
   defp deps do
     [
-      {:mutare, path: "../mutare"}
+      {:mutare, "~> 0.1"}
       | ecto_deps() ++
           [
             # Static-analysis tooling: lints (credo) and type/discrepancy checks (dialyxir,
