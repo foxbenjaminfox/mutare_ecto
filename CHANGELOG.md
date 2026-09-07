@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-09-07
+
+### Fixed
+
+- **No compiler warning on Elixir 1.20.** The host routing re-checked the
+  literal kinds `Mutare.AST.literal_value/1` already guarantees, which 1.20's
+  type inference reports as a test that always succeeds while compiling the
+  dependency (and which failed the package's own warnings-as-errors CI). The
+  redundant check is gone; behaviour is unchanged.
+- **The README's install snippet names real versions** (`~> 0.1` for both
+  `mutare` and `mutare_ecto`) instead of the `"~> ..."` placeholders left
+  from before publication.
+
 ## [0.1.0] - 2026-09-07
 
 Initial release.
@@ -39,5 +52,6 @@ Initial release.
   templates, interval units, cast types, field/binding names) are never
   mutated, so no mutant can poison the single metamutant build.
 
-[Unreleased]: https://github.com/foxbenjaminfox/mutare_ecto/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/foxbenjaminfox/mutare_ecto/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/foxbenjaminfox/mutare_ecto/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/foxbenjaminfox/mutare_ecto/releases/tag/v0.1.0
