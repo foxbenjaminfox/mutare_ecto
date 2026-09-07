@@ -94,7 +94,7 @@ Core seams that have gone that route after such a decision:
 Core's public test surface for plugins is `Mutare.Test`, wrapped here by
 `Mutare.Ecto.TestSupport` (threads the plugin's default mutators, forwards every other option).
 The suites also use core's `observe_mutant/3` flip-and-compare and the shipped
-`Mutare.Test.Fixtures.RoutingExtension` for foreign-routing composition.
+`Mutare.Test.RoutingExtension` for foreign-routing composition.
 
 **Deployment requirement:** Mutare must run **as a dependency of the app under test** so Ecto and
 the app's schemas are on the BEAM code path (that is what lets `use`-expansion expand

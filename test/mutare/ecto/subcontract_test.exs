@@ -495,16 +495,16 @@ defmodule Mutare.Ecto.SubcontractTest do
 
     test "an author macro's :expression argument sub-contracts; its :skip argument never does" do
       # The island walk reads the same per-argument routing as the catalogs — the routing shipped
-      # by core's `Mutare.Test.Fixtures.RoutingExtension`: `tagged/2` routes its condition
+      # by core's `Mutare.Test.RoutingExtension`: `tagged/2` routes its condition
       # `:expression` (standard syntax — descend), `opaque/1` is fully `:raw` (the macro's own
       # grammar — opaque). The same sources *without* the extension both sub-contract, isolating
       # the routing as what suppresses the second.
-      helper = @with_core ++ [extensions: [Mutare.Test.Fixtures.RoutingExtension]]
+      helper = @with_core ++ [extensions: [Mutare.Test.RoutingExtension]]
 
       tagged = """
       defmodule M do
         import Ecto.Query
-        import Mutare.Test.Fixtures.RoutingExtension
+        import Mutare.Test.RoutingExtension
         def q(n), do: from(u in User, where: tagged(u.age > ^(n + 1), :urgent), select: u.id)
       end
       """
@@ -515,7 +515,7 @@ defmodule Mutare.Ecto.SubcontractTest do
       opaque = """
       defmodule M do
         import Ecto.Query
-        import Mutare.Test.Fixtures.RoutingExtension
+        import Mutare.Test.RoutingExtension
         def q(n), do: from(u in User, where: opaque(u.age > ^(n + 1)), select: u.id)
       end
       """
@@ -664,12 +664,12 @@ defmodule Mutare.Ecto.SubcontractTest do
       # `RoutingExtension` fixture, threaded via `extensions:`) is registered fully `:raw` —
       # its argument is the macro's own grammar, opaque to the island walk. Without the
       # extension the same pin is reached (the contrast that isolates the routing).
-      helper = @with_core ++ [extensions: [Mutare.Test.Fixtures.RoutingExtension]]
+      helper = @with_core ++ [extensions: [Mutare.Test.RoutingExtension]]
 
       src = """
       defmodule M do
         import Ecto.Query
-        import Mutare.Test.Fixtures.RoutingExtension
+        import Mutare.Test.RoutingExtension
         def d(n), do: dynamic([u], opaque(u.age > ^(n + 1)))
       end
       """

@@ -2,7 +2,7 @@ defmodule Mutare.Ecto.AuthorMacros do
   @moduledoc false
   # A routing-only test fixture whose macros deliberately **wear the plugin's own catalog names**.
   #
-  # Core's shipped `Mutare.Test.Fixtures.RoutingExtension` covers the general case — a foreign
+  # Core's shipped `Mutare.Test.RoutingExtension` covers the general case — a foreign
   # macro whose arguments the catalogs must leave opaque. It cannot cover the *name-collision*
   # case, because its macros (`opaque/1`, `tagged/2`) are named nothing the plugin mutates. This
   # fixture is that case: an author's query DSL is free to define a `sum/2` or a `max/1`, and a

@@ -15,10 +15,10 @@ defmodule Mutare.Ecto.DynamicTest do
   # where it is built.
 
   # The full-family plugin instance plus core's shipped routing-only fixture
-  # (`Mutare.Test.Fixtures.RoutingExtension`, threaded via `extensions:`), for the nested-`:raw`
+  # (`Mutare.Test.RoutingExtension`, threaded via `extensions:`), for the nested-`:raw`
   # opacity test — foreign macro routing shipped by an independent module, no hand-rolled provider.
   @all_families [{Mutare.Ecto, repo: MyApp.Repo, families: :all}]
-  @routing [Mutare.Test.Fixtures.RoutingExtension]
+  @routing [Mutare.Test.RoutingExtension]
 
   # The mutated whole-node renderings recorded under the `:ecto` family.
   defp mutated(src, opts \\ []), do: src |> ecto_diffs(opts) |> Enum.map(fn {_o, m} -> m end)
@@ -203,7 +203,7 @@ defmodule Mutare.Ecto.DynamicTest do
       src = """
       defmodule M do
         import Ecto.Query
-        import Mutare.Test.Fixtures.RoutingExtension
+        import Mutare.Test.RoutingExtension
         def d(v), do: dynamic([u], opaque(u.age > 18) and u.role == ^v)
       end
       """

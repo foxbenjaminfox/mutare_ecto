@@ -3,7 +3,7 @@ defmodule Mutare.Ecto.MacroSkipTest do
 
   import Mutare.Ecto.TestSupport
 
-  alias Mutare.Test.Fixtures.RoutingExtension
+  alias Mutare.Test.RoutingExtension
 
   # A user can define their own macros and use them *inside* an Ecto `where`/`having` fragment. When
   # they register such a macro `:raw` (or some of its arguments `:raw`), the plugin must leave that
@@ -13,7 +13,7 @@ defmodule Mutare.Ecto.MacroSkipTest do
   # resolve pre-pass) as `Mutare.Ecto.Fragment`/`Mutare.Ecto.Aggregate` walk the hosted condition.
   #
   # The author macros and their routing come from core's shipped routing-only fixture,
-  # `Mutare.Test.Fixtures.RoutingExtension` — `opaque/1` (fully `:raw`) and `tagged/2`
+  # `Mutare.Test.RoutingExtension` — `opaque/1` (fully `:raw`) and `tagged/2`
   # (`[:expression, :raw]`) — enabled through the `:extensions` channel, exactly how an independent
   # library ships the registration its DSL relies on. Routing applies only when the extension is
   # enabled, so every test pins the contrast: the same source *without* it still mutates into the
@@ -45,7 +45,7 @@ defmodule Mutare.Ecto.MacroSkipTest do
       src = """
       defmodule M do
         import Ecto.Query
-        import Mutare.Test.Fixtures.RoutingExtension
+        import Mutare.Test.RoutingExtension
         def q, do: from(u in User, where: opaque(u.age > 18))
       end
       """
@@ -67,7 +67,7 @@ defmodule Mutare.Ecto.MacroSkipTest do
       src = """
       defmodule M do
         import Ecto.Query
-        import Mutare.Test.Fixtures.RoutingExtension
+        import Mutare.Test.RoutingExtension
         def q, do: from(u in User, where: tagged(u.age > 18, :urgent))
       end
       """
@@ -94,7 +94,7 @@ defmodule Mutare.Ecto.MacroSkipTest do
       src = """
       defmodule M do
         import Ecto.Query
-        import Mutare.Test.Fixtures.RoutingExtension
+        import Mutare.Test.RoutingExtension
         def q do
           from p in Post,
             group_by: p.user_id,
@@ -130,7 +130,7 @@ defmodule Mutare.Ecto.MacroSkipTest do
       src = """
       defmodule M do
         import Ecto.Query
-        import Mutare.Test.Fixtures.RoutingExtension
+        import Mutare.Test.RoutingExtension
         def q(query), do: where(query, [u], opaque(u.age > 18) and u.score > 5)
       end
       """
@@ -151,7 +151,7 @@ defmodule Mutare.Ecto.MacroSkipTest do
       src = """
       defmodule M do
         import Ecto.Query
-        import Mutare.Test.Fixtures.RoutingExtension
+        import Mutare.Test.RoutingExtension
         def q(query), do: query |> where([u], opaque(u.age > 18) and u.score > 5)
       end
       """
@@ -170,7 +170,7 @@ defmodule Mutare.Ecto.MacroSkipTest do
       src = """
       defmodule M do
         import Ecto.Query
-        import Mutare.Test.Fixtures.RoutingExtension
+        import Mutare.Test.RoutingExtension
         def q(query), do: query |> having([u], opaque(sum(u.age)) > 5)
       end
       """
@@ -198,7 +198,7 @@ defmodule Mutare.Ecto.MacroSkipTest do
       src = """
       defmodule M do
         import Ecto.Query
-        import Mutare.Test.Fixtures.RoutingExtension
+        import Mutare.Test.RoutingExtension
         def q do
           from u in User,
             join: p in Post,
@@ -226,7 +226,7 @@ defmodule Mutare.Ecto.MacroSkipTest do
       src = """
       defmodule M do
         import Ecto.Query
-        import Mutare.Test.Fixtures.RoutingExtension
+        import Mutare.Test.RoutingExtension
         def q(query) do
           query
           |> join(:inner, [u], p in Post, on: opaque(p.views > 1) and p.user_id == u.id)
@@ -257,7 +257,7 @@ defmodule Mutare.Ecto.MacroSkipTest do
       src = """
       defmodule M do
         import Ecto.Query
-        import Mutare.Test.Fixtures.RoutingExtension
+        import Mutare.Test.RoutingExtension
         def q(query), do: where(query, [a, b], opaque(a.age > b.score))
       end
       """
@@ -345,7 +345,7 @@ defmodule Mutare.Ecto.MacroSkipTest do
       src = """
       defmodule M do
         import Ecto.Query
-        import Mutare.Test.Fixtures.RoutingExtension
+        import Mutare.Test.RoutingExtension
         def q, do: from(u in User, where: opaque(u.age > 18) and u.score > 5)
       end
       """
