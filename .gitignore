@@ -13,3 +13,6 @@ mutare_ecto-*.tar
 # Dialyzer PLTs (rebuildable cache)
 /priv/plts/*.plt
 /priv/plts/*.plt.hash
+
+# Mutare sandboxes the example READMEs prescribe (sibling dirs, so the ../.. path dep resolves)
+examples/*_sandbox/

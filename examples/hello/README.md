@@ -13,8 +13,13 @@ are loadable), so run it from *inside this directory*:
 cd examples/hello
 mix deps.get
 mix test          # green baseline — mutation testing needs a passing suite
-mix mutare        # mutate the Ecto surface and report the survivors
+mix mutare --sandbox ../hello_sandbox
+                  # mutate the Ecto surface and report the survivors
 ```
+
+The sandbox has to be a *sibling* directory: the plugin is a `../..` path dep,
+and Mutare copies the project into the sandbox before compiling the metamutant,
+so a sandbox anywhere else leaves that relative path dangling.
 
 `.mutare.exs` enables only the Ecto plugin (`{Mutare.Ecto, repo: Hello.Repo}`),
 so the run is small and focused; add `:all` to also mutate the plain Elixir in
@@ -23,7 +28,7 @@ so the run is small and focused; add `:all` to also mutate the plain Elixir in
 ## What you'll see
 
 ```
-mutare: 9 mutants across 2 file(s)
+mutare: 8 mutants across 2 file(s)
 
 lib/hello.ex:30  [ecto, in-place]  SURVIVED
 -    |> order_by([g], desc: g.inserted_at)
@@ -37,16 +42,16 @@ lib/hello/greeting.ex:23  [ecto, in-place]  SURVIVED
 -    |> validate_length(:name, min: 2)
 +    |> Elixir.Function.identity()
 
-mutation score: 55.6%  (5 killed, 4 survived, 9 total)
+mutation score: 62.5%  (5 killed, 3 survived, 8 total)
 ```
 
-Four survivors, each a concrete, named test gap:
+Three survivors, each a concrete, named test gap:
 
 - **`recent_greetings/1` is barely tested.** Its only test checks that the call
   returns the right *number* of rows — never the order, never that the limit
-  bites. So three mutations slip through: flipping the sort `:desc` → `:asc`,
-  dropping the `order_by` entirely, and dropping the `limit`. The fix is one
-  assertion about *which* greetings come back, in *what* order.
+  bites. So two mutations slip through: flipping the sort `:desc` → `:asc` and
+  dropping the `limit`. The fix is one assertion about *which* greetings come
+  back, in *what* order.
 - **`validate_length(:name, min: 2)` is never exercised.** The changeset test
   checks that a *missing* name is rejected, but no test submits a one-character
   name — so deleting the length rule changes nothing any test observes. (Its

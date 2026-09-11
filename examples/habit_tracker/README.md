@@ -58,38 +58,40 @@ mix mutare --sandbox ../habit_tracker_sandbox
                   # mutate the Ecto surface and report the survivors
 ```
 
+The sandbox must be a *sibling* directory — the
+[hello example](../hello/README.md#run-it) explains why (the plugin is a `../..`
+path dep).
+
 `.mutare.exs` enables just the Ecto plugin and excludes the CLI / boot glue, so
 the run is all about the data layer. (Add `:all` to also mutate the plain
 Elixir — the streak arithmetic, the changeset literals — for a fuller picture.)
 
 ## What you'll see
 
-Abridged — a handful of the 33 survivors, and the trailing note on the
-equivalence-sensitive ones is shortened here (the real run spells it out
-further):
+Abridged — a handful of the 28 survivors (the run lists every one, first as a
+one-line summary and then as a diff):
 
 ```
-mutare: 115 mutants across 5 file(s)
+mutare: 99 mutants across 5 file(s)
 
 lib/habit_tracker/habit.ex:36  [ecto, in-place]  SURVIVED
 -    |> validate_length(:name, min: 2, max: 40)
 +    |> Elixir.Function.identity()
 
-lib/habit_tracker/stats.ex:24  [ecto, in-place]  SURVIVED  — kill may require an orphan row — a preserved-side row with no match (join kinds coincide when every row matches)
--      join: c in assoc(h, :check_ins),
-+      left_join: c in assoc(h, :check_ins),
+lib/habit_tracker/check_in.ex:27  [ecto, in-place]  SURVIVED  — kill may require a changeset whose value sits exactly on the bound — strict and non-strict number validations (greater_than vs greater_than_or_equal_to, less_than vs less_than_or_equal_to) accept the same values except one equal to the bound
+-    |> validate_number(:count, greater_than: 0)
++    |> validate_number(:count, greater_than_or_equal_to: 0)
 
 lib/habit_tracker/stats.ex:28  [ecto, in-place]  SURVIVED  — kill may require a row whose value sits exactly on the bound — strict and non-strict comparisons (< vs <=, > vs >=) select the same rows except one equal to the bound
 -      having: sum(c.count) >= ^min_total,
 +      having: sum(c.count) > ^min_total,
 
-lib/habit_tracker/stats.ex:111  [ecto, in-place]  SURVIVED  — kill may require NULL rows in the ordered column — nulls_first and nulls_last only change where NULLs sort, ordering all other rows identically
+lib/habit_tracker/stats.ex:114  [ecto, in-place]  SURVIVED  — kill may require NULL rows in the ordered column — nulls_first and nulls_last only change where NULLs sort, ordering all other rows identically
 -      order_by: [desc_nulls_last: max(c.date)],
 +      order_by: [desc_nulls_first: max(c.date)],
 
 lib/habit_tracker/tracker.ex:114  [ecto, in-place]  SURVIVED
 -      from(c in CheckIn, where: c.habit_id == ^habit.id, select: c.date)
-+      from(c in CheckIn, select: c.date)
 
 lib/habit_tracker/search.ex:99  [ecto, in-place]  SURVIVED
 -  defp apply_filter({:until, date}, query), do: where(query, [check_in: c], c.date <= ^date)
@@ -99,10 +101,10 @@ lib/habit_tracker/habit.ex:40  [ecto, in-place]  SURVIVED
 -    |> optimistic_lock(:lock_version)
 +    |> Elixir.Function.identity()
 
-mutation score: 70.3%  (78 killed, 33 survived, 4 no-coverage, 115 total)
+mutation score: 70.5%  (67 killed, 28 survived, 4 no-coverage, 99 total)
 ```
 
-The 33 survivors cluster into a few honest lessons.
+The 28 survivors cluster into a few honest lessons.
 
 ### 1. Validations no test exercises
 
@@ -116,11 +118,20 @@ For contrast, `validate_required(:name)` and `unique_constraint(:name)` on a
 habit **are** tested (a nameless habit and a duplicate name), so dropping *those*
 is killed. Same kind of rule — one verified, one not.
 
+The two `validate_number(…, greater_than: 0)` rules each get a *second* mutant
+besides the drop: the bound swapped to `greater_than_or_equal_to: 0`, carrying a
+note (**`kill may require a changeset whose value sits exactly on the bound`**).
+That's a finer question than the drop's — not "is this rule tested?" but "is the
+*bound* tested?" — and it stays alive even once a test rejects a non-positive
+value, unless that value sits *on* the bound: a check-in with `count: 0`, a
+habit with `target: 0`. A test that rejects `-1` kills the drop and leaves the
+swap alive.
+
 ### 2. The fixtures only ever hold one habit's data
 
-The most repeated survivor is the same shape three times — dropping
-`where: c.habit_id == ^habit.id` in `total_count`, `current_streak`, and the
-`delete_habit` transaction:
+The most repeated survivor is the same shape four times — dropping
+`where: c.habit_id == ^habit.id` in `total_count`, `recent_check_ins`,
+`current_streak`, and the `delete_habit` transaction:
 
 ```
 from(c in CheckIn, where: c.habit_id == ^habit.id)  →  from(c in CheckIn, [])
@@ -131,6 +142,10 @@ filter by habit looks identical to one that remembers. With a *second* habit's
 check-ins in the database, deleting that `where` would pull in rows that don't
 belong — and the mutant would die. **Weak test data, not a missing test.**
 
+The same fixture lets the `sum → avg` swaps in the leaderboard's and the
+progress report's sort keys survive: with one check-in per habit, a habit's sum
+*is* its average.
+
 ### 3. Query shape that no assertion pins
 
 `recent_check_ins/2` is checked only for its row *count*, so flipping its
@@ -140,21 +155,23 @@ the fixtures contain no archived habit and none sitting on the boundary.
 
 ### 4. SQL-equivalence annotations — honest "maybe unkillable"
 
-Two survivors carry a note instead of a plain `SURVIVED`, because they may be
+Several survivors carry a note instead of a plain `SURVIVED`, because they may be
 unkillable for a *data* reason rather than a test gap — and the Ecto mutator
 knows the difference:
 
-- `join` → `left_join` reads **`kill may require an orphan row`**. The two joins
-  differ only when a habit has *no* check-in; every habit in the leaderboard
-  fixture has one, so the result is identical. Add a check-in-less habit and the
-  left join would include it (with a `NULL` sum) — killing the mutant.
 - `having: sum(...) >= ^min_total` → `>` reads **`kill may require a row whose
   value sits exactly on the bound`**. `>=` and `>` agree on every row except one
   sitting *exactly* on the threshold — which no fixture provides.
+- `where: c.habit_id == ^habit.id` → `!=` in the `delete_habit` transaction reads
+  **`kill may require a non-NULL row`** — the note for the `==`/`!=` swap, which
+  coincide only when the compared column is NULL. Here the column is never NULL;
+  the mutant survives for lesson 2's reason instead (with one habit's check-ins in
+  the database, `!=` deletes nothing and nobody notices). The note says *may*: it
+  names the data-side reason the family *can* be equivalent, not a verdict.
 
-Each note names the *specific* data a kill needs — an orphan row here, a boundary
-row there — because the reasons differ (join cardinality versus a missing
-boundary value). That precision comes from the library reasoning in SQL's
+Each note names the *specific* data a kill needs — a boundary row here, a
+non-NULL row there, an orphan row or a NULL sort key in lesson 7 — because the
+reasons differ. That precision comes from the library reasoning in SQL's
 semantics, not Elixir's — the whole point of a dedicated Ecto mutator.
 
 ### 5. Dynamically-built queries, only partly driven
@@ -188,8 +205,10 @@ changes nothing it observes. This is the `hook_drop` family, and the survivor
 reads differently from the others: not "your filter is wrong" but *"the
 concurrency guard the `lock_version` column exists for is untested."* The kill is
 a test that loads the habit twice, saves one copy, and asserts the other raises.
-(The `Repo.update` in `update_habit/2` survives for the same reason the insert
-does — no test reads the row back to confirm the write landed.)
+(The `Repo.update` in `update_habit/2` survives for a related reason: its test
+checks the *returned* struct and never reads the row back, so the non-persisting
+`apply_action` rewrite passes. `create_habit/1`'s `Repo.insert` is killed — later
+tests read that habit back.)
 
 ### 7. Where NULLs sort — and it's the same missing fixture as the orphan row
 
@@ -202,11 +221,11 @@ direction flip and both `max → min` aggregate swaps (in the `order_by` and the
 note:
 
 ```
-lib/habit_tracker/stats.ex:111  SURVIVED  — kill may require NULL rows in the ordered column — …
+lib/habit_tracker/stats.ex:114  SURVIVED  — kill may require NULL rows in the ordered column — …
 -      order_by: [desc_nulls_last: max(c.date)],
 +      order_by: [desc_nulls_first: max(c.date)],
 
-lib/habit_tracker/stats.ex:111  SURVIVED  — kill may require an orphan row — …
+lib/habit_tracker/stats.ex:112  SURVIVED  — kill may require an orphan row — …
 -      left_join: c in assoc(h, :check_ins),
 +      inner_join: c in assoc(h, :check_ins),
 ```
