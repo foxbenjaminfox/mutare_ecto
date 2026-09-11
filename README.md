@@ -1,5 +1,10 @@
 # mutare_ecto
 
+[![Hex.pm](https://img.shields.io/hexpm/v/mutare_ecto.svg)](https://hex.pm/packages/mutare_ecto)
+[![Hexdocs](https://img.shields.io/badge/hexdocs-docs-blue.svg)](https://hexdocs.pm/mutare_ecto)
+[![CI](https://github.com/foxbenjaminfox/mutare_ecto/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/foxbenjaminfox/mutare_ecto/actions/workflows/ci.yml)
+[![License](https://img.shields.io/hexpm/l/mutare_ecto.svg)](https://github.com/foxbenjaminfox/mutare_ecto/blob/master/LICENSE)
+
 A mutation-testing plugin for [Ecto](https://hexdocs.pm/ecto), built as a custom
 [Mutare](https://github.com/foxbenjaminfox/mutare) mutator.
 
