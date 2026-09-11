@@ -255,7 +255,8 @@ defmodule Mutare.Ecto.ConfigTest do
                :coalesce,
                :temporal,
                :ordering_nulls,
-               :join_type
+               :join_type,
+               :validation_boundary
              ]
 
       # …and they're a subset of the full set.
@@ -293,11 +294,12 @@ defmodule Mutare.Ecto.ConfigTest do
                  :persistence,
                  :on_conflict,
                  :validation_drop,
+                 :validation_boundary,
                  :hook_drop
                ])
 
       # …and no accidental duplicates: the list length equals the deduped-set size.
-      assert length(Mutare.Ecto.families()) == 26
+      assert length(Mutare.Ecto.families()) == 27
     end
 
     test "the default set is the full set minus the opt-in literal arms" do

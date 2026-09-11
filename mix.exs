@@ -16,6 +16,8 @@ defmodule Mutare.Ecto.MixProject do
     Mutare.Ecto
     Mutare.Ecto.BindingReorder
     Mutare.Ecto.Changeset
+    Mutare.Ecto.Changeset.Routing
+    Mutare.Ecto.ValidationBoundary
     Mutare.Ecto.Clause
     Mutare.Ecto.ClauseDrop
     Mutare.Ecto.Dynamic
@@ -144,6 +146,8 @@ defmodule Mutare.Ecto.MixProject do
           Mutare.Ecto.RepoAggregate,
           Mutare.Ecto.RepoWrite,
           Mutare.Ecto.Changeset,
+          Mutare.Ecto.Changeset.Routing,
+          Mutare.Ecto.ValidationBoundary,
           Mutare.Ecto.QueryTerminal
         ],
         "Query-DSL mutators": [

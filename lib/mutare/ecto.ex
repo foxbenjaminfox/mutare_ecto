@@ -15,7 +15,7 @@ defmodule Mutare.Ecto do
 
   This module is a thin front for a family of sub-mutators, dispatched by the node it
   sees (`Mutare.Ecto.Dispatcher`): `Mutare.Ecto.RepoAggregate` and `Mutare.Ecto.RepoWrite` (Repo calls), `Mutare.Ecto.Changeset`
-  (changeset pipelines), `Mutare.Ecto.Query` (whole-`from` mutations), `Mutare.Ecto.Clause` and
+  and `Mutare.Ecto.ValidationBoundary` (changeset pipelines), `Mutare.Ecto.Query` (whole-`from` mutations), `Mutare.Ecto.Clause` and
   `Mutare.Ecto.QueryTerminal` (standalone/pipe clause macros and `first`/`last`),
   `Mutare.Ecto.BindingReorder` (positional binding transpositions on any binding-list macro),
   `Mutare.Ecto.ClauseDrop` (removing a standalone/pipe clause stage — `q |> where(…)` → `q`),
@@ -68,8 +68,15 @@ defmodule Mutare.Ecto do
   **Structural positions held back from core's families.** Listing the plugin also *suppresses* a
   little noise elsewhere: `call_routes/0` routes the action atom of `Ecto.Changeset.apply_action/2`
   and `apply_action!/2` `:raw`, so no core family ever mutates it — the atom is metadata (it only
-  stamps an error changeset's `action`), never behaviour. This is **not** gated by `families:`,
-  which selects what the plugin *produces*; the route applies whenever the plugin is listed.
+  stamps an error changeset's `action`), never behaviour. Likewise a changeset stage's **written
+  field atom** (`validate_length(cs, :name, …)` — a column name, which core would swap for an
+  unknown field Ecto raises on), the **option keys** of `validate_number` (`greater_than:`,
+  `message:`, … — Ecto rejects an option it doesn't know; the strict/non-strict swap is the
+  plugin's own `:validation_boundary`, and the bound *values* stay core's to bump), and a written
+  **`count:` mode** of `validate_length` (`:mutare` is no mode). `validate_length`'s keys are left
+  to core — Ecto ignores an unknown key, so the swap is a live mutant, not a crash — see
+  `Mutare.Ecto.Changeset.Routing`. This is **not** gated by `families:`, which selects what the
+  plugin *produces*; the routes apply whenever the plugin is listed.
 
   **Equivalence-sensitive families.** Some mutants carry a **report note** — a survivor reads
   `… SURVIVED  — kill may require …` — so it is recognised as honest signal, not a plain test gap.
@@ -94,7 +101,8 @@ defmodule Mutare.Ecto do
   or a literal `limit`/`offset` bound (pin-only — `Mutare.Ecto.Bound`); every routed node is still
   offered whole to `mutate/2` for the in-place families. A free-standing `dynamic/1,2` registers
   `:raw` (its arguments are left as written, the call itself still offered) and is mutated
-  whole-call by `Mutare.Ecto.Dynamic`.
+  whole-call by `Mutare.Ecto.Dynamic`. The changeset stages (`Mutare.Ecto.Changeset.stages/0`)
+  route through `Mutare.Ecto.Changeset.Routing`, which only pins the structural positions above.
 
   Resolution of these macros relies on Mutare's `use`-expansion (so the
   `use Ecto.Schema`-injected `import Ecto.Schema`, and a `use MyAppWeb, :live_view`-bundled
@@ -108,6 +116,7 @@ defmodule Mutare.Ecto do
 
   alias Mutare.Ecto.{
     Aggregate,
+    Changeset,
     Combination,
     Config,
     Context,
@@ -119,7 +128,8 @@ defmodule Mutare.Ecto do
     Query,
     Scalar,
     Surface,
-    Tag
+    Tag,
+    ValidationBoundary
   }
 
   @impl Mutare.Mutator
@@ -165,7 +175,7 @@ defmodule Mutare.Ecto do
   """
   # Every producer contributing finer labels (`Mutare.Ecto.Vocabulary`). The arithmetic operators
   # arrive via `Scalar`, which owns them (`Fragment` only applies its swaps per condition node).
-  @vocabularies [Fragment, Scalar, Aggregate, Ordering, Query, Combination]
+  @vocabularies [Fragment, Scalar, Aggregate, Ordering, Query, Combination, ValidationBoundary]
   @impl Mutare.Mutator
   @spec variants() :: [atom() | String.t()]
   def variants do
@@ -202,6 +212,11 @@ defmodule Mutare.Ecto do
         {Ecto.Changeset, fun, 2, [:expression, :raw]}
       end
 
+    # Every pipeline stage the plugin mutates routes through the changeset classifier
+    # (`Mutare.Ecto.Changeset.Routing`): a written field atom, `validate_number`'s option keys,
+    # and a written `validate_length` `count:` mode are held back from core's families.
+    stages = for stage <- Changeset.stages(), do: {Ecto.Changeset, stage, :any, :routing}
+
     query =
       Enum.map(Surface.macro_registrations(), fn
         {macro, :routing} -> {Ecto.Query, macro, :any, :routing}
@@ -209,12 +224,17 @@ defmodule Mutare.Ecto do
       end)
 
     # mutare:ignore[operand_swap] concat order is irrelevant — entries registered as a set
-    schema ++ changeset ++ query
+    schema ++ changeset ++ stages ++ query
   end
 
-  # The per-argument routing classifier — see `Mutare.Ecto.Host.Routing`.
+  # The per-argument routing classifiers, one per routed library surface: an `Ecto.Changeset`
+  # stage — see `Mutare.Ecto.Changeset.Routing`; every `Ecto.Query` macro — see
+  # `Mutare.Ecto.Host.Routing`.
   @impl Mutare.CallRouting
-  defdelegate route_arguments(call, context), to: Host.Routing
+  def route_arguments(%Mutare.CallRouting.Call{module: Ecto.Changeset} = call, context),
+    do: Changeset.Routing.route_arguments(call, context)
+
+  def route_arguments(call, context), do: Host.Routing.route_arguments(call, context)
 
   # Exactly the macros the classifier can route a position `:hosted`
   # (`Mutare.Ecto.Surface.hosted_macro_names/0`).

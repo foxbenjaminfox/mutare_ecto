@@ -15,7 +15,8 @@ defmodule Mutare.Ecto.Dispatcher do
     QueryTerminal,
     RepoAggregate,
     RepoWrite,
-    Surface
+    Surface,
+    ValidationBoundary
   }
 
   alias Mutare.Calls
@@ -80,8 +81,9 @@ defmodule Mutare.Ecto.Dispatcher do
   defp call_mutations({@query_key, _name, _args, _rebuild}, node, context),
     do: QueryTerminal.mutations(node, context)
 
+  # A changeset pipeline stage: the stage drops and the `validate_number` bound swap.
   defp call_mutations({@changeset_key, _name, _args, _rebuild}, node, context),
-    do: Changeset.mutations(node, context)
+    do: invoke([Changeset, ValidationBoundary], node, context)
 
   defp call_mutations({module, _name, _args, _rebuild}, node, %Context{config: config} = context) do
     # `RepoAggregate`/`RepoWrite`'s own `RepoCall.resolve/2` re-verifies the module match and

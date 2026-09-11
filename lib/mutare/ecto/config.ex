@@ -34,7 +34,8 @@ defmodule Mutare.Ecto.Config do
   #     (`Mutare.Ecto.Query`), combination (`Mutare.Ecto.Combination`), query_terminal
   #     (`Mutare.Ecto.QueryTerminal`);
   #   * repo write: persistence, on_conflict (`Mutare.Ecto.RepoWrite`);
-  #   * changeset: validation_drop, hook_drop (`Mutare.Ecto.Changeset`).
+  #   * changeset: validation_drop, hook_drop (`Mutare.Ecto.Changeset`), validation_boundary
+  #     (`Mutare.Ecto.ValidationBoundary`).
   #
   # Generates the catalog machinery from this one declaration: `@type family` (the union),
   # `all_families/0` (`:all`, ordered), `default_families/0` (`:all` minus `:opt_in`),
@@ -76,6 +77,7 @@ defmodule Mutare.Ecto.Config do
       :persistence,
       :on_conflict,
       :validation_drop,
+      :validation_boundary,
       :hook_drop
     ],
     opt_in: [:string_literal, :atom_literal, :boolean_literal]

@@ -42,6 +42,14 @@ defmodule Mutare.Ecto.Changeset do
   @hooks ~w(prepare_changes optimistic_lock)a
 
   @doc """
+  Every pipeline stage the plugin owns — the droppable validators/constraints and the Repo-time
+  hooks. The one list `Mutare.Ecto.call_routes/0` registers `:routing` (through
+  `Mutare.Ecto.Changeset.Routing`), so a stage is routed exactly when it is mutated.
+  """
+  @spec stages() :: [atom()]
+  def stages, do: @droppable ++ @hooks
+
+  @doc """
   Changeset-step drop mutations for an `Ecto.Changeset` call as tags, or `[]`.
   A validator/constraint drops under `:validation_drop`; a Repo-time hook under `:hook_drop`.
   """

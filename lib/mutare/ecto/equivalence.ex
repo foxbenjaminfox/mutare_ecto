@@ -7,7 +7,8 @@ defmodule Mutare.Ecto.Equivalence do
   # the plugin produces.
   #
   # The reasons are genuinely distinct (only the connective one is actually SQL three-valued
-  # logic — the rest turn on boundary values, NULL exclusion, NULL ordering, or join cardinality),
+  # logic — the rest turn on boundary values, NULL exclusion, NULL ordering, join cardinality, or
+  # — for the one changeset family, `:validation_boundary` — a changeset value on the bound),
   # so each note names the specific data a kill needs rather than one catch-all string. The
   # `@…_note` strings below are the single statement of each family's reason — written as the
   # report line itself, so the rationale and what the user reads cannot drift. Three families
@@ -39,6 +40,7 @@ defmodule Mutare.Ecto.Equivalence do
   @temporal_note "kill may require a row timestamped near now — ago(n, unit) and from_now(n, unit) sit the same distance on opposite sides of now, so comparisons against them differ only for rows between the two instants"
   @ordering_nulls_note "kill may require NULL rows in the ordered column — nulls_first and nulls_last only change where NULLs sort, ordering all other rows identically"
   @join_note "kill may require an orphan row — a preserved-side row with no match (join kinds coincide when every row matches)"
+  @validation_boundary_note "kill may require a changeset whose value sits exactly on the bound — strict and non-strict number validations (greater_than vs greater_than_or_equal_to, less_than vs less_than_or_equal_to) accept the same values except one equal to the bound"
 
   # The note for each equivalence-sensitive family; the single source of truth for the set (a family
   # is equivalence-sensitive iff it appears here). `sensitive_families/0` derives the ordered set by
@@ -52,7 +54,8 @@ defmodule Mutare.Ecto.Equivalence do
     coalesce: @coalesce_note,
     temporal: @temporal_note,
     ordering_nulls: @ordering_nulls_note,
-    join_type: @join_note
+    join_type: @join_note,
+    validation_boundary: @validation_boundary_note
   }
 
   @doc "The families whose survivors may be unkillable for a data reason (see the report note)."

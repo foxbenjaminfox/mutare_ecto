@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`validation_boundary`**, a changeset family: the strict/non-strict swap of a
+  `validate_number/3` bound — `greater_than` ↔ `greater_than_or_equal_to`,
+  `less_than` ↔ `less_than_or_equal_to` — the changeset twin of the in-query
+  `comparison` swap, on by default and equivalence-sensitive (a kill needs a
+  changeset whose value sits exactly on the bound). `equal_to`/`not_equal_to` are
+  deliberately not swapped; `validate_length`'s inclusive `min`/`max` have no
+  strict twin, so their off-by-one stays Mutare's integer family's.
+
+### Changed
+
+- **Changeset stages are routed.** Listing the plugin now holds back from Mutare's
+  core families the changeset positions where a core swap is a crash rather than
+  a mutant: a written field atom (`validate_length(cs, :name, …)` — swapping it
+  names a field Ecto raises on), the option keys of `validate_number`
+  (`greater_than:`, `message:`, … — Ecto rejects any option it doesn't know), and
+  a written `count:` mode of `validate_length` (`:mutare` is no mode Ecto
+  dispatches on). `validate_length`'s *keys* stay core's: Ecto ignores an unknown
+  key, so `min:` → `mutare:` is a live mutant — that one bound gone, the call
+  otherwise intact — finer than the whole-call drop. The bound *values* still
+  receive core's literal mutants, and a field *list*
+  (`validate_required(cs, [:name, :email])`) stays an ordinary expression for
+  core's list families.
+
 ## [0.1.1] - 2026-09-07
 
 ### Fixed

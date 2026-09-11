@@ -43,6 +43,10 @@ defmodule Mutare.Ecto.VariantTest do
       assert "left" in variants
       assert "intersect" in variants
       assert "except_all" in variants
+
+      # ...and the changeset bound swap.
+      assert "greater_than" in variants
+      assert "less_than_or_equal_to" in variants
     end
 
     test "is canonical: the finer labels deduped and sorted, after the family atoms" do

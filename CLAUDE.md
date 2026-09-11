@@ -122,8 +122,10 @@ gives each entry its own isolated generated lockfile; normal local commands cont
 `Mutare.Ecto` (`lib/mutare/ecto.ex`) is a thin `Mutare.Mutator` front that also implements core's
 two adapter behaviours, `Mutare.CallRouting` and `Mutare.Mutator.MacroHost`. Every callback
 delegates: `init/1` → `Mutare.Ecto.Config` (options parsed once, delivered as `context.config`);
-`call_routes/0`/`hosted_macros/0` are derived from `Mutare.Ecto.Surface`; `route_arguments/2` →
-`Mutare.Ecto.Host.Routing`; `host/2` → `Mutare.Ecto.Host`; `mutate/2` → `Mutare.Ecto.Dispatcher`
+`call_routes/0`/`hosted_macros/0` are derived from `Mutare.Ecto.Surface` (query macros) and
+`Mutare.Ecto.Changeset.stages/0` (changeset stages); `route_arguments/2` →
+`Mutare.Ecto.Host.Routing` for an `Ecto.Query` call and `Mutare.Ecto.Changeset.Routing` for an
+`Ecto.Changeset` one; `host/2` → `Mutare.Ecto.Host`; `mutate/2` → `Mutare.Ecto.Dispatcher`
 (tags → `Mutare.Ecto.Tag.to_mutation/1`); `finalize/2` → `Mutare.Ecto.Equivalence` (the one
 filter + note funnel); `argument_marks/1` pins `apply_action`'s action atom
 (NOTES "`apply_action`'s action atom: pinned against core's value families, never mutated").
@@ -138,7 +140,8 @@ The surface divides by **how a mutation is delivered**, not by what it mutates:
 1. **Plain calls** — resolved through `Mutare.Calls`, delivered by Mutare's ordinary in-place
    selector: `RepoAggregate`, `RepoWrite`, `Changeset`, `QueryTerminal`; the whole-`from`
    rewrites (`Query`); the standalone/pipe rewrites (`Clause`, `ClauseDrop`, `BindingReorder`);
-   and the free-standing `dynamic/1,2`, mutated whole-call where it is built (`Dynamic`).
+   the free-standing `dynamic/1,2`, mutated whole-call where it is built (`Dynamic`); and the
+   changeset bound swap (`ValidationBoundary`).
 2. **Skipped** — `schema`/`embedded_schema` bodies: a mutated field name/type is a broken schema,
    not a mutant.
 3. **Hosted DSL** (the heart) — in-fragment `where`/`having`/`on:` mutations, woven behind Ecto's
@@ -180,7 +183,9 @@ Each row is role + the rule(s) that module is the **home** for.
 | `dynamic.ex` | free-standing `dynamic/1,2`; home of its whole-call in-place delivery |
 | `query.ex` | whole-`from` rewrites; home of the JoinType narrowing rationale |
 | `clause.ex` | standalone/pipe cousins of `query.ex` |
-| `clause_drop.ex` / `changeset.ex` | stage drops (a query clause / a changeset validator or hook) over `stage_drop.ex` |
+| `clause_drop.ex` / `changeset.ex` | stage drops (a query clause / a changeset validator or hook) over `stage_drop.ex`; `changeset.ex` is home of the stage table (`stages/0`) the changeset routes derive from |
+| `changeset/routing.ex` | the changeset-stage classifier; home of the changeset pins (a written field atom `:raw`; `validate_number`'s option keys raw via `{:keyword, …}`, values `:expression`; a written `validate_length` `count:` mode via a keyed refinement) and of why a field *list* and `validate_length`'s keys are not pinned |
+| `validation_boundary.ex` | the `validate_number` strict↔non-strict bound swap; home of the `equal_to`/`not_equal_to` exclusion |
 | `stage_drop.ex` | home of pipe-aware stage-drop delivery |
 | `binding_reorder.ex` | home of the in-place binding-reorder rule |
 | `repo_aggregate.ex` / `repo_write.ex` / `query_terminal.ex` | bucket-1 families; `repo_write.ex` is home of the `on_conflict` swap rules and of the persistence rewrite's error-path parity rule (the mutant restates the write's Repo and action, so it may differ only on a *successful* write) |

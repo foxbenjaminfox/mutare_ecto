@@ -125,13 +125,20 @@ just be a broken query, not a test signal).
 | `persistence` | `Repo.insert(cs)` → non-persisting `apply_action` | Does a test assert the write actually happened? |
 | `on_conflict` | swap `on_conflict:` on `insert`/`insert!`/`insert_all` — `:nothing`→`:raise`, `:raise`→`:nothing`, `:replace_all`→`:nothing` | Is the conflict behaviour tested? |
 | `validation_drop` | drop `validate_required`, `unique_constraint`, … | Is the rule it enforces tested? |
+| `validation_boundary` | `validate_number(:age, greater_than: 0)` → `greater_than_or_equal_to: 0` (and `less_than` ↔ `less_than_or_equal_to`) | Is the bound itself tested? |
 | `hook_drop` | drop `prepare_changes` / `optimistic_lock` | Is the side effect / lock asserted? |
 
 Both query syntaxes are covered — the `from(u in User, where: …)` keyword form (piped too:
 `User |> from(as: :u, where: …)`) and the composable pipe form (`q |> where([u], …)`) — as are
 direct, aliased, and `import`/`use`-bundled call styles.
 Schema definitions (`schema`/`embedded_schema`) are left untouched: a mutated field name is a
-broken schema, not an interesting mutant.
+broken schema, not an interesting mutant. For the same reason, listing the plugin holds a few
+changeset positions back from Mutare's core families: a stage's written field atom
+(`validate_length(cs, :name, …)` — an unknown field raises), `apply_action`'s action atom, the
+option *keys* of `validate_number` (an unknown option raises; their strict/non-strict swap is
+`validation_boundary`'s, and the bound *values* stay core's to bump), and a written `count:` mode
+of `validate_length`. Its *keys* stay core's: Ecto ignores an unknown one, so `min:` → `mutare:`
+is a live mutant — that bound alone gone.
 
 ## Configuration
 
@@ -183,8 +190,9 @@ and gives each a note naming the **specific** data a kill needs, so the report r
 
 The reasons are distinct — a boundary value, NULL exclusion (`==`/`!=`), three-valued `and`/`or`,
 an arithmetic identity operand (0 for `+`/`-`, ±1 for `*`/`/`), a NULL row for the `coalesce`
-default, a near-*now* row for the `ago`/`from_now` flip, NULL ordering, join cardinality — so the
-notes are too, rather than one catch-all string.
+default, a near-*now* row for the `ago`/`from_now` flip, NULL ordering, join cardinality, a
+changeset value on a `validate_number` bound — so the notes are too, rather than one catch-all
+string.
 
 `Mutare.Ecto.equivalence_sensitive_families/0` returns that set, and with `as:` you can group them
 under their own report name to separate "needs a boundary fixture" from "needs any test at all":
