@@ -4,9 +4,9 @@ defmodule Mutare.Ecto.Host do
 
   The companion `Mutare.Ecto.Host.Routing` identifies hosted argument positions. This module then
   coordinates four focused components: `Host.Condition` locates the condition argument a
-  `where`/`having` call owns, `Host.Bindings` interprets Ecto binding declarations, `Host.Catalog`
+  `where`/`having` call contains, `Host.Bindings` interprets Ecto binding declarations, `Host.Catalog`
   produces the logical mutants — the plugin's own SQL catalog plus the pin interiors
-  `Mutare.Ecto.Island` sub-contracts to core (which is why `context` threads down to the
+  `Mutare.Ecto.Island` passes to core (which is why `context` is passed down to the
   catalog) — and `Host.Target` constructs the `dynamic/2` wrap and selector splice consumed by
   Mutare core.
 

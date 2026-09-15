@@ -5,10 +5,10 @@ defmodule HabitTracker.Stats do
   This is the dense end of the query DSL — joins, `group_by`/`having`, aggregates
   (`sum`/`avg`/`count`), scalar SQL (`coalesce` and arithmetic), a
   `left_join` with `is_nil`, a date-range filter, and an explicit NULLS-placement
-  ordering — exactly the surface where the Ecto mutator earns its keep. Swap
+  ordering — all covered by the Ecto mutator. Swap
   `sum` for `avg`, an inner join for a left one, `>=` for `>`, drop a
-  `coalesce` fallback, or move where NULLs sort, and only a sharp test will
-  notice.
+  `coalesce` fallback, or move where NULLs sort: tests must distinguish the changed
+  results to kill these mutants.
   """
   import Ecto.Query
 
@@ -43,7 +43,7 @@ defmodule HabitTracker.Stats do
     |> Repo.all()
   end
 
-  @doc "The total of every count a habit has logged (0 when it has none)."
+  @doc "The total count logged for a habit (0 when it has no check-ins)."
   def total_count(%Habit{} = habit) do
     from(c in CheckIn, where: c.habit_id == ^habit.id)
     |> Repo.aggregate(:sum, :count)
@@ -100,8 +100,8 @@ defmodule HabitTracker.Stats do
   dormant ones (never checked in) listed last.
 
   A `left_join` keeps the never-checked-in habits, whose `max(c.date)` is then
-  `NULL`; the explicit `:desc_nulls_last` is the author saying *where* those NULLs
-  sort — at the bottom. That NULLS placement is its **own** mutation axis, separate
+  `NULL`; the explicit `:desc_nulls_last` places those NULLs at the bottom.
+  That NULLS placement is its **own** mutation axis, separate
   from the `:desc` direction: flipping it to `:desc_nulls_first` only changes the
   result once a dormant habit (a NULL date) is actually in the data — the same
   orphan-row condition the `left_join` → inner-join swap needs. Two equivalence-
@@ -123,8 +123,7 @@ defmodule HabitTracker.Stats do
   Built in the composable form with an **ellipsis binding**: `where([..., c], ...)`
   reaches the check-in binding — the *last* one — without naming the `habits`
   binding ahead of it. That's the positional idiom for "filter on the
-  most-recently-joined table" in query code that doesn't want to spell out every
-  binding before the one it cares about.
+  most-recently-joined table" without listing every preceding binding.
   """
   def active_since(date) do
     Habit

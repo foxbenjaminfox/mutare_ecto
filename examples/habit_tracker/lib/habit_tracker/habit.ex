@@ -2,9 +2,8 @@ defmodule HabitTracker.Habit do
   @moduledoc """
   A habit to build: a name, how often it should happen, and a per-period target.
 
-  The `schema` block is off-limits to the mutator (a renamed field is a broken
-  schema, not a mutant), but `changeset/2` is fair game — every validation it
-  stacks on is a rule Mutare can drop to ask "is this enforced by a test?".
+  The mutator skips the `schema` block (a renamed field is a broken schema), but
+  can drop each validation in `changeset/2` to check whether tests cover it.
   """
   use Ecto.Schema
   import Ecto.Changeset

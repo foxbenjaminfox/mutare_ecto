@@ -1,10 +1,10 @@
 defmodule Mutare.Ecto.ValidationBoundary do
   @moduledoc """
-  Swap a `validate_number/3` bound between its strict and non-strict form — the changeset twin of
-  the in-query `:comparison` swap. `validate_number(:age, greater_than: 0)` →
+  Swap a `validate_number/3` bound between its strict and non-strict form — the changeset
+  counterpart of the in-query `:comparison` swap. `validate_number(:age, greater_than: 0)` →
   `validate_number(:age, greater_than_or_equal_to: 0)`. "Is the bound *itself* tested?" — the two
   validations accept the same values except one exactly on the bound, so the mutant survives
-  unless a test builds a changeset whose value sits on it and asserts the verdict. Family
+  unless a test builds a changeset whose value equals it and asserts the validation result. Family
   `:validation_boundary`; equivalence-sensitive (`Mutare.Ecto.Equivalence`), because a kill needs
   exactly that fixture.
 
@@ -12,8 +12,8 @@ defmodule Mutare.Ecto.ValidationBoundary do
   `less_than_or_equal_to`. `equal_to`/`not_equal_to` are deliberately not swapped: the mutant
   rejects the one value the written validation accepts (or the reverse), which any happy-path test
   kills — no signal beyond the whole-call `:validation_drop`. `validate_length`'s `min`/`max`/`is`
-  are inclusive with no strict twin, so the off-by-one there is core's integer family's (the value
-  stays an ordinary expression — `Mutare.Ecto.Changeset.Routing`).
+  are inclusive with no strict counterpart, so core's integer family provides their off-by-one
+  mutations (the value stays an ordinary expression — `Mutare.Ecto.Changeset.Routing`).
 
   One mutant per swappable option; every other option (`message:`, a second bound) is kept as
   written. Matched like the stage drops (`Mutare.Ecto.Changeset`): the call resolves to
@@ -39,14 +39,14 @@ defmodule Mutare.Ecto.ValidationBoundary do
     less_than_or_equal_to: :less_than
   }
 
-  @doc "The strict/non-strict twin of a `validate_number` option key, or `nil` for any other key."
+  @doc "The strict/non-strict counterpart of a `validate_number` option key, or `nil` for any other key."
   @spec swap(atom()) :: atom() | nil
   def swap(key), do: Map.get(@swaps, key)
 
   @doc """
   The finer `# mutare:ignore` label for a bound swap: the **written** key
   (`# mutare:ignore[ecto:greater_than]` leaves a `greater_than:` bound's swap alone). Total over
-  any key; whether a swap exists is `swap/1`'s decision.
+  any key; `swap/1` returns the replacement key or `nil` when no swap exists.
   """
   @spec label(atom()) :: String.t()
   def label(key), do: Atom.to_string(key)

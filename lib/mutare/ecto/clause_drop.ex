@@ -1,7 +1,7 @@
 defmodule Mutare.Ecto.ClauseDrop do
   @moduledoc """
-  Drop a standalone/pipe **query clause** — the composable cousin of `Mutare.Ecto.Query`'s
-  whole-`from` clause drop, and the query-side twin of `Mutare.Ecto.Changeset`'s validator drop.
+  Drop a standalone/pipe **query clause** — the composable counterpart of `Mutare.Ecto.Query`'s
+  whole-`from` clause drop, analogous to `Mutare.Ecto.Changeset`'s validator drop.
   Where `Query` removes a `where:`/`limit:` clause from a `from(…)` keyword list, this removes the
   same kinds of clause written as a standalone call or pipe stage:
 
@@ -20,7 +20,7 @@ defmodule Mutare.Ecto.ClauseDrop do
   ## Families
 
   The recorded family mirrors `Mutare.Ecto.Query`, so the **same** semantic mutation carries the
-  **same** family regardless of which syntax wrote it:
+  **same** family regardless of the syntax used:
 
     * `where`/`or_where`/`having`/`or_having` → **`:filter_drop`**;
     * `limit`/`offset` → **`:bound`** (the bound family also covers the `n`→`n±1` bumps);
@@ -42,7 +42,7 @@ defmodule Mutare.Ecto.ClauseDrop do
 
   @doc """
   Stage-drop mutations for an `Ecto.Query` clause macro as tags, or `[]`.
-  Pipe-aware: the `pipe_mode` from `context` decides identity-vs-first-argument delivery.
+  Pipe-aware: the `pipe_mode` from `context` determines identity-vs-first-argument delivery.
   """
   @spec mutations(Macro.t(), Context.t()) :: [Mutare.Ecto.Tag.t()]
   @impl Mutare.Ecto.SubMutator

@@ -8,7 +8,7 @@ defmodule Mutare.Ecto.QueryTerminal do
 
   These are plain `Ecto.Query` functions (not the macro DSL), so they resolve through
   `Mutare.Calls.resolved_call_to/3` in every written form — qualified (`Ecto.Query.first(q)`),
-  aliased, or bare under `import Ecto.Query` — and ride Mutare's ordinary in-place selector. The
+  aliased, or bare under `import Ecto.Query` — and use Mutare's ordinary in-place selector. The
   `rebuild` keeps the source's written form (and is pipe-agnostic: `q |> first()` has an empty arg
   list, so `q |> last()` falls out for free). Family `:query_terminal`.
   """

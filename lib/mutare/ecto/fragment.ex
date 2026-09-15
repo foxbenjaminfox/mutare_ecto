@@ -9,25 +9,24 @@ defmodule Mutare.Ecto.Fragment do
   `Mutare.Ecto.Dynamic` rebuilds a free-standing `dynamic` call whole (an ordinary expression
   position, needing no weave).
 
-  ## SQL semantics, owned end to end
+  ## SQL semantics throughout the catalog
 
   The catalog reuses **none** of Mutare's built-in mutators: the operators look like Elixir's
   but they evaluate under SQL's semantics — three-valued boolean logic for the connectives,
   NULL handling for the predicates, boundary behaviour for the comparisons, the engine's
-  division for arithmetic — so a borrowed Elixir-semantics mutator would silently drop
+  division for arithmetic — so an Elixir-semantics mutator would silently drop
   genuinely killable mutants (or emit provably equivalent ones). The in-fragment literal arms are
-  owned here for the same reason: a literal written into a condition is part of the SQL the query
-  runs, not interpolated Elixir, so core never sees it (the clause is raw/`:hosted`). They follow
+  implemented here for the same reason: a literal written into a condition is part of the SQL
+  the query runs, not interpolated Elixir, so core never traverses it (the clause is raw/`:hosted`). They follow
   core's value conventions — the numeric arms take their off-by-one/zero table and
   `# mutare:ignore` labels from `Mutare.AST.numeric_alternatives/3`, so the two can't drift —
-  but are decided here under SQL semantics, and each is named after the *type* it mutates
-  (`integer_literal`, …), never after `fragment(...)`.
+  but the mutations are selected here under SQL semantics. Each is named after the *type* it
+  mutates (`integer_literal`, …), never after `fragment(...)`.
 
-  The rule cuts the other way at every `^` pin: a pin's interior is ordinary Elixir evaluated at
-  runtime, never this catalog's (an SQL-rationale `^(min * 2)` → `^(min / 2)` would mutate the
-  parameter's Elixir value). The walk treats a pin as a leaf, and `islands/1` hands each interior
-  to the condition's owner for the core sub-contract — see `Mutare.Ecto.Island`. Field references
-  (`u.age`) are likewise never mutated.
+  A `^` pin's interior is ordinary Elixir evaluated at runtime, so this catalog never mutates it
+  (applying the SQL mutation `^(min * 2)` → `^(min / 2)` would mutate the parameter's Elixir value).
+  The walk treats a pin as a leaf, and `islands/1` returns each interior for the calling module
+  to pass to core — see `Mutare.Ecto.Island`. Field references (`u.age`) are likewise never mutated.
 
   ## The families
 
@@ -38,7 +37,7 @@ defmodule Mutare.Ecto.Fragment do
     * **NullPredicate** — `is_nil(x)`↔`not is_nil(x)`, treated as one unit so `not is_nil(x)`
       flips back rather than double-negating. Its argument is **never descended** — the value
       families preserve NULL-ness, so their mutants are provably equivalent there — with one
-      exception the unit reads itself: the coalesce drop, the one mutation that changes
+      exception handled directly: the coalesce drop, the one mutation that changes
       NULL-ness (see the `children/2` `is_nil` clause and `null_interior/1`).
     * **Membership** — `x in ^list`↔`x not in ^list` and `exists(subquery)`↔`not exists(subquery)`
       (unit polarity flips, no double negation), one **element drop** per *distinct* entry of a
@@ -78,19 +77,19 @@ defmodule Mutare.Ecto.Fragment do
   query, not a live one): the `fragment` template, an interval unit, a cast type, a column,
   binding, or alias name — `structural_position?/1` is the registry, consulted off the
   `{parent_form, arity, index}` the walk threads down. Data literals at every *other* position
-  of those forms are still mutated. A **tuple** is told apart the same way: at a structural
-  position it is a compound cast spec (`{:array, :string}`), skipped whole; anywhere else it is
+  of those forms are still mutated. A **tuple** is classified by position in the same way: at a
+  structural position it is a compound cast spec (`{:array, :string}`), skipped whole; anywhere else it is
   Ecto's tuple comparison (`{p.views, p.id} > {1, 2}`), walked like a written list — each element
   a data position of the comparison (`children/2`).
 
   ## Traversal
 
   The traversal is the plugin's one shared walk (`Mutare.Ecto.Walk`, whose author-macro rule
-  decides which nested-call arguments are entered): this module supplies its descent rule
+  specifies which nested-call arguments are entered): this module supplies its descent rule
   (`children/2` — the unit predicates, the `{parent_form, arity, index}` position) and two
-  per-node readers over the positions it admits — the catalog (`local/3`, behind `mutants/2`)
+  per-node readers over the positions traversed — the catalog (`local/3`, behind `mutants/2`)
   and the island collector (`local_islands/1`, behind `islands/1`) — so the two can never
-  disagree about which nodes a condition exposes.
+  traverse different sets of nodes in a condition.
   """
 
   alias Mutare.Ecto.{Aggregate, Config, Scalar, Subquery, Tag, Walk}
@@ -124,8 +123,8 @@ defmodule Mutare.Ecto.Fragment do
   `# mutare:ignore[ecto:<]` can suppress just that one). `config` carries `dialects:` — the
   `like`↔`ilike` swap is emitted only under `:postgres`.
 
-  The catalog proper is `local/3` — what one node offers, at its `{parent_form, arity, index}`
-  position — read over every position the shared walk (`Mutare.Ecto.Walk`) admits under this
+  The catalog proper is `local/3` — the mutations for one node, at its `{parent_form, arity, index}`
+  position — applied at every position the shared walk (`Mutare.Ecto.Walk`) traverses under this
   catalog's own descent rule (`children/2`).
   """
   @spec mutants(Macro.t(), Config.t()) :: [Tag.t()]
@@ -135,15 +134,15 @@ defmodule Mutare.Ecto.Fragment do
   @doc """
   Every interpolation **island** (`^expr`) in the condition, as `{interior, rebuild}` pairs —
   `interior` is the pin's Elixir expression and `rebuild.(mutated_interior)` is the full condition
-  with exactly that pin's interior replaced (the pin itself kept). The condition's owner feeds
-  each interior to the core sub-contract — see `Mutare.Ecto.Island`.
+  with exactly that pin's interior replaced (the pin itself kept). The calling module passes
+  each interior to core — see `Mutare.Ecto.Island`.
 
   The islands are a second reader of the **same** positions `mutants/2` reads
   (`local_islands/1` over `Mutare.Ecto.Walk.positions/3`, under the same `children/2`), so a
   caller cannot reach an island the catalog would not have walked past — by construction, not by
   a parallel walk kept in step. So an `is_nil` argument surfaces no island, a subquery argument
   surfaces the pins of the clauses `Mutare.Ecto.Subquery` mutates under that wrapper, and the pin
-  itself is the boundary (the sub-contract owns everything beneath it).
+  itself is the boundary (everything beneath it is passed to core for mutation).
   """
   @spec islands(Macro.t()) :: [{Macro.t(), (Macro.t() -> Macro.t())}]
   def islands(condition) do

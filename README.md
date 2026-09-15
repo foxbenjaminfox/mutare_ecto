@@ -13,21 +13,20 @@ your code — a `>` becomes a `>=`, a `where` clause is dropped, a `validate_req
 and reruns your suite. If the tests still pass, that mutation **survived**, and you've found a gap
 your assertions don't cover.
 
-`mutare_ecto` aims that lens at the Ecto code you write — `Repo` calls, changeset pipelines, and
-the `from`/query DSL — so a survivor tells you something concrete: *"no test would notice if this
-filter, this sort order, or this validation quietly changed."*
+`mutare_ecto` applies mutation testing to the Ecto code you write — `Repo` calls, changeset
+pipelines, and the `from`/query DSL. A surviving mutant indicates that no test fails when a
+particular filter, sort order, or validation changes.
 
 ## Why a dedicated Ecto mutator
 
-An Ecto `where` clause looks like Elixir, but it isn't — it's a fragment of SQL, and SQL runs
-under **three-valued logic** (`NULL` is neither true nor false). A general-purpose mutator that
-treats `a < b or a > b` as ordinary Elixir will "helpfully" conclude it's equivalent to `a != b`
-and skip the mutation. In SQL that's wrong: when `a` or `b` is `NULL`, the two differ — and that's
-exactly the untested edge you'd want flagged.
+An Ecto `where` condition uses Elixir syntax to express SQL, which evaluates boolean expressions
+under **three-valued logic** (`NULL` is neither true nor false). Elixir's equivalence rules do not
+account for SQL's NULL handling. Applying them to query conditions can suppress useful mutations
+or produce equivalent ones.
 
-So `mutare_ecto` ships its **own** SQL-semantics mutation catalog and never borrows Mutare's
+So `mutare_ecto` provides a separate SQL-semantics mutation catalog and never applies Mutare's
 Elixir-semantics mutators inside a query. Every mutation it emits is one a real SQL engine will
-run, and its equivalence reasoning is SQL's, not Elixir's.
+run, and its equivalence rules follow SQL semantics.
 
 ## Installation
 
@@ -135,9 +134,9 @@ Schema definitions (`schema`/`embedded_schema`) are left untouched: a mutated fi
 broken schema, not an interesting mutant. For the same reason, listing the plugin holds a few
 changeset positions back from Mutare's core families: a stage's written field atom
 (`validate_length(cs, :name, …)` — an unknown field raises), `apply_action`'s action atom, the
-option *keys* of `validate_number` (an unknown option raises; their strict/non-strict swap is
-`validation_boundary`'s, and the bound *values* stay core's to bump), and a written `count:` mode
-of `validate_length`. Its *keys* stay core's: Ecto ignores an unknown one, so `min:` → `mutare:`
+option *keys* of `validate_number` (an unknown option raises; `validation_boundary` swaps strict
+and non-strict keys, and core still mutates the bound *values*), and a written `count:` mode
+of `validate_length`. Core still mutates its *keys*: Ecto ignores an unknown one, so `min:` → `mutare:`
 is a live mutant — that bound alone gone.
 
 ## Configuration
@@ -155,7 +154,7 @@ Each `{Mutare.Ecto, …}` entry takes:
   list (`repo: [MyApp.Repo, MyApp.ReplicaRepo]`) when the app has several. Omit it when only
   query/changeset families are needed; Repo-call families then produce no mutations.
 - **`families:`** — select the catalog. Every family above is independently toggleable; an unknown
-  name fails loudly. Accepts:
+  name raises an `ArgumentError`. Accepts:
   - `:default` (the unset default) — every family **except** the opt-in `string_literal` /
     `atom_literal` / `boolean_literal` arms (see the † note above);
   - `:all` — every family, including those opt-in arms;
@@ -177,10 +176,9 @@ the remaining options reach this plugin.
 
 ## Equivalence reporting
 
-Some survivors are honest signal rather than a flat "your test is missing." A surviving
-`>=`↔`>`, `and`↔`or`, or `is_nil` mutant may be **legitimately unkillable without the right
-fixture** — a boundary row, a `NULL`, an orphan — not an oversight. The plugin marks these families
-and gives each a note naming the **specific** data a kill needs, so the report reads:
+A surviving `>=`↔`>`, `and`↔`or`, or `is_nil` mutant may require **specific fixture data** to
+distinguish it from the original — a boundary row, a `NULL`, an orphan. The plugin annotates these
+families with the specific data needed to kill each mutant, so the report reads:
 
 ```
 … SURVIVED  — kill may require a row whose value sits exactly on the bound — …

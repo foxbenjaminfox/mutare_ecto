@@ -6,17 +6,17 @@ defmodule Mutare.Ecto.BindingReorder do
   (the condition/clause/join/dynamic descriptors in `Mutare.Ecto.Surface`).
 
   A binding list maps names to the query's bindings **by position**: `[a, b]` binds `a`→1st,
-  `b`→2nd. Transposing two positional entries (`[a, b]` → `[b, a]`) asks whether their order
+  `b`→2nd. Transposing two positional entries (`[a, b]` → `[b, a]`) tests whether their order
   matters. **Named** bindings (`comments: c`) are addressed by name, not position, so they are left
   in place. `_`-prefixed bindings are intentionally ignored, matching core's pattern-swap policy.
 
   The reorder is always delivered **in place** — by swapping the written list, never by rewriting the
   condition body. The list sits in an ordinary argument position (not inside a macro-expanded query
-  fragment), so the whole macro call (itself an expression returning a query) rides Mutare's ordinary
+  fragment), so the whole macro call (itself an expression returning a query) uses Mutare's ordinary
   selector `case`; no host / `dynamic` weaving is needed. Leaving the body byte-for-byte untouched is
   also what makes the swap safe across an opaque author macro in that body (the author-macro rule —
   see `Mutare.Ecto.Walk`). Wrong-schema field access from a swap surfaces at query-plan time
-  (runtime), not compile time, so a mutant never poisons the single build.
+  (runtime), not compile time, so a mutant never causes the single build to fail.
 
   This covers the macros whose binding list is an **argument**. A `from`'s binding-list *source*
   (`from [a, b] in q, …`) is written at the whole-`from` level, so its reorder is delivered there

@@ -49,7 +49,7 @@ Three survivors, each a concrete, named test gap:
 
 - **`recent_greetings/1` is barely tested.** Its only test checks that the call
   returns the right *number* of rows — never the order, never that the limit
-  bites. So two mutations slip through: flipping the sort `:desc` → `:asc` and
+  excludes any rows. So two mutations survive: flipping the sort `:desc` → `:asc` and
   dropping the `limit`. The fix is one assertion about *which* greetings come
   back, in *what* order.
 - **`validate_length(:name, min: 2)` is never exercised.** The changeset test
@@ -73,8 +73,7 @@ And because that test reads its data back through the database, it also kills th
 **persistence** mutant on `Repo.insert` (line 19): swap the real write for a
 non-persisting `apply_action` and the rows are never there to read.
 
-The lesson is the one mutation testing keeps teaching: a test that asserts
-*counts* or *that it didn't crash* leaves the interesting behaviour — the filter,
+A test that asserts *counts* or *that it didn't crash* leaves the behaviour — the filter,
 the order, the boundary — unverified. Asserting the actual rows is what kills the
 mutants.
 

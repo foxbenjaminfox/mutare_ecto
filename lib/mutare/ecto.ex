@@ -13,8 +13,8 @@ defmodule Mutare.Ecto do
   discovered automatically) and enables its mutations. Query, changeset, and schema handling do
   not require `repo:`; that option only identifies the module(s) matched by the Repo-call families.
 
-  This module is a thin front for a family of sub-mutators, dispatched by the node it
-  sees (`Mutare.Ecto.Dispatcher`): `Mutare.Ecto.RepoAggregate` and `Mutare.Ecto.RepoWrite` (Repo calls), `Mutare.Ecto.Changeset`
+  This module delegates to sub-mutators selected by node type
+  (`Mutare.Ecto.Dispatcher`): `Mutare.Ecto.RepoAggregate` and `Mutare.Ecto.RepoWrite` (Repo calls), `Mutare.Ecto.Changeset`
   and `Mutare.Ecto.ValidationBoundary` (changeset pipelines), `Mutare.Ecto.Query` (whole-`from` mutations), `Mutare.Ecto.Clause` and
   `Mutare.Ecto.QueryTerminal` (standalone/pipe clause macros and `first`/`last`),
   `Mutare.Ecto.BindingReorder` (positional binding transpositions on any binding-list macro),
@@ -68,20 +68,20 @@ defmodule Mutare.Ecto do
   **Structural positions held back from core's families.** Listing the plugin also *suppresses* a
   little noise elsewhere: `call_routes/0` routes the action atom of `Ecto.Changeset.apply_action/2`
   and `apply_action!/2` `:raw`, so no core family ever mutates it — the atom is metadata (it only
-  stamps an error changeset's `action`), never behaviour. Likewise a changeset stage's **written
+  sets an error changeset's `action`), never behaviour. Likewise a changeset stage's **written
   field atom** (`validate_length(cs, :name, …)` — a column name, which core would swap for an
   unknown field Ecto raises on), the **option keys** of `validate_number` (`greater_than:`,
-  `message:`, … — Ecto rejects an option it doesn't know; the strict/non-strict swap is the
-  plugin's own `:validation_boundary`, and the bound *values* stay core's to bump), and a written
-  **`count:` mode** of `validate_length` (`:mutare` is no mode). `validate_length`'s keys are left
-  to core — Ecto ignores an unknown key, so the swap is a live mutant, not a crash — see
+  `message:`, … — Ecto rejects unsupported options; the plugin's `:validation_boundary` swaps
+  strict and non-strict keys, and core still mutates the bound *values*), and a written
+  **`count:` mode** of `validate_length` (`:mutare` is no mode). Core still mutates
+  `validate_length`'s keys — Ecto ignores an unknown key, so the swap is a live mutant, not a crash — see
   `Mutare.Ecto.Changeset.Routing`. This is **not** gated by `families:`, which selects what the
   plugin *produces*; the routes apply whenever the plugin is listed.
 
-  **Equivalence-sensitive families.** Some mutants carry a **report note** — a survivor reads
-  `… SURVIVED  — kill may require …` — so it is recognised as honest signal, not a plain test gap.
+  **Equivalence-sensitive families.** Some mutants include a **report note** —
+  `… SURVIVED  — kill may require …` — describing fixture data needed to distinguish their results.
   Each note names the **specific** data a kill needs (a boundary row, a non-NULL row, NULL rows in
-  a column, an orphan row, …); the set and each family's reason are `Mutare.Ecto.Equivalence`'s,
+  a column, an orphan row, …); `Mutare.Ecto.Equivalence` defines the set and each family's reason,
   and the note is attached by `finalize/2` (`c:Mutare.Mutator.finalize/2`) on every delivery path.
   `equivalence_sensitive_families/0` returns that set; with the `:as` convention you can
   additionally *group* them under their own report name:
@@ -93,7 +93,7 @@ defmodule Mutare.Ecto do
   ## Macro routing
 
   `call_routes/0` registers the compile-time DSL so Mutare core never splices a runtime selector
-  into a query expression (which would poison the single build). `schema`/`embedded_schema` are
+  into a query expression (which would fail the single build). `schema`/`embedded_schema` are
   routed `:raw` — a mutated field name or type is a broken schema, not a mutant. Every query-building
   macro (`from`, `where`/`having`, `join`, `order_by`, `limit`, …) routes through the per-argument
   classifier `Mutare.Ecto.Host.Routing`, whose `:hosted` positions the selector host
@@ -148,8 +148,8 @@ defmodule Mutare.Ecto do
   defdelegate default_families, to: Config
 
   @doc """
-  The families whose survivors may be legitimately unkillable for a data reason, not a test gap
-  (see "Equivalence-sensitive families" above; the per-family reasons are `Mutare.Ecto.Equivalence`'s).
+  The families whose survivors may require specific fixture data to kill
+  (see "Equivalence-sensitive families" above; `Mutare.Ecto.Equivalence` defines the per-family reasons).
   """
   @spec equivalence_sensitive_families() :: [atom()]
   defdelegate equivalence_sensitive_families, to: Equivalence, as: :sensitive_families

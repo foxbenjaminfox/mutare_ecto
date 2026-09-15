@@ -11,11 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`validation_boundary`**, a changeset family: the strict/non-strict swap of a
   `validate_number/3` bound — `greater_than` ↔ `greater_than_or_equal_to`,
-  `less_than` ↔ `less_than_or_equal_to` — the changeset twin of the in-query
+  `less_than` ↔ `less_than_or_equal_to` — the changeset counterpart of the in-query
   `comparison` swap, on by default and equivalence-sensitive (a kill needs a
   changeset whose value sits exactly on the bound). `equal_to`/`not_equal_to` are
   deliberately not swapped; `validate_length`'s inclusive `min`/`max` have no
-  strict twin, so their off-by-one stays Mutare's integer family's.
+  strict counterpart, so Mutare's integer family still provides their off-by-one mutations.
 
 ### Changed
 
@@ -23,9 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   core families the changeset positions where a core swap is a crash rather than
   a mutant: a written field atom (`validate_length(cs, :name, …)` — swapping it
   names a field Ecto raises on), the option keys of `validate_number`
-  (`greater_than:`, `message:`, … — Ecto rejects any option it doesn't know), and
+  (`greater_than:`, `message:`, … — Ecto rejects unsupported options), and
   a written `count:` mode of `validate_length` (`:mutare` is no mode Ecto
-  dispatches on). `validate_length`'s *keys* stay core's: Ecto ignores an unknown
+  dispatches on). Core still mutates `validate_length`'s *keys*: Ecto ignores an unknown
   key, so `min:` → `mutare:` is a live mutant — that one bound gone, the call
   otherwise intact — finer than the whole-call drop. The bound *values* still
   receive core's literal mutants, and a field *list*
@@ -75,7 +75,7 @@ Initial release.
   (`Mutare.Ecto.equivalence_sensitive_families/0`).
 - **Structural-position safety**: literals that shape the SQL (fragment
   templates, interval units, cast types, field/binding names) are never
-  mutated, so no mutant can poison the single metamutant build.
+  mutated, so these positions cannot cause the single metamutant build to fail.
 
 [Unreleased]: https://github.com/foxbenjaminfox/mutare_ecto/compare/v0.1.1...HEAD
 [0.1.1]: https://github.com/foxbenjaminfox/mutare_ecto/compare/v0.1.0...v0.1.1

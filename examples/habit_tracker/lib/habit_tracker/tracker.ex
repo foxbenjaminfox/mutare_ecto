@@ -3,10 +3,10 @@ defmodule HabitTracker.Tracker do
   The core habit operations: create and archive habits, record check-ins, and
   compute the current streak.
 
-  This is the heart of what the Ecto mutator works on — `where` filters, sort
+  This module includes several operations the Ecto mutator changes — `where` filters, sort
   orders, a row limit, an upsert, and a transaction — alongside the plain Elixir
-  of the streak loop. A surviving mutant here points straight at behaviour no
-  test pins down.
+  of the streak loop. A surviving mutant indicates that no test distinguishes
+  the changed behaviour from the original.
   """
   import Ecto.Query
 
@@ -42,9 +42,8 @@ defmodule HabitTracker.Tracker do
 
   The filter is a *single* SQL condition combining **membership** (`in`) and
   **connectives** (`and` / `or` / `not`): a habit qualifies when its cadence is in
-  the list and it isn't archived (unless `archived: true` is passed). The mutator
-  reasons about both under SQL's semantics — not Elixir's, with the `and`/`or`
-  swap genuinely three-valued — which is the whole reason a query needs its own mutator.
+  the list and it isn't archived (unless `archived: true` is passed). Both mutation
+  families follow SQL semantics, including three-valued logic for the `and`/`or` swap.
   """
   def by_cadence(cadences, opts \\ []) do
     include_archived = Keyword.get(opts, :archived, false)

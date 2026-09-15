@@ -17,8 +17,8 @@ defmodule HabitTracker.Search do
 
   Together, the two styles cover the query surface the Ecto mutator is built to
   exercise: drop a `where`, turn an `inner_join` into a `left_join`, flip a
-  comparison inside `dynamic/2`, or swap an `or` for an `and` — each a question
-  about whether a filter is really tested.
+  comparison inside `dynamic/2`, or swap an `or` for an `and` — each mutation
+  checks whether tests cover a filter's behaviour.
   """
   import Ecto.Query
 

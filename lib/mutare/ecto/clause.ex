@@ -1,6 +1,6 @@
 defmodule Mutare.Ecto.Clause do
   @moduledoc """
-  Standalone/pipe clause-macro mutations — the composable cousins of the whole-`from` family
+  Standalone/pipe clause-macro mutations — the composable counterparts of the whole-`from` family
   in `Mutare.Ecto.Query`. Where `Query` mutates `from`'s keyword clauses, this mutates the
   same kinds of thing written as standalone calls or pipe stages:
 
@@ -22,7 +22,7 @@ defmodule Mutare.Ecto.Clause do
 
   These macros route through the `:routing` classifier (`Mutare.Ecto.Host.Routing`), which keeps
   their *data* positions raw while the routed node is still offered whole to `mutate/2`; the
-  mutation rides Mutare's ordinary in-place selector, since the macro call is itself an
+  mutation uses Mutare's ordinary in-place selector, since the macro call is itself an
   expression. The orthogonal **stage removal** (`q |> order_by(…)` → `q`) lives in
   `Mutare.Ecto.ClauseDrop`, and the `:bound` ±1 bump of a literal `limit`/`offset` is hosted
   pin-only (`Mutare.Ecto.Bound`; NOTES "Bound bump: from whole-call rewrite to pin-only

@@ -1,6 +1,6 @@
 defmodule Mutare.Ecto.Changeset.Routing do
   @moduledoc """
-  The per-argument routing classifier for the `Ecto.Changeset` pipeline stages the plugin owns
+  The per-argument routing classifier for the `Ecto.Changeset` pipeline stages the plugin mutates
   (`Mutare.Ecto.Changeset.stages/0` — every validator, constraint, and Repo-time hook it can
   drop) — the changeset counterpart of the query classifier `Mutare.Ecto.Host.Routing`. Nothing
   here is hosted; the classifier only holds back from core's families the positions where a
@@ -15,19 +15,19 @@ defmodule Mutare.Ecto.Changeset.Routing do
       (`validate_required(cs, [:name, :email])`), a variable, a `prepare_changes` function — routes
       `:expression`, so a list stays reachable for core's list families.
     * The **option keys** of `validate_number` route per-pair `{:keyword, …}`, which leaves every
-      key raw while the values stay `:expression`. Ecto rejects any option it does not know
+      key raw while the values stay `:expression`. Ecto rejects unsupported options
       (`ArgumentError: unknown option`), so a swapped key raises — every written key is raw, no
-      key set is consulted. The bound literal keeps core's off-by-one mutants, and the
-      strict/non-strict swap of the key itself is `Mutare.Ecto.ValidationBoundary`'s.
+      key set is consulted. The bound literal keeps core's off-by-one mutants, and
+      `Mutare.Ecto.ValidationBoundary` swaps strict and non-strict keys.
     * `validate_length`'s keys are **not** held back: Ecto reads `count:`/`is:`/`min:`/`max:` and
       ignores anything else, so core's `min:` → `mutare:` is a live mutant — that one bound gone,
-      the call otherwise intact — a finer question than the whole-call `:validation_drop` asks.
+      the call otherwise intact — a more specific mutation than the whole-call `:validation_drop`.
       Only a **written mode atom** in its `count:` value (`:graphemes`/`:codepoints`/`:bytes`) is
       held back, by a keyed refinement (`[:expression, count: :raw]`): `:mutare` is no mode, and
       Ecto's mode dispatch has no clause for it on a string field (a `CaseClauseError`). A
       computed value stays `:expression`, so core can mutate how the mode is selected. The
       options of every other stage (a constraint's `name:`, a `message:` alone) stay
-      `:expression` — an unlisted stage's option set is not the plugin's to assert.
+      `:expression` — the plugin defines no option restrictions for unlisted stages.
 
   Which slot is the field position follows the call's **form**, as in the query classifier:
   written directly (`validate_length(cs, :name, …)`) the changeset is the first visible argument

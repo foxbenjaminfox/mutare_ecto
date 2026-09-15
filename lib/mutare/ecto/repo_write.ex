@@ -1,7 +1,7 @@
 defmodule Mutare.Ecto.RepoWrite do
   @moduledoc """
   Mutations on the **persisting Repo writes** — `insert`/`update`/`delete`/`insert_or_update`
-  and their `!` twins. Two families, both matched by resolving the call's module to one of the
+  and their `!` variants. Two families, both matched by resolving the call's module to one of the
   configured `repo:` modules (so direct, aliased, and `use Ecto.Repo`-defined forms all match):
 
     * **`:persistence`** — replace the write with the equivalent *non-persisting*
@@ -32,7 +32,7 @@ defmodule Mutare.Ecto.RepoWrite do
       The argument is normalised through `Ecto.Changeset.change/1`, which is **total over both
       shapes** Repo writes accept — a bare struct (`insert`/`delete`) *and* a changeset
       (`update`/`insert_or_update`) — so the rewrite never breaks on the struct case.
-      `apply_action` faithfully preserves the `{:ok, struct}` / `{:error, changeset}` shape (and
+      `apply_action` preserves the `{:ok, struct}` / `{:error, changeset}` shape (and
       `apply_action!` raises `Ecto.InvalidChangesetError`, exactly like `insert!`), so the mutant
       diverges from the real write on **only** the success path: it skips persistence and the
       DB-enforced constraints (`unique_constraint`, `foreign_key_constraint`, …) that fire only on
@@ -42,7 +42,7 @@ defmodule Mutare.Ecto.RepoWrite do
       changeset).
 
       **Error-path parity is what makes that kill condition precise**, so the rewrite reproduces
-      the two pieces of metadata a real write stamps on the changeset it hands back
+      the two pieces of metadata a real write sets on the returned changeset
       (`Ecto.Repo.Schema`'s `put_repo_and_action/4`), which `apply_action/2` on its own does not:
 
         * the **Repo** — hence the `Map.replace!(…, :repo, …)` stage, carrying the configured
@@ -53,7 +53,7 @@ defmodule Mutare.Ecto.RepoWrite do
           for `insert_or_update`, which Ecto routes to insert or update on the changeset data's
           `__meta__` state. The mutant reads that same state, so an invalid **loaded** changeset
           still comes back `action: :update` (and `insert_or_update!` still raises
-          `Ecto.InvalidChangesetError` saying "could not perform **update**"). Hard-coding
+          `Ecto.InvalidChangesetError` with the message "could not perform **update**"). Hard-coding
           `:insert` there made the mutant differ from the baseline on the *invalid* path, killing
           it with tests that never exercise persistence at all — see NOTES "Persistence: the
           rewrite restates the write's Repo and action".
@@ -67,7 +67,7 @@ defmodule Mutare.Ecto.RepoWrite do
       Both are programmer-error paths no persistence test asserts on.
 
     * **`:on_conflict`** — swap an explicit `on_conflict:` atom on an `insert`/`insert!`/`insert_all`
-      (the writes that take the option) for the *distinct* alternative it conflicts-handles to:
+      (the writes that take the option) to change the conflict-handling behaviour:
       `:nothing`→`:raise` (silent-skip → crash — a survivor means no test exercises the upsert's
       conflict path), `:raise`→`:nothing` (crash → silent-skip — kill with a test asserting a
       duplicate fails), and `:replace_all`→`:nothing` (overwrite-row → keep-old-row — kill with a
@@ -76,20 +76,20 @@ defmodule Mutare.Ecto.RepoWrite do
       A swap **to `:raise` also drops any written `conflict_target:` pair** — Ecto forbids the
       combination (`ArgumentError`, ":conflict_target option is forbidden when :on_conflict is
       :raise", raised in the planner before any SQL), so keeping the pair would turn the mutant
-      into an unconditional crasher (raising on *every* insert, conflict or not — a
+      into an unconditional error (raising on *every* insert, conflict or not — a
       trivially-killed non-mutant) instead of the intended crash-on-conflict. A swap to
-      `:nothing` keeps the pair: `:nothing` accepts a target, and the target still *arbitrates* —
+      `:nothing` keeps the pair: `:nothing` accepts a target, which restricts the conflicts handled —
       `ON CONFLICT (email) DO NOTHING` skips only conflicts on the named constraint while a
       conflict on any other unique constraint raises in mutant and baseline alike, so preserving
-      the author's arbiter preserves the semantics. `:replace_all` is a swap **source** only,
+      the specified conflict target preserves the semantics. `:replace_all` is a swap **source** only,
       never a target — the reverse needs a `conflict_target` on Postgres, so a target-less swap
       would be a runtime crash (a trivially-killed non-mutant). Non-atom `on_conflict:` values (a
       `{:replace, …}` tuple, a keyword-list update, a query) are left untouched.
 
   **Pipe-aware.** The `:persistence` rewrite is one **stage chain** over the value the write would
-  have persisted — `change()`, then the `:repo` stamp, then the `apply_action` call — rendered
-  from a single table (`stages/3`) in whichever form the source wrote. Piped
-  (`cs |> Repo.insert()`) the value is the `|>` left-hand side, so the chain ships as a
+  have persisted — `change()`, then setting `:repo`, then the `apply_action` call — rendered
+  from a single table (`stages/3`) in the form used in the source. Piped
+  (`cs |> Repo.insert()`) the value is the `|>` left-hand side, so the chain is emitted as a
   right-nested pipe stage Mutare splices onto it — `cs |> (change() |> Map.replace!(…) |>
   apply_action(:insert))`, which flattens to the intended pipe. Unpiped the same stages nest as
   calls around the written argument, *not* as a pipe on it: `|>` binds tighter than most

@@ -21,8 +21,8 @@ defmodule Mutare.Ecto.Query do
       and `full_join`→`left_join`/`right_join` (plus `left_join`↔`right_join` sideways). "Does any
       test exercise the orphan row this join kind keeps that a narrower kind would drop?" An outer
       join is written *because* unmatched rows must survive, so seed data built for that reason is
-      likely to already hold the orphan that makes the narrower kind disagree — a strong, killable
-      mutation. The reverse (`inner_join`/`join`→`left_join`, `*`→`full_join`) is deliberately not
+      likely to already include an orphan for which the narrower kind returns different rows —
+      a killable mutation. The reverse (`inner_join`/`join`→`left_join`, `*`→`full_join`) is deliberately not
       offered: it widens a join the author picked precisely to *exclude* unmatched rows, and
       absent a reason to test for an orphan that shouldn't matter, the widened query usually
       returns identical rows — an equivalent mutant more often than a killable one. The
@@ -31,8 +31,8 @@ defmodule Mutare.Ecto.Query do
       `right_join` are **dialect-gated** (`:postgres`/`:mysql` — SQLite lacks `RIGHT JOIN`).
     * **Combination** — swap a set-operation clause's *key*: `intersect:`↔`except:` and
       `intersect_all:`↔`except_all:`. "Does any test pin which rows the combination keeps?" The
-      pairing, its portability, and the `union` exclusion are the shared
-      `Mutare.Ecto.Combination` catalog's.
+      shared `Mutare.Ecto.Combination` catalog defines the pairing, its portability, and the
+      `union` exclusion.
     * **Aggregate (in `select`/`order_by`)** — swap an aggregate inside a `select`/`select_merge`
       or `order_by` clause value (`sum`↔`avg`, `min`↔`max`), via the shared `Mutare.Ecto.Aggregate`
       walker. "Does any test pin which aggregate the column is reduced/sorted by?" (An aggregate
@@ -46,16 +46,16 @@ defmodule Mutare.Ecto.Query do
     * **Binding reorder (source list)** — when the source declares a positional binding list
       (`from [a, b] in q, …`), transpose each pair of those bindings (`[a, b]` → `[b, a]`). "Did
       the author bind the sources in the right order?" The list was written at the whole-`from`
-      level, so its reorder is delivered here — the rule and its policy are
-      `Mutare.Ecto.BindingReorder`'s.
+      level, so its reorder is delivered here — see `Mutare.Ecto.BindingReorder` for the rule
+      and its policy.
 
   Each mutation is returned as a `Mutare.Ecto.Tag`: its label is the finer operator/kind a swap
   family names (order/join/aggregate — `nil` for a structural drop), and its attribution
   (`Mutare.Mutator.Mutation.at/2`/`at_drop/1`) names the **inner clause** the rewrite changed,
   so the site is reported there rather than at the whole `from` (see `Mutare.Ecto.Walk` on
   attribution). `config` carries `dialects:` for the join gate. The `from` is read apart and
-  rebuilt through `Mutare.Ecto.AST.FromCall`, which keeps the written form (and owns the
-  emptied-clause-list rule). A scalar `from/1` (`from(Post)`, no clauses) yields nothing, while
+  rebuilt through `Mutare.Ecto.AST.FromCall`, which preserves the written form and handles
+  emptied clause lists. A scalar `from/1` (`from(Post)`, no clauses) yields nothing, while
   a source binding list (`from([a, b] in query)`) can still reorder.
   """
 
@@ -127,14 +127,14 @@ defmodule Mutare.Ecto.Query do
   @doc """
   The whole-`from` mutations for `from` under an already-resolved `%Config{}` — the body
   `mutations/2` delegates to — restricted to `producers` (default: every producer, in
-  `mutations/2`'s order) over the clauses whose key `clause?` admits (default: every clause;
+  `mutations/2`'s order) over the clauses whose key satisfies `clause?` (default: every clause;
   `:binding_reorder` rewrites the source, not a clause, so the predicate never reaches it).
 
-  Exposed so `Mutare.Ecto.Subquery` can **compose** exactly the producers a subquery wrapper
-  observes into an inner `from` (where it holds the parsed `FromCall` and config, not a full
+  Exposed so `Mutare.Ecto.Subquery` can mutate an inner `from` using just the producers whose
+  mutations can affect the wrapper's result (with the parsed `FromCall` and config, not a full
   callback context): the row-set producers under every wrapper, and the `select` projection's
   `:aggregate`/`:scalar` swaps under a value-wrapper only — rather than running all eight and
-  filtering what it never wanted. An unknown producer is a programming error and fails loudly.
+  filtering out inapplicable mutations. An unknown producer is a programming error and raises.
   """
   @spec mutations_for(FromCall.t(), Config.t(), [producer()], (atom() -> boolean())) ::
           [Mutare.Ecto.SubMutator.tagged()]

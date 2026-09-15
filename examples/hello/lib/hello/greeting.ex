@@ -3,8 +3,8 @@ defmodule Hello.Greeting do
   A greeting addressed to someone, in some language.
 
   The `schema` block is left untouched by the Ecto mutator (a renamed field is a
-  broken schema, not an interesting mutant). The *changeset* is fair game: each
-  validation it adds is a rule Mutare can drop to ask "does a test cover this?".
+  broken schema, not an interesting mutant). Mutare can drop each validation in
+  the *changeset* to check whether tests cover it.
   """
   use Ecto.Schema
   import Ecto.Changeset

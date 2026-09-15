@@ -104,11 +104,11 @@ lib/habit_tracker/habit.ex:40  [ecto, in-place]  SURVIVED
 mutation score: 70.5%  (67 killed, 28 survived, 4 no-coverage, 99 total)
 ```
 
-The 28 survivors cluster into a few honest lessons.
+The 28 survivors fall into a few groups.
 
 ### 1. Validations no test exercises
 
-Seven changeset rules can be dropped without a test noticing
+Seven changeset rules can be dropped without a test failing
 (`validate_length`, `validate_inclusion`, `validate_number`, `assoc_constraint`,
 the `check_ins` `unique_constraint`, …). The suite only ever submits *valid*
 attributes, so the rules never fire. The fix is to assert the failure each rule
@@ -121,9 +121,8 @@ is killed. Same kind of rule — one verified, one not.
 The two `validate_number(…, greater_than: 0)` rules each get a *second* mutant
 besides the drop: the bound swapped to `greater_than_or_equal_to: 0`, carrying a
 note (**`kill may require a changeset whose value sits exactly on the bound`**).
-That's a finer question than the drop's — not "is this rule tested?" but "is the
-*bound* tested?" — and it stays alive even once a test rejects a non-positive
-value, unless that value sits *on* the bound: a check-in with `count: 0`, a
+The swap checks whether the *bound* is tested. It survives even once a test rejects
+a non-positive value, unless that value sits *on* the bound: a check-in with `count: 0`, a
 habit with `target: 0`. A test that rejects `-1` kills the drop and leaves the
 swap alive.
 
@@ -137,9 +136,9 @@ The most repeated survivor is the same shape four times — dropping
 from(c in CheckIn, where: c.habit_id == ^habit.id)  →  from(c in CheckIn, [])
 ```
 
-Every test sets up exactly one habit's check-ins, so a query that forgets to
-filter by habit looks identical to one that remembers. With a *second* habit's
-check-ins in the database, deleting that `where` would pull in rows that don't
+Every test sets up exactly one habit's check-ins, so queries with and without the
+habit filter return identical results. With a *second* habit's check-ins in the
+database, deleting that `where` would pull in rows that don't
 belong — and the mutant would die. **Weak test data, not a missing test.**
 
 The same fixture lets the `sum → avg` swaps in the leaderboard's and the
@@ -153,26 +152,25 @@ progress report's sort keys survive: with one check-in per habit, a habit's sum
 the `where archived == false` and the `having` threshold can be dropped because
 the fixtures contain no archived habit and none sitting on the boundary.
 
-### 4. SQL-equivalence annotations — honest "maybe unkillable"
+### 4. SQL-equivalence annotations — potentially missing fixtures
 
-Several survivors carry a note instead of a plain `SURVIVED`, because they may be
-unkillable for a *data* reason rather than a test gap — and the Ecto mutator
-knows the difference:
+Several survivors include a note alongside `SURVIVED` describing fixture data
+that may be needed to distinguish the mutant from the original:
 
 - `having: sum(...) >= ^min_total` → `>` reads **`kill may require a row whose
   value sits exactly on the bound`**. `>=` and `>` agree on every row except one
-  sitting *exactly* on the threshold — which no fixture provides.
+  exactly on the threshold — which no fixture provides.
 - `where: c.habit_id == ^habit.id` → `!=` in the `delete_habit` transaction reads
   **`kill may require a non-NULL row`** — the note for the `==`/`!=` swap, which
   coincide only when the compared column is NULL. Here the column is never NULL;
   the mutant survives for lesson 2's reason instead (with one habit's check-ins in
-  the database, `!=` deletes nothing and nobody notices). The note says *may*: it
-  names the data-side reason the family *can* be equivalent, not a verdict.
+  the database, `!=` deletes nothing and no assertion fails). The word *may*
+  indicates a possible cause of equivalence for this family; it does not establish
+  why this particular mutant survived.
 
 Each note names the *specific* data a kill needs — a boundary row here, a
 non-NULL row there, an orphan row or a NULL sort key in lesson 7 — because the
-reasons differ. That precision comes from the library reasoning in SQL's
-semantics, not Elixir's — the whole point of a dedicated Ecto mutator.
+reasons differ. These annotations follow SQL semantics, as required for Ecto queries.
 
 ### 5. Dynamically-built queries, only partly driven
 
@@ -201,10 +199,9 @@ both dynamic boundaries (`since` and `min_count`), so comparison flips and the
 *stale* update — two processes load the same habit, both save — raises
 `Ecto.StaleEntryError` instead of silently clobbering. The suite updates a habit
 and checks the new value, but never sets up that conflict, so dropping the lock
-changes nothing it observes. This is the `hook_drop` family, and the survivor
-reads differently from the others: not "your filter is wrong" but *"the
-concurrency guard the `lock_version` column exists for is untested."* The kill is
-a test that loads the habit twice, saves one copy, and asserts the other raises.
+changes no asserted result. This `hook_drop` survivor indicates that the concurrency
+guard provided by `lock_version` is untested. To kill it, add a test that loads
+the habit twice, saves one copy, and asserts the other raises.
 (The `Repo.update` in `update_habit/2` survives for a related reason: its test
 checks the *returned* struct and never reads the row back, so the non-persisting
 `apply_action` rewrite passes. `create_habit/1`'s `Repo.insert` is killed — later
@@ -230,13 +227,13 @@ lib/habit_tracker/stats.ex:112  SURVIVED  — kill may require an orphan row —
 +      inner_join: c in assoc(h, :check_ins),
 ```
 
-This is the lesson the Ecto mutator is built to make: a nulls-qualified ordering
-key has **two independent axes**, and they mutate separately. A bare `:desc`
-asserts nothing about NULLs and gets only the direction flip; writing
-`:desc_nulls_last` is the author saying *they care where NULLs land*, so it also
-gets a placement flip (`:desc_nulls_last` → `:desc_nulls_first`) under its own
+An ordering key with explicit NULL placement has **two independent axes**, and
+the plugin mutates them separately. A bare `:desc` leaves NULL placement to the
+engine default and gets only the direction flip; `:desc_nulls_last` explicitly
+specifies NULL placement, so it also gets a placement flip
+(`:desc_nulls_last` → `:desc_nulls_first`) under its own
 `ordering_nulls` family — equivalence-sensitive, because only a row with a `NULL`
-in the ordered column can tell the two placements apart.
+in the ordered column can produce different results under the two placements.
 
 And here that placement survivor sits next to a `join_type` survivor with a
 *different* note — **two distinct SQL phenomena, NULL ordering and join
@@ -276,7 +273,7 @@ rows, in order:
   included, so `>=` → `>` is caught.
 - `Tracker.by_cadence/2` — the membership-plus-connective filter
   (`h.cadence in ^cadences and (… or not h.archived)`) is pinned to exact results,
-  so `in` → `not in` and `and` → `or` are both killed. Both reason under SQL's
+  so `in` → `not in` and `and` → `or` are both killed. Both swaps follow SQL's
   NULL semantics (the `and`/`or` swap is the genuine three-valued-logic case);
   here, on the non-null `cadence` / `archived` columns, they're cleanly killable —
   the contrast with the `NULL`-noted survivors above (the same kind of operator,

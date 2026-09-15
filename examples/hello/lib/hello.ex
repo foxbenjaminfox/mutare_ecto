@@ -4,7 +4,7 @@ defmodule Hello do
 
   Every database-touching function here is something the Ecto mutator can change
   in a SQL-meaningful way — a filter, a sort direction, a row limit — so a
-  surviving mutant points straight at a test that wouldn't notice the change.
+  surviving mutant indicates that no test fails when that behaviour changes.
   """
   import Ecto.Query
   alias Hello.{Greeting, Repo}

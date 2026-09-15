@@ -29,9 +29,9 @@ mix mutare --sandbox ../hello_sandbox
 
 ## The point isn't the score
 
-Both suites have **partial coverage on purpose**, so every run surfaces real
-survivors. Each example's `README.md` walks through its survivors and the
+Both suites have **partial coverage on purpose**, so every run produces
+survivors. Each example's `README.md` explains its survivors and the
 test-quality gap behind each one — a missing boundary fixture, weak test data
 (only one entity's rows), an untested branch, an unasserted sort order. That's
-what mutation testing is for, and an Ecto-aware mutator points it straight at
-your filters, joins, and validations.
+what mutation testing checks; this plugin applies those checks to your filters,
+joins, and validations.

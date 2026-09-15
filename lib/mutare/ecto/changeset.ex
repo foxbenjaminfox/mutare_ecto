@@ -4,7 +4,7 @@ defmodule Mutare.Ecto.Changeset do
   guard. `cs |> validate_required([:name])` → `cs`. A surviving mutant means **no test
   exercises** the behaviour that step contributes. Matched by resolving the call to
   `Ecto.Changeset` (direct, aliased, or the common `import Ecto.Changeset`), so the form the
-  source wrote doesn't matter.
+  call uses doesn't matter.
 
   Two families, dropped by the same machinery but kept apart because the thing being removed
   differs:
@@ -42,7 +42,7 @@ defmodule Mutare.Ecto.Changeset do
   @hooks ~w(prepare_changes optimistic_lock)a
 
   @doc """
-  Every pipeline stage the plugin owns — the droppable validators/constraints and the Repo-time
+  Every pipeline stage the plugin mutates — the droppable validators/constraints and the Repo-time
   hooks. The one list `Mutare.Ecto.call_routes/0` registers `:routing` (through
   `Mutare.Ecto.Changeset.Routing`), so a stage is routed exactly when it is mutated.
   """
