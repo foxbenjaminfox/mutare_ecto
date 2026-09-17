@@ -20,6 +20,10 @@ defmodule Mutare.Ecto.Clause do
       via the shared `Mutare.Ecto.Combination` catalog. Unlike the others this mutates the
       call's *name*, not its last argument — the operand queries are untouched.
 
+  `Query`'s JoinType narrowing has **no** counterpart here: a standalone `join(q, :left, …)`
+  keeps its qualifier (NOTES "Spelling gaps: what the README table declares, and what closing
+  each takes").
+
   These macros route through the `:routing` classifier (`Mutare.Ecto.Host.Routing`), which keeps
   their *data* positions raw while the routed node is still offered whole to `mutate/2`; the
   mutation uses Mutare's ordinary in-place selector, since the macro call is itself an

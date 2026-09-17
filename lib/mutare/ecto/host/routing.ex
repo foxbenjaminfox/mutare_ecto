@@ -32,7 +32,11 @@ defmodule Mutare.Ecto.Host.Routing do
   else (`base_query(2)`'s `2` → `3`/`1`/`0`). The one shape read in that slot is the **structural
   queryable** — a schema alias (`where(Post, …)`), a table-name string, or a `{"table", Schema}`
   pair — which stays raw: a table/schema swap is a broken query, not a mutant (core's `:alias` and
-  `:string` families would otherwise name a nonexistent module or table).
+  `:string` families would otherwise name a nonexistent module or table). Only the direct form
+  can read it. Piped, the queryable is no visible argument, and core's `Call` carries the
+  visible ones alone, so the left side routes `:expression` whatever it is: `Post |> where(…)`
+  hands `Post` to core's `:alias` family where `where(Post, …)` holds it back (NOTES "A
+  structural queryable on a pipe's left is core's").
 
   `dynamic` and the `is_named_binding` guard helper instead register `:raw`
   (`Mutare.Ecto.Surface.macro_registrations/0`): neither is a query-threading stage, so core must
@@ -46,8 +50,9 @@ defmodule Mutare.Ecto.Host.Routing do
       A structural source (`Post`, `"t"`) is a broken query if swapped, and a binding source
       (`p in S`) is a pattern over its queryable that no per-argument treatment can split — so a
       *computed* source (`from(p in base_query(2), …)`) stays raw here too, unlike the threaded
-      query of a composable macro (above); mutations apply inside the function where that query is
-      built. Each `where`/`having` condition routes by shape, the same under a binding source or a
+      query of a composable macro (above). The query is still mutated inside the function that
+      builds it; what is lost is the call written here — `base_query(2)`'s `2`, which
+      `where(base_query(2), …)` keeps. Each `where`/`having` condition routes by shape, the same under a binding source or a
       bare queryable (`from("t", …)`, whose conditions can only reference a named binding — the
       host weaves them behind an empty-binding `dynamic([], …)`). A non-shorthand *expression*
       condition routes `:hosted`; a keyword-**shorthand** condition (`where: [x: v]`) instead

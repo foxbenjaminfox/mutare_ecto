@@ -129,9 +129,7 @@ name, never a literal that is the name.
 | `validation_boundary` | `validate_number(:age, greater_than: 0)` → `greater_than_or_equal_to: 0` (and `less_than` ↔ `less_than_or_equal_to`) | Is the bound itself tested? |
 | `hook_drop` | drop `prepare_changes` / `optimistic_lock` | Is the side effect / lock asserted? |
 
-Both query syntaxes are covered — the `from(u in User, where: …)` keyword form (piped too:
-`User |> from(as: :u, where: …)`) and the composable pipe form (`q |> where([u], …)`) — as are
-direct, aliased, and `import`/`use`-bundled call styles.
+Direct, aliased, and `import`/`use`-bundled call styles are all recognised.
 Schema definitions (`schema`/`embedded_schema`) are left untouched: a mutated field name is a
 broken schema, not an interesting mutant. For the same reason, listing the plugin holds a few
 changeset positions back from Mutare's core families: a stage's written field atom
@@ -140,6 +138,47 @@ option *keys* of `validate_number` (an unknown option raises; `validation_bounda
 and non-strict keys, and core still mutates the bound *values*), and a written `count:` mode
 of `validate_length`. Core still mutates its *keys*: Ecto ignores an unknown one, so `min:` → `mutare:`
 is a live mutant — that bound alone gone.
+
+### Coverage by spelling
+
+Ecto lets one query be written as a `from` keyword list (piped too:
+`User |> from(as: :u, where: …)`) or as composable stages (`q |> where([u], …)`, or the same
+calls written directly, `where(q, [u], …)`). Most families reach the same mutated queries either
+way; the last four rows are the ones that do not, so respelling a query there changes which
+mutants it gets.
+
+| | `from` keyword form | composable stages |
+|---|---|---|
+| A condition (`where`/`having`/`or_*`, a join's `on:`): every in-condition family, `filter_drop`, keyword-shorthand values | ✓ | ✓ |
+| `bound`, `ordering`, `ordering_nulls`, `combination`; `aggregate`/`arithmetic`/`coalesce` in a `select`/`order_by` | ✓ | ✓ |
+| `binding_reorder` | the source list (`from [a, b] in q`), which every clause reads | each stage's own list |
+| `join_type` | ✓ `left_join:` → `inner_join:` | ✗ `join(q, :left, …)` keeps its qualifier |
+| `clause_drop` — a join, `group_by`, `distinct`, `select`, `preload`, `lock`, `windows`, `with_cte`, a set operation | ✗ only `where`/`having` (`filter_drop`) and `limit`/`offset` (`bound`) drop | ✓ |
+| The query being refined, when computed — `recent(2)` | ✗ `from p in recent(2)`: the `2` is not mutated | ✓ `where(recent(2), …)` and `recent(2) \|> where(…)`: Mutare's own families mutate it |
+| The query being refined, when a schema or table name | held back from Mutare's families (a swapped name is a broken query) | held back written directly (`where(Post, …)`), but **not** on a pipe's left: `Post \|> where(…)` → `Mutare.Mutant \|> where(…)` |
+
+Where an expression is written matters as well:
+
+- **A subquery's interior** is mutated when it is an inline `from` inside a condition
+  (`p.id in subquery(from c in …)`, `exists(from …)`). An inline pipeline
+  (`subquery(Comment |> where(…))`) and a subquery used as a `from` source
+  (`from s in subquery(…)`) are not entered. Built first and passed by variable, the subquery
+  is an ordinary query and gets every family.
+- **A `^` pin's interior** is ordinary Elixir, which Mutare's own families mutate when the pin
+  sits in a condition (`where: p.views > ^(min + 1)`). In any other clause — `limit:
+  ^(page_size + 1)`, `order_by: ^[asc: dynamic(…)]`, a `select` — the interior is left alone. An
+  expression or a `dynamic` bound to a variable first is mutated where it is built; the same
+  code written inside such a pin is not.
+
+**A dropped stage can break the query rather than weaken it.** `q |> join(…)` → `q` is the query
+without the join only when nothing later needs what the stage provided. When a later stage
+does — the join's binding, a `windows` name an `over/2` uses, the `limit` a `with_ties`
+qualifies, a CTE a join reads, a schemaless source's `select` — the mutant raises as the query
+is built, planned, or run. Any test that executes the query kills it, whatever that test
+asserts: the kill shows that the stage runs, not that its effect is tested. A pipeline is
+assembled at runtime, often across functions, so a single stage cannot show which case it is
+in. (Dropping a join ahead of another also runs, with the later positional bindings shifted
+onto the freed slot.)
 
 ## Configuration
 

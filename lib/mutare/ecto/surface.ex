@@ -4,6 +4,13 @@ defmodule Mutare.Ecto.Surface do
   # Consumers derive routing, stage removal, hosted conditions, binding accumulation, and mutation
   # capabilities from these descriptors (NOTES "Surface: one descriptor table instead of parallel
   # lists").
+  #
+  # The two spellings of a name are declared **independently**: `:mutations`/`:stage_drop` are
+  # what it gets as a composable stage, `:from`/`:from_drop` what it gets as a `from` key. A
+  # spelling gap is therefore a key present on one side only — `:join_type` under `:from` alone,
+  # `:clause_drop` under `:stage_drop` alone. Each is stated in the README's "Coverage by
+  # spelling" table and pinned by `Mutare.Ecto.SpellingCases`, so closing one is an edit to all
+  # three (NOTES "Spelling gaps: what the README table declares, and what closing each takes").
 
   @macro_kinds [:from, :condition, :join, :clause, :dynamic, :raw]
   @mutation_capabilities [:ordering, :aggregate, :scalar, :combination]

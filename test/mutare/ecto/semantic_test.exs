@@ -14,9 +14,19 @@ defmodule Mutare.Ecto.SemanticTest.SQLite do
   use Mutare.Ecto.SemanticCases, repo: MyApp.Repo
 end
 
+defmodule Mutare.Ecto.SpellingTest.SQLite do
+  use ExUnit.Case, async: false
+  use Mutare.Ecto.SpellingCases, repo: MyApp.Repo
+end
+
 if Mutare.Ecto.SemanticHarness.postgres_enabled?() do
   defmodule Mutare.Ecto.SemanticTest.Postgres do
     use ExUnit.Case, async: false
     use Mutare.Ecto.SemanticCases, repo: MyApp.PgRepo
+  end
+
+  defmodule Mutare.Ecto.SpellingTest.Postgres do
+    use ExUnit.Case, async: false
+    use Mutare.Ecto.SpellingCases, repo: MyApp.PgRepo
   end
 end

@@ -135,6 +135,89 @@ They are unimplemented. What composing them takes:
 The most valuable single case is probably the ordering flip of the latest-row scalar — "does
 any test pin which row the subquery picks?".
 
+### Spelling gaps: what the README table declares, and what closing each takes
+
+The README used to say "both query syntaxes are covered", which was true of the families and
+false of the capabilities: `Mutare.Ecto.Surface` declares what a name gets as a `from` key
+(`:from`/`:from_drop`) and as a composable stage (`:mutations`/`:stage_drop`) independently, and
+the two sides had drifted apart without any doc saying so. The README's "Coverage by spelling"
+table now states each gap and `Mutare.Ecto.SpellingCases` pins it — comparing spellings by the
+**statements their mutants reach**, since rendered diffs differ between spellings even where the
+mutants agree. A gap is asserted as "this family reaches nothing here", so closing one fails
+its test until the table is rewritten. None of the gaps below rests on an equivalence argument;
+each is unimplemented.
+
+  * **`join_type` on a standalone `join/3,4,5`.** Plugin-side and small. The narrowing rationale
+    (`Mutare.Ecto.Query`) carries over unchanged, and the qualifier is an ordinary runtime
+    expression — Ecto validates a non-literal one through `Ecto.Query.Builder.Join.qual!/1` —
+    so a literal `:left`/`:full`/`:right` can be swapped in a whole-call rewrite like
+    `Mutare.Ecto.Clause`'s. It needs the flip tables keyed by qualifier rather than by `from`
+    key, the dialect gate threaded into `Clause` (which ignores its context today), and
+    `Surface`'s ":mutations require macro :clause" rule widened to `:join`.
+  * **`clause_drop` on a `from` key.** For a key nothing else can reference (`group_by:`,
+    `distinct:`, `preload:`, `lock:`, `select:` over a schema source) it is one more `from_drop`
+    family through `Query`'s existing `drops/3`. A `join:` is the hard one, and the reason the
+    whole-`from` drop cannot simply be widened: the keyword list expands at compile time, so
+    dropping a join whose variable another clause reads fails the **single build** rather than
+    one mutant. It has to prove the variable unreferenced (every other clause value, every
+    other join's source and `on:`), take the join's own `on:` keys with it, and decide what a
+    dropped `as:` name means for stages composed later.
+  * **A computed `from` source** (`from p in recent(2)`). The source argument is an `in`
+    pattern, and core's treatments are per argument: nothing routes "the right side of this
+    `in`" `:expression` while the left stays raw. A nested treatment is a core seam.
+  * **An inline piped subquery** (`subquery(Comment |> where(…))` inside a condition).
+    `Mutare.Ecto.Subquery` recurses a parsed `FromCall`; a pipeline is a chain of stage calls
+    with no such normal form, so each stage's condition would have to be located
+    (`Mutare.Ecto.Host.Condition`) and rebuilt into the chain.
+
+### Stage drops: a dependency break is not told from a weakened query
+
+`Mutare.Ecto.ClauseDrop` emits both kinds under one family (its moduledoc has the taxonomy, and
+`Mutare.Ecto.SpellingCases` pins where each break surfaces — build, plan, or run). A break is
+killed by any test that executes the query, so it is scored as a kill that says nothing about
+the dropped stage's effect; it also costs a mutant run.
+
+It cannot be constrained from where the mutant is made: `mutate/2` is offered one stage, with
+`pipe_mode` and nothing of the pipeline around it, and the stages that would reveal the
+dependency may sit in another function altogether. Nor is a local proxy sound — a join naming
+its binding or carrying `as:` is as likely to be a pure row filter as a provider. The options,
+none taken:
+
+  * **a sibling-aware seam in core** — the pipeline's later stages offered alongside the stage,
+    which would also let a repeated pipe bound be recognised (design history "Bound: only the
+    effective occurrence of a repeated bound is mutated"). Decidable only within one written
+    pipeline; a query finished elsewhere stays opaque. Consult before adding.
+  * **classifying the kill rather than the mutant** — core records `:killed` without the
+    reason, so "killed by a raised `Ecto.QueryError`" is not reportable today. That is the
+    general form of the problem, not an Ecto one, and would be core's to add.
+  * **a separate family for the provider stages** (`join`, `windows`, `with_cte`), so a project
+    could exclude them. Rejected for now: the filtering join is among the family's most useful
+    mutants, and excluding by stage name discards it along with the breaks.
+
+### Pins outside a condition are not sub-contracted
+
+`Mutare.Ecto.Island` sub-contracts a pin's interior to core from the two places that own a
+condition. Every other clause value is routed `:raw`, so `limit: ^(page_size + 1)`,
+`order_by: ^[asc: dynamic([p], p.a + p.b)]` and `select: %{v: ^(min * 2)}` have interiors nobody
+mutates, while the same code bound to a variable first is mutated where it is built. The
+delivery is not the obstacle: the interior is already behind a pin, so a selector `case` there
+is ordinary Elixir and poisons nothing. What is missing is an owner for the position —
+either the host taking these values as `:hosted` targets, one per pin (the root-pin and
+pin-only bound weaves in `Mutare.Ecto.Host.Target` are the precedent), or a core treatment
+meaning "raw, except beneath a `^`". The second is a core seam; consult before adding.
+
+### A structural queryable on a pipe's left is core's
+
+`where(Post, …)` holds `Post` back from core's `:alias` family (a swapped schema is a broken
+query — `Mutare.Ecto.Host.Routing`), and the piped `from` routes its hidden source `:raw` for the
+same reason. A composable stage cannot do either: piped, the queryable is no visible argument,
+the classifier never sees its shape, and routing the hidden side `:raw` wholesale would give up
+every computed upstream query (`recent(2) |> where(…)`), which is the case the `:expression`
+default exists for. So `Post |> where(…)`, a very common spelling, gets
+`Mutare.Mutant |> where(…)`, and `"posts" |> where(…)` a query over `""`: each raises, and is
+killed by any test that runs the query. Closing it needs core to show the classifier the pipe's
+left side, the same seam "A binding pattern on a pipe's left" is waiting on.
+
 ## Design history
 
 What a thing used to be, what it is now, and why. The moduledocs state only the current shape;

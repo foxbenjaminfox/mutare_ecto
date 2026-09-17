@@ -31,9 +31,33 @@ defmodule Mutare.Ecto.ClauseDrop do
   is SQL-unspecified); the implicit-direction flip in `Mutare.Ecto.Ordering` is the reliable
   ordering mutant instead.
 
-  A dropped stage can leave a later stage referencing a binding/CTE/window the query no longer
-  has — but these macros build the query at *runtime*, so that surfaces as a runtime error when
-  the mutant is exercised (killing it), never a compile error of the single metamutant build.
+  ## A drop weakens the query, or breaks it
+
+  Which one depends on the stages *after* the dropped one, and a stage is mutated alone — a
+  pipeline is assembled at runtime, often across functions, and `mutate/2` is offered one call
+  at a time — so both kinds are emitted under the same family:
+
+    * **Nothing later needs the stage** — a filtering join, a `group_by`, a `distinct`, a
+      `preload`. The mutant is the query without it, and a kill means a test pins what the
+      stage contributes.
+    * **A later stage needs what it provided** — a join's binding (by position or by `as:`
+      name), the `windows` name an `over/2` uses, the `limit` a `with_ties` qualifies, the CTE
+      a join reads, a schemaless source's `select`. The mutant is no query at all: it raises
+      as the pipeline is built (`with_ties`, a named binding), as Ecto plans it (a positional
+      binding, a window, the missing `select`), or at the engine (the CTE's table). Any test
+      that executes the query kills it, whatever it asserts — so the kill shows that the stage
+      *runs*, not that its effect is tested.
+    * **In between**: dropping a join ahead of another runs, with every later positional
+      binding shifted onto the freed slot — `[p, c]`'s `c` now names the next join's table.
+
+  None of this reaches the single build. These macros assemble the query at runtime, so a broken
+  dependency raises only under its own mutant — the inactive branches, and every other mutant
+  in the file, are untouched. The `from` form differs exactly there: Ecto expands the whole
+  keyword list at compile time, so a dropped `join:` would leave `where: c.x` naming an unbound
+  variable in the metamutant itself. That is why `Mutare.Ecto.Query` drops a `limit:` together
+  with its `with_ties:`; a `from` join drop would first have to prove the binding unreferenced,
+  and none is offered. Telling the two kinds apart *here* needs the rest of the pipeline in
+  view (NOTES "Stage drops: a dependency break is not told from a weakened query").
   """
 
   alias Mutare.Ecto.{Context, StageDrop, Surface}

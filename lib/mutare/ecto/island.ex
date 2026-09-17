@@ -56,6 +56,15 @@ defmodule Mutare.Ecto.Island do
   # `Fragment.islands/2` reports each pin's **role**, and this seam is the home of the **role
   # policy** (`subcontracted/3`): which written literals of an interior are still query
   # structure, and so not core's to rewrite.
+  #
+  # **Only the pins inside a condition are sub-contracted**, whatever their role — unimplemented
+  # elsewhere, not equivalent. The two callers above own conditions; a pin in any other clause
+  # value — a bound (`limit: ^(size + 1)`), an ordering (`order_by: ^[asc: dynamic(…)]`), a
+  # projection (`select: %{v: ^(min * 2)}`) — sits in a position routed `:raw`, which core does
+  # not descend and no owner walks for islands, so its interior is mutated by nobody. Bound to a
+  # variable first, the same expression is ordinary Elixir (and the same `dynamic` a
+  # free-standing one), mutated where it is built — so moving code into or out of such a pin
+  # changes its coverage (NOTES "Pins outside a condition are not sub-contracted").
 
   alias Mutare.Ecto.{AST, Context, Fragment}
   alias Mutare.Mutator.Mutation

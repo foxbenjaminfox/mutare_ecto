@@ -28,10 +28,10 @@ mix docs                                     # ExDoc → doc/ (gitignored)
 mix deps.get                                 # fetch deps
 ```
 
-`mix test` compiles everything, so there is no separate build step. Only the semantic suite
-touches a DB — it boots its Repo in `setup_all` (via `Mutare.Ecto.SemanticHarness.start_repo!/1`),
-so every **other** test run stays DB-free and the driver NIF cost is isolated to the semantic
-modules.
+`mix test` compiles everything, so there is no separate build step. Only that one file touches
+a DB — its two suites, semantic and spelling, each boot the Repo in `setup_all` (via
+`Mutare.Ecto.SemanticHarness.start_repo!/1`), so every **other** test run stays DB-free and the
+driver NIF cost is isolated to those modules.
 
 ### The semantic suite's engines (SQLite always, Postgres opt-in)
 
@@ -260,6 +260,14 @@ Each is the conclusion; the canonical statement is in the named module.
   (`Mutare.Ecto.Equivalence`). A `producer:`-relayed island mutant bypasses it.
 - **A new macro kind must take a real branch in every dispatch** — `macro_kind_parity_test.exs`
   fails until it does. `Mutare.Ecto.Surface.macro_kinds/0`.
+- **A spelling gap is declared, never discovered.** A `from` key and a composable stage get
+  their capabilities from separate `Surface` keys, so the two can differ. Each difference is a
+  row of the README's "Coverage by spelling" table and a test in `Mutare.Ecto.SpellingCases`
+  that asserts the gap itself — closing one means editing the descriptor, the table, and the
+  test together. `Mutare.Ecto.Surface`.
+- **A stage drop may break the query instead of weakening it**, and nothing in view of one
+  stage tells which. It raises under its own mutant only — never the single build, which is
+  the `from` form's problem. `Mutare.Ecto.ClauseDrop`.
 - **One home per rule in the docs.** Mechanics and family rationale → the owning module's doc;
   history ("used to be …") → `NOTES.md` "Design history"; cross-module gotchas → here, as a
   pointer. Layering per `../mutare/.claude/skills/editing-docs/SKILL.md`. Public moduledocs are
@@ -282,6 +290,15 @@ Each is the conclusion; the canonical statement is in the named module.
   Site's logical diff, the baseline run first and pinned); `site_id/2`/`site_by/3` +
   `under/3`/`activate/2` remain for multi-mutant builds, the token-absence drops, and the write
   path.
+- The spelling suite (`Mutare.Ecto.SpellingCases`, instantiated per engine from the same entry
+  file) asks a different question — *does one query get the same mutants however it is
+  written?* — and answers it by normal form, not by rendered diff: a family's capability on a
+  fixture is the set of **statements** its mutants reach (`H.outcome/3`: the SQL and params the
+  engine is asked to run, or the stage — build, plan, run — at which the query breaks).
+  `spellings/2` first checks that the bodies are one query (equal baselines); each test then
+  states the reached set as hand-written queries, restating a pin where the delivery pins
+  (`limit: ^3`). A gap asserts `MapSet.new()` beside a non-empty sibling under the same family
+  name, so a misspelt family cannot pass vacuously.
 - The fixtures and assertions are engine-agnostic: every DB helper takes the Repo module first,
   `H.full_join_supported?/1` runtime-gates the one FULL-JOIN fixture, and aggregate values route
   through `to_number/1` (Postgres hands back `Decimal` where SQLite gives a float). Fixtures:

@@ -250,6 +250,57 @@ defmodule Mutare.Ecto.SemanticHarness do
     activate(id, fn -> repo.all(fun.()) end)
   end
 
+  @typedoc """
+  What a built query amounts to at the engine: the statement it runs as, or the stage at which it
+  stops being a query — `:build` (constructing it raises: `with_ties` over a query with no
+  `limit`), `:plan` (Ecto's planner rejects it: a binding, window or `select` it needs is gone),
+  or `:run` (the engine rejects the planned statement: a table no CTE defines any more).
+  """
+  @type outcome ::
+          {:runs, sql :: String.t(), params :: [term()]} | {:breaks, :build | :plan | :run}
+
+  @doc """
+  The `t:outcome/0` of the query `fun` builds under active mutant `id` (`0` for the baseline).
+
+  The **statement** is the normal form the spelling suite compares by: it is what the engine is
+  asked, so two mutants that reach the same statement are one logical mutation however each was
+  written or delivered (a `from` keyword rewrite, a dropped pipe stage, a woven `dynamic`), and
+  a fixture's two spellings are one query exactly when their baselines agree. A delivery that
+  pins a value shows in the params, so an expected query restates the pin (`limit: ^3`).
+
+  The **stage** tells a stage-drop mutant that weakens the query from one that breaks a
+  dependency: the first still runs, as a different statement; the second raises wherever Ecto
+  or the engine first notices what is missing. Only the stage is reported — the exception type
+  for an engine-side failure is adapter detail.
+  """
+  @spec outcome(module(), non_neg_integer(), (-> Ecto.Queryable.t())) :: outcome()
+  def outcome(repo, id, fun) when is_integer(id) and id >= 0 do
+    activate(id, fn ->
+      with {:ok, query} <- attempt(:build, fun),
+           {:ok, {sql, params}} <-
+             attempt(:plan, fn -> Ecto.Adapters.SQL.to_sql(:all, repo, query) end),
+           {:ok, _rows} <- attempt(:run, fn -> repo.all(query) end) do
+        {:runs, sql, params}
+      end
+    end)
+  end
+
+  defp attempt(stage, fun) do
+    {:ok, fun.()}
+  rescue
+    _error -> {:breaks, stage}
+  end
+
+  @doc """
+  The family a Site belongs to, as the string its variant carries: the plugin's SQL family for an
+  `:ecto` site (`Mutare.Ecto.Tag.to_mutation/1` leads the variant with it), core's mutator name
+  for every other — a relayed island mutant included, which core records under the family that
+  produced it.
+  """
+  @spec family(Mutare.MutationSite.t()) :: String.t()
+  def family(%Mutare.MutationSite{mutator: :ecto, variant: [family | _labels]}), do: family
+  def family(%Mutare.MutationSite{mutator: mutator}), do: Atom.to_string(mutator)
+
   @doc """
   The flip-and-compare pair for the query path: run `fun`'s query at baseline and under the one
   site matching `pattern`, returning `{baseline_rows, mutant_rows}`.
