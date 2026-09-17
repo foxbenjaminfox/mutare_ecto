@@ -283,6 +283,34 @@ defmodule Mutare.Ecto.SemanticCases do
           assert mutant == [3, 4]
         end
 
+        # A root pin on a standalone join written without `x in`, woven pin-only. The realistic
+        # occupant is an inline `dynamic`, which names the joined binding itself; its SQL is the
+        # plugin's own to mutate, so this runs plugin-alone.
+        test "an unnamed standalone join's root-pin on: carries a live inline-dynamic mutant" do
+          {mod, sites} =
+            build("""
+            defmodule Q do
+              import Ecto.Query
+              alias MyApp.{Post, User}
+              def q do
+                posts = from(p in Post, select: %{user_id: p.user_id, views: p.views})
+
+                from(u in User, select: u.id)
+                |> join(:inner, [u], subquery(posts),
+                  on: ^dynamic([u, s], s.user_id == u.id and s.views > 10)
+                )
+              end
+            end
+            """)
+
+          {baseline, mutant} = observe_ids(mod, sites, {~r/s\.views > 10/, ~r/s\.views >= 10/})
+
+          # Baseline: only P2 (20 views) clears `> 10` — its author, Bob.
+          assert baseline == [2]
+          # The `>=` mutant admits the boundary post P1 (10 views) — Alice joins.
+          assert mutant == [1, 2]
+        end
+
         # The lowered twin: the island's *hosted* Ecto. A standalone query built inside the pin
         # (`^Repo.all(from ...)`) has its `where:` condition swap deliverable only by hosting —
         # which cannot nest — so core's collect **lowers** the hosted target: the mutant is the

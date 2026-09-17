@@ -33,7 +33,8 @@ defmodule Mutare.Ecto.RootPinDeliveryTest do
     {"where/3", &__MODULE__.where_bound/1},
     {"piped where/2", &__MODULE__.where_piped/1},
     {"binding-less where/2", &__MODULE__.where_bare/1},
-    {"join on:", &__MODULE__.join_on/1}
+    {"join on:", &__MODULE__.join_on/1},
+    {"unnamed join on:", &__MODULE__.unnamed_join_on/1}
   ]
 
   def from_where(interior), do: ~s|from(p in "posts", where: ^(#{interior}))|
@@ -43,6 +44,7 @@ defmodule Mutare.Ecto.RootPinDeliveryTest do
   def where_piped(interior), do: ~s|q \|> where([p], ^(#{interior}))|
   def where_bare(interior), do: ~s|where(q, ^(#{interior}))|
   def join_on(interior), do: ~s|join(q, :inner, [c], p in "posts", on: ^(#{interior}))|
+  def unnamed_join_on(interior), do: ~s|join(q, :inner, [c], "posts", on: ^(#{interior}))|
 
   defp module_source(body) do
     """
@@ -130,6 +132,21 @@ defmodule Mutare.Ecto.RootPinDeliveryTest do
     # inside `dynamic/2`, so the ordinary wrap is behaviour-preserving and stays.
     source = module_source(~s|where(q, [p], p.views > ^(2 + 3))|)
     assert metamutant(source, @with_core) =~ "Ecto.Query.dynamic([p], p.views > ^(2 + 4))"
+  end
+
+  test "an unnamed standalone join's root-pin on: weaves pin-only — an inline dynamic mutates" do
+    # The plugin alone: an inline `dynamic` in the pin is the plugin's own to mutate, whole-call.
+    source =
+      module_source(~s|join(q, :inner, [p], subquery(q), on: ^dynamic([p, s], s.id > p.id))|)
+
+    assert {"^dynamic([p, s], s.id > p.id)", "^dynamic([p, s], s.id >= p.id)"} in ecto_diffs(
+             source
+           )
+
+    woven = metamutant(source)
+    assert woven =~ "^case"
+    refute woven =~ "Elixir.Ecto.Query.dynamic", "pin-only: no woven wrap, no bindings\n#{woven}"
+    assert_compiles(source)
   end
 
   test "a root pin lowered out of an outer pin's interior is rebuilt natively too" do
