@@ -170,7 +170,7 @@ Each row is role + the rule(s) that module is the **home** for.
 | `host/bindings.ex` | interprets binding declarations and renders the list a woven `dynamic/2` re-declares; home of the join-slot rule (every join — a `from` join clause, or the one a standalone `join/4,5` adds — holds one positional slot; an unnamed one re-declares as `_`) |
 | `host/catalog.ex` | the own-catalog + island mutants for one hosted condition |
 | `host/join_on.ex` | home of join `on:` hostability (a join's sole, top-level, non-`assoc` on-expression — an `assoc` join told by its source, named or not) |
-| `host/target.ex` | the `dynamic`-wrap / `^`-pin / splice transforms core consumes |
+| `host/target.ex` | the `dynamic`-wrap / `^`-pin / splice transforms core consumes; home of the root-pin rule (a condition that *is* a `^` pin weaves pin-only over its interior) |
 | `fragment.ex` | the SQL-semantics catalog for conditions (public family table); home of the SQL side of the ownership rule, the `is_nil` observation rule (beneath it a mutant is pruned only where the per-form NULL rules *know* it keeps the argument's NULL-ness; an unknown form — and every pin — is emitted), and the structural-position registry |
 | `subquery.ex` | recurses the catalogs into an inline subquery; home of the wrapper observation modes and of what is pruned as equivalent vs. merely not composed yet |
 | `island.ex` | the interpolation-island seam; home of the sub-contract and the pin-side keyword-key rule |
@@ -233,6 +233,9 @@ Each is the conclusion; the canonical statement is in the named module.
   baseline too. So hostability depends on the receiving clause as well as the expression
   (`Mutare.Ecto.StaticCondition`), and a hosted delivery is proven by building the query under
   every mutant (`TestSupport.assert_builds/3`), not by `assert_compiles/2`.
+- **Never `dynamic`-wrap a condition that is itself a `^` pin.** Ecto dispatches a root
+  interpolation on its runtime value (keyword filter / boolean / `DynamicExpr`); the wrap demotes
+  it to a parameter — in the original branch too, breaking the baseline. `Mutare.Ecto.Host.Target`.
 - **Sourceror wraps literals** as `{:__block__, meta, [value]}`: read through `Mutare.Ecto.AST`'s
   readers, emit through core's `Mutare.AST` constructors, never hand-build a block. Emitted module
   references are `Elixir.`-prefixed (alias-proof). `Mutare.Ecto.AST`.

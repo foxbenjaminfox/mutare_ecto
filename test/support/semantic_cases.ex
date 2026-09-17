@@ -228,6 +228,61 @@ defmodule Mutare.Ecto.SemanticCases do
           assert mutant -- baseline == [1, 4]
         end
 
+        # The root pin's other native arm: a **keyword filter**. The fixture above would run
+        # behind a `dynamic/2` wrap too (a nested `^DynamicExpr` is spliced), but a keyword list
+        # is a field filter only at a condition's root — so these run only because a root pin
+        # is woven pin-only (`Mutare.Ecto.Host.Target`). Both halves are the proof: the
+        # *baseline* is still Ecto's `u.age == ^18`, and the mutant moves the rows as a
+        # different filter value predicts.
+        test "a root keyword filter's value mutant is live, over an intact baseline" do
+          {mod, sites} =
+            H.compile(
+              """
+              defmodule Q do
+                import Ecto.Query
+                alias MyApp.User
+                def q, do: from(u in User, where: ^[age: 18], select: u.id)
+              end
+              """,
+              mutators: [:integer, {Mutare.Ecto, repo: @repo}]
+            )
+
+          {baseline, mutant} = observe_ids(mod, sites, {"^[age: 18]", "^[age: 19]"})
+
+          # Baseline filters `age == 18`: Alice, Dave.
+          assert baseline == [1, 4]
+          # The mutant filters `age == 19`: Frank alone.
+          assert mutant == [6]
+        end
+
+        test "a computed root filter's value mutant is live, over an intact baseline" do
+          {mod, sites} =
+            H.compile(
+              """
+              defmodule Q do
+                import Ecto.Query
+                alias MyApp.User
+                def q do
+                  only_active = true
+                  from(u in User,
+                    where: ^(if only_active, do: [active: true], else: []),
+                    select: u.id
+                  )
+                end
+              end
+              """,
+              mutators: [:boolean, {Mutare.Ecto, repo: @repo}]
+            )
+
+          {baseline, mutant} =
+            observe_ids(mod, sites, {~r/\[active: true\]/, ~r/\[active: false\]/})
+
+          # Baseline keeps the active users: Alice, Bob, Eve, Frank.
+          assert baseline == [1, 2, 5, 6]
+          # The mutant keeps the inactive ones instead: Carol, Dave.
+          assert mutant == [3, 4]
+        end
+
         # The lowered twin: the island's *hosted* Ecto. A standalone query built inside the pin
         # (`^Repo.all(from ...)`) has its `where:` condition swap deliverable only by hosting —
         # which cannot nest — so core's collect **lowers** the hosted target: the mutant is the

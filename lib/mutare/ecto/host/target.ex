@@ -1,10 +1,36 @@
 defmodule Mutare.Ecto.Host.Target do
   @moduledoc false
   # Builds the `Mutare.Mutator.MacroHost.Target` values consumed by Mutare core and owns every
-  # delivery transform: wrapping logical fragments in `dynamic/2` (the target's `:wrap`), pinning
-  # the selector, and splicing it into the original call. The bound-bump targets are **pin-only**
-  # (`Mutare.Ecto.Bound`): no `:wrap` (core defaults the branch wrapper to identity, so each
-  # branch is a bare integer) and no bindings.
+  # delivery transform: mapping a logical fragment to its selector branch (the target's `:wrap`),
+  # pinning the selector, and splicing it into the original call. The bound-bump targets are
+  # **pin-only** (`Mutare.Ecto.Bound`): no `:wrap` (core defaults the branch wrapper to identity,
+  # so each branch is a bare integer) and no bindings.
+  #
+  # ## The root-pin rule: a condition that *is* a pin weaves pin-only
+  #
+  # Every selector is spliced `^`-pinned, so what a branch must be depends on what Ecto does
+  # with the value a pin *in that position* carries — and the two positions differ:
+  #
+  #   * A pin **inside a predicate** (`p.views > ^min`) is a query parameter, natively and
+  #     inside `dynamic/2` alike. So a predicate's branch is `dynamic(bindings, fragment)`: the
+  #     one form that can carry SQL structure behind a pin, and behaviour-preserving for every
+  #     pin nested in it.
+  #   * A pin that **is the whole condition** (`where: ^filters`, `where(q, ^cond)`, a join's
+  #     `on: ^cond`) is no parameter: Ecto dispatches on its runtime value
+  #     (`Ecto.Query.Builder.Filter.filter!/6`) — a `DynamicExpr` is expanded, a boolean is the
+  #     literal condition (`true` adds none at all), a keyword list is a field filter
+  #     (`[views: 5]` ⇒ `p.views == ^5`), anything else raises. `dynamic(bindings, ^value)`
+  #     would push that pin down into predicate position and demote all but the `DynamicExpr`
+  #     to a parameter — in the *original* branch too, so the instrumented baseline itself
+  #     would break. Its branch is therefore the pin's bare **interior**: the woven
+  #     `^case … do` hands Ecto the same kind of value, in the same position, that the author's
+  #     `^interior` did, and Ecto's dispatch is untouched by construction — with no binding
+  #     list re-declared, since nothing is wrapped.
+  #
+  # The logical fragment (the Site's diff, the ignore range) stays the written condition, `^`
+  # included; only the branch is unpinned, by `:wrap` — which core applies to the mutant
+  # branches, the fallback branch, and a nested host's lowered rebuild alike, so the one choice
+  # in `branch/2` covers all three.
 
   alias Mutare.Ecto.AST.{FromCall, KeywordList, QueryCall}
   alias Mutare.Mutator.MacroHost
@@ -78,14 +104,25 @@ defmodule Mutare.Ecto.Host.Target do
   end
 
   defp new(original, mutants, bindings, splice) do
-    MacroHost.Target.new(original, mutants, splice, wrap: dynamic_wrap(bindings))
+    MacroHost.Target.new(original, mutants, splice, wrap: branch(original, bindings))
   end
 
-  defp dynamic_wrap(bindings) do
+  # The fragment → branch mapping, chosen once per target by the written condition's shape (the
+  # root-pin rule, in the module header).
+  defp branch({:^, _meta, [_interior]}, _bindings), do: &interior/1
+
+  defp branch(_predicate, bindings) do
     fn fragment ->
       Mutare.AST.absolute_call([:Ecto, :Query], :dynamic, [bindings, fragment])
     end
   end
+
+  # Single-clause on purpose. A root pin's every mutant is itself a root pin: the SQL catalog
+  # reads a pin as a leaf, so the condition is carried entirely by the island sub-contract, whose
+  # rebuild re-pins each mutated interior (`Mutare.Ecto.Fragment.islands/1`). A mutant of any
+  # other shape means that invariant broke, and the crash names it — a fallback `dynamic/2`
+  # wrap would instead quietly reinstate the demotion this rule exists to prevent.
+  defp interior({:^, _meta, [interior]}), do: interior
 
   defp pin(case_node), do: {:^, [], [case_node]}
 end

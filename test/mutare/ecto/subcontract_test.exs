@@ -16,7 +16,8 @@ defmodule Mutare.Ecto.SubcontractTest do
   #     *inside* the interior (an inner `dynamic(...)` literal, offered whole-call to
   #     `Mutare.Ecto.Dynamic` — SQL semantics, never core's);
   #   * delivery stays 100% host-owned — the island mutants are just more branches of the same
-  #     woven `^`/`dynamic` selector (SemanticTest proves one is live at runtime);
+  #     woven selector (SemanticTest proves one is live at runtime; a condition that is itself
+  #     a pin weaves pin-only, which `RootPinDeliveryTest` owns);
   #   * the plugin's SQL *catalog* never reasons about the interior's Elixir (an SQL-rationale
   #     `^(min * 2)` → `^(min / 2)` would mutate the *parameter's* Elixir value/type) — with no
   #     core families in the run, a plain-Elixir interior simply produces nothing.

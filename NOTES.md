@@ -224,6 +224,24 @@ interpolation with a behaviourally identical baseline (`Mutare.Ecto.Bound`, `Hos
 host agree on "literal bound" by definition. Only the bound *drop* remains a whole-`from`/stage
 rewrite.
 
+### Root pin: from `dynamic`-wrapped to pin-only
+
+When a top-level-pin condition (`where: ^cond`) was first hosted in every form, it rode the
+ordinary delivery: every branch `dynamic(bindings, ^interior)`. The interiors that change had
+in view were a runtime boolean and logic choosing which dynamic to splice, and its check was
+that every woven metamutant *compiles*. A `DynamicExpr` does survive the wrap (`dynamic/2`
+splices it), and that was the one arm ever observed at runtime (the semantic suite's
+inner-dynamic fixture); the later keyword-filter fixtures again asserted compilation only. But
+Ecto dispatches a root interpolation on its value, and inside `dynamic/2` the same pin is a
+parameter: `^[score: 5]` stopped being `p.score == ^5` and became the parameter `[score: 5]`
+(an `Ecto.QueryError` when run), and `^true` became a bound `true` instead of no condition. Since
+the wrap also encloses the *original* branch, the instrumented **baseline** broke, not just the
+mutants; the trigger was any core-mutable Elixir in a root pin whose value is not a
+`DynamicExpr`. A root pin is now woven **pin-only** over its bare interior, by the branch `wrap`
+alone — which also fixed the lowered rebuild of an inner query's root pin, since core lowers
+through the same `wrap` (`Mutare.Ecto.Host.Target`; `root_pin_delivery_test.exs` holds the
+baseline-parity check across every arm of Ecto's dispatch and every hosted position).
+
 ### Ordering: implicit-direction flip replaces the order_by clause drop
 
 `order_by` used to be droppable like any other clause. But an `ORDER BY`-less query's row order

@@ -4,12 +4,13 @@ defmodule Mutare.Ecto.Host.Catalog do
   # (`Mutare.Ecto.Fragment`, with the shared per-node scalar/aggregate catalogs folded in so the
   # condition is walked once) plus the mutants `Mutare.Ecto.Island` sub-contracts for each `^` pin
   # interior — relayed with `producer:` set, so they are just more branches of the same woven
-  # `^`/`dynamic` selector. Production only: the `families:` filter and equivalence note are
-  # applied by core's `finalize/2` pass (`Mutare.Ecto.Equivalence`), and core drops a target
-  # whose mutants all skip.
+  # selector. Production only: the `families:` filter and equivalence note are applied by core's
+  # `finalize/2` pass (`Mutare.Ecto.Equivalence`), and core drops a target whose mutants all
+  # skip.
   #
-  # Delivery (`dynamic` wrap, pinning, splicing) lives in `Mutare.Ecto.Host.Target`; the pin-only
-  # `:bound` bumps are `Mutare.Ecto.Bound`'s; a binding-reorder is never hosted
+  # Delivery (each fragment's branch form — `dynamic`-wrapped, or the bare interior of a
+  # condition that is itself a pin — pinning, splicing) lives in `Mutare.Ecto.Host.Target`; the
+  # pin-only `:bound` bumps are `Mutare.Ecto.Bound`'s; a binding-reorder is never hosted
   # (`Mutare.Ecto.BindingReorder`).
 
   alias Mutare.Ecto.{Config, Context, Fragment, Island, Tag}

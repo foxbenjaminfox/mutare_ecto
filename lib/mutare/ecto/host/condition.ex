@@ -22,7 +22,8 @@ defmodule Mutare.Ecto.Host.Condition do
   # Neither shape matches the keyword-shorthand form (`where(q, col: v)`), which `locate/1` reports
   # as `nil` — its trailing pairs route `{:keyword, …}` instead (`Mutare.Ecto.Host.Routing`). A
   # top-level `^cond` pin **is** a condition in either shape: its own SQL catalog is empty, but its
-  # interior is sub-contracted to core (`Mutare.Ecto.Island`).
+  # interior is sub-contracted to core (`Mutare.Ecto.Island`) — and woven pin-only, with no
+  # `dynamic/2` and so no re-declared bindings at all (the root-pin rule, `Mutare.Ecto.Host.Target`).
 
   alias Mutare.Ecto.AST.BindingList
 

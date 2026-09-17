@@ -10,6 +10,13 @@ defmodule Mutare.Ecto.Host do
   catalog) — and `Host.Target` constructs the `dynamic/2` wrap and selector splice consumed by
   Mutare core.
 
+  A condition that is itself a `^` pin (`where: ^filters`, `where(q, ^cond)`, a join's
+  `on: ^cond`) is woven **pin-only**, over its bare interior: Ecto treats such a root
+  interpolation according to its runtime value — a keyword list is a field filter, a boolean a
+  literal condition, a dynamic is expanded — and a `dynamic/2` wrap would turn the first two into
+  plain parameters. Pinning the selector alone hands Ecto the same kind of value the written pin
+  did, so the instrumented query behaves as the original.
+
   Besides conditions, the host also weaves the `:bound` ±1 bump of a literal `limit`/`offset`
   value, as a **pin-only** target with no `dynamic/2` wrap and no bindings — see
   `Mutare.Ecto.Bound`, the bump catalog and its literal guard. In a `from`, only the
@@ -107,7 +114,8 @@ defmodule Mutare.Ecto.Host do
   # `dynamic([], …)` re-declares none — valid, since such a condition can only reference a *named*
   # binding. Hostability is decided by the clause key (`hostable_clause?/3`, in the caller) and a
   # non-empty catalog, not the binding count — so a top-level-pin condition (`where: ^cond`)
-  # hosts whenever its sub-contract yields something (`Mutare.Ecto.Island`).
+  # hosts whenever its sub-contract yields something (`Mutare.Ecto.Island`); its weave is
+  # pin-only and leaves these bindings unused (`Mutare.Ecto.Host.Target`).
   defp from_target(condition, bindings, index, context) do
     case Catalog.mutants(condition, context) do
       [] -> []

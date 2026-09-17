@@ -40,7 +40,9 @@ defmodule Mutare.Ecto.Island do
   # rebuilds the whole free-standing `dynamic` call around it.
   #
   # A **top-level-pin** condition (`where: ^cond`, `where(q, [u], ^cond)`, a join `on: ^cond`, a
-  # `dynamic([p], ^cond)` body) is handled no differently: the SQL catalog is empty for a pin,
+  # `dynamic([p], ^cond)` body) is *analyzed* no differently (its **delivery** by the host does
+  # differ — pin-only, so Ecto still dispatches on the interpolated value; the root-pin rule,
+  # `Mutare.Ecto.Host.Target`): the SQL catalog is empty for a pin,
   # and `Fragment.islands/1` surfaces the whole interior as one island — so a pinned *Elixir*
   # condition (`^(if params.sort, do: a, else: b)`, `^(rem(n, 2) == 0 and flag)`) has its logic
   # mutated by core exactly as a nested pin's parameter is. A bare `^d` interior is a variable,

@@ -70,6 +70,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   such conditions; a plain `is_nil(p.column)` is unchanged.
 - The `*`↔`/` survivor note no longer says a zero divisor always raises: it
   raises on Postgres and yields NULL on SQLite and MySQL.
+- **A condition that is itself a `^` pin keeps Ecto's own handling when
+  instrumented.** With Mutare's core families enabled, a root interpolation
+  carrying mutable Elixir — `where: ^[score: 5]`, or a computed
+  `^(if enabled?, do: [active: true], else: [])` — was woven behind a
+  `dynamic/2` wrap like any other condition. Ecto reads a root interpolation by
+  its value (a keyword list is a field filter, a boolean a literal condition),
+  but inside `dynamic/2` the same pin is a plain parameter, so the instrumented
+  query raised `Ecto.QueryError` even with no mutant active. Such a condition is
+  now woven pin-only over its interior, leaving Ecto's dispatch untouched; the
+  reported diffs are unchanged. A pin holding a bare variable (`^filters`) or a
+  dynamic was never affected.
 
 - **A subquery in a `having` no longer breaks the instrumented build.** Ecto accepts
   `having: count(p.id) > subquery(…)` written statically but rejects the same subquery
