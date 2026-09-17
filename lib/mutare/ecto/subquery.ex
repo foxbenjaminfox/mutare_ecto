@@ -48,9 +48,14 @@ defmodule Mutare.Ecto.Subquery do
   #     and through a scalar `subquery`, which reads one row — the latest-row idiom
   #     `order_by: [desc: c.at], limit: 1`, and on SQLite (which reads a multi-row scalar's
   #     first row rather than raising) without the `limit` too.
-  #   * `distinct`/`group_by`: `Query` has no whole-`from` producer for either (their one
-  #     mutation is the pipe-form stage drop, `Mutare.Ecto.ClauseDrop`), so there is nothing to
-  #     compose.
+  #   * `distinct`/`group_by` (and the rest of `Query`'s `:clause_drop` producer). A `distinct`
+  #     drop is unobservable through `exists`, `in` and the quantifiers — duplicates change
+  #     neither existence, membership, nor a comparison against `all`/`any` — and observable
+  #     only through a scalar `subquery`, where it can turn one row into several. A `group_by`
+  #     drop changes how many rows there are and what an aggregate ranges over. Beside an
+  #     aggregate (in the projection, or a `having`) that shows even through `exists` — the
+  #     grouped rows of an empty set are no rows, the ungrouped aggregate always one — and
+  #     without one it does not; it also tends to leave a projection Postgres rejects.
   #
   # A pinned `^expr` inside a mutated clause is sub-contracted to core like a top-level pin (see
   # `Mutare.Ecto.Island`): `interior_islands/2` surfaces it from exactly the clauses each `mode`

@@ -184,7 +184,7 @@ Each row is role + the rule(s) that module is the **home** for.
 | `bound.ex` | the `:bound` ±1 bump; home of pin-only hosting and the `literal?/1` = `bumps/1` agreement |
 | `dynamic.ex` | free-standing `dynamic/1,2`; home of its whole-call in-place delivery |
 | `static_condition.ex` | the condition the host cannot weave (a subquery in a `having`; a declaration the plugin cannot re-declare); home of the delivery rule (`delivery/4` — receiving clause × expression × predicate kind × declaration, consulted by the host and the fallback alike) and of its whole-call fallback delivery |
-| `query.ex` | whole-`from` rewrites; home of the JoinType narrowing rationale |
+| `query.ex` | whole-`from` rewrites; home of the JoinType narrowing rationale and of which `from` keys drop (one the rest of the keyword list cannot need — so never a join, `select:`, `update:` or `windows:`) |
 | `clause.ex` | standalone/pipe cousins of `query.ex` |
 | `clause_drop.ex` / `changeset.ex` | stage drops (a query clause / a changeset validator or hook) over `stage_drop.ex`; `changeset.ex` is home of the stage table (`stages/0`) the changeset routes derive from |
 | `changeset/routing.ex` | the changeset-stage classifier; home of the changeset pins (a written field atom `:raw`; `validate_number`'s option keys raw via `{:keyword, …}`, values `:expression`; a written `validate_length` `count:` mode via a keyed refinement) and of why a field *list* and `validate_length`'s keys are not pinned |

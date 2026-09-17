@@ -296,6 +296,46 @@ defmodule Mutare.Ecto.SpellingCases do
         end
       end
 
+      describe "Same in both spellings — the drop of a clause nothing else in the query needs" do
+        test "a grouping, a `distinct` and a `preload`" do
+          compiled =
+            spellings(
+              [
+                from: ~S|from(p in Post, group_by: p.id, distinct: true, preload: [:user])|,
+                pipe: ~S'Post |> group_by([p], p.id) |> distinct(true) |> preload([:user])'
+              ],
+              helpers: "alias MyApp.Post"
+            )
+
+          assert_same(compiled, :clause_drop, [
+            from(p in MyApp.Post, distinct: true, preload: [:user]),
+            from(p in MyApp.Post, group_by: p.id, preload: [:user]),
+            # A preload is a second query and changes no statement, so its drop lands on the
+            # baseline's.
+            from(p in MyApp.Post, group_by: p.id, distinct: true)
+          ])
+        end
+
+        test "a `select_merge`, and a set operation" do
+          for {from, pipe} <- [
+                {~S|from(p in Post, select_merge: %{views: p.id})|,
+                 ~S'Post |> select_merge([p], %{views: p.id})'},
+                {~S|from(p in Post, union_all: ^published())|,
+                 ~S'Post |> union_all(^published())'}
+              ] do
+            compiled =
+              spellings([from: from, pipe: pipe],
+                helpers: """
+                alias MyApp.Post
+                defp published, do: from(p in Post, where: p.published)
+                """
+              )
+
+            assert_same(compiled, :clause_drop, [from(p in MyApp.Post)])
+          end
+        end
+      end
+
       describe "Same in both spellings — a set operation" do
         test "`intersect` ↔ `except`" do
           compiled =
@@ -345,8 +385,10 @@ defmodule Mutare.Ecto.SpellingCases do
 
       # ── the gaps: one spelling only ─────────────────────────────────────────────────────────
 
-      describe "Gap — a clause other than a filter or a bound drops from a pipeline only" do
-        test "a join, a grouping, a `distinct` and a `preload` each drop as a stage, never as a `from` key" do
+      describe "Gap — a join, a `windows` and a `select` drop from a pipeline only" do
+        # A `from` holds these back: its keyword list expands as a whole when the metamutant
+        # compiles, and the rest of the list may need them (`Mutare.Ecto.Query`, "Clause drop").
+        test "each drops as a stage, never as a `from` key" do
           %{from: from, pipe: pipe} =
             spellings(
               [
@@ -354,17 +396,15 @@ defmodule Mutare.Ecto.SpellingCases do
                 from(p in Post,
                   join: c in "comments",
                   on: c.post_id == p.id,
-                  group_by: p.id,
-                  distinct: true,
-                  preload: [:user]
+                  windows: [w: [partition_by: p.user_id]],
+                  select: p.id
                 )
                 """,
                 pipe: ~S"""
                 Post
                 |> join(:inner, [p], c in "comments", on: c.post_id == p.id)
-                |> group_by([p], p.id)
-                |> distinct(true)
-                |> preload([:user])
+                |> windows([p], w: [partition_by: p.user_id])
+                |> select([p], p.id)
                 """
               ],
               helpers: "alias MyApp.Post"
@@ -374,26 +414,19 @@ defmodule Mutare.Ecto.SpellingCases do
 
           assert reached(pipe, :clause_drop) ==
                    statements([
-                     from(p in MyApp.Post, group_by: p.id, distinct: true, preload: [:user]),
                      from(p in MyApp.Post,
-                       join: c in "comments",
-                       on: c.post_id == p.id,
-                       distinct: true,
-                       preload: [:user]
+                       windows: [w: [partition_by: p.user_id]],
+                       select: p.id
                      ),
                      from(p in MyApp.Post,
                        join: c in "comments",
                        on: c.post_id == p.id,
-                       group_by: p.id,
-                       preload: [:user]
+                       select: p.id
                      ),
-                     # A preload changes no statement — it is a second query — so its drop lands
-                     # on the baseline's.
                      from(p in MyApp.Post,
                        join: c in "comments",
                        on: c.post_id == p.id,
-                       group_by: p.id,
-                       distinct: true
+                       windows: [w: [partition_by: p.user_id]]
                      )
                    ])
         end

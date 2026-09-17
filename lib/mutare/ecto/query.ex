@@ -5,11 +5,24 @@ defmodule Mutare.Ecto.Query do
   Mutare's ordinary in-place selector wraps; the localized in-fragment mutations (operator
   swaps inside a `where`, via `^`/`dynamic`) arrive with the host extensions.
 
-    * **Clause drop** — remove one `where`/`having`/`or_where`/`or_having` clause from the
+    * **Filter drop** — remove one `where`/`having`/`or_where`/`or_having` clause from the
       query. "Is this filter tested?" Reuses the surviving clauses, so it always compiles, and
       works for both the binding form (`from p in Post, where: p.active`) and the bindingless
       form (`from Post, where: [active: true]`) since it operates on the clause list, not the
       clause value.
+    * **Clause drop** — remove one `group_by`/`distinct`/`preload`/`lock`/`select_merge`/
+      `with_ties` clause, or one set operation (`union:`, `except:`, …): the `from`-keyword
+      twin of `Mutare.Ecto.ClauseDrop`'s stage drop, under the same family. "Is what this
+      clause contributes tested?" A `from` expands as a whole when the metamutant compiles, so
+      a key drops here only if the rest of the list cannot need it — it binds no variable,
+      nothing names it, and no plan requires it. That holds the pipeline's other drops back:
+      a **join** binds a variable the other clauses read, so its drop would fail the single
+      build unless the binding were first proved unreferenced; a **`select:`** is required by
+      a schemaless source, an **`update:`** by `update_all`, and a **`windows:`** is named by
+      `over/2`. What remains can still depend on a dropped clause at the *engine* — a
+      `select` that mixes an aggregate with a plain column needs its `group_by` on Postgres —
+      which raises under that one mutant only (`Mutare.Ecto.ClauseDrop`, "A drop weakens the
+      query, or breaks it").
     * **Order flip** — flip an `order_by` direction (`:asc`↔`:desc`, and the `*_nulls_*`
       variants). "Does any test pin the sort direction?"
     * **Bound (drop)** — drop a `limit`/`offset` clause. "Is the window tested at all?" The
@@ -87,13 +100,14 @@ defmodule Mutare.Ecto.Query do
 
   @typedoc """
   One whole-`from` producer, named in `Mutare.Ecto.Surface`'s vocabulary: a `from_drop` family
-  walked over the clause list (`:filter_drop`, `:bound`), a `from` capability walked over the
+  walked over the clause list (`:filter_drop`, `:bound`, `:clause_drop`), a `from` capability walked over the
   clauses carrying it (the `:ordering`/`:aggregate`/`:scalar` value swaps, the
   `:join_type`/`:combination` key swaps), or the source-level `:binding_reorder`.
   """
   @type producer ::
           :filter_drop
           | :bound
+          | :clause_drop
           | :ordering
           | :join_type
           | :combination
@@ -105,6 +119,7 @@ defmodule Mutare.Ecto.Query do
   @producers [
     :filter_drop,
     :bound,
+    :clause_drop,
     :ordering,
     :join_type,
     :combination,
@@ -142,6 +157,8 @@ defmodule Mutare.Ecto.Query do
 
   defp produce(:bound, from, _config, clause?), do: drops(from, :bound, clause?)
 
+  defp produce(:clause_drop, from, _config, clause?), do: drops(from, :clause_drop, clause?)
+
   defp produce(:ordering, from, _config, clause?), do: value_swaps(from, :ordering, clause?)
 
   defp produce(:join_type, from, config, clause?), do: join_swaps(from, config, clause?)
@@ -176,12 +193,14 @@ defmodule Mutare.Ecto.Query do
     end
   end
 
-  # Remove each clause whose key is in `keys`, keeping the others — so the query still
-  # compiles (it reuses the surviving clauses). Used for both the filter drops (where/having,
-  # tagged `:filter_drop`) and the bound drops (limit/offset, tagged `:bound`). Only an
-  # *effective* clause drops: a last-wins key's overridden occurrence (`limit: 5, limit: 10`'s
-  # `5`) never reaches the query, so its drop would be equivalent — `FromCall.effective_clause?/2`
-  # (a filter always is; only the bound keys are last-wins).
+  # Remove each clause whose key `Surface` drops under `family`, keeping the others — so the
+  # query still compiles (it reuses the surviving clauses, and `Surface` declares a `from_drop`
+  # only on a key the rest of the list cannot need — the moduledoc's "Clause drop"). Used for
+  # the filter drops (where/having, tagged `:filter_drop`), the bound drops (limit/offset,
+  # tagged `:bound`) and the rest (`:clause_drop`). Only an *effective* clause drops: a
+  # last-wins key's overridden occurrence (`limit: 5, limit: 10`'s `5`, `lock:` likewise) never
+  # reaches the query, so its drop would be equivalent — `FromCall.effective_clause?/2` (an
+  # accumulating key always is).
   defp drops(%FromCall{clauses: clauses} = from, family, clause?) do
     admit? = &(Surface.from_drop_family(&1) == family and clause?.(&1))
 

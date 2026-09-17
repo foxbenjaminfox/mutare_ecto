@@ -84,6 +84,21 @@ defmodule Mutare.Ecto.SurfaceTest do
     refute :select in Surface.hosted_macro_names()
   end
 
+  test "a `from` key drops under its stage's family, and the held-back stages are these" do
+    droppable = for %{name: name, stage_drop: _} <- Surface.descriptors(), do: name
+
+    # One removal, one family, in either spelling.
+    for name <- droppable, family = Surface.from_drop_family(name) do
+      assert family == Surface.stage_drop_family(name)
+    end
+
+    # The stages whose `from` key does not drop, each for a stated reason
+    # (`Mutare.Ecto.Query`, "Clause drop") — so a clause macro added to the table has to be
+    # decided here, not left out by omission. `with_cte` is no `from` key at all.
+    assert Enum.sort(for name <- droppable, !Surface.from_drop_family(name), do: name) ==
+             [:join, :select, :update, :windows, :with_cte]
+  end
+
   test "last-wins keys are exactly the ones Ecto documents as overriding a repeat" do
     # `limit`/`offset`/`lock` replace their predecessor; every other clause accumulates (or, for
     # `select`/`distinct`, cannot be repeated at all).

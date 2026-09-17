@@ -65,13 +65,18 @@ defmodule Mutare.Ecto.InterpolationTest do
         "from(u in User, group_by: ^(cols ++ [:x]), order_by: ^(ord ++ [:y]), select: u.id)"
 
       # The transform ran (positive control — without this the exhaustive check below would hold
-      # vacuously on an empty diff set, "nothing ran" masquerading as "left raw"), and its *only*
-      # output here is core wrapping the whole `def q` body in its return-value family. No family
-      # is sourced from inside the pins — no `--`/list mutant of the appends, no literal mutant of
-      # the atoms in them — and the plugin produces nothing at all: every diff is the whole body.
+      # vacuously on an empty diff set, "nothing ran" masquerading as "left raw"), and nothing it
+      # produced is sourced from *inside* a pin — no `--`/list mutant of the appends, no literal
+      # mutant of the atoms in them. Every diff takes a pin whole: core wrapping the whole `def q`
+      # body in its return-value family, and the plugin's drop of the `group_by:` clause, which
+      # re-emits the pinned value verbatim as its `original`. (`order_by:` never drops.)
       assert diffs != []
 
-      assert Enum.all?(diffs, fn {mutator, original, _mutated} ->
+      {drops, rest} = Enum.split_with(diffs, fn {mutator, _o, _m} -> mutator == :ecto end)
+
+      assert drops == [{:ecto, "^(cols ++ [:x])", ""}]
+
+      assert Enum.all?(rest, fn {mutator, original, _mutated} ->
                mutator == :return_value and original == whole_body
              end)
 

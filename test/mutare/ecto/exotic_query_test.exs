@@ -992,7 +992,7 @@ defmodule Mutare.Ecto.ExoticQueryTest do
   end
 
   describe "group_by/distinct expressions" do
-    test "grouping and distinctness declarations are never mutated" do
+    test "grouping and distinctness declarations drop whole, and are never mutated inside" do
       src = """
       defmodule Q do
         import Ecto.Query
@@ -1007,8 +1007,14 @@ defmodule Mutare.Ecto.ExoticQueryTest do
       """
 
       # A mutated group key changes every aggregate's meaning at once (a shotgun, not a probe),
-      # and DISTINCT ON ordering is tied to the group shape — both stay raw by design.
-      assert ecto_diffs(src, @all) == []
+      # and DISTINCT ON ordering is tied to the group shape — both values stay raw by design: no
+      # literal mutant of the fragment template, no direction flip of the `distinct` ordering.
+      # What each clause gets is its whole-clause drop (`Mutare.Ecto.Query`, "Clause drop").
+      assert ecto_diffs(src, @all) == [
+               {~s|[p.user_id, fragment("date(?)", p.title)]|, ""},
+               {"[asc: p.views]", ""}
+             ]
+
       assert_compiles(src, @all)
     end
   end

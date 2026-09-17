@@ -343,6 +343,136 @@ defmodule Mutare.Ecto.QueryTest do
     end
   end
 
+  describe "Clause drop (group_by / distinct / preload / lock / select_merge / with_ties / set operations)" do
+    # The `from`-keyword twin of `Mutare.Ecto.ClauseDrop`'s stage drop, under the same family. A
+    # `from` expands as a whole when the metamutant compiles, so a key drops only if the rest of
+    # the list cannot need it (`Mutare.Ecto.Query`, "Clause drop").
+    @clause_drop [mutators: [{Mutare.Ecto, repo: MyApp.Repo, families: [:clause_drop]}]]
+
+    defp clause_drops(src), do: ecto_diffs(src, @clause_drop)
+
+    test "drops each such clause, reported at the clause it removed" do
+      src = """
+      defmodule Posts do
+        import Ecto.Query
+        def q(other) do
+          from p in Post,
+            group_by: p.user_id,
+            distinct: true,
+            preload: [:user],
+            lock: "FOR UPDATE",
+            select_merge: %{n: count(p.id)},
+            union_all: ^other
+        end
+      end
+      """
+
+      assert clause_drops(src) == [
+               {"p.user_id", ""},
+               {"true", ""},
+               {"[:user]", ""},
+               {~s|"FOR UPDATE"|, ""},
+               {"%{n: count(p.id)}", ""},
+               {"^other", ""}
+             ]
+
+      assert_compiles(src, @clause_drop)
+    end
+
+    test "every set operation drops, swappable or not" do
+      for key <- ~w(union union_all except except_all intersect intersect_all)a do
+        src = """
+        defmodule Posts do
+          import Ecto.Query
+          def q(other), do: from(p in Post, select: p.id, #{key}: ^other)
+        end
+        """
+
+        assert clause_drops(src) == [{"^other", ""}], "expected #{key}: to drop"
+        assert_compiles(src, @clause_drop)
+      end
+    end
+
+    test "a `with_ties:` drops on its own, and still goes with its `limit:`" do
+      src = """
+      defmodule Posts do
+        import Ecto.Query
+        def q, do: from(p in Post, order_by: p.views, limit: 3, with_ties: true)
+      end
+      """
+
+      assert clause_drops(src) == [{"true", ""}]
+
+      # The `limit:` drop (`:bound`) takes the tie mode with it — a dangling `with_ties:` fails
+      # the build — so the two drops differ: one keeps the limit, the other neither.
+      rendered = metamutant(src, mutators: [{Mutare.Ecto, families: [:bound, :clause_drop]}])
+      assert rendered =~ "from(p in Post, order_by: p.views, limit:"
+      assert rendered =~ "from(p in Post, order_by: p.views)"
+      refute rendered =~ ~r/from\(p in Post, order_by: p\.views, with_ties/
+      assert_compiles(src, mutators: [{Mutare.Ecto, families: [:bound, :clause_drop]}])
+    end
+
+    test "holds back the keys the rest of the query may need — a join, select, update, windows" do
+      for clauses <- [
+            # binds `c`, which `where:` reads: dropped, the metamutant would not compile
+            ~s|join: c in "comments", on: c.post_id == p.id, where: c.score > 1|,
+            # required by a schemaless source — and `order_by` never drops (`Mutare.Ecto.Ordering`)
+            ~s|select: p.id, order_by: p.id|,
+            # required by `update_all`
+            ~s|update: [set: [views: 0]]|,
+            # named by `over/2`
+            ~s|windows: [w: [partition_by: p.user_id]], select: over(count(p.id), :w)|
+          ] do
+        src = """
+        defmodule Posts do
+          import Ecto.Query
+          def q, do: from(p in "posts", #{clauses})
+        end
+        """
+
+        assert clause_drops(src) == [], "expected no clause drop in: #{clauses}"
+      end
+    end
+
+    test "drops only the effective occurrence of a repeated `lock:` — Ecto keeps the last" do
+      src = """
+      defmodule Posts do
+        import Ecto.Query
+        def q, do: from(p in Post, lock: "FOR SHARE", lock: "FOR UPDATE")
+      end
+      """
+
+      assert clause_drops(src) == [{~s|"FOR UPDATE"|, ""}]
+    end
+
+    test "the piped from drops the same clauses" do
+      src = """
+      defmodule Posts do
+        import Ecto.Query
+        def q, do: Post |> from(as: :post, group_by: as(:post).user_id, distinct: true)
+      end
+      """
+
+      assert clause_drops(src) == [{"as(:post).user_id", ""}, {"true", ""}]
+      assert_compiles(src, @clause_drop)
+    end
+
+    test "is silenced with its family, like the stage drop it twins" do
+      src = """
+      defmodule Posts do
+        import Ecto.Query
+        def q, do: from(p in Post, group_by: p.user_id, select: p.user_id)
+      end
+      """
+
+      assert [%{variant: ["clause_drop"]}] = sites(src)
+
+      assert ecto_diffs(src,
+               mutators: [{Mutare.Ecto, families: {:default, except: [:clause_drop]}}]
+             ) == []
+    end
+  end
+
   describe "JoinType" do
     test "a default (inner) join has no join_type mutant — widening is not offered" do
       src = """

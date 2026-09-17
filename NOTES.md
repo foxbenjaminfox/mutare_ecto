@@ -147,14 +147,17 @@ mutants agree. A gap is asserted as "this family reaches nothing here", so closi
 its test until the table is rewritten. None of the gaps below rests on an equivalence argument;
 each is unimplemented.
 
-  * **`clause_drop` on a `from` key.** For a key nothing else can reference (`group_by:`,
-    `distinct:`, `preload:`, `lock:`, `select:` over a schema source) it is one more `from_drop`
-    family through `Query`'s existing `drops/3`. A `join:` is the hard one, and the reason the
-    whole-`from` drop cannot simply be widened: the keyword list expands at compile time, so
-    dropping a join whose variable another clause reads fails the **single build** rather than
-    one mutant. It has to prove the variable unreferenced (every other clause value, every
-    other join's source and `on:`), take the join's own `on:` keys with it, and decide what a
-    dropped `as:` name means for stages composed later.
+  * **`clause_drop` on the `from` keys still held back** — `join:`, `select:`, `windows:`,
+    `update:` (design history "Clause drop: the `from` keys nothing else needs"). Unlike a
+    pipeline, a `from` shows every clause at once, so three of the four could be *constrained*
+    rather than refused. A `join:` is the hard one: the keyword list expands at compile time,
+    so dropping a join whose variable another clause reads fails the **single build** rather
+    than one mutant. It has to prove the variable unreferenced (every other clause value,
+    every other join's source and `on:`), take the join's own `on:` keys with it, and decide
+    what a dropped `as:` name means for stages composed later. A `select:` could drop when
+    the source is a schema rather than a table name, a `windows:` when no `over/2` in the same
+    `from` names it. An `update:` cannot be decided here: whether `update_all` still has
+    something to set depends on its call site.
   * **A computed `from` source** (`from p in recent(2)`). The source argument is an `in`
     pattern, and core's treatments are per argument: nothing routes "the right side of this
     `in`" `:expression` while the left stays raw. A nested treatment is a core seam.
@@ -386,6 +389,28 @@ mutation for a query builder — was originally only reachable in the `from`-key
 (`q |> where(…)`) are far more common in practice, so `Mutare.Ecto.ClauseDrop` added the stage
 drop over the shared `Mutare.Ecto.StageDrop` delivery, recording the **same** family as `Query`
 for the same semantic mutation regardless of which syntax wrote it.
+
+### Clause drop: the `from` keys nothing else needs
+
+After `Mutare.Ecto.ClauseDrop` gave every composable stage a drop, the `from` form was left
+with the two it started with — `where`/`having` (`:filter_drop`) and `limit`/`offset`
+(`:bound`) — so `q |> group_by(…)` could lose its grouping and `from(…, group_by: …)` could
+not. No decision lay behind that; it surfaced when the spellings were compared by the
+statements their mutants reach. `Mutare.Ecto.Surface` now declares `from_drop: :clause_drop` on
+`group_by`/`distinct`/`preload`/`lock`/`select_merge`/`with_ties` and the six set operations,
+through `Mutare.Ecto.Query`'s existing `drops/3` (so a repeated `lock:` drops only its effective
+occurrence, like a repeated bound).
+
+The line is drawn by what a `from` is: one keyword list, expanded as a whole when the
+metamutant compiles, where a pipeline is assembled at runtime. A stage drop that breaks a
+dependency raises under its own mutant; the same drop in a `from` can fail the **build** for
+every mutant in the file. So a key drops only if the rest of the list cannot need it — it
+binds no variable, nothing names it, no plan requires it — which holds back `join:` (binds a
+variable), `select:` (a schemaless source requires one), `update:` (`update_all` does) and
+`windows:` (named by `over/2`). `Surface` enforces that a `from_drop` is the same name's
+`stage_drop` family, and `surface_test.exs` pins the held-back set, so a clause macro added
+later has to be placed on one side of the line. What is left can still fail at the *engine*
+(a projection that needs its `group_by` on Postgres), under that one mutant.
 
 ### Fragment: beneath `is_nil`, pruned only where NULL-ness is known
 

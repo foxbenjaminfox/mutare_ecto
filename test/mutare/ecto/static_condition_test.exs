@@ -379,9 +379,10 @@ defmodule Mutare.Ecto.StaticConditionTest do
       end
     end
 
-    test "the plugin's only mutant is the clause drop; the scalar pair is core's alone" do
-      # The whole-`from` drop of the clause (`Mutare.Ecto.Query`) — no catalog mutant of a pair.
-      assert [{"[user_id: 3, score: " <> _, ""}] = ecto_diffs(@filter_having)
+    test "the plugin's only mutants are clause drops; the scalar pair is core's alone" do
+      # The whole-`from` drops of the filter and of the `group_by:` beside it
+      # (`Mutare.Ecto.Query`) — no catalog mutant of a pair.
+      assert [{"[user_id: 3, score: " <> _, ""}, {"p.user_id", ""}] = ecto_diffs(@filter_having)
 
       opts = [mutators: [Mutare.Mutators.IntegerLiteral, {Mutare.Ecto, repo: MyApp.Repo}]]
 

@@ -7,9 +7,9 @@ defmodule Mutare.Ecto.Surface do
   #
   # The two spellings of a name are declared **independently**: `:mutations`/`:stage_drop` are
   # what it gets as a composable stage, `:from`/`:from_drop` what it gets as a `from` key. A
-  # spelling gap is therefore a key present on one side only — `:clause_drop` under
-  # `:stage_drop` alone — where a shared capability sits on both (`:join_type` under `:from`
-  # *and* `:mutations`). Each gap is stated in the README's "Coverage by spelling" table and
+  # spelling gap is therefore a key present on one side only — a `:stage_drop` with no
+  # `:from_drop` beside it (`join`, `select`, `update`, `windows`) — where a shared capability
+  # sits on both (`:join_type` under `:from` *and* `:mutations`). Each gap is stated in the README's "Coverage by spelling" table and
   # pinned by `Mutare.Ecto.SpellingCases`, so closing one is an edit to all three (NOTES
   # "Spelling gaps: what the README table declares, and what closing each takes").
 
@@ -56,7 +56,8 @@ defmodule Mutare.Ecto.Surface do
     macro: :clause,
     mutations: [:combination],
     stage_drop: :clause_drop,
-    from: [:combination]
+    from: [:combination],
+    from_drop: :clause_drop
   }
 
   @surface [
@@ -68,8 +69,10 @@ defmodule Mutare.Ecto.Surface do
     @condition |> Map.put(:name, :or_where) |> Map.put(:dynamic_subqueries, true),
     Map.put(@condition, :name, :having),
     Map.put(@condition, :name, :or_having),
+    # A `select:` does not drop from a `from` — a schemaless source requires one — where a
+    # `select_merge:` only adds to whatever the query already selects (`from_drop`, below).
     Map.put(@projection, :name, :select),
-    Map.put(@projection, :name, :select_merge),
+    @projection |> Map.put(:name, :select_merge) |> Map.put(:from_drop, :clause_drop),
     # `order_by`/`prepend_order_by` are deliberately **not** stage-droppable — see
     # `Mutare.Ecto.Ordering` ("Implicit-direction flip").
     %{
@@ -83,8 +86,8 @@ defmodule Mutare.Ecto.Surface do
       macro: :clause,
       mutations: [:ordering, :aggregate, :scalar]
     },
-    %{name: :group_by, macro: :clause, stage_drop: :clause_drop},
-    %{name: :distinct, macro: :clause, stage_drop: :clause_drop},
+    %{name: :group_by, macro: :clause, stage_drop: :clause_drop, from_drop: :clause_drop},
+    %{name: :distinct, macro: :clause, stage_drop: :clause_drop, from_drop: :clause_drop},
     # `limit`/`offset` (and `lock`, below) are **last-wins** keys: Ecto applies a `from`'s pairs
     # in written order and each of these *replaces* its predecessor ("if `limit` is given twice,
     # it overrides the previous value"), where every other clause accumulates. So of
@@ -107,7 +110,7 @@ defmodule Mutare.Ecto.Surface do
       from_drop: :bound,
       last_wins: true
     },
-    %{name: :with_ties, macro: :clause, stage_drop: :clause_drop},
+    %{name: :with_ties, macro: :clause, stage_drop: :clause_drop, from_drop: :clause_drop},
     %{
       name: :join,
       macro: :join,
@@ -115,13 +118,19 @@ defmodule Mutare.Ecto.Surface do
       stage_drop: :clause_drop,
       from: [:join_binding, :join_type]
     },
-    %{name: :preload, macro: :clause, stage_drop: :clause_drop},
-    %{name: :lock, macro: :clause, stage_drop: :clause_drop, last_wins: true},
+    %{name: :preload, macro: :clause, stage_drop: :clause_drop, from_drop: :clause_drop},
+    %{
+      name: :lock,
+      macro: :clause,
+      stage_drop: :clause_drop,
+      from_drop: :clause_drop,
+      last_wins: true
+    },
     %{name: :update, macro: :clause, stage_drop: :clause_drop},
     %{name: :with_cte, macro: :clause, stage_drop: :clause_drop},
     %{name: :windows, macro: :clause, stage_drop: :clause_drop},
-    %{name: :union, macro: :clause, stage_drop: :clause_drop},
-    %{name: :union_all, macro: :clause, stage_drop: :clause_drop},
+    %{name: :union, macro: :clause, stage_drop: :clause_drop, from_drop: :clause_drop},
+    %{name: :union_all, macro: :clause, stage_drop: :clause_drop, from_drop: :clause_drop},
     Map.put(@combination, :name, :except),
     Map.put(@combination, :name, :except_all),
     Map.put(@combination, :name, :intersect),
@@ -190,7 +199,15 @@ defmodule Mutare.Ecto.Surface do
        ":mutations other than :join_type require macro :clause"},
       {is_nil(stage_drop) or macro_kind in [:condition, :join, :clause],
        ":stage_drop requires a composable macro (:condition/:join/:clause)"},
-      {is_nil(from_drop) or from != [], ":from_drop requires a non-empty :from"},
+      {from_drop != :filter_drop or :hosted in from,
+       ":from_drop :filter_drop requires a :hosted :from capability"},
+      {from_drop != :bound or :bound in from,
+       ":from_drop :bound requires a :bound :from capability"},
+      # One removal, one family, in either spelling (`Mutare.Ecto.ClauseDrop`, "Families"). The
+      # converse does not hold: a stage may drop where its `from` key does not
+      # (`Mutare.Ecto.Query`, "Clause drop").
+      {is_nil(from_drop) or from_drop == stage_drop,
+       ":from_drop must be the family the same name's :stage_drop carries"},
       {macro_kind != :condition or
          (:hosted in from and stage_drop == :filter_drop and from_drop == :filter_drop),
        ":condition must be :hosted with :filter_drop stage_drop and from_drop"},

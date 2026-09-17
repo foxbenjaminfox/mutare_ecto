@@ -1,9 +1,9 @@
 defmodule Mutare.Ecto.ClauseDrop do
   @moduledoc """
   Drop a standalone/pipe **query clause** — the composable counterpart of `Mutare.Ecto.Query`'s
-  whole-`from` clause drop, analogous to `Mutare.Ecto.Changeset`'s validator drop.
-  Where `Query` removes a `where:`/`limit:` clause from a `from(…)` keyword list, this removes the
-  same kinds of clause written as a standalone call or pipe stage:
+  whole-`from` clause drops, analogous to `Mutare.Ecto.Changeset`'s validator drop.
+  Where `Query` removes a `where:`/`limit:`/`group_by:` clause from a `from(…)` keyword list, this
+  removes the same kinds of clause written as a standalone call or pipe stage:
 
       q |> where([u], u.active)   →  q          "is this filter tested?"
       q |> limit(10)              →  q          "is the page size pinned?"
@@ -55,9 +55,10 @@ defmodule Mutare.Ecto.ClauseDrop do
   in the file, are untouched. The `from` form differs exactly there: Ecto expands the whole
   keyword list at compile time, so a dropped `join:` would leave `where: c.x` naming an unbound
   variable in the metamutant itself. That is why `Mutare.Ecto.Query` drops a `limit:` together
-  with its `with_ties:`; a `from` join drop would first have to prove the binding unreferenced,
-  and none is offered. Telling the two kinds apart *here* needs the rest of the pipeline in
-  view (NOTES "Stage drops: a dependency break is not told from a weakened query").
+  with its `with_ties:`, and drops only the keys nothing else in the list can need (its "Clause
+  drop"); a `from` join drop would first have to prove the binding unreferenced, and none is
+  offered. Telling the two kinds apart *here* needs the rest of the pipeline in view (NOTES
+  "Stage drops: a dependency break is not told from a weakened query").
   """
 
   alias Mutare.Ecto.{Context, StageDrop, Surface}

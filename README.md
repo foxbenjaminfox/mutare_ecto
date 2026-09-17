@@ -116,7 +116,7 @@ name, never a literal that is the name.
 | `join_type` | `left_join:` → `inner_join:`, `full_join:` → `left_join:`/`right_join:`; likewise `join(q, :left, …)` → `join(q, :inner, …)` (narrows cardinality) |
 | `combination` | `intersect` ↔ `except`, `intersect_all` ↔ `except_all` (`union` is left alone) |
 | `aggregate` | `sum(u.x)` ↔ `avg(u.x)`, `min` ↔ `max` (in `select`/`order_by`/`having`, or `Repo.aggregate`) |
-| `clause_drop` | drop a standalone/pipe stage — `q \|> group_by(…)`, `\|> select(…)`, `\|> join(…)`, … → `q` (never `order_by`: an unordered result has no defined order to test) |
+| `clause_drop` | drop a clause that is neither a filter nor a bound — a pipe stage (`q \|> group_by(…)`, `\|> select(…)`, `\|> join(…)`, … → `q`) or a `from` key (`group_by:`, `distinct:`, `preload:`, …); never `order_by`: an unordered result has no defined order to test |
 | `query_terminal` | `Ecto.Query.first` ↔ `last` |
 
 **Repo writes and changesets** — plain calls, no query DSL involved:
@@ -152,7 +152,7 @@ mutants it gets.
 | A condition (`where`/`having`/`or_*`, a join's `on:`): every in-condition family, `filter_drop`, keyword-shorthand values | ✓ | ✓ |
 | `bound`, `ordering`, `ordering_nulls`, `join_type`, `combination`; `aggregate`/`arithmetic`/`coalesce` in a `select`/`order_by` | ✓ | ✓ |
 | `binding_reorder` | the source list (`from [a, b] in q`), which every clause reads | each stage's own list |
-| `clause_drop` — a join, `group_by`, `distinct`, `select`, `preload`, `lock`, `windows`, `with_cte`, a set operation | ✗ only `where`/`having` (`filter_drop`) and `limit`/`offset` (`bound`) drop | ✓ |
+| `clause_drop` | ✓ `group_by:`, `distinct:`, `preload:`, `lock:`, `select_merge:`, `with_ties:`, a set operation; ✗ a join, `select:`, `update:`, `windows:` — the rest of the keyword list may need them, and it is compiled as a whole | ✓ each of those, and `with_cte` |
 | The query being refined, when computed — `recent(2)` | ✗ `from p in recent(2)`: the `2` is not mutated | ✓ `where(recent(2), …)` and `recent(2) \|> where(…)`: Mutare's own families mutate it |
 | The query being refined, when a schema or table name | held back from Mutare's families (a swapped name is a broken query) | held back written directly (`where(Post, …)`), but **not** on a pipe's left: `Post \|> where(…)` → `Mutare.Mutant \|> where(…)` |
 
@@ -177,7 +177,9 @@ is built, planned, or run. Any test that executes the query kills it, whatever t
 asserts: the kill shows that the stage runs, not that its effect is tested. A pipeline is
 assembled at runtime, often across functions, so a single stage cannot show which case it is
 in. (Dropping a join ahead of another also runs, with the later positional bindings shifted
-onto the freed slot.)
+onto the freed slot.) A `from` key drops only where nothing in the same `from` can need it, so
+the query without it always compiles — though the engine may still object, as Postgres does to
+a `select` that mixes an aggregate with a plain column once its `group_by:` is gone.
 
 ## Configuration
 
