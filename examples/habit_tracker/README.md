@@ -68,11 +68,11 @@ Elixir — the streak arithmetic, the changeset literals — for a fuller pictur
 
 ## What you'll see
 
-Abridged — a handful of the 28 survivors (the run lists every one, first as a
+Abridged — a handful of the 29 survivors (the run lists every one, first as a
 one-line summary and then as a diff):
 
 ```
-mutare: 99 mutants across 5 file(s)
+mutare: 104 mutants across 5 file(s)
 
 lib/habit_tracker/habit.ex:36  [ecto, in-place]  SURVIVED
 -    |> validate_length(:name, min: 2, max: 40)
@@ -101,10 +101,10 @@ lib/habit_tracker/habit.ex:40  [ecto, in-place]  SURVIVED
 -    |> optimistic_lock(:lock_version)
 +    |> Elixir.Function.identity()
 
-mutation score: 70.5%  (67 killed, 28 survived, 4 no-coverage, 99 total)
+mutation score: 71.0%  (71 killed, 29 survived, 4 no-coverage, 104 total)
 ```
 
-The 28 survivors fall into a few groups.
+The 29 survivors fall into a few groups.
 
 ### 1. Validations no test exercises
 
@@ -151,6 +151,12 @@ progress report's sort keys survive: with one check-in per habit, a habit's sum
 `:desc` to `:asc` and dropping its `limit` both survive. And on the leaderboard,
 the `where archived == false` and the `having` threshold can be dropped because
 the fixtures contain no archived habit and none sitting on the boundary.
+
+`check_ins_since/1` promises its check-ins "with their habit preloaded", and its
+test pins the rows and their order — but reads only each check-in's `date`. So
+the `preload: [:habit]` clause can be dropped from the `from` with nothing
+failing: a `clause_drop` survivor, killed by asserting on `check_in.habit` just
+once.
 
 ### 4. SQL-equivalence annotations — potentially missing fixtures
 
@@ -251,7 +257,11 @@ rows, in order:
 - `never_checked_in/0` — turning its `left_join` into an inner join, or flipping
   `is_nil(c.id)`, is caught (a habit with no check-ins must appear).
 - `check_ins_since/1` — the `>=` boundary and the `:desc` order are both pinned
-  (a check-in *on* the cutoff is asserted to be included).
+  (a check-in *on* the cutoff is asserted to be included). Its preload is not —
+  lesson 3.
+- `leaderboard/1`, `busy_habits/1`, `progress_report/2`, `by_recent_activity/0` —
+  dropping any of their `group_by:` clauses is killed: the tests assert per-habit
+  rows, and an ungrouped aggregate collapses them into one.
 - `total_count/1` — `sum` → `avg` is killed (two differing counts give different
   numbers).
 - `progress_report/2` — the left join keeps zero-progress habits in the report,
