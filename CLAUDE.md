@@ -140,7 +140,8 @@ The surface divides by **how a mutation is delivered**, not by what it mutates:
 1. **Plain calls** — resolved through `Mutare.Calls`, delivered by Mutare's ordinary in-place
    selector: `RepoAggregate`, `RepoWrite`, `Changeset`, `QueryTerminal`; the whole-`from`
    rewrites (`Query`); the standalone/pipe rewrites (`Clause`, `ClauseDrop`, `BindingReorder`);
-   the free-standing `dynamic/1,2`, mutated whole-call where it is built (`Dynamic`); and the
+   the free-standing `dynamic/1,2`, mutated whole-call where it is built (`Dynamic`); a
+   condition the host declines as unweavable, rebuilt whole-call (`StaticCondition`); and the
    changeset bound swap (`ValidationBoundary`).
 2. **Skipped** — `schema`/`embedded_schema` bodies: a mutated field name/type is a broken schema,
    not a mutant.
@@ -181,6 +182,7 @@ Each row is role + the rule(s) that module is the **home** for.
 | `combination.ex` | the set-operation swap table (`union` deliberately unswapped) |
 | `bound.ex` | the `:bound` ±1 bump; home of pin-only hosting and the `literal?/1` = `bumps/1` agreement |
 | `dynamic.ex` | free-standing `dynamic/1,2`; home of its whole-call in-place delivery |
+| `static_condition.ex` | the condition Ecto accepts only statically built (a subquery in a `having`); home of the weavability rule (`weavable?/2` — receiving clause × expression) and of its whole-call fallback delivery |
 | `query.ex` | whole-`from` rewrites; home of the JoinType narrowing rationale |
 | `clause.ex` | standalone/pipe cousins of `query.ex` |
 | `clause_drop.ex` / `changeset.ex` | stage drops (a query clause / a changeset validator or hook) over `stage_drop.ex`; `changeset.ex` is home of the stage table (`stages/0`) the changeset routes derive from |
@@ -226,6 +228,11 @@ Each is the conclusion; the canonical statement is in the named module.
 - **Stay inside the single build.** Any in-query mutation must be `^`-pinned behind the selector —
   a bare `case` in a query position poisons compilation. New query-position families go through
   the host (`Mutare.Ecto.Host`); the pin-only bound bump (`Mutare.Ecto.Bound`) is the precedent.
+- **Weaving changes how Ecto builds a clause, and Ecto's dynamic path accepts less than its
+  static one.** A weave Ecto rejects still compiles; it raises when the query is *built*, at
+  baseline too. So hostability depends on the receiving clause as well as the expression
+  (`Mutare.Ecto.StaticCondition`), and a hosted delivery is proven by building the query under
+  every mutant (`TestSupport.assert_builds/3`), not by `assert_compiles/2`.
 - **Sourceror wraps literals** as `{:__block__, meta, [value]}`: read through `Mutare.Ecto.AST`'s
   readers, emit through core's `Mutare.AST` constructors, never hand-build a block. Emitted module
   references are `Elixir.`-prefixed (alias-proof). `Mutare.Ecto.AST`.

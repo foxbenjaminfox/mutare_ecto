@@ -1637,6 +1637,36 @@ defmodule Mutare.Ecto.SemanticCases do
         end
       end
 
+      describe "StaticCondition — a subquery in a `having` (whole-call delivered)" do
+        # The one condition the host declines (`Mutare.Ecto.StaticCondition`): Ecto rejects a
+        # subquery inside a *dynamic* `having` when the query is built, so weaving this clause
+        # would raise at baseline. Its mutants arrive as whole-`from` rebuilds instead, and this
+        # proves both halves against the engine: the baseline runs at all, and a rebuilt mutant is
+        # live. Grouped by role, the age totals are admin 58, user 62, mod 17; the threshold
+        # subquery is the largest post view count (20), which the `max`→`min` interior mutant
+        # lowers to the smallest (5) — admitting `mod`.
+        test "the baseline runs, and the subquery's max→min mutant admits another group" do
+          {mod, sites} =
+            build("""
+            defmodule Q do
+              import Ecto.Query
+              alias MyApp.{Post, User}
+              def q do
+                from u in User,
+                  group_by: u.role,
+                  having: sum(u.age) > subquery(from(p in Post, select: max(p.views))),
+                  select: u.role
+              end
+            end
+            """)
+
+          {baseline, mutant} = observe_ids(mod, sites, {"max(p.views)", "min(p.views)"})
+
+          assert baseline == ["admin", "user"]
+          assert mutant == ["admin", "mod", "user"]
+        end
+      end
+
       describe "on_conflict — `:replace_all` → `:nothing` (Repo write, content-observed)" do
         # The write-path twin of the query-family liveness tests. An `:on_conflict` mutant changes what
         # `Repo.insert/2` *does* on a unique conflict rather than which rows a query returns: `:replace_all`

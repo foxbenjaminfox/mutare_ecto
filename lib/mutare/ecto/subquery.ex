@@ -61,6 +61,36 @@ defmodule Mutare.Ecto.Subquery do
   @typedoc "The wrapper's observation mode — whether its projected `select` is visible."
   @type mode :: :existence | :value
 
+  # The call heads under which `Ecto.Query.Builder.escape/5` accumulates a subquery: `subquery/1`
+  # itself, and the quantifiers, which rewrite their argument — whatever it is, an inline `from`
+  # or a variable — into `subquery(arg)`.
+  @wrappers [:subquery, :all, :any, :exists]
+
+  @doc """
+  Whether Ecto would accumulate a subquery while escaping `condition` — a unary call to one of
+  `@wrappers` anywhere outside a `^` pin (a pin's interior is Elixir, never escaped). This asks
+  about the wrapper alone, so it is wider than what `interior_mutants/3` recurses: `subquery(q)`
+  over a variable counts, as does a wrapper inside an author macro's argument.
+
+  Deliberately an unrestricted traversal rather than a `Mutare.Ecto.Walk` reader: its one
+  consumer (`Mutare.Ecto.StaticCondition`) falls back to a delivery that is valid either way, so
+  a false positive costs nothing while a false negative fails the query build — the traversal
+  that sees more is the safe one. It reads source, so a subquery an author macro *expands* to
+  stays invisible (NOTES "A macro that expands to a subquery in a `having`").
+  """
+  @spec present?(Macro.t()) :: boolean()
+  def present?(condition) do
+    {_pruned, found?} =
+      Macro.prewalk(condition, false, fn
+        # Prune the interior: `prewalk` descends whatever node is returned.
+        {:^, _meta, _args}, found? -> {:pin, found?}
+        {head, _meta, [_arg]}, _found? when head in @wrappers -> {:wrapper, true}
+        node, found? -> {node, found?}
+      end)
+
+    found?
+  end
+
   @doc """
   Every single-point interior mutant of an inline subquery `from`, each the **whole inner `from`**
   rebuilt (which the caller wraps back into the wrapper). `[]` unless `node` is an inline

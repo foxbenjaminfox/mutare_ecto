@@ -14,9 +14,12 @@ defmodule Mutare.Ecto.Host do
   value, as a **pin-only** target with no `dynamic/2` wrap and no bindings — see
   `Mutare.Ecto.Bound`, the bump catalog and its literal guard. In a `from`, only the
   *effective* occurrence of a repeated bound weaves (`Mutare.Ecto.AST.FromCall.effective_clause?/2`).
+
+  A condition Ecto accepts only statically built — a subquery in a `having` — is declined here
+  and delivered as a whole-call rebuild instead: `Mutare.Ecto.StaticCondition`.
   """
 
-  alias Mutare.Ecto.{Bound, Context, Surface}
+  alias Mutare.Ecto.{Bound, Context, StaticCondition, Surface}
   alias Mutare.Ecto.AST.{FromCall, KeywordList, QueryCall}
   alias Mutare.Ecto.AST.KeywordList.Entry
   alias Mutare.Ecto.Host.{Bindings, Catalog, Condition, JoinOn, Target}
@@ -39,7 +42,7 @@ defmodule Mutare.Ecto.Host do
 
       %QueryCall{name: macro, args: args} ->
         case Surface.macro_kind(macro) do
-          :condition -> condition_target(args, context)
+          :condition -> condition_target(macro, args, context)
           :join -> join_target(args, context)
           :clause -> bound_target(macro, args)
           # Defensively dead: `hosted_macro_names/0` subscribes only the kinds above. A new kind
@@ -68,8 +71,9 @@ defmodule Mutare.Ecto.Host do
 
         # A hostable condition clause. `Bindings.visible_to/2` owns the truncation offset (and
         # why it includes the current entry itself); each clause sees only the join bindings
-        # introduced up to it.
-        hostable_clause?(key, index, hostable_on) ->
+        # introduced up to it. A condition the clause cannot take as a dynamic is declined —
+        # `Mutare.Ecto.StaticCondition` rebuilds it whole-call instead.
+        hostable_clause?(key, index, hostable_on) and StaticCondition.weavable?(key, value) ->
           bindings = Bindings.from(source, Bindings.visible_to(clauses, index))
           from_target(value, bindings, index, context)
 
@@ -113,9 +117,11 @@ defmodule Mutare.Ecto.Host do
 
   # The woven `dynamic/2` re-declares the written binding list — or an empty one for the
   # binding-less form (`bindings: nil` — `Mutare.Ecto.Host.Condition`), which
-  # `Bindings.declarations/1` renders as `[]`.
-  defp condition_target(args, context) do
+  # `Bindings.declarations/1` renders as `[]`. A condition that `macro` cannot take as a dynamic
+  # is declined, as in the `from` form (`Mutare.Ecto.StaticCondition`).
+  defp condition_target(macro, args, context) do
     with %Condition{node: condition, index: index, bindings: list} <- Condition.locate(args),
+         true <- StaticCondition.weavable?(macro, condition),
          [_ | _] = mutants <- Catalog.mutants(condition, context) do
       [Target.condition(condition, mutants, Bindings.declarations(list), index)]
     else

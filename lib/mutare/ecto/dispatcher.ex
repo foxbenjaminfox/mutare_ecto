@@ -15,6 +15,7 @@ defmodule Mutare.Ecto.Dispatcher do
     QueryTerminal,
     RepoAggregate,
     RepoWrite,
+    StaticCondition,
     Surface,
     ValidationBoundary
   }
@@ -46,13 +47,20 @@ defmodule Mutare.Ecto.Dispatcher do
     end
   end
 
-  defp query_macro_mutations(:from, call, context), do: Query.mutations(call, context)
-
-  # A condition macro's operator/literal swaps are the host's (`Mutare.Ecto.Host`); its written
-  # binding list reorders in place (`Mutare.Ecto.BindingReorder`).
-  defp query_macro_mutations(:condition, %QueryCall{node: node} = call, context),
+  # A `from`'s conditions are the host's, except one it declines as unweavable, which
+  # `Mutare.Ecto.StaticCondition` rebuilds whole-call.
+  defp query_macro_mutations(:from, call, context),
     # mutare:ignore[operand_swap] equivalent — two independent sub-mutator result lists, consumed as a set
-    do: BindingReorder.mutations(call, context) ++ ClauseDrop.mutations(node, context)
+    do: Query.mutations(call, context) ++ StaticCondition.mutations(call, context)
+
+  # A condition macro's operator/literal swaps are the host's (`Mutare.Ecto.Host`) — or
+  # `Mutare.Ecto.StaticCondition`'s, for a condition the host declines as unweavable; its written
+  # binding list reorders in place (`Mutare.Ecto.BindingReorder`).
+  defp query_macro_mutations(:condition, %QueryCall{node: node} = call, context) do
+    # mutare:ignore[operand_swap] equivalent — three independent result lists, consumed as a set
+    BindingReorder.mutations(call, context) ++
+      ClauseDrop.mutations(node, context) ++ StaticCondition.mutations(call, context)
+  end
 
   defp query_macro_mutations(kind, %QueryCall{node: node} = call, context)
        when kind in [:clause, :join] do

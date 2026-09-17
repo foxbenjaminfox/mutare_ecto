@@ -93,6 +93,16 @@ defmodule Mutare.Ecto.SurfaceTest do
         do: refute(Surface.last_wins?(key))
   end
 
+  test "only the where kind accepts a subquery inside a dynamic" do
+    # Ecto's `Builder.Filter.filter!/7` keeps a dynamic's subqueries for `:where` alone — pinned
+    # against Ecto itself by `static_condition_test.exs`'s capability-boundary tests.
+    for key <- [:where, :or_where], do: assert(Surface.dynamic_subqueries?(key))
+
+    # Every other hosted key, and anything unknown, defaults to the delivery valid either way.
+    for key <- [:having, :or_having, :on, :select, :no_such_clause],
+        do: refute(Surface.dynamic_subqueries?(key))
+  end
+
   test "join descriptors distinguish binding accumulation from join-type mutation" do
     for join <- ~w(join inner_join left_join right_join full_join)a do
       assert Surface.from_clause?(join, :join_binding)

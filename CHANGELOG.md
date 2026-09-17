@@ -57,6 +57,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Mutare that pass without it. An unnamed join is now re-declared as `_`
   (`[p, _, c]`; `[p, ..., c, _]` when the source is a composed query).
 
+- **A subquery in a `having` no longer breaks the instrumented build.** Ecto accepts
+  `having: count(p.id) > subquery(…)` written statically but rejects the same subquery
+  inside a *dynamic* `having` — and it rejects it when the query is built, not when the
+  module compiles. Weaving such a clause therefore raised "subqueries are not allowed in
+  `having` expressions" on every call of the function, the unmutated baseline included.
+  A `having`/`or_having` whose condition carries a subquery (`subquery/1`, `exists`, `all`,
+  `any`) now keeps its clause static: the same mutants are delivered as whole-call
+  rebuilds. `where`/`or_where` accept the dynamic form and weave as before.
+
 ## [0.1.1] - 2026-09-07
 
 ### Fixed

@@ -18,7 +18,16 @@ defmodule Mutare.Ecto.Surface do
     :combination
   ]
   @drop_families [:filter_drop, :bound, :clause_drop]
-  @descriptor_keys [:name, :macro, :mutations, :stage_drop, :from, :from_drop, :last_wins]
+  @descriptor_keys [
+    :name,
+    :macro,
+    :mutations,
+    :stage_drop,
+    :from,
+    :from_drop,
+    :last_wins,
+    :dynamic_subqueries
+  ]
 
   # Shared descriptor shapes for the families of near-identical clause keys, so "what a condition
   # (set-operation / projection) clause looks like" lives in one place; each `@surface` entry below
@@ -44,8 +53,11 @@ defmodule Mutare.Ecto.Surface do
 
   @surface [
     %{name: :from, macro: :from},
-    Map.put(@condition, :name, :where),
-    Map.put(@condition, :name, :or_where),
+    # `where`/`or_where` alone accept a *dynamic* that carries a subquery; `having`/`or_having`
+    # reject one at query-build time (`dynamic_subqueries?/1`). Declared on the keys that accept,
+    # so a condition key added later defaults to the delivery that is valid either way.
+    @condition |> Map.put(:name, :where) |> Map.put(:dynamic_subqueries, true),
+    @condition |> Map.put(:name, :or_where) |> Map.put(:dynamic_subqueries, true),
     Map.put(@condition, :name, :having),
     Map.put(@condition, :name, :or_having),
     Map.put(@projection, :name, :select),
@@ -139,6 +151,7 @@ defmodule Mutare.Ecto.Surface do
     stage_drop = Map.get(descriptor, :stage_drop)
     from_drop = Map.get(descriptor, :from_drop)
     last_wins = Map.get(descriptor, :last_wins)
+    dynamic_subqueries = Map.get(descriptor, :dynamic_subqueries)
 
     # Each rule is `{ok?, why}`; the first violated one raises, naming the specific invariant rather
     # than dumping the whole descriptor. Compile-time only, and every condition is a plain boolean,
@@ -156,6 +169,10 @@ defmodule Mutare.Ecto.Surface do
       {is_nil(from_drop) or from_drop in @drop_families,
        "unknown :from_drop #{inspect(from_drop)}"},
       {is_nil(last_wins) or last_wins == true, ":last_wins is declared only as true"},
+      {is_nil(dynamic_subqueries) or dynamic_subqueries == true,
+       ":dynamic_subqueries is declared only as true"},
+      {is_nil(dynamic_subqueries) or :hosted in from,
+       ":dynamic_subqueries requires a :hosted :from capability"},
       {mutations == [] or macro_kind == :clause, ":mutations require macro :clause"},
       {is_nil(stage_drop) or macro_kind in [:condition, :join, :clause],
        ":stage_drop requires a composable macro (:condition/:join/:clause)"},
@@ -191,7 +208,8 @@ defmodule Mutare.Ecto.Surface do
           optional(:stage_drop) => drop_family(),
           optional(:from) => [from_capability()],
           optional(:from_drop) => drop_family(),
-          optional(:last_wins) => true
+          optional(:last_wins) => true,
+          optional(:dynamic_subqueries) => true
         }
 
   @doc "Every registered surface descriptor, in macro-registration order."
@@ -278,6 +296,17 @@ defmodule Mutare.Ecto.Surface do
   """
   @spec last_wins?(atom()) :: boolean()
   def last_wins?(name), do: get(name, :last_wins, false)
+
+  @doc """
+  Whether Ecto accepts a subquery inside a **dynamic** spliced into `name`'s clause. Only
+  `where`/`or_where` do: `Ecto.Query.Builder.Filter.filter!/7` keeps a dynamic's subqueries for
+  `:where` alone, and every other kind raises "subqueries are not allowed in `having`
+  expressions" when the query is *built* — though the same subquery written statically is valid
+  there (Ecto has planned `having` subqueries since 3.11.1). The clause half of
+  `Mutare.Ecto.StaticCondition`'s rule.
+  """
+  @spec dynamic_subqueries?(atom()) :: boolean()
+  def dynamic_subqueries?(name), do: get(name, :dynamic_subqueries, false)
 
   defp get(name, key, default \\ nil) do
     case descriptor(name) do

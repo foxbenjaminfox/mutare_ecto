@@ -50,6 +50,44 @@ defmodule Mutare.Ecto.TestSupport do
   def assert_compiles(source, opts \\ []),
     do: Mutare.Test.assert_metamutant_compiles(source, mutators(opts), transform_opts(opts))
 
+  @doc """
+  Assert the query `build` constructs **builds** — at baseline and under every mutant of
+  `source` — and return the recorded Sites.
+
+  A stronger net than `assert_compiles/2`, needed wherever a mutant is delivered through a
+  `dynamic`: Ecto validates a dynamic when the query is built, not when the module compiles, so
+  a weave Ecto rejects compiles cleanly and raises only once the function runs — at baseline
+  too, since the original branch is woven like any mutant. `build` receives the compiled fixture
+  module — the last one `source` defines, so a helper module (an author macro) may precede it —
+  and returns the queryable (`& &1.q()` — a stage-drop mutant may hand back the bare source, so
+  any `Ecto.Queryable` passes); no Repo is involved, so this stays DB-free.
+
+  Flips the VM-wide selector (`Mutare.Test.with_active_mutant/2`), so the calling test module
+  must be `async: false`.
+  """
+  def assert_builds(source, build, opts \\ []) when is_function(build, 1) do
+    {modules, sites} =
+      Mutare.Test.compile_metamutant(source, mutators(opts), transform_opts(opts))
+
+    module = List.last(modules)
+
+    for {id, label} <- [{0, "baseline"} | Enum.map(sites, &{&1.id, mutant_label(&1)})] do
+      try do
+        Mutare.Test.with_active_mutant(id, fn -> Ecto.Queryable.to_query(build.(module)) end)
+      rescue
+        error ->
+          ExUnit.Assertions.flunk(
+            "the query failed to build under #{label}: #{Exception.message(error)}"
+          )
+      end
+    end
+
+    sites
+  end
+
+  defp mutant_label(site),
+    do: "mutant #{site.id} (#{site.original_code} → #{site.mutated_code})"
+
   @doc "The rendered metamutant source for `source` — for `=~` checks on the woven scaffolding."
   def metamutant(source, opts \\ []),
     do: Mutare.Test.metamutant_source(source, mutators(opts), transform_opts(opts))

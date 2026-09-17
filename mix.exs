@@ -28,6 +28,7 @@ defmodule Mutare.Ecto.MixProject do
     Mutare.Ecto.QueryTerminal
     Mutare.Ecto.RepoAggregate
     Mutare.Ecto.RepoWrite
+    Mutare.Ecto.StaticCondition
   )
 
   def project do
@@ -159,7 +160,8 @@ defmodule Mutare.Ecto.MixProject do
         "Hosted in-fragment mutations": [
           Mutare.Ecto.Host,
           Mutare.Ecto.Host.Routing,
-          Mutare.Ecto.Fragment
+          Mutare.Ecto.Fragment,
+          Mutare.Ecto.StaticCondition
         ]
       ]
     ]

@@ -70,6 +70,36 @@ would need descent-propagating marks. Proven in `structural_marks_test.exs` (hel
 plugin enabled, mutating without it — plus the piped/imported spellings and a positional
 sibling-atom control).
 
+### A macro that expands to a subquery in a `having`
+
+`Mutare.Ecto.StaticCondition` declines to weave a `having` whose condition carries a subquery,
+because Ecto rejects one inside a *dynamic* `having` when the query is built. It decides by
+reading source (`Mutare.Ecto.Subquery.present?/1`), so a subquery that appears only once an
+author macro **expands** is invisible to it:
+
+    defmacro over_threshold(p), do: quote(do: count(unquote(p).id) > subquery(…))
+
+    having: over_threshold(p) and count(p.id) > 1
+
+That condition is woven, and the function then raises "subqueries are not allowed in `having`
+expressions" on every call, baseline included. It takes both halves: a condition that is the
+macro call *alone* has no catalog mutants, so it is never woven and builds as written.
+
+No directive rescues it. `# mutare:ignore` marks the sites ignored but leaves the clause
+woven — core drops a target whose mutants `finalize/2` all *skip*, not one whose sites are all
+ignored. What does work is giving the macro a clause of its own, since repeated `having:`
+clauses AND together: `having: over_threshold(p), having: count(p.id) > 1` weaves only the
+second.
+
+Closable plugin-side, and deferred as a delivery change rather than a fix. Reading source
+cannot name the macro — core reports an unregistered macro as indistinguishable from an ordinary
+call (`Mutare.Calls.routed_treatments/1`) — but it need not: inside a query expression every
+call outside Ecto's own API (`Ecto.Query.API`/`WindowAPI`'s exports) is something Ecto must
+macro-expand, so `weavable?/2` could refuse any such `having`. The recognized set cannot go
+stale in the dangerous direction: a form it fails to recognize only downgrades that clause to
+the whole-call delivery, which is valid either way. The cost is that every innocent macro in a
+`having` (a `fragment` helper, say) gives up the weave too.
+
 ### A binding pattern on a pipe's left (`(p in Post) |> from(…)`) is unsupported
 
 Ecto accepts `(p in Post) |> from(where: p.x > 1)` — `|>` rewrites it to `from(p in Post, …)`
