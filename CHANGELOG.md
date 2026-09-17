@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-17
+
 ### Added
 
 - **`validation_boundary`**, a changeset family: the strict/non-strict swap of a
@@ -27,11 +29,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Expect more mutants on existing `from` queries.
 
 - **`join_type` reaches a standalone join.** `join(q, :left, [p], c in Comment, on: …)`
-  and `q |> join(:full, …)` now have their qualifier narrowed — `:left` → `:inner`,
-  `:full` → `:left`/`:right`, and `:left` ↔ `:right` under `dialects: [:postgres]` or
-  `[:mysql]` — exactly as a `from`'s `left_join:` key always was, under the same
-  `# mutare:ignore[ecto:left]` labels. Only a written qualifier is swapped, never a
-  computed one.
+  and `q |> join(:full, …)` now have their qualifier narrowed — `:left` → `:inner` and
+  `:full` → `:left`, plus `:left` ↔ `:right` and `:full` → `:right` under
+  `dialects: [:postgres]` or `[:mysql]` — exactly as a `from`'s `left_join:` key always
+  was, under the same `# mutare:ignore[ecto:left]` labels. Only a written qualifier is
+  swapped, never a computed one.
 
 - **A standalone join written without a binding variable has its `on:` mutated.**
   `join(q, :inner, [p], "audit", on: p.id > 1)` (or a bare `subquery`, `fragment`,
@@ -69,6 +71,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the rule recognised only `c in assoc(p, :posts)`, so a `from` join written as a
   bare `assoc(p, :posts)` had its `on:` mutated in place all the same. Both
   spellings are now treated alike.
+
+- **The install snippet names Mutare 0.2.** The plugin's own requirement stays
+  `{:mutare, "~> 0.1"}` — it builds and passes its suite against the 0.1 and 0.2
+  core lines alike — but the README now shows `{:mutare, "~> 0.2"}`, and CI
+  builds against 0.2.
 
 ### Fixed
 
@@ -208,6 +215,7 @@ Initial release.
   templates, interval units, cast types, field/binding names) are never
   mutated, so these positions cannot cause the single metamutant build to fail.
 
-[Unreleased]: https://github.com/foxbenjaminfox/mutare_ecto/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/foxbenjaminfox/mutare_ecto/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/foxbenjaminfox/mutare_ecto/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/foxbenjaminfox/mutare_ecto/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/foxbenjaminfox/mutare_ecto/releases/tag/v0.1.0

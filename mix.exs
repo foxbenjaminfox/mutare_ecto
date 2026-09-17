@@ -1,7 +1,7 @@
 defmodule Mutare.Ecto.MixProject do
   use Mix.Project
 
-  @version "0.1.1"
+  @version "0.2.0"
   @source_url "https://github.com/foxbenjaminfox/mutare_ecto"
 
   # Visible modules whose docs reference hidden plumbing, silenced on the *referencing* module
