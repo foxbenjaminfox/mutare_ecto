@@ -90,6 +90,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   A `having`/`or_having` whose condition carries a subquery (`subquery/1`, `exists`, `all`,
   `any`) now keeps its clause static: the same mutants are delivered as whole-call
   rebuilds. `where`/`or_where` accept the dynamic form and weave as before.
+- **A binding declaration the plugin could not read no longer breaks the build.**
+  Ecto accepts an interpolated binding name (`where(q, [{^name, p}], …)`) and an
+  explicit index (`where(q, [{p, 0}, {c, 2}], …)`); the plugin read neither, took
+  the declaration for an absent one, and hosted the condition behind
+  `dynamic([], p.score > 10)` — an unbound `p`, failing the single build. As a
+  `from` source (`from([{p, 0}] in query, …)`) the same list crashed the run
+  outright. Both forms (and the tuple spelling `[{:post, p}]`) are now read and
+  re-declared as written. A declaration still outside the grammar — a computed
+  index, or a name that calls a function, either of which the re-declaration
+  would evaluate a second time — declines the in-fragment mutants for that one
+  condition instead; every other family still applies to it.
+- **Several entries over a literal source no longer misplace its joins.**
+  `from([p, q] in Post, join: c in Comment, …)` re-declared `[p, q, c]`, placing
+  `c` at a binding that does not exist; it is now tail-anchored (`[p, q, ..., c]`).
 
 - **A keyword-shorthand condition is never hosted as a predicate.** Two shapes
   were: a shorthand written after a binding list (`where(q, [p], score: 5)`), and

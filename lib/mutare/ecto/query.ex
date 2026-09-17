@@ -171,7 +171,7 @@ defmodule Mutare.Ecto.Query do
   # reorders.
   defp binding_reorders(%FromCall{source: source} = from) do
     with {:in, meta, [lhs, rhs]} <- source,
-         %BindingList{} = list <- BindingList.parse(lhs) do
+         {:ok, %BindingList{} = list} <- BindingList.parse(lhs) do
       for swapped <- BindingList.transpositions(list) do
         swapped_source = {:in, meta, [swapped, rhs]}
 

@@ -30,9 +30,9 @@ defmodule Mutare.Ecto.NormalizedASTTest do
 
   describe "BindingList" do
     test "validates entries and preserves the wrapper when transposing" do
-      list = BindingList.parse(parse("[a, ..., b, post: p]"))
+      assert {:ok, %BindingList{} = list} = BindingList.parse(parse("[a, ..., b, post: p]"))
 
-      assert %BindingList{} = list
+      assert [{:positional, _a}, :ellipsis, {:positional, _b}, {:named, :post, _p}] = list.entries
       assert [swapped] = BindingList.transpositions(list)
       assert Sourceror.to_string(swapped) == "[b, ..., a, post: p]"
     end
@@ -49,15 +49,49 @@ defmodule Mutare.Ecto.NormalizedASTTest do
     end
 
     test "does not emit an unchanged transposition for repeated names" do
-      list = BindingList.parse(parse("[a, a]"))
+      {:ok, list} = BindingList.parse(parse("[a, a]"))
       assert BindingList.transpositions(list) == []
     end
 
-    test "accepts a bare list and rejects non-binding or empty lists" do
-      assert %BindingList{} = BindingList.parse([{:a, [], nil}])
-      assert BindingList.parse(parse("[active: true]")) == nil
-      assert BindingList.parse(parse("[]")) == nil
-      assert BindingList.parse(parse("a")) == nil
+    test "accepts a bare list and rejects a non-binding list or a non-list" do
+      assert {:ok, %BindingList{}} = BindingList.parse([{:a, [], nil}])
+      assert BindingList.parse(parse("[active: true]")) == :error
+      assert BindingList.parse(parse("a")) == :error
+    end
+
+    # The declaration grammar is wider than the reorderable one: every form Ecto's
+    # `escape_bind/1` reads parses, and only the plain positionals among them transpose.
+    test "parses Ecto's whole entry grammar; only plain positionals are reorderable" do
+      assert {:ok, list} = BindingList.parse(parse("[a, b, {c, 4}, {:post, p}, {^name, q}]"))
+
+      assert [
+               {:positional, _},
+               {:positional, _},
+               {:indexed, _, 4},
+               {:named, :post, _},
+               {:interpolated, _, _}
+             ] = list.entries
+
+      assert Enum.map(BindingList.transpositions(list), &Sourceror.to_string/1) == [
+               "[b, a, {c, 4}, {:post, p}, {^name, q}]"
+             ]
+
+      # An indexed entry carries its own position, so transposing two is a no-op — none is offered.
+      assert {:ok, indexed} = BindingList.parse(parse("[{a, 0}, {b, 1}]"))
+      assert BindingList.transpositions(indexed) == []
+    end
+
+    test "the empty list is a declaration (of nothing), but find/1 skips it" do
+      assert {:ok, %BindingList{entries: []}} = BindingList.parse(parse("[]"))
+
+      args = [parse("query"), parse("[]"), parse("[a, b]")]
+      assert {2, %BindingList{}} = BindingList.find(args)
+      assert BindingList.find([parse("query"), parse("[]")]) == nil
+    end
+
+    test "one entry outside the grammar makes the whole list uninterpretable" do
+      assert BindingList.parse(parse("[a, {p, index}]")) == :error
+      assert BindingList.parse(parse("[a, {^name(), p}]")) == :error
     end
   end
 

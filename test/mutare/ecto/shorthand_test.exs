@@ -137,7 +137,7 @@ defmodule Mutare.Ecto.ShorthandTest do
       end
     end
 
-    test "locate/1 reports the kind of the predicate it located, in both argument forms" do
+    test "locate/3 reports the kind of the predicate it located, declaration written or omitted" do
       for {code, kind} <- [
             {"where(q, [p], p.score > ^min)", :expression},
             {"where(q, as(:post).score > 5)", :expression},
@@ -146,7 +146,7 @@ defmodule Mutare.Ecto.ShorthandTest do
           ] do
         {:where, _meta, args} = Sourceror.parse_string!(code)
 
-        assert %Host.Condition{kind: ^kind} = Host.Condition.locate(args),
+        assert %Host.Condition{kind: ^kind} = Host.Condition.locate(:condition, args, :unpiped),
                "expected `#{code}` to locate a #{kind}"
       end
     end
@@ -165,10 +165,12 @@ defmodule Mutare.Ecto.ShorthandTest do
       end
     end
 
-    test "locate/1 declines a keyword filter in both argument forms" do
+    test "locate/3 declines a keyword filter, declaration written or omitted" do
       for code <- ["where(q, score: 5)", "where(q, [p], score: 5)", "where(q, [p], [])"] do
         {:where, _meta, args} = Sourceror.parse_string!(code)
-        assert Host.Condition.locate(args) == nil, "expected no located condition in `#{code}`"
+
+        assert Host.Condition.locate(:condition, args, :unpiped) == nil,
+               "expected no located condition in `#{code}`"
       end
     end
   end

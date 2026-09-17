@@ -402,6 +402,29 @@ defmodule Mutare.Ecto.BindingReorderTest do
              ]
     end
 
+    test "indexed and interpolated-name entries stay put; the plain positionals swap around them" do
+      # Reorderability is narrower than the declaration grammar (`Mutare.Ecto.AST.BindingList`):
+      # `{c, 4}` carries its own position and `{^name, d}` is addressed by name, so neither is
+      # transposed — but the list they sit in is still a declaration, and its plain pair swaps.
+      assert reorder_renders("where(q, [a, b, {c, 4}, {^name, d}], a.x > b.y)") ==
+               ["where(q, [b, a, {c, 4}, {^name, d}], a.x > b.y)"]
+
+      # Two indexed entries name their own positions, so exchanging them changes nothing.
+      assert reorder_renders("where(q, [{a, 0}, {b, 1}], a.x > b.y)") == []
+    end
+
+    test "a from source reorders its plain positionals around an indexed entry" do
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q(query), do: from([a, b, {c, 4}] in query, select: {a.x, b.y, c.z})
+      end
+      """
+
+      assert Enum.any?(mutated(src), &(&1 =~ "[b, a, {c, 4}] in query"))
+      assert_compiles(src)
+    end
+
     test "a list of field accesses / atoms is not a binding list (no swap, no crash)" do
       # BindingList.find/1 tests every list argument through BindingList.parse/1; a select/group_by
       # list of field accesses or field names has no binding entries, so it is never mistaken for a

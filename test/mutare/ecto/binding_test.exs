@@ -28,11 +28,17 @@ defmodule Mutare.Ecto.BindingTest do
   end
 
   describe "reorderable_name/1" do
-    test "returns ordinary variable names and excludes underscore-prefixed bindings" do
-      assert Binding.reorderable_name({:u, [], nil}) == :u
-      refute Binding.reorderable_name({:_, [], nil})
-      refute Binding.reorderable_name({:_unused, [], nil})
-      refute Binding.reorderable_name(parse("u.id"))
+    test "names a plain positional entry, excluding underscore-prefixed bindings" do
+      assert Binding.reorderable_name({:positional, {:u, [], nil}}) == :u
+      refute Binding.reorderable_name({:positional, {:_, [], nil}})
+      refute Binding.reorderable_name({:positional, {:_unused, [], nil}})
+    end
+
+    test "no other entry is reorderable: each is addressed by index or name, not list position" do
+      refute Binding.reorderable_name(:ellipsis)
+      refute Binding.reorderable_name({:indexed, {:u, [], nil}, 0})
+      refute Binding.reorderable_name({:named, :post, {:u, [], nil}})
+      refute Binding.reorderable_name({:interpolated, {:name, [], nil}, {:u, [], nil}})
     end
   end
 
@@ -51,29 +57,78 @@ defmodule Mutare.Ecto.BindingTest do
   end
 
   describe "placeholder/0" do
-    test "is a clean `_` node: a binding-list entry that renders as `_` and is never reordered" do
+    test "is a clean `_` node: a positional entry that renders as `_` and is never reordered" do
       assert {:_, [], nil} = Binding.placeholder()
       assert Sourceror.to_string(Binding.placeholder()) == "_"
-      assert Binding.variable?(Binding.placeholder())
-      assert Binding.entry?(Binding.placeholder())
-      refute Binding.reorderable_name(Binding.placeholder())
+      assert {:ok, {:positional, _var} = entry} = Binding.parse(Binding.placeholder())
+      refute Binding.reorderable_name(entry)
     end
   end
 
-  describe "entry?/1" do
-    test "accepts positional, named, and ellipsis entries" do
-      assert Binding.entry?({:u, [], nil})
-      assert Binding.entry?({{:__block__, [], [:post]}, {:p, [], nil}})
-      # The real `...` node (`{:..., [], []}`, context `[]`) — must reach `entry?`'s `ellipsis?`
-      # disjunct, not its `variable?` one. A hand-built `{:..., [], nil}` (context `nil`) would slip
-      # through `variable?` (`:...` and `nil` are both atoms), never exercising the ellipsis branch.
-      assert Binding.entry?(Binding.ellipsis())
-      assert Binding.entry?(Sourceror.parse_string!("..."))
+  # `parse/1` mirrors `Ecto.Query.Builder.escape_bind/1`, clause for clause and in its order.
+  describe "parse/1 — the entry grammar" do
+    # The one element of `[<code>]`, as Sourceror hands it to the plugin.
+    defp element(code), do: code |> parse() |> Mutare.AST.unwrap_literal() |> hd()
+
+    test "a positional variable and the `...` anchor" do
+      assert {:ok, {:positional, {:u, _, nil}}} = Binding.parse(element("[u]"))
+      assert Binding.parse(element("[...]")) == {:ok, :ellipsis}
+      assert Binding.parse(Binding.ellipsis()) == {:ok, :ellipsis}
     end
 
-    test "rejects shorthand-like pairs whose value is not a binding variable" do
-      refute Binding.entry?({{:__block__, [], [:active]}, {:__block__, [], [true]}})
-      refute Binding.entry?({:not_a_binding, [], []})
+    test "`...` is the anchor even with an atom context, where it has a variable's shape" do
+      # Ecto tests the anchor first for the same reason: `{:..., [], nil}` (context `nil`) passes
+      # `variable?/1` — `:...` and `nil` are both atoms.
+      assert Binding.variable?({:..., [], nil})
+      assert Binding.parse({:..., [], nil}) == {:ok, :ellipsis}
+    end
+
+    test "a named binding, in the keyword and the explicit-tuple spellings" do
+      assert {:ok, {:named, :post, {:p, _, nil}}} = Binding.parse(element("[post: p]"))
+      assert {:ok, {:named, :post, {:p, _, nil}}} = Binding.parse(element("[{:post, p}]"))
+    end
+
+    test "an indexed positional, with a literal non-negative index only" do
+      assert {:ok, {:indexed, {:p, _, nil}, 2}} = Binding.parse(element("[{p, 2}]"))
+      assert Binding.parse(element("[{p, -1}]")) == :error
+      assert Binding.parse(element("[{p, 1.5}]")) == :error
+      assert Binding.parse(element("[{p, index}]")) == :error
+    end
+
+    test "a variable on the left is read as indexed before named, as Ecto reads it" do
+      # `{p, c}` is "`p` at index `c`" to Ecto — never "`c` named `p`". The index is not a
+      # literal, so the entry is uninterpretable rather than misread as a named binding.
+      assert Binding.parse(element("[{p, c}]")) == :error
+    end
+
+    test "an interpolated name: a variable or a module attribute, nothing that could run code twice" do
+      assert {:ok, {:interpolated, {:name, _, nil}, {:p, _, nil}}} =
+               Binding.parse(element("[{^name, p}]"))
+
+      assert {:ok, {:interpolated, {:@, _, [{:name, _, nil}]}, {:p, _, nil}}} =
+               Binding.parse(element("[{^@name, p}]"))
+
+      assert Binding.parse(element("[{^name(), p}]")) == :error
+      assert Binding.parse(element("[{^opts.name, p}]")) == :error
+      assert Binding.parse(element("[{^:post, p}]")) == :error
+    end
+
+    test "rejects shorthand-like pairs and non-binding nodes" do
+      assert Binding.parse(element("[active: true]")) == :error
+      assert Binding.parse(element("[name: ^value]")) == :error
+      assert Binding.parse(element("[u.id]")) == :error
+      assert Binding.parse(element("[f(1)]")) == :error
+      assert Binding.parse(element("[:post]")) == :error
+    end
+  end
+
+  describe "positional?/1" do
+    test "everything but the two named forms occupies a position" do
+      assert Binding.positional?(:ellipsis)
+      assert Binding.positional?({:positional, {:u, [], nil}})
+      assert Binding.positional?({:indexed, {:u, [], nil}, 0})
+      refute Binding.positional?({:named, :post, {:u, [], nil}})
+      refute Binding.positional?({:interpolated, {:name, [], nil}, {:u, [], nil}})
     end
   end
 end

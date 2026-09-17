@@ -85,8 +85,8 @@ defmodule Mutare.Ecto.StaticCondition do
     end
   end
 
-  def mutations(%QueryCall{name: macro, args: args} = call, context) do
-    case Condition.locate(args) do
+  def mutations(%QueryCall{name: macro, args: args, pipe_mode: pipe_mode} = call, context) do
+    case Condition.locate(:condition, args, pipe_mode) do
       %Condition{node: condition, index: index} ->
         rebuilt(macro, condition, context, &QueryCall.replace_arg(call, index, &1))
 
@@ -97,7 +97,7 @@ defmodule Mutare.Ecto.StaticCondition do
 
   # The weave's own mutant set (`Mutare.Ecto.Host.Catalog.mutants/2`'s two halves), each
   # delivered through `rebuild` instead — for a predicate the host declined, and only for one.
-  # (A condition macro's argument is already one: `Condition.locate/1` reads the same shape.)
+  # (A condition macro's argument is already one: `Condition.locate/3` reads the same shape.)
   defp rebuilt(clause, condition, %Context{config: config} = context, rebuild) do
     if declined?(clause, condition) do
       own = for tag <- Catalog.own_catalog(condition, config), do: Tag.map_node(tag, rebuild)

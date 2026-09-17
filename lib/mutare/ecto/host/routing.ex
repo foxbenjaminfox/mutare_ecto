@@ -159,9 +159,11 @@ defmodule Mutare.Ecto.Host.Routing do
     # data positions stay raw. The condition/shorthand overlay then marks what the host/core own.
     base = query_threading_route(args, pipe_mode)
 
-    case Condition.locate(args) do
-      # binding form (`where(q, [u], cond)`) — host the condition after the binding list — or the
-      # binding-less form (`where(q, as(:post).x > 1)`) — host the trailing condition itself.
+    case Condition.locate(:condition, args, pipe_mode) do
+      # A condition, with its declaration written (`where(q, [u], cond)`) or omitted
+      # (`where(q, as(:post).x > 1)`). One whose declaration the plugin cannot interpret routes
+      # `:hosted` too and the host declines it — hostability is the host's call, as for a
+      # non-hostable `on:`.
       %Condition{index: index} -> List.replace_at(base, index, :hosted)
       # keyword-shorthand form (`where(q, col: v)` / `where(q, [p], col: v)`) — route the trailing
       # keyword list per-pair.
@@ -275,8 +277,9 @@ defmodule Mutare.Ecto.Host.Routing do
     case args |> List.last() |> Condition.shape() do
       {:keyword_filter, pairs} -> route_last(default, {:keyword, pair_treatments(pairs)})
       :pairless_list -> default
-      # Reached only by an argless call (`List.last([])` is `nil`, which is no list): a real
-      # trailing predicate is what `Condition.locate/1` would have located.
+      # Reached only by an arity the macro does not have — an argless call (`List.last([])` is
+      # `nil`, which is no list), a lone `where(q)`: a trailing predicate at a real arity is what
+      # `Condition.locate/3` would have located.
       {:predicate, _kind} -> default
     end
   end

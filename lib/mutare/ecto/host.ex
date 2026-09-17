@@ -55,9 +55,9 @@ defmodule Mutare.Ecto.Host do
       %QueryCall{name: :from} = call ->
         from_targets(FromCall.parse(call), context)
 
-      %QueryCall{name: macro, args: args} ->
+      %QueryCall{name: macro, args: args, pipe_mode: pipe_mode} ->
         case Surface.macro_kind(macro) do
-          :condition -> condition_target(macro, args, context)
+          :condition -> condition_target(macro, args, pipe_mode, context)
           :join -> join_target(args, context)
           :clause -> bound_target(macro, args)
           # Defensively dead: `hosted_macro_names/0` subscribes only the kinds above. A new kind
@@ -88,10 +88,13 @@ defmodule Mutare.Ecto.Host do
         # `from_target/4`'s question. `Bindings.visible_to/2` owns the truncation offset (and
         # why it includes the current entry itself); each clause sees only the join bindings
         # introduced up to it. A condition the clause cannot take as a dynamic is declined —
-        # `Mutare.Ecto.StaticCondition` rebuilds it whole-call instead.
+        # `Mutare.Ecto.StaticCondition` rebuilds it whole-call instead — and so is one behind a
+        # source or join declaration `Bindings` cannot interpret, which stays as written.
         hostable_clause?(key, index, hostable_on) and StaticCondition.weavable?(key, value) ->
-          bindings = Bindings.from(source, Bindings.visible_to(clauses, index))
-          from_target(value, bindings, index, context)
+          case Bindings.from(source, Bindings.visible_to(clauses, index)) do
+            {:ok, bindings} -> from_target(value, bindings, index, context)
+            :error -> []
+          end
 
         true ->
           []
@@ -120,9 +123,9 @@ defmodule Mutare.Ecto.Host do
   end
 
   # No `bindings` non-emptiness guard: a bare-queryable source (`from("t", as: :t, where:
-  # as(:t).x > 1)`) declares no positional binding, so `Bindings.from/2` returns `[]` and the woven
-  # `dynamic([], …)` re-declares none — valid, since such a condition can only reference a *named*
-  # binding. Hostability is decided by the clause key (`hostable_clause?/3`, in the caller) and a
+  # as(:t).x > 1)`) declares no positional binding, so `Bindings.from/2` returns `{:ok, []}` and
+  # the woven `dynamic([], …)` re-declares none — valid, since such a condition can only reference
+  # a *named* binding. Hostability is decided by the clause key (`hostable_clause?/3`, in the caller) and a
   # non-empty catalog, not the binding count — so a top-level-pin condition (`where: ^cond`)
   # hosts whenever its sub-contract yields something (`Mutare.Ecto.Island`); its weave is
   # pin-only and leaves these bindings unused (`Mutare.Ecto.Host.Target`).
@@ -138,7 +141,7 @@ defmodule Mutare.Ecto.Host do
   # A keyword filter is not the host's: its pairs were routed to core one by one, and neither the
   # predicate catalog nor the pin sub-contract is offered it, so hosting a *sibling* never
   # changes what happens to it. (A condition macro's argument takes the same decision inside
-  # `Condition.locate/1`.)
+  # `Condition.locate/3`.)
   defp predicate_mutants(value, context) do
     case Condition.shape(value) do
       {:predicate, kind} -> {kind, Catalog.mutants(value, context)}
@@ -147,16 +150,18 @@ defmodule Mutare.Ecto.Host do
     end
   end
 
-  # The woven `dynamic/2` re-declares the written binding list — or an empty one for the
-  # binding-less form (`bindings: nil` — `Mutare.Ecto.Host.Condition`), which
-  # `Bindings.declarations/1` renders as `[]`. A condition that `macro` cannot take as a dynamic
-  # is declined, as in the `from` form (`Mutare.Ecto.StaticCondition`).
-  defp condition_target(macro, args, context) do
-    with %Condition{node: condition, index: index, kind: kind, bindings: list} <-
-           Condition.locate(args),
+  # The woven `dynamic/2` re-declares the written binding list — or an empty one when none was
+  # written. A declaration the plugin cannot interpret is neither: `Bindings.declarations/1`
+  # answers `:error` and the condition is declined (`Mutare.Ecto.Host.Condition`'s three outcomes).
+  # So is a condition that `macro` cannot take as a dynamic, as in the `from` form
+  # (`Mutare.Ecto.StaticCondition`).
+  defp condition_target(macro, args, pipe_mode, context) do
+    with %Condition{node: condition, index: index, kind: kind, declaration: declaration} <-
+           Condition.locate(:condition, args, pipe_mode),
          true <- StaticCondition.weavable?(macro, condition),
+         {:ok, bindings} <- Bindings.declarations(declaration),
          [_ | _] = mutants <- Catalog.mutants(condition, context) do
-      [Target.condition(condition, kind, mutants, Bindings.declarations(list), index)]
+      [Target.condition(condition, kind, mutants, bindings, index)]
     else
       _ -> []
     end
@@ -187,7 +192,7 @@ defmodule Mutare.Ecto.Host do
            Enum.find_index(options.entries, &(&1.key == :on)),
          true <- JoinOn.hostable_standalone?(args, options.entries),
          %Entry{value: condition} = Enum.at(options.entries, pair_index),
-         [_ | _] = bindings <- Bindings.join(args),
+         {:ok, bindings} <- Bindings.join(args),
          {kind, [_ | _] = mutants} <- predicate_mutants(condition, context) do
       [Target.keyword_condition(condition, kind, mutants, bindings, arg_index, pair_index)]
     else

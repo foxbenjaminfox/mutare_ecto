@@ -1056,14 +1056,20 @@ defmodule Mutare.Ecto.HostTest do
       end
     end
 
-    # The clause-level pins for `Host.Condition.locate/1`: no argument at all, and a binding
-    # list with nothing after it (`where(q, [p])`, which Ecto itself rejects) are both "no hosted
-    # condition" — never a `%Condition{}` with a `nil` node or an out-of-range index.
-    test "locate/1 is nil for no args and for a trailing binding list" do
-      assert Host.Condition.locate([]) == nil
+    # The clause-level pins for `Host.Condition.locate/3`: an arity the macro does not have
+    # (no argument at all, a lone query) and a binding list with nothing after it
+    # (`where(q, [p])`, which Ecto itself rejects) are all "no hosted condition" — never a
+    # `%Condition{}` with a `nil` node or an out-of-range index.
+    test "locate/3 is nil for a degenerate arity and for a trailing binding list" do
+      assert Host.Condition.locate(:condition, [], :unpiped) == nil
+      assert Host.Condition.locate(:condition, [], :piped) == nil
+      assert Host.Condition.locate(:dynamic, [], :unpiped) == nil
+      assert Host.Condition.locate(:dynamic, [], :piped) == nil
 
       [q, binding_list] = Sourceror.parse_string!("f(q, [p])") |> elem(2)
-      assert Host.Condition.locate([q, binding_list]) == nil
+      assert Host.Condition.locate(:condition, [q], :unpiped) == nil
+      assert Host.Condition.locate(:condition, [q, binding_list], :unpiped) == nil
+      assert Host.Condition.locate(:condition, [binding_list], :piped) == nil
     end
   end
 
@@ -1460,6 +1466,248 @@ defmodule Mutare.Ecto.HostTest do
     end
   end
 
+  describe "the declaration grammar is Ecto's, and an unread declaration is never an empty one" do
+    # Ecto's `escape_bind/1` reads two entry forms beyond `var` / `name: var` / `...`: an
+    # interpolated name (`{^name, p}`) and an explicit index (`{p, 0}`). The host located the
+    # declaration by *searching* the arguments for a list it could read — so one it could not
+    # read was indistinguishable from none, the condition fell to the binding-less form, and the
+    # weave was `dynamic([], p.score > 10)`: an unbound `p`, failing the single build. The slot
+    # is now read by position (`Mutare.Ecto.Host.Condition`), its entries by Ecto's own grammar
+    # (`Mutare.Ecto.Binding`), and whatever is still unread **declines**.
+
+    # The standalone/piped forms and a `from` source all re-declare the written entry verbatim.
+    for {label, declaration} <- [
+          {"an interpolated name", "{^name, p}"},
+          {"a module-attribute name", "{^@name, p}"},
+          {"an explicit index", "{p, 0}"},
+          {"the tuple spelling of a named binding", "{:post, p}"}
+        ] do
+      test "#{label} is re-declared in the woven dynamic (where, piped where, from)" do
+        declaration = unquote(declaration)
+
+        for stage <- [
+              "where(query, [#{declaration}], p.score > 10)",
+              "query |> where([#{declaration}], p.score > 10)",
+              "from([#{declaration}] in query, where: p.score > 10)",
+              "from(#{declaration} in query, where: p.score > 10)"
+            ] do
+          src = """
+          defmodule M do
+            import Ecto.Query
+            @name :post
+            def q(query, name), do: {name, @name, #{stage}}
+          end
+          """
+
+          assert {"p.score > 10", "p.score >= 10"} in hosted(src), stage
+          refute metamutant(src) =~ "dynamic([]", stage
+          assert_compiles(src)
+        end
+      end
+    end
+
+    test "the written entries are re-declared as written, in order" do
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q(query, name) do
+          where(query, [{a, 0}, {c, 2}, {^name, p}], c.x > a.x and p.x > 1)
+        end
+      end
+      """
+
+      assert metamutant(src) =~ "dynamic([{a, 0}, {c, 2}, {^name, p}]"
+      assert_compiles(src)
+    end
+
+    # What the grammar deliberately leaves out (`Mutare.Ecto.Binding`): a re-declared entry is
+    # evaluated a second time, so a computed index or a name that could run code is unread.
+    # Unread is not empty — the condition is left as written (its stage drop, a whole-call
+    # rewrite that never reads the list, is all that remains).
+    for {label, declaration} <- [
+          {"a name that calls a function", "{^name(), p}"},
+          {"a computed index", "{p, index}"}
+        ] do
+      test "#{label} declines hosting rather than weaving an empty declaration" do
+        declaration = unquote(declaration)
+
+        for stage <- [
+              "where(query, [#{declaration}], p.score > 10)",
+              "query |> where([#{declaration}], p.score > 10)",
+              "from([#{declaration}] in query, where: p.score > 10)",
+              "join(query, :inner, [#{declaration}], c in Comment, on: c.id > p.score)"
+            ] do
+          src = """
+          defmodule M do
+            import Ecto.Query
+            def q(query, index), do: {index, #{stage}}
+            defp name, do: :post
+          end
+          """
+
+          conditions = ["p.score > 10", "c.id > p.score"]
+          refute Enum.any?(hosted(src), fn {original, _} -> original in conditions end), stage
+          refute metamutant(src) =~ "dynamic(", stage
+          assert_compiles(src)
+        end
+      end
+    end
+
+    test "a free-standing dynamic mutates under any declaration: it re-emits the written list" do
+      # `Mutare.Ecto.Dynamic` rebuilds the whole call, so it never needs to *read* the list.
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def d(index), do: dynamic([{p, index}], p.score > 10)
+      end
+      """
+
+      assert {"p.score > 10", "p.score >= 10"} in ecto_diffs(src)
+      assert metamutant(src) =~ "dynamic([{p, index}], p.score >= 10)"
+      assert_compiles(src)
+    end
+
+    test "a standalone join appends its binding to an indexed declaration, tail-anchored" do
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q(query), do: join(query, :inner, [{p, 0}], c in Comment, on: c.post_id == p.id)
+      end
+      """
+
+      assert {"c.post_id == p.id", "c.post_id != p.id"} in hosted(src)
+      assert metamutant(src) =~ "dynamic([{p, 0}, ..., c]"
+      assert_compiles(src)
+    end
+
+    test "two entries over a literal source's one binding anchor its joins" do
+      # A literal source is ONE binding, so the join is binding 1 — while a contiguous
+      # `[{p, 0}, {q, 0}, c]` (or `[p, q, c]`) would call it binding 2.
+      for {declaration, woven} <- [
+            {"[{p, 0}, {q, 0}]", "dynamic([{p, 0}, {q, 0}, ..., c]"},
+            {"[p, q]", "dynamic([p, q, ..., c]"}
+          ] do
+        src = """
+        defmodule M do
+          import Ecto.Query
+          def q do
+            from(#{declaration} in Post, join: c in Comment, on: c.post_id == p.id, where: c.id > q.id)
+          end
+        end
+        """
+
+        assert metamutant(src) =~ woven
+        assert_compiles(src)
+      end
+    end
+
+    test "a single indexed entry over a literal source keeps its joins contiguous" do
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q, do: from([{p, 0}] in Post, join: c in Comment, on: c.post_id == p.id)
+      end
+      """
+
+      assert metamutant(src) =~ "dynamic([{p, 0}, c]"
+      assert_compiles(src)
+    end
+
+    test "a join written without `in` holds its binding position as `_`" do
+      # `join: assoc(p, :comments)` names no variable but is binding 1, so `u` is binding 2.
+      # Skipping it re-declared `[p, u]` — `u` bound to the *comments* join, in the unmutated
+      # branch as much as in every mutant.
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q do
+          from(p in Post, join: assoc(p, :comments), join: u in User, on: true, where: u.id > p.id)
+        end
+      end
+      """
+
+      assert {"u.id > p.id", "u.id >= p.id"} in hosted(src)
+      assert metamutant(src) =~ "dynamic([p, _, u]"
+      assert_compiles(src)
+    end
+
+    test "a keyword shorthand after a written declaration routes per pair, as it does without one" do
+      # A list condition is the shorthand form whether or not a declaration precedes it.
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q(query), do: where(query, [p], score: 10)
+      end
+      """
+
+      all = [:all, {Mutare.Ecto, repo: MyApp.Repo}]
+      diffs = diffs(src, mutators: all)
+
+      # Core's literal family mutates the value, `^`-pinned; the column key and the written
+      # declaration stay raw, and nothing is woven behind a `dynamic`.
+      assert {:integer, "10", "11"} in diffs
+      refute Enum.any?(diffs, fn {_mutator, original, _} -> original in ["score:", "[p]"] end)
+      refute metamutant(src, mutators: all) =~ "dynamic("
+      assert_compiles(src, mutators: all)
+    end
+  end
+
+  describe "Host.Condition.locate/3 — the declaration's three outcomes" do
+    alias Mutare.Ecto.AST.BindingList
+
+    defp call_args(code), do: code |> Sourceror.parse_string!() |> elem(2)
+
+    test "written: the slot before the condition, by position, in the direct and piped forms" do
+      assert %Host.Condition{index: 2, declaration: %BindingList{entries: [{:positional, _}]}} =
+               Host.Condition.locate(:condition, call_args("where(q, [p], p.x > 1)"), :unpiped)
+
+      assert %Host.Condition{index: 1, declaration: %BindingList{entries: [{:named, :post, _}]}} =
+               Host.Condition.locate(:condition, call_args("where([post: p], p.x > 1)"), :piped)
+
+      assert %Host.Condition{index: 1, declaration: %BindingList{entries: [{:indexed, _, 0}]}} =
+               Host.Condition.locate(:dynamic, call_args("dynamic([{p, 0}], p.x > 1)"), :unpiped)
+    end
+
+    test "written empty is a declaration of nothing, not an omitted one" do
+      assert %Host.Condition{index: 2, declaration: %BindingList{entries: []}} =
+               Host.Condition.locate(
+                 :condition,
+                 call_args("where(q, [], as(:p).x > 1)"),
+                 :unpiped
+               )
+    end
+
+    test "omitted: the arity says no declaration was written" do
+      assert %Host.Condition{index: 1, declaration: :omitted} =
+               Host.Condition.locate(:condition, call_args("where(q, as(:p).x > 1)"), :unpiped)
+
+      assert %Host.Condition{index: 0, declaration: :omitted} =
+               Host.Condition.locate(:condition, call_args("where(as(:p).x > 1)"), :piped)
+
+      assert %Host.Condition{index: 0, declaration: :omitted} =
+               Host.Condition.locate(:dynamic, call_args("dynamic(as(:p).x > 1)"), :unpiped)
+    end
+
+    test "uninterpretable: written, but unread — and never reported as omitted" do
+      for code <- ["where(q, [{p, index}], p.x > 1)", "where(q, bindings, p.x > 1)"] do
+        assert %Host.Condition{index: 2, declaration: :uninterpretable} =
+                 Host.Condition.locate(:condition, call_args(code), :unpiped)
+      end
+
+      # A piped `dynamic`'s declaration is the pipe's hidden left side: written, but unseen.
+      assert %Host.Condition{index: 0, declaration: :uninterpretable} =
+               Host.Condition.locate(:dynamic, call_args("dynamic(p.x > 1)"), :piped)
+    end
+
+    test "Bindings.declarations/1 keeps the three apart" do
+      {:ok, written} = BindingList.parse(Sourceror.parse_string!("[p]"))
+
+      assert Host.Bindings.declarations(written) == {:ok, [{:p, [], nil}]}
+      assert Host.Bindings.declarations(:omitted) == {:ok, []}
+      assert Host.Bindings.declarations(:uninterpretable) == :error
+    end
+  end
+
   describe "the threaded query is routed by form, not shape" do
     # `Host.Routing` marks a directly written queryable `:expression` whatever it is: the upstream
     # mutations of a *computed* query must stay reachable through the stage exactly as a bare
@@ -1684,8 +1932,8 @@ defmodule Mutare.Ecto.HostTest do
     end
 
     test "condition macro with no condition after the binding list hosts nothing" do
-      # `Host.Condition.locate/1` requires an argument *after* the binding list, so a binding-only call
-      # never marks a position `:hosted`.
+      # By arity, `Host.Condition.locate/3` reads a binding-only call's lone list as the condition,
+      # not a declaration — and a list is never a hosted condition, so no position is `:hosted`.
       assert routing("q |> where([u])") == [:raw]
       assert routing("where(q, [u])") == [:expression, :raw]
     end

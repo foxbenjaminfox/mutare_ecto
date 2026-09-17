@@ -166,8 +166,8 @@ Each row is role + the rule(s) that module is the **home** for.
 | `tag.ex` | `%Tag{family, node, label, attribution}` — the one shape every producer emits; `to_mutation/1`; home of what the `attribution` field means |
 | `host.ex` | selector-host coordinator (bucket 3): a hosted call → `Target`s |
 | `host/routing.ex` | `route_arguments/2`, the per-argument classifier; home of the routing rationale (`:hosted`/`:expression`/`:skip`/`:interpolated`/`{:keyword, …}`) |
-| `host/condition.ex` | `shape/1`, the one predicate-versus-keyword-filter classification routing, hosting (the weave and its `StaticCondition` fallback) and the subquery recursion share, reporting a predicate's kind (`:expression` / `:root_pin`) for `Target` to deliver by; `locate/1`; home of the hosted-condition shapes (binding-form / binding-less) |
-| `host/bindings.ex` | interprets binding declarations and renders the list a woven `dynamic/2` re-declares; home of the join-slot rule (every join — a `from` join clause, or the one a standalone `join/4,5` adds — holds one positional slot; an unnamed one re-declares as `_`) |
+| `host/condition.ex` | `shape/1`, the one predicate-versus-keyword-filter classification routing, hosting (the weave and its `StaticCondition` fallback) and the subquery recursion share, reporting a predicate's kind (`:expression` / `:root_pin`) for `Target` to deliver by; `locate/3`; home of the hosted-condition shapes and of the located-by-position rule — a condition's binding declaration is read from its arity-determined slot, never searched for, and is one of *written* / *omitted* / *uninterpretable* |
+| `host/bindings.ex` | interprets binding declarations and renders the list a woven `dynamic/2` re-declares, as `{:ok, declarations} \| :error`; home of join placement (the join-slot rule: every join, whether a `from` join clause or the one a standalone `join/4,5` adds, holds one positional slot, an unnamed one re-declaring as `_`; and the `...` anchor rule) and of the hidden-source assumption |
 | `host/catalog.ex` | the own-catalog + island mutants for one hosted condition |
 | `host/join_on.ex` | home of join `on:` hostability (a join's sole, top-level, non-`assoc` on-expression — an `assoc` join told by its source, named or not) |
 | `host/target.ex` | the `dynamic`-wrap / `^`-pin / splice transforms core consumes; home of the root-pin rule (a condition that *is* a `^` pin — a `:root_pin` predicate — weaves pin-only over its interior) |
@@ -196,8 +196,8 @@ Each row is role + the rule(s) that module is the **home** for.
 | `equivalence.ex` | home of the equivalence-sensitive set, each family's note, and the `finalize/2` funnel (context-free, over a `%Config{}`) |
 | `vocabulary.ex` | the `variant_labels/0` callback; home of vocabulary canonicalisation |
 | `ast.ex` | typed literal readers + list unwrap/rewrap; home of "emit through core's `Mutare.AST`, `Elixir.`-prefixed" |
-| `ast/query_call.ex` / `ast/from_call.ex` / `ast/binding_list.ex` / `ast/keyword_list.ex` | normalized values that preserve the written form; `FromCall` is home of the empty-clause-list collapse and of the effective-clause rule (a last-wins key's overridden occurrence is never mutated) |
-| `binding.ex` | the primitive binding-entry vocabulary |
+| `ast/query_call.ex` / `ast/from_call.ex` / `ast/binding_list.ex` / `ast/keyword_list.ex` | normalized values that preserve the written form; `FromCall` is home of the empty-clause-list collapse and of the effective-clause rule (a last-wins key's overridden occurrence is never mutated); `BindingList` is home of the declaration-vs-reorderable split (`parse/1` admits any declaration, `[]` included; only `transpositions/1` asks what reorders) |
+| `binding.ex` | the binding-entry vocabulary; home of the entry **grammar** (`parse/1`, Ecto's `escape_bind/1` in its order) and of why a computed index / name is read narrower than Ecto reads it |
 
 ### Families and configuration
 
@@ -233,6 +233,10 @@ Each is the conclusion; the canonical statement is in the named module.
   predicate catalog reads `Mutare.Ecto.Host.Condition.shape/1` first.
 - **Binding-reorder is always in-place, never a body rewrite.** `Mutare.Ecto.BindingReorder`
   (a `from` source list reorders at the whole-`from` level, `Mutare.Ecto.Query`).
+- **A declaration the plugin cannot read is never an empty one.** A re-declaring consumer
+  locates the declaration by position and declines on `:error`; only the reorder may search by
+  shape (`BindingList.find/1`), where an unread list costs its own mutants and nothing else.
+  `Mutare.Ecto.Host.Condition`, `Mutare.Ecto.Host.Bindings`.
 - **Stay inside the single build.** Any in-query mutation must be `^`-pinned behind the selector —
   a bare `case` in a query position poisons compilation. New query-position families go through
   the host (`Mutare.Ecto.Host`); the pin-only bound bump (`Mutare.Ecto.Bound`) is the precedent.

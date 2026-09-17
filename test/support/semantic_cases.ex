@@ -2409,6 +2409,124 @@ defmodule Mutare.Ecto.SemanticCases do
         end
       end
 
+      describe "Binding declarations — Ecto's whole entry grammar re-declares faithfully" do
+        # The two entry forms beyond `var` / `name: var` / `...` (`Mutare.Ecto.Binding`): the host
+        # used to read neither, take the declaration for an absent one, and weave
+        # `dynamic([], x.age > 18)` — an unbound `x`, failing the single build. `assert_compiles`
+        # now proves the build; these prove the re-declared entry resolves to the *same binding*
+        # the written one does (a wrong one compiles fine and only shows against rows).
+        test "an interpolated name: the >= mutant admits the boundary rows" do
+          {mod, sites} =
+            build("""
+            defmodule Q do
+              import Ecto.Query
+              alias MyApp.User
+              def q do
+                name = :user
+                from(u in User, as: :user, select: u.id)
+                |> where([{^name, x}], x.age > 18)
+              end
+            end
+            """)
+
+          {baseline, mutant} = observe_ids(mod, sites, {"x.age > 18", "x.age >= 18"})
+
+          assert baseline == [2, 5, 6]
+          assert mutant == [1, 2, 4, 5, 6]
+        end
+
+        test "an explicit index: the condition filters the binding the index names" do
+          # `{u, 1}` is the joined users binding. Resolved to binding 0 instead (the posts), the
+          # query would raise — posts have no `age` — so the row sets prove the index survived.
+          {mod, sites} =
+            build("""
+            defmodule Q do
+              import Ecto.Query
+              alias MyApp.{Post, User}
+              def q do
+                from(p in Post, join: u in User, on: u.id == p.user_id, select: u.id)
+                |> where([{u, 1}], u.age > 18)
+              end
+            end
+            """)
+
+          {baseline, mutant} = observe_ids(mod, sites, {"u.age > 18", "u.age >= 18"})
+
+          # P1 → Alice (18), P2 → Bob (25); P3's user does not exist.
+          assert baseline == [2]
+          assert mutant == [1, 2]
+        end
+
+        # A literal source is ONE binding however many entries declare it, so its first join is
+        # binding 1; the woven list anchors the join (`[{u, 0}, {x, 0}, ..., p]`) rather than
+        # count it third. Before, the indexed spelling crashed the host outright (`clean_var/1`
+        # on the list) and the plain one re-declared `[u, x, p]` — `p` at a binding that does not
+        # exist, in the unmutated branch too. (`x` is the users in the indexed spelling and the
+        # posts in the plain one, where it is simply position 1; `id` exists on both.)
+        test "two entries over a literal source: the join lands on its own binding" do
+          for declaration <- ["[{u, 0}, {x, 0}]", "[u, x]"] do
+            {mod, sites} =
+              build("""
+              defmodule Q do
+                import Ecto.Query
+                alias MyApp.{Post, User}
+                def q do
+                  from(#{declaration} in User,
+                    join: p in Post,
+                    on: p.user_id == u.id,
+                    where: p.views > 10 and x.id > 0,
+                    select: u.id
+                  )
+                end
+              end
+              """)
+
+            {baseline, mutant} =
+              observe_ids(
+                mod,
+                sites,
+                {"p.views > 10 and x.id > 0", "p.views >= 10 and x.id > 0"}
+              )
+
+            # P1 (views 10) → Alice sits on the boundary; P2 (views 20) → Bob.
+            assert baseline == [2], declaration
+            assert mutant == [1, 2], declaration
+          end
+        end
+      end
+
+      describe "Regression — a join written without `in` holds its binding position (baseline correctness)" do
+        # `join: assoc(u, :posts)` names no variable, but it is binding 1 — so the next join's
+        # `u2` is binding 2. The host skipped the anonymous join and re-declared `[u, u2]`, binding
+        # `u2` to the *posts* join: in the unmutated branch too, since even the original condition
+        # runs behind the woven `dynamic`. Posts have no `age`, so that baseline did not just
+        # misfilter, it raised. The re-declared `[u, _, u2]` keeps every position.
+        test "the baseline filters the named join, and its mutant is live" do
+          {mod, sites} =
+            build("""
+            defmodule Q do
+              import Ecto.Query
+              alias MyApp.User
+              def q do
+                from(u in User,
+                  join: assoc(u, :posts),
+                  join: u2 in User,
+                  on: u2.id == u.id,
+                  where: u2.age > 18,
+                  select: u2.id
+                )
+              end
+            end
+            """)
+
+          {baseline, mutant} = observe_ids(mod, sites, {"u2.age > 18", "u2.age >= 18"})
+
+          # The users with a post are Alice (18) and Bob (25).
+          assert baseline == [2]
+          assert mutant == [1, 2]
+        end
+      end
+
       describe "Exotic constructs — a CTE interior mutant is live" do
         # The CTE's interior is an ordinary query mutated where it is *built*; this proves the woven
         # `dynamic` still runs when that query is then attached as a `WITH` and joined through its

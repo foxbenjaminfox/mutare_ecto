@@ -35,48 +35,62 @@ defmodule Mutare.Ecto.Host.Condition do
   #
   # ## The argument shapes
   #
-  # `locate/1` finds the predicate a host owns in a condition macro's argument list
-  # (`where`/`having`, and the free-standing `dynamic/1,2` that shares their shape). Pure
-  # argument-shape parsing: it reports the written binding list preceding the condition but never
-  # interprets it — rendering the declarations a woven `dynamic/2` re-declares is
-  # `Mutare.Ecto.Host.Bindings`' job. Consumed by `Mutare.Ecto.Host` (the weave — `bindings` go
-  # through `Bindings.declarations/1`, and `kind` picks the delivery), `Mutare.Ecto.Host.Routing`
-  # (marks `index` `:hosted`), and `Mutare.Ecto.Dynamic` (rebuilds the whole call around
-  # `index`).
+  # `locate/3` finds the predicate a host owns in a condition macro's argument list
+  # (`where`/`having`, and the free-standing `dynamic/1,2` that shares their shape), and reads the
+  # binding declaration written before it. Consumed by `Mutare.Ecto.Host` (the weave — the
+  # declaration goes through `Bindings.declarations/1`, and `kind` picks the delivery),
+  # `Mutare.Ecto.Host.Routing` (marks `index` `:hosted`), and `Mutare.Ecto.Dynamic` (rebuilds the
+  # whole call around `index`).
   #
-  # Two shapes resolve here:
+  # ### Located by position, never searched for
   #
-  #   * a **binding-form** condition (`where(q, [u], u.x == ^v)`) — the condition sits one slot past
-  #     the written binding list, which the woven `dynamic/2` re-declares.
-  #   * a **binding-less** condition (`q |> where(as(:post).views > 100)`, `where(q, is_nil(c.x))`) —
-  #     no positional list is written, so the condition is the trailing argument and the woven
-  #     `dynamic/2` re-declares an **empty** binding list (`dynamic([], …)`). A named-binding
-  #     (`as(:_)`), `parent_as`, or `fragment` reference resolves against the query the dynamic is
-  #     spliced into, exactly as Ecto's own `where(q, ^dynamic)` form does. This is what lets a
-  #     binding-less `where`/`having` still have its SQL operators/literals mutated.
+  # Both macros end `(…, binding \\ [], expr)`, so the call's **effective arity** says whether a
+  # declaration was written, and where: `where(query, binding, expr)` /
+  # `query |> where(binding, expr)` carry one in the slot before the condition;
+  # `where(query, expr)` / `query |> where(expr)` omit it. (`dynamic` is the same without the
+  # threaded query.) The slot is never *searched for* among the arguments — a search can only
+  # find a list it already understands, so a declaration it cannot read looks exactly like no
+  # declaration at all, and the condition gets hosted behind a `dynamic([], …)` that declares
+  # none of the variables it uses. Position keeps the three outcomes apart:
   #
-  # Neither shape matches a keyword filter, **with or without a binding list before it**
-  # (`where(q, col: v)`, `where(q, [p], col: v)`): `locate/1` reports `nil`, and the trailing
-  # pairs route `{:keyword, …}` instead (`Mutare.Ecto.Host.Routing`). A top-level `^cond` pin
-  # **is** a predicate in either shape, of kind `:root_pin`: its own SQL catalog is empty, but its
-  # interior is sub-contracted to core (`Mutare.Ecto.Island`) — and woven pin-only, with no
-  # `dynamic/2` and so no re-declared bindings at all (the root-pin rule, `Mutare.Ecto.Host.Target`).
+  #   * a **written** declaration the plugin reads — a `BindingList`, the empty `[]` included —
+  #     which the woven `dynamic/2` re-declares;
+  #   * an **omitted** one (`q |> where(as(:post).views > 100)`, `where(q, is_nil(c.x))`): the
+  #     woven `dynamic/2` re-declares an empty list. A named-binding (`as(:_)`), `parent_as`, or
+  #     `fragment` reference resolves against the query the dynamic is spliced into, exactly as
+  #     Ecto's own `where(q, ^dynamic)` form does — which is what lets a binding-less
+  #     `where`/`having` still have its SQL operators/literals mutated;
+  #   * an **uninterpretable** one — written, by position, but outside
+  #     `Mutare.Ecto.Binding`'s grammar (or hidden on a pipe's left, `[p] |> dynamic(…)`). The
+  #     host declines it; `Mutare.Ecto.Dynamic`, which re-emits the written list untouched,
+  #     needs no declaration and mutates it all the same.
+  #
+  # Under any of the three, only a predicate is located. A keyword filter, **with or without a
+  # binding list before it** (`where(q, col: v)`, `where(q, [p], col: v)`), makes `locate/3`
+  # report `nil`, and the trailing pairs route `{:keyword, …}` instead
+  # (`Mutare.Ecto.Host.Routing`). A top-level `^cond` pin **is** a predicate, of kind
+  # `:root_pin`: its own SQL catalog is empty, but its interior is sub-contracted to core
+  # (`Mutare.Ecto.Island`) — and woven pin-only, with no `dynamic/2` and so no re-declared
+  # bindings at all (the root-pin rule, `Mutare.Ecto.Host.Target`).
 
   alias Mutare.Ecto.AST.{BindingList, KeywordList}
+  alias Mutare.Mutator
 
-  @enforce_keys [:node, :index, :kind]
-  defstruct [:node, :index, :kind, bindings: nil]
+  @enforce_keys [:node, :index, :kind, :declaration]
+  defstruct [:node, :index, :kind, :declaration]
+
+  @typedoc "The binding declaration preceding a condition — see the module comment's three outcomes."
+  @type declaration :: BindingList.t() | :omitted | :uninterpretable
 
   @typedoc """
-  A located host-owned predicate: the condition `node`, its argument `index`, its `kind`
-  (`shape/1`), and the written binding list preceding it — `nil` for the binding-less form,
-  which re-declares an empty one.
+  A located host-owned predicate: the condition `node`, its visible argument `index`, its `kind`
+  (`shape/1`), and its declaration.
   """
   @type t :: %__MODULE__{
           node: Macro.t(),
           index: non_neg_integer(),
           kind: predicate_kind(),
-          bindings: BindingList.t() | nil
+          declaration: declaration()
         }
 
   @typedoc """
@@ -106,6 +120,12 @@ defmodule Mutare.Ecto.Host.Condition do
   """
   @type predicate_kind :: :expression | :root_pin
 
+  @typedoc """
+  Which macro's argument layout `locate/3` reads: a query-threading condition macro, or
+  `dynamic` (`Mutare.Ecto.Surface`'s macro kinds of those names).
+  """
+  @type macro_kind :: :condition | :dynamic
+
   @doc """
   Classify a value written at a condition position (the module header's first section) — the
   single predicate-versus-keyword-filter decision routing and hosting share.
@@ -129,53 +149,54 @@ defmodule Mutare.Ecto.Host.Condition do
   end
 
   @doc """
-  The host-owned predicate argument in `args`, or `nil` when the args carry none (a keyword
-  filter in either form, or nothing to host).
+  The host-owned predicate in the visible `args` of a `macro_kind` macro called under
+  `pipe_mode`, or `nil` when the call carries none: a keyword filter (`shape/1`), or an arity
+  the macro does not have (an argless `q |> where()` — core still routes it, the macro
+  registering with `:any` arity — or a lone `where(q)`; `host_test.exs`'s totality cases pin
+  both).
   """
-  @spec locate([Macro.t()]) :: t() | nil
-  def locate(args) do
-    case binding_form(args) do
-      %__MODULE__{} = condition -> condition
-      nil -> bindingless_form(args)
-    end
-  end
-
-  # The binding-form condition: one slot past the written binding list, or `nil` when the args carry
-  # no binding list, nothing follows it (a *trailing* binding list is not a condition;
-  # `host_test.exs`'s totality case pins that), or what follows is not a predicate
-  # (`where(q, [p], col: v)` — a binding list only says where a condition *may* sit, exactly as
-  # a clause key does). The `+ 1` offset lives here, not in callers.
-  @spec binding_form([Macro.t()]) :: t() | nil
-  defp binding_form(args) do
-    with {binding_index, bindings} <- BindingList.find(args),
-         index = binding_index + 1,
-         true <- index < length(args),
+  @spec locate(macro_kind(), [Macro.t()], Mutator.pipe_mode()) :: t() | nil
+  def locate(macro_kind, args, pipe_mode) do
+    with {declaration_position, condition_position} <-
+           layout(macro_kind, Mutator.effective_arity(args, pipe_mode)),
+         index when is_integer(index) <- Mutator.visible_index(condition_position, pipe_mode),
          node = Enum.at(args, index),
          {:predicate, kind} <- shape(node) do
-      %__MODULE__{node: node, index: index, kind: kind, bindings: bindings}
+      %__MODULE__{
+        node: node,
+        index: index,
+        kind: kind,
+        declaration: declaration(declaration_position, args, pipe_mode)
+      }
     else
       _ -> nil
     end
   end
 
-  # The trailing argument as a host-owned condition with no binding declarations, or `nil` when it is
-  # not a predicate (`shape/1`): a list — a binding list like `[u]`, a keyword filter like
-  # `[active: true]`, or an empty `[]`. Everything else — a comparison/connective/null/membership
-  # expression, or a top-level `^cond` pin, possibly referencing only named bindings — is hosted;
-  # the catalog then decides whether there is anything to mutate. An argless call
-  # (`q |> where()`) has no trailing argument at all, and core still routes it (the macro
-  # registers with `:any` arity), so the empty clause keeps this total — `host_test.exs`'s
-  # totality case pins it.
-  @spec bindingless_form([Macro.t()]) :: t() | nil
-  defp bindingless_form([]), do: nil
+  # The effective positions `{declaration | nil, condition}` of a call of that effective arity.
+  # The declaration slot sits right after the arguments that precede it in the macro's head —
+  # the threaded query for a condition macro, nothing for `dynamic`.
+  defp layout(macro_kind, effective_arity) do
+    leading = leading_arguments(macro_kind)
 
-  defp bindingless_form(args) do
-    index = length(args) - 1
-    node = Enum.at(args, index)
+    case effective_arity - leading do
+      1 -> {nil, leading}
+      2 -> {leading, leading + 1}
+      _ -> nil
+    end
+  end
 
-    case shape(node) do
-      {:predicate, kind} -> %__MODULE__{node: node, index: index, kind: kind}
-      _filter -> nil
+  defp leading_arguments(:condition), do: 1
+  defp leading_arguments(:dynamic), do: 0
+
+  defp declaration(nil, _args, _pipe_mode), do: :omitted
+
+  defp declaration(position, args, pipe_mode) do
+    with index when is_integer(index) <- Mutator.visible_index(position, pipe_mode),
+         {:ok, list} <- args |> Enum.at(index) |> BindingList.parse() do
+      list
+    else
+      _ -> :uninterpretable
     end
   end
 end

@@ -545,3 +545,49 @@ pin. Two policies were weighed for the `:structural` row:
 Three roles, not one per kind of name: every structural position takes the same policy, so
 "field name" versus "interval unit" would be a distinction no code reads. The registry's comments
 still say which name each position holds.
+
+### Binding declarations: located by position, read by Ecto's grammar
+
+The host used to find a condition's binding declaration by **searching** the arguments for the
+first list it could parse (`BindingList.find/1`), and `BindingList.parse/1` doubled as the
+reorder's eligibility test: a non-empty list of `var` / `name: var` / `...`. Ecto's
+`escape_bind/1` reads two more entry forms — an interpolated name (`[{^name, p}]`) and an
+explicit index (`[{p, 0}, {c, 2}]`) — and a search can only find what it already understands.
+So a declaration in either form was invisible: `Host.Condition` fell through to its binding-less
+shape and the weave was `dynamic([], p.score > 10)`, an unbound `p` that failed the single build.
+"A declaration I cannot read" had silently become "no declaration". The `from` twin did not
+degrade at all — `Bindings.declarations/1` handed the unread list to `clean_var/1` and `host/2`
+crashed with a `ContractError`.
+
+Three separations fixed it. **Grammar vs. reorderability:** `Mutare.Ecto.Binding.parse/1` is the
+entry grammar, mirroring `escape_bind/1` clause for clause and in its order (`{p, c}` is an
+indexed positional to Ecto before it is ever a named one); `BindingList.parse/1` admits any list
+of such entries, `[]` included; only `transpositions/1` asks what is reorderable (plain
+positionals — an indexed entry carries its own position, so transposing it is a no-op).
+**Position vs. shape:** both condition macros end `(…, binding \\ [], expr)`, so the call's
+effective arity says whether a declaration was written and where; `Host.Condition.locate/3`
+reads that slot and reports it *written*, *omitted*, or *uninterpretable*, and
+`Host.Bindings` answers `{:ok, declarations} | :error` so the third can never be rendered as
+the second. (`find/1` survives for `BindingReorder` alone, where skipping an unread list costs
+that reorder its mutants and nothing else.) **Entries vs. nodes:** placement used to tell a
+named declaration from a positional one by re-reading the rendered node's shape
+(`named?({_, _})`), which an indexed `{p, 0}` would have satisfied; it now works on parsed
+entries and renders once.
+
+Two forms are read narrower than Ecto reads them, because the woven `dynamic/2` *re-declares*
+the list beside the original, evaluating whatever an entry computes a second time: an index must
+be a literal, and an interpolated name a variable or module attribute. `{^next_name(), p}` would
+run `next_name/0` twice in the **unmutated** branch. Those decline hosting. The alternative —
+deliver such a condition as a whole-call rebuild, as `Mutare.Ecto.Dynamic` does, which re-emits
+the written list and needs no reading of it — was weighed and left: once the grammar is Ecto's,
+what remains unread is either invalid Ecto or these two computed forms, too rare to carry a
+second delivery path for.
+
+The same rewrite surfaced a placement bug that corrupted the **baseline**, not just the mutants:
+the contiguity rule counted a literal source's joins from the *number of declared entries*, where
+a literal source is always exactly one binding, so `[p, q] in Post` (or `[{p, 0}, {q, 0}]`) put
+the first join at position 2 instead of 1. The anchor rule is now exact — joins stay contiguous
+only behind exactly one positional entry. (The rewrite ran into the unnamed-join miscount too,
+fixed on its own in "Bindings: an unnamed join still holds its slot" above; entry-based
+placement keeps that section's `_` slot as a parsed positional entry, and a join's named left
+side outside the grammar declines the condition rather than failing the run.)

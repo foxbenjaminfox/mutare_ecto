@@ -11,34 +11,67 @@ defmodule Mutare.Ecto.Host.Bindings do
   # valid SQL over the wrong table. Hence the rule `join_slot/1` is the home of: a synthesized list
   # accounts for **every** position its joins establish, named by the author or not — each join
   # clause of a `from` (`join_slots/1`), and the one join a standalone `join/4,5` adds (`join/1`).
+  #
+  # Every reader here answers `{:ok, declarations} | :error`, and the two are never blurred:
+  # `{:ok, []}` says the query position declares **nothing** (an omitted or empty list, a bare
+  # queryable source), so a woven `dynamic([], …)` is faithful; `:error` says a declaration was
+  # written that this module **cannot interpret** (`Mutare.Ecto.Binding`'s grammar), so *any*
+  # re-declaration would be a guess and the host declines the condition. The work is done on
+  # parsed entries (`t:Mutare.Ecto.Binding.entry/0`) and rendered to AST once, at the end —
+  # placement never re-reads a node's shape to learn what kind of entry it is.
 
-  alias Mutare.Ecto.{AST, Binding, Surface}
+  alias Mutare.Ecto.{Binding, Surface}
   alias Mutare.Ecto.AST.{BindingList, KeywordList}
   alias Mutare.Ecto.AST.KeywordList.Entry
+  alias Mutare.Ecto.Host.Condition
+
+  @typedoc "The binding list a woven `dynamic/2` re-declares, or `:error` — see the module comment."
+  @type result :: {:ok, [Macro.t()]} | :error
 
   @doc "The dynamic binding list established by a `from` source and its join clauses."
-  @spec from(Macro.t(), KeywordList.t()) :: [Macro.t()]
+  @spec from(Macro.t() | nil, KeywordList.t()) :: result()
   def from(source, %KeywordList{} = clauses) do
-    {source_decls, composed?} =
-      case source do
-        # A binding source `lhs in rhs` rebinds `rhs`'s *leading* bindings. When `rhs` composes an
-        # external query — a bound variable (`x in q`), a function call (`x in build(args)`), a
-        # `subquery(...)`, or any other expression — that query can carry more bindings the host can't
-        # see, so an appended join must anchor to the tail (`...`) rather than sit at the next
-        # contiguous slot. Only a *literal* queryable (`x in Schema`, `x in "table"`, `x in {"t", S}`)
-        # has no hidden bindings — its joins follow contiguously, so it must *not* anchor.
-        {:in, _, [lhs, rhs]} -> {declarations(lhs), composed_source?(rhs)}
-        # A piped `from`'s source is the hidden `|>` left side (`Mutare.Ecto.AST.FromCall`): it
-        # declares no binding, and — unseen — may be anything, so it is read as composed.
-        nil -> {[], true}
-        # A bare queryable source (`from(Post, …)`, `from("t", as: :t, …)`, `from(q, …)`) declares
-        # no binding; its composed-ness is read off the queryable itself, exactly as for an `in`
-        # rhs. (With no positional to count from, `join_anchor/4` anchors an appended join either
-        # way — the value is honest, not load-bearing, for this and the hidden source alike.)
-        _ -> {[], composed_source?(source)}
-      end
+    with {:ok, declared, composed?} <- source_entries(source),
+         {:ok, joined} <- join_slots(clauses) do
+      {:ok, declared |> append_joins(joined, composed?) |> render()}
+    end
+  end
 
-    append_positionals(source_decls, join_slots(clauses), composed?)
+  # The entries a `from` source declares, and whether the source is **composed** — may carry
+  # bindings the host can't see.
+  #
+  # A binding source `lhs in rhs` rebinds `rhs`'s *leading* bindings. When `rhs` composes an
+  # external query — a bound variable (`x in q`), a function call (`x in build(args)`), a
+  # `subquery(...)`, or any other expression — that query can carry more bindings the host can't
+  # see, so an appended join must anchor to the tail (`...`) rather than sit at the next contiguous
+  # slot. Only a *literal* queryable (`x in Schema`, `x in "table"`, `x in {"t", S}`) has no hidden
+  # bindings — its joins follow contiguously, so it must *not* anchor.
+  defp source_entries({:in, _meta, [lhs, rhs]}) do
+    with {:ok, declared} <- pattern_entries(lhs), do: {:ok, declared, composed_source?(rhs)}
+  end
+
+  # A piped `from`'s source is the hidden `|>` left side (`Mutare.Ecto.AST.FromCall`), which no
+  # callback is shown. It is read as a **queryable value** — declaring nothing, and composed,
+  # since unseen it may be any query. That is an assumption, not an observation, and it is
+  # exactly the one core's pipe hoisting already makes about every pipe's left side (it binds it
+  # to a variable): a binding *pattern* there (`(p in Post) |> from(…)`) breaks core's delivery
+  # before this reading of it matters (NOTES "A binding pattern on a pipe's left
+  # (`(p in Post) |> from(…)`) is unsupported").
+  defp source_entries(nil), do: {:ok, [], true}
+
+  # A bare queryable source (`from(Post, …)`, `from("t", as: :t, …)`, `from(q, …)`) declares
+  # no binding; its composed-ness is read off the queryable itself, exactly as for an `in`
+  # rhs. (With no positional to count from, `join_anchor/4` anchors an appended join either
+  # way — the value is honest, not load-bearing, for this and the hidden source alike.)
+  defp source_entries(source), do: {:ok, [], composed_source?(source)}
+
+  # The `lhs` of a `lhs in rhs` source: Ecto `List.wrap/1`s it, so it is a declaration list or
+  # one lone entry (`p in Post`).
+  defp pattern_entries(lhs) do
+    case BindingList.parse(lhs) do
+      {:ok, %BindingList{entries: entries}} -> {:ok, entries}
+      :error -> with {:ok, entry} <- Binding.parse(lhs), do: {:ok, [entry]}
+    end
   end
 
   @doc """
@@ -58,85 +91,60 @@ defmodule Mutare.Ecto.Host.Bindings do
   # mutare:ignore[literal:pred] equivalent: the entry at `index` never contributes a binding
   def visible_to(%KeywordList{} = clauses, index), do: KeywordList.take(clauses, index + 1)
 
-  @doc "The dynamic binding list visible to a standalone `join` on-condition."
-  @spec join([Macro.t()]) :: [Macro.t()]
-  def join(args) do
-    # The join expression — `x in Source`, or a bare `Source` — sits one argument past the written
-    # binding list: Ecto's `join(query, qual, binding \\ [], expr, opts \\ [])` can't skip the
-    # middle default, so a join written with options (the `on:` the host weaves) always writes its
-    # list too — and may legally write it **empty** (`join(q, :inner, [], p in Post, on: p.views >
-    # 1)`: the condition references only the joined binding). The list is located through
-    # `written/1`, not `BindingList.find/1`, precisely so that `[]` counts as the declaration it
-    # is; located through `find/1` it fell through here, and the join kept only its stage drop.
-    with {index, written} <- find_written(args),
-         {:ok, join} <- Enum.fetch(args, index + 1) do
-      # The `on:` is resolved with the new join in place, so the join's slot is declared whether
-      # or not it is named (`join_slot/1`) — after an author-written `[..., x]` the `_` is what
-      # keeps `x` on the binding it named: `[..., x, _]`, where `[..., x]` would now read the new
-      # join. A standalone `join` always composes an external query, so the slot anchors to the tail.
-      append_positionals(written, [join_slot(join)], true)
-    else
-      _ -> []
-    end
-  end
+  @doc """
+  The dynamic binding list visible to a standalone `join`'s on-condition: the written
+  declaration plus the slot of the join itself, named or not (`join_slot/1`).
 
-  # The first written binding list in `args` with its index, or `nil` — `written/1` decides what
-  # counts, so the empty list is found exactly as a populated one is.
-  defp find_written(args) do
-    args
-    |> Enum.with_index()
-    |> Enum.find_value(fn {node, index} ->
-      case written(node) do
-        nil -> nil
-        declarations -> {index, declarations}
-      end
-    end)
+  Read **by position from the end** — `join(query, qual, binding \\\\ [], expr, opts \\\\ [])`
+  can't skip the middle default, so a join written with options (the `on:` the host weaves)
+  always writes its declaration too, third from last in the direct and piped forms alike. It may
+  legally be **empty** (`join(q, :inner, [], p in Post, on: p.views > 1)`: the condition
+  references only the joined binding), which is the declaration it looks like, not a missing
+  one. The host calls this only for a call whose last argument is that options list.
+  """
+  @spec join([Macro.t()]) :: result()
+  def join(args) do
+    with [written, join, _options] <- Enum.take(args, -3),
+         {:ok, %BindingList{entries: declared}} <- BindingList.parse(written),
+         {:ok, slot} <- join_slot(join) do
+      # The `on:` is resolved with the new join in place, so the join's slot is declared whether
+      # or not it is named — after an author-written `[..., x]` the `_` is what keeps `x` on the
+      # binding it named: `[..., x, _]`, where `[..., x]` would now read the new join. A standalone
+      # `join` always composes an external query, so the slot anchors to the tail.
+      {:ok, declared |> append_joins([slot], true) |> render()}
+    else
+      _ -> :error
+    end
   end
 
   @doc """
-  Normalize a lone binding or binding list for a synthesized `dynamic/2`: the `lhs` of a
-  `lhs in rhs` source or join — a binding list, the empty `[]`, or a single positional variable.
-  `nil` — the binding-less form (`Mutare.Ecto.Host.Condition`) — re-declares an empty one
-  (`dynamic([], …)`).
+  The binding list a woven `dynamic/2` re-declares for a located condition's declaration
+  (`t:Mutare.Ecto.Host.Condition.declaration/0`): the written entries, an empty list for an
+  omitted one, and `:error` — never an empty list — for one the plugin cannot interpret.
   """
-  @spec declarations(Macro.t() | BindingList.t() | nil) :: [Macro.t()]
-  # The binding-less form's written list. Load-bearing, not defensive: `nil` is the one shape the
-  # general clause below can't read — no list, so `written/1` declines it and the lone-variable
-  # branch would try to re-declare `nil` itself.
-  def declarations(nil), do: []
+  @spec declarations(Condition.declaration()) :: result()
+  def declarations(%BindingList{entries: entries}), do: {:ok, render(entries)}
+  def declarations(:omitted), do: {:ok, []}
+  def declarations(:uninterpretable), do: :error
 
-  def declarations(%BindingList{entries: entries}), do: Enum.map(entries, &declaration/1)
+  defp render(entries), do: Enum.map(entries, &declaration/1)
 
-  def declarations(node) do
-    case written(node) do
-      # Not a list at all: a lone positional variable (`x in q`).
-      nil -> [Mutare.AST.clean_var(node)]
-      declarations -> declarations
-    end
-  end
+  # One entry, re-declared with fresh meta (the written nodes stay where they were written).
+  defp declaration(:ellipsis), do: Binding.ellipsis()
+  defp declaration({:positional, var}), do: Mutare.AST.clean_var(var)
 
-  # The declarations of a *written* binding list, or `nil` for any other node. A written list is a
-  # `BindingList` — or the empty `[]`, which `BindingList.parse/1` declines (it is the *reorderable*
-  # list, and `[]` has nothing to reorder) but which is a legal declaration of exactly nothing: a
-  # lone `[] in q` source, or a standalone join's prior bindings (`join/1`).
-  defp written(node) do
-    case BindingList.parse(node) do
-      %BindingList{} = list -> declarations(list)
-      nil -> if AST.unwrap_list(node) == [], do: [], else: nil
-    end
-  end
+  defp declaration({:indexed, var, index}),
+    do: {Mutare.AST.clean_var(var), Mutare.AST.literal(index)}
 
-  # One parsed `%BindingList{}` entry, re-declared. `Mutare.Ecto.AST.BindingList.parse/1` (the
-  # only way entries are built) already validated each as a named pair, a positional variable, or
-  # the `...` anchor (`Mutare.Ecto.Binding.entry?/1`), so no shape is re-checked here.
-  defp declaration({key, var}),
-    do: {Mutare.AST.keyword_key(AST.atom_value(key)), Mutare.AST.clean_var(var)}
+  defp declaration({:named, name, var}),
+    do: {Mutare.AST.keyword_key(name), Mutare.AST.clean_var(var)}
 
-  defp declaration({:..., _meta, _ctx}), do: Binding.ellipsis()
-  defp declaration(var), do: Mutare.AST.clean_var(var)
+  defp declaration({:interpolated, name_expr, var}),
+    do: {{:^, [], [clean_name(name_expr)]}, Mutare.AST.clean_var(var)}
 
-  defp named?({_key, _var}), do: true
-  defp named?(_node), do: false
+  # `Mutare.Ecto.Binding` admits exactly these two name expressions.
+  defp clean_name({:@, _meta, [attribute]}), do: {:@, [], [Mutare.AST.clean_var(attribute)]}
+  defp clean_name(var), do: Mutare.AST.clean_var(var)
 
   # Whether a binding source's right-hand side composes an external query that may carry bindings the
   # host can't see (so an appended join must anchor to the tail). True for everything *except* a
@@ -158,7 +166,7 @@ defmodule Mutare.Ecto.Host.Bindings do
   defp literal_queryable?(node) when is_binary(node) or is_atom(node), do: true
   defp literal_queryable?(_node), do: false
 
-  # One declaration per join clause, in written order: **every join occupies exactly one
+  # One slot per join clause, in written order, all or nothing: **every join occupies exactly one
   # positional slot**, whether or not the author names it. Ecto's join builder binds a join written
   # without `x in` — `cross_join: "audit"`, `join: subquery(q)`, `left_join: assoc(p, :x)`, a
   # `fragment`, a `^source` — anonymously, and still advances the binding count
@@ -169,49 +177,62 @@ defmodule Mutare.Ecto.Host.Bindings do
   # why no ellipsis can stand in for a missing slot, and why a trailing `_` is kept rather than
   # trimmed: redundant after a literal source, it is what places `c` in `[p, ..., c, _]`.
   defp join_slots(%KeywordList{entries: entries}) do
-    for %Entry{key: key, value: value} <- entries,
-        Surface.from_clause?(key, :join_binding),
-        do: join_slot(value)
+    slots =
+      for %Entry{key: key, value: value} <- entries,
+          Surface.from_clause?(key, :join_binding),
+          do: join_slot(value)
+
+    if Enum.all?(slots, &match?({:ok, _entry}, &1)),
+      do: {:ok, for({:ok, entry} <- slots, do: entry)},
+      else: :error
   end
 
   # The slot of one join expression — a `from` join clause's value, or a standalone `join/4,5`'s
   # `expr` argument: Ecto reads both through the same `Join.escape/3`. A join names its slot only
-  # as `var in source` — the LHS is a plain variable, with no list and no `key: var` form (Ecto
-  # reads anything else as a malformed join), so a slot is a positional entry by construction and
-  # `clean_var/1` fails loudly on a foreign LHS shape rather than mis-declare it.
-  defp join_slot({:in, _meta, [var, _source]}), do: Mutare.AST.clean_var(var)
-  defp join_slot(_unnamed), do: Binding.placeholder()
-
-  defp append_positionals(declarations, added, composed?) do
-    {named, source_positional} = Enum.split_with(declarations, &named?/1)
-    source_positional ++ positioned_joins(source_positional, named, added, composed?) ++ named
+  # as `var in source`, with one plain variable on the left — no list, no `key: var` form (Ecto
+  # reads anything else as a malformed join) — so any other left side is `:error`, not a guess.
+  defp join_slot({:in, _meta, [lhs, _source]}) do
+    case Binding.parse(lhs) do
+      {:ok, {:positional, _var} = entry} -> {:ok, entry}
+      _other -> :error
+    end
   end
 
-  defp positioned_joins(source_positional, source_named, join_positional, composed?) do
-    if Enum.any?(source_positional, &Binding.ellipsis?/1),
-      do: join_positional,
-      else: join_anchor(source_positional, source_named, join_positional, composed?)
+  defp join_slot(_unnamed), do: {:ok, {:positional, Binding.placeholder()}}
+
+  # Ecto wants the named entries at the tail, so the joins (positional) go in before them.
+  defp append_joins(declared, joined, composed?) do
+    {positional, named} = Enum.split_with(declared, &Binding.positional?/1)
+    positional ++ positioned_joins(positional, named, joined, composed?) ++ named
   end
 
-  # Anchor the appended joins to the tail with a leading `...` when their slot isn't contiguous
-  # with the declared source bindings. A literal source with leading positionals and no named
-  # rebind keeps the joins contiguous.
-  defp join_anchor(source_positional, source_named, join_positional, composed?) do
+  defp positioned_joins(positional, named, joined, composed?) do
+    if :ellipsis in positional,
+      do: joined,
+      else: join_anchor(positional, named, joined, composed?)
+  end
+
+  # Anchor the appended joins to the tail with a leading `...` when their list position would not
+  # be their binding index. It is only for a literal source declared by exactly one positional
+  # entry and no named rebind; those joins stay contiguous.
+  defp join_anchor(positional, named, joined, composed?) do
     # The source composes an external query, so hidden bindings may sit between its declarations
     # and the appended joins.
     hidden_source_bindings? = composed?
-    # An opaque/bindingless source declares no positional binding to count from.
-    no_positional_to_count_from? = source_positional == []
+    # A literal source is exactly one binding, so its joins are bindings 1, 2, … — which is
+    # where the list puts them only when one positional entry precedes them. None (an
+    # opaque/bindingless source) leaves nothing to count from; two (`[p, q]`, or
+    # `[{p, 0}, {q, 0}]`) are two entries over that one binding.
+    source_not_one_entry? = length(positional) != 1
     # A named rebind leaves the positions past it opaque.
-    rebinds_by_name? = source_named != []
+    rebinds_by_name? = named != []
 
-    needs_tail_anchor? =
-      hidden_source_bindings? or no_positional_to_count_from? or rebinds_by_name?
+    needs_tail_anchor? = hidden_source_bindings? or source_not_one_entry? or rebinds_by_name?
 
-    if join_positional != [] and needs_tail_anchor? do
-      [Binding.ellipsis() | join_positional]
+    if joined != [] and needs_tail_anchor? do
+      [:ellipsis | joined]
     else
-      join_positional
+      joined
     end
   end
 end
