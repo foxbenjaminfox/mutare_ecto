@@ -138,7 +138,7 @@ defmodule Mutare.Ecto.Host.Target do
 
   # Single-clause on purpose. A root pin's every mutant is itself a root pin: the SQL catalog
   # reads a pin as a leaf, so the condition is carried entirely by the island sub-contract, whose
-  # rebuild re-pins each mutated interior (`Mutare.Ecto.Fragment.islands/1`). A mutant of any
+  # rebuild re-pins each mutated interior (`Mutare.Ecto.Fragment.islands/2`). A mutant of any
   # other shape means that invariant broke, and the crash names it — a fallback `dynamic/2`
   # wrap would instead quietly reinstate the demotion this rule exists to prevent.
   defp interior({:^, _meta, [interior]}), do: interior

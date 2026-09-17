@@ -201,7 +201,7 @@ the `select`/`order_by` expression walker a third — three descents that could 
 which nodes a condition exposes (an island the catalog would never have walked past, or the
 reverse). `Mutare.Ecto.Walk.positions/3` is now the single traversal; every catalog is a per-node
 *reader* over its positions and never descends on its own (a catalog's `children/2` rule can only
-narrow what the walk admits). So `Fragment.mutants/2` and `Fragment.islands/1` agree by
+narrow what the walk admits). So `Fragment.mutants/2` and `Fragment.islands/2` agree by
 construction, not by two walks kept in step; `fragment_descent_test.exs` pins the policy.
 
 ### Dispatcher: classify once
@@ -505,3 +505,43 @@ reaches them) — only the keys stopped being catalog roots. Pinned in `shorthan
 including the compositional regression (a hosted sibling changes neither the diffs recorded in a
 shorthand nor its rendering in the metamutant) and the reachability invariant (every recorded mutant
 id has a selector branch) — and live against the DB in the semantic suite.
+
+### Islands: a pin keeps the role of its position
+
+The island sub-contract was built on one sentence — "a `^` pin's interior is ordinary Elixir,
+analyzed exactly like top-level Elixir" — which is right about *how* an interior is analyzed and
+silent about what its value is *for*. `Fragment.islands/1` was driven by meeting a `^` and threw
+the walk's position away, so the structural-position registry, which keeps the literal arms off
+the written `field(p, :score)`, said nothing once the same atom sat behind a pin: `^:score` went
+to core as unconstrained data and came back `^:mutare`. So did a pinned interval unit
+(`ago(^n, ^"day")` → `^"mutare"`, which Ecto rejects when the query is *built*), a pinned cast
+type, a binding or select-alias name, and a fragment's `identifier(^name)`. A test comment
+recorded the belief behind it: "a pin can only sit at a data position". Ecto accepts a pin at
+nearly every position the registry lists.
+
+One guard did carry positional knowledge across the boundary — the pin-side keyword-key rule —
+but as a blanket: every island's keyword keys were held, wherever the pin sat, which is why its
+doc had to list a known cost (an option list inside a parameter pin was "protected" too).
+
+`islands/2` now reports each pin's **role**, read off the position the walk already threads
+(`:structural` where the registry says so, `:value` elsewhere; a pin that *is* the root takes the
+role its caller states — `:condition` for a predicate, and `Mutare.Ecto.Subquery`'s for a filter
+pair's value and a pinned projection), and `Mutare.Ecto.Island` maps role to what is held. The
+keyword-key rule became the `:condition` row, so its known cost no longer reaches a `:value`
+pin. Two policies were weighed for the `:structural` row:
+
+  * hold every atom/string literal anywhere in the interior — the keyword-key rule's own
+    over-approximation. Rejected: the idiomatic ways to compute a column name put *data*
+    literals beside it (`Keyword.get(opts, :sort, :inserted_at)`, `params["sort"]`), and
+    `:sort` → `:mutare` — "is the sort option honoured?" — is a live, valid-query mutant this
+    would silently lose;
+  * hold a literal only where it is **known** to reach the slot: one the interior can evaluate
+    to, read through the forms whose value is one of their own sub-expressions. Chosen — it is
+    `Fragment`'s `is_nil` stance (prune what is known, emit the rest), and its error is the
+    cheap one: a name that reaches the slot *through a call* keeps its sentinel swap, a
+    broken-query mutant any test on that path kills, where the first policy's error is a live
+    mutant never offered.
+
+Three roles, not one per kind of name: every structural position takes the same policy, so
+"field name" versus "interval unit" would be a distinction no code reads. The registry's comments
+still say which name each position holds.

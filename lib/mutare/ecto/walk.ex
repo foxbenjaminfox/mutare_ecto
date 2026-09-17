@@ -10,7 +10,7 @@ defmodule Mutare.Ecto.Walk do
   # that reconstructs the walked **root** around a replacement for exactly that node. A catalog
   # is then a per-node *reader* of those positions (`mutants/4`: the node's own alternatives,
   # each rebuilt into the root), and a second reader of the same positions
-  # (`Mutare.Ecto.Fragment.islands/1`) agrees with the first about which nodes exist **by
+  # (`Mutare.Ecto.Fragment.islands/2`) agrees with the first about which nodes exist **by
   # construction** — there is no second traversal to drift (NOTES "Walk: one traversal under
   # every catalog").
   #

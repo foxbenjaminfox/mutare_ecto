@@ -138,19 +138,19 @@ defmodule Mutare.Ecto.Subquery do
 
   @doc """
   Every interpolation **island** (`^expr`) inside the subquery's own mutated clauses, as
-  `{interior, rebuild}` pairs whose `rebuild` reconstructs the whole inner `from` — composed outward
-  by the caller. `[]` unless `node` is an inline `from(source, clauses)` (or, in `:existence`
-  mode, `subquery(from(source, clauses))`). Which clauses' pins are surfaced tracks exactly what
-  each `mode` mutates (see the module comment).
+  `t:Mutare.Ecto.Fragment.island/0` triples whose `rebuild` reconstructs the whole inner `from` —
+  composed outward by the caller. `[]` unless `node` is an inline `from(source, clauses)` (or,
+  in `:existence` mode, `subquery(from(source, clauses))`). Which clauses' pins are surfaced
+  tracks exactly what each `mode` mutates (see the module comment).
   """
-  @spec interior_islands(Macro.t(), mode()) :: [{Macro.t(), (Macro.t() -> Macro.t())}]
+  @spec interior_islands(Macro.t(), mode()) :: [Fragment.island()]
   def interior_islands(node, mode) do
     case inline_from(node, mode) do
       {%FromCall{clauses: clauses} = from, wrap} ->
         KeywordList.flat_map(clauses, &island_clause?(&1, mode), fn entry, index ->
-          for {root, rebuild_value} <- island_roots(entry),
-              {interior, rebuild} <- Fragment.islands(root) do
-            {interior, &wrap.(rebuild_clause(from, index, rebuild_value.(rebuild.(&1))))}
+          for {root, root_role, rebuild_value} <- island_roots(entry),
+              {interior, role, rebuild} <- Fragment.islands(root, root_role) do
+            {interior, role, &wrap.(rebuild_clause(from, index, rebuild_value.(rebuild.(&1))))}
           end
         end)
 
@@ -200,9 +200,14 @@ defmodule Mutare.Ecto.Subquery do
 
   # The roots whose pins are surfaced in one such clause: a condition's are the very roots its
   # catalog walks (`catalog_roots/1`), so the two readers keep agreeing about which nodes exist;
-  # a projection is no condition position and is read whole.
+  # a projection is no condition position and is read whole. Each root carries the role of a
+  # pin standing *as* that root (`t:Mutare.Ecto.Fragment.role/0` — a pin beneath it reads its
+  # own position): a pinned projection (`select: ^fields`) is a list of column names, or a map
+  # of dynamics — structure the builder writes out, never a parameter.
   defp island_roots(%Entry{key: key, value: value}) do
-    if Surface.from_clause?(key, :hosted), do: catalog_roots(value), else: [{value, & &1}]
+    if Surface.from_clause?(key, :hosted),
+      do: catalog_roots(value),
+      else: [{value, :structural, & &1}]
   end
 
   # The row-set producers, composed straight from `Mutare.Ecto.Query` — attribution included (the
@@ -218,7 +223,7 @@ defmodule Mutare.Ecto.Subquery do
   # nothing here.
   defp conditions(%FromCall{clauses: clauses} = from, config) do
     KeywordList.flat_map(clauses, &Surface.from_clause?(&1, :hosted), fn entry, index ->
-      for {root, rebuild_value} <- catalog_roots(entry.value),
+      for {root, _pin_role, rebuild_value} <- catalog_roots(entry.value),
           tag <- Catalog.own_catalog(root, config),
           do: Tag.map_node(tag, &rebuild_clause(from, index, rebuild_value.(&1)))
     end)
@@ -234,14 +239,19 @@ defmodule Mutare.Ecto.Subquery do
   # SQL data like the right side of the `c.score == 5` it abbreviates. A **key** never is: it
   # names a column, and the catalog would read `score: 5` as a value tuple with two data sides and
   # rename it (`[mutare: 5]` — an unknown-column query, not a mutant).
+  #
+  # Each root also says what a pin standing *as* it is to the query (`island_roots/1`): a pinned
+  # predicate is a whole `:condition`; a pinned pair value (`where: [score: ^min]`) is the
+  # `:value` its column is compared with.
   defp catalog_roots(value) do
     case Condition.shape(value) do
       {:predicate, _kind} ->
-        [{value, & &1}]
+        [{value, :condition, & &1}]
 
       {:keyword_filter, pairs} ->
         for {%Entry{value: pair_value}, index} <- Enum.with_index(pairs.entries) do
-          {pair_value, &(pairs |> KeywordList.put_value(index, &1) |> KeywordList.to_ast())}
+          {pair_value, :value,
+           &(pairs |> KeywordList.put_value(index, &1) |> KeywordList.to_ast())}
         end
 
       :pairless_list ->

@@ -6,7 +6,7 @@ defmodule Mutare.Ecto.FragmentDescentTest do
   @config Config.parse!([])
 
   # `Fragment`'s two readers — `mutants/2` (the SQL catalog's single-point mutants) and
-  # `islands/1` (the `^`-pin interiors it hands to core) — read the positions of ONE walk
+  # `islands/2` (the `^`-pin interiors it hands to core) — read the positions of ONE walk
   # (`Mutare.Ecto.Walk.positions/3`) under the catalog's one descent rule (`children/2`), so they
   # agree at every node by construction: neither descends on its own. (They used to be two
   # hand-rolled copies of the traversal, and this file guarded their parity.) What is still worth
@@ -23,7 +23,7 @@ defmodule Mutare.Ecto.FragmentDescentTest do
   # half is exercised end-to-end in `subcontract_test.exs`/`exotic_query_test.exs`, not here).
   #
   # The probe: at one test position each fixture places either a lone `^v` pin or a lone integer
-  # literal. `islands/1` surfaces the pin *iff* the walk reached that position; `mutants/2` yields an
+  # literal. `islands/2` surfaces the pin *iff* the walk reached that position; `mutants/2` yields an
   # `:integer_literal` mutant *iff* it reached the same position (that literal is the fixture's
   # only integer). Both readers are asserted, so a reader that grew a descent of its own — or lost
   # one — fails here too.
@@ -81,7 +81,7 @@ defmodule Mutare.Ecto.FragmentDescentTest do
   for %{desc: desc, pinned: pinned, literal: literal, descend?: descend?} <- @fixtures do
     test "#{desc}: both readers #{if(descend?, do: "descend", else: "stop")} in step" do
       assert island_surfaced?(unquote(pinned)) == unquote(descend?),
-             "islands/1 disagreed with the expected descent for: #{unquote(pinned)}"
+             "islands/2 disagreed with the expected descent for: #{unquote(pinned)}"
 
       assert literal_descended?(unquote(literal)) == unquote(descend?),
              "mutants/2 disagreed with the expected descent for: #{unquote(literal)}"
@@ -97,8 +97,9 @@ defmodule Mutare.Ecto.FragmentDescentTest do
     assert island_surfaced?("is_nil(u.a + ^v)")
   end
 
-  # Whether `islands/1` surfaced the fixture's single pin — i.e. the walk reached that position.
-  defp island_surfaced?(src), do: src |> Sourceror.parse_string!() |> Fragment.islands() != []
+  # Whether `islands/2` surfaced the fixture's single pin — i.e. the walk reached that position.
+  defp island_surfaced?(src),
+    do: src |> Sourceror.parse_string!() |> Fragment.islands(:condition) != []
 
   # Whether `mutants/2` produced an `:integer_literal` mutant — i.e. the walk reached the
   # fixture's single integer literal. Any other family (a comparison/membership flip on an outer

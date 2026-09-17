@@ -648,15 +648,13 @@ defmodule Mutare.Ecto.FragmentTest do
   describe "interpolation islands (`^expr`)" do
     # A pin's interior is ordinary Elixir evaluated at runtime — core's business, never this
     # catalog's. The catalog stops at the pin (no SQL-rationale `^(min * 2)` → `^(min / 2)`);
-    # `islands/1` hands the interior to the host's core sub-contract instead.
+    # `islands/2` hands the interior to the host's core sub-contract instead, with the pin's
+    # role (its own describe block, below).
 
     defp islands(code) do
-      code
-      |> Sourceror.parse_string!()
-      |> Fragment.islands()
-      |> Enum.map(fn {interior, rebuild} ->
-        {Sourceror.to_string(interior), rebuild}
-      end)
+      for {interior, _role, rebuild} <-
+            Fragment.islands(Sourceror.parse_string!(code), :condition),
+          do: {Sourceror.to_string(interior), rebuild}
     end
 
     test "the catalog never offers or descends a pin's interior" do
@@ -664,7 +662,7 @@ defmodule Mutare.Ecto.FragmentTest do
       assert mutants("u.age > ^100") == MapSet.new(["u.age >= ^100"])
     end
 
-    test "islands/1 finds each pin and rebuilds the full condition around a replacement" do
+    test "islands/2 finds each pin and rebuilds the full condition around a replacement" do
       assert [{"min * 2", rebuild}] = islands("u.age > ^(min * 2)")
 
       assert rebuild.(Sourceror.parse_string!("min - 1")) |> Sourceror.to_string() ==
@@ -741,9 +739,9 @@ defmodule Mutare.Ecto.FragmentTest do
     end
 
     test "islands are reached at the data positions of known Ecto DSL forms" do
-      # The structural-position registry guards *literals* (a literal there is SQL shape, not
-      # data) — a pin can only sit at a data position, and the island walk descends every
-      # argument the author-macro rule allows, registry or not.
+      # The structural-position registry suppresses a written *literal*; it never stops the walk,
+      # which descends every argument the author-macro rule allows. (A pin at one of the
+      # registry's own positions is reached too, under another role — the next describe block.)
       assert [{"m * 2", rebuild}] = islands(~s|fragment("? > ?", u.age, ^(m * 2))|)
 
       assert rebuild.(Sourceror.parse_string!("m / 2")) |> Sourceror.to_string() ==
@@ -794,6 +792,74 @@ defmodule Mutare.Ecto.FragmentTest do
       # Ecto's grammar forbids anyway) becomes its own island.
       assert [{interior, _rebuild}] = islands("u.age > ^(f.(base + 1))")
       assert interior == "f.(base + 1)"
+    end
+  end
+
+  describe "a pin's role — what its value is to the query" do
+    # `islands/2` reports each pin with the role of the position it fills, read off the same
+    # registry that suppresses a written literal: a pin moves a value out of the SQL, never out
+    # of its position. What each role means for core's mutants is `Mutare.Ecto.Island`'s policy
+    # (`subcontract_test.exs`); this pins the classification alone.
+
+    defp roles(code, root_role \\ :condition) do
+      for {interior, role, _rebuild} <-
+            Fragment.islands(Sourceror.parse_string!(code), root_role),
+          do: {Sourceror.to_string(interior), role}
+    end
+
+    test "a pin at a data position is a :value" do
+      assert roles("u.age > ^min") == [{"min", :value}]
+      assert roles("u.age in [18, ^base]") == [{"base", :value}]
+      assert roles("u.role in ^list") == [{"list", :value}]
+      assert roles("{p.views, p.id} > {^a, ^b}") == [{"a", :value}, {"b", :value}]
+      assert roles(~s|p.meta[^key] == "v"|) == [{"key", :value}]
+
+      # A fragment's arguments — and the `constant`/`splice` modifiers among them — carry data.
+      assert roles(~s|fragment("? > ?", constant(^floor), ^min)|) ==
+               [{"floor", :value}, {"min", :value}]
+
+      assert roles(~s|fragment("? in (?)", u.age, splice(^ages))|) == [{"ages", :value}]
+    end
+
+    test "a pin at a structural position is :structural, beside the form's :value pins" do
+      for {code, expected} <- [
+            {"field(p, ^name) > ^min", [{"name", :structural}, {"min", :value}]},
+            {"p.x == type(^v, ^type)", [{"v", :value}, {"type", :structural}]},
+            {"p.at > ago(^n, ^unit)", [{"n", :value}, {"unit", :structural}]},
+            {"p.at < from_now(^n, ^unit)", [{"n", :value}, {"unit", :structural}]},
+            {"p.on > date_add(^day, ^n, ^unit)",
+             [{"day", :value}, {"n", :value}, {"unit", :structural}]},
+            {"p.at > datetime_add(^now, ^n, ^unit)",
+             [{"now", :value}, {"n", :value}, {"unit", :structural}]},
+            {"field(as(^binding), :score) > 1", [{"binding", :structural}]},
+            {"field(parent_as(^binding), :score) > 1", [{"binding", :structural}]},
+            {"selected_as(^name) > 1", [{"name", :structural}]},
+            {"selected_as(sum(p.x), ^name) > ^min", [{"name", :structural}, {"min", :value}]},
+            {~s|fragment("? COLLATE ?", p.title, identifier(^collation)) == ^v|,
+             [{"collation", :structural}, {"v", :value}]},
+            {~s|fragment("? COLLATE ?", p.title, literal(^collation)) == ^v|,
+             [{"collation", :structural}, {"v", :value}]},
+            # Ecto's keyword fragment: the lone pinned argument fills the template's slot.
+            {"fragment(^keywords)", [{"keywords", :structural}]}
+          ] do
+        assert roles(code) == expected, "unexpected roles for: #{code}"
+      end
+    end
+
+    test "a pin that is the whole root takes the caller's role" do
+      assert roles("^cond") == [{"cond", :condition}]
+      assert roles("^fields", :structural) == [{"fields", :structural}]
+      assert roles("^min", :value) == [{"min", :value}]
+    end
+
+    test "the root's role stops at the root — a pin beneath it reads its own position" do
+      assert roles("not ^flag") == [{"flag", :value}]
+      assert roles("^a and ^b") == [{"a", :value}, {"b", :value}]
+
+      # A written list or tuple is transparent syntax: a pinned element of a projection root is
+      # a selected value, not the projection.
+      assert roles("[c.id, ^x]", :structural) == [{"x", :value}]
+      assert roles("{c.id, ^x}", :structural) == [{"x", :value}]
     end
   end
 

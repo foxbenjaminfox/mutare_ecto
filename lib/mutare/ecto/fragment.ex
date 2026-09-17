@@ -25,8 +25,10 @@ defmodule Mutare.Ecto.Fragment do
 
   A `^` pin's interior is ordinary Elixir evaluated at runtime, so this catalog never mutates it
   (applying the SQL mutation `^(min * 2)` → `^(min / 2)` would mutate the parameter's Elixir value).
-  The walk treats a pin as a leaf, and `islands/1` returns each interior for the calling module
-  to pass to core — see `Mutare.Ecto.Island`. Field references (`u.age`) are likewise never mutated.
+  The walk treats a pin as a leaf, and `islands/2` returns each interior for the calling module
+  to pass to core — see `Mutare.Ecto.Island` — together with the pin's **role** (`t:role/0`): the
+  pin moves a value out of the SQL, not out of the position it fills, so a pin at a structural
+  position (below) still carries structure. Field references (`u.age`) are likewise never mutated.
 
   ## The families
 
@@ -81,6 +83,12 @@ defmodule Mutare.Ecto.Fragment do
   Ecto's tuple comparison (`{p.views, p.id} > {1, 2}`), walked like a written list — each element
   a data position of the comparison (`children/2`).
 
+  The same registry gives a **pin** at such a position its role. Ecto accepts an interpolation
+  at most of them — `field(p, ^name)`, `type(^v, ^type)`, `ago(^n, ^unit)`, `as(^binding)`,
+  `selected_as(^name)`, a fragment's `identifier(^name)` — and the value the pin computes is the
+  same column, cast type, unit or name the written literal would have been. `islands/2` reports
+  such a pin as `:structural`, never as a plain `:value`.
+
   ## What `is_nil` observes
 
   `is_nil(x)` reads one bit of `x` per row — whether it is NULL — so a mutant inside `x` that is
@@ -122,7 +130,7 @@ defmodule Mutare.Ecto.Fragment do
   (`children/2` — the unit predicates, and each child's context: its
   `{parent_form, arity, index}` position and what the enclosing predicate observes of it) and
   two per-node readers over the positions traversed — the catalog (`local/3`, behind
-  `mutants/2`) and the island collector (`local_islands/1`, behind `islands/1`) — so the two
+  `mutants/2`) and the island collector (`local_islands/2`, behind `islands/2`) — so the two
   can never traverse different sets of nodes in a condition.
   """
 
@@ -158,6 +166,29 @@ defmodule Mutare.Ecto.Fragment do
   @typep ctx :: {position(), observed()}
   @root {nil, :value}
 
+  @typedoc """
+  What a `^` pin's value is **to the query**, read off where the pin sits — the one fact about a
+  pin its interior cannot show. It decides how much of that interior is still structure once
+  the interior is passed to core; the policy per role is `Mutare.Ecto.Island`'s.
+
+    * `:value` — a query parameter, plain application data: a pin at any data position (a
+      comparison operand, an in-list element, a JSON path key, a `fragment`, `splice` or
+      `constant` argument).
+    * `:condition` — the pin *is* a whole condition (a `:root_pin` predicate,
+      `Mutare.Ecto.Host.Condition`), which Ecto dispatches on its runtime value: a keyword
+      filter, a boolean or a dynamic.
+    * `:structural` — the pin fills a structural position (the moduledoc's registry): its value
+      is a column, binding or alias name, a cast type, an interval unit or an SQL identifier,
+      which the builder writes into the SQL it emits.
+  """
+  @type role :: :value | :condition | :structural
+
+  @typedoc """
+  One interpolation island: the pin's interior, the pin's role, and the rebuild of the walked
+  root around a replacement interior (the pin itself kept).
+  """
+  @type island :: {Macro.t(), role(), Walk.rebuild()}
+
   @doc """
   Every single-point mutant of a `where`/`having` condition as self-tagging `Mutare.Ecto.Tag`s, or
   `[]` when the condition has nothing the catalog mutates (a bare boolean column, an
@@ -180,25 +211,34 @@ defmodule Mutare.Ecto.Fragment do
     do: Walk.mutants(condition, @root, &children/2, &observable(&1, &2, config))
 
   @doc """
-  Every interpolation **island** (`^expr`) in the condition, as `{interior, rebuild}` pairs —
-  `interior` is the pin's Elixir expression and `rebuild.(mutated_interior)` is the full condition
-  with exactly that pin's interior replaced (the pin itself kept). The calling module passes
-  each interior to core — see `Mutare.Ecto.Island`.
+  Every interpolation **island** (`^expr`) in `root`, as `t:island/0` triples — `interior` is
+  the pin's Elixir expression, `role` what the pin's value is to the query (`t:role/0`), and
+  `rebuild.(mutated_interior)` the full `root` with exactly that pin's interior replaced (the
+  pin itself kept). The calling module passes each interior to core, under the policy its role
+  selects — see `Mutare.Ecto.Island`.
 
   The islands are a second reader of the **same** positions `mutants/2` reads
-  (`local_islands/1` over `Mutare.Ecto.Walk.positions/3`, under the same `children/2`), so a
+  (`local_islands/2` over `Mutare.Ecto.Walk.positions/3`, under the same `children/2`), so a
   caller cannot reach an island the catalog would not have walked past — by construction, not by
   a parallel walk kept in step. So a subquery argument surfaces the pins of the clauses
   `Mutare.Ecto.Subquery` mutates under that wrapper, and the pin itself is the boundary
   (everything beneath it is passed to core for mutation). What the enclosing predicate observes
   never narrows this reader: a pin beneath `is_nil` is an island too, because nothing is known
   about which Elixir mutants keep a parameter's `nil`-ness (see "What `is_nil` observes").
+
+  The role is read off the same walk: a pin's is its position's — `:structural` at a
+  structural position, `:value` at every other. Only a pin that *is* the root has no position
+  to read, and what the root is only the caller knows, so the caller states it as `root_role`:
+  `:condition` for a predicate, and `Mutare.Ecto.Subquery`'s for the other roots it walks.
   """
-  @spec islands(Macro.t()) :: [{Macro.t(), (Macro.t() -> Macro.t())}]
-  def islands(condition) do
-    for {node, _ctx, rebuild} <- Walk.positions(condition, @root, &children/2),
-        {interior, inner} <- local_islands(node),
-        do: {interior, &rebuild.(inner.(&1))}
+  @spec islands(Macro.t(), role()) :: [island()]
+  def islands({:^, meta, [interior]}, root_role),
+    do: [{interior, root_role, &{:^, meta, [&1]}}]
+
+  def islands(root, _root_role) do
+    for {node, {position, _observed}, rebuild} <- Walk.positions(root, @root, &children/2),
+        {interior, role, inner} <- local_islands(node, position),
+        do: {interior, role, &rebuild.(inner.(&1))}
   end
 
   # `Mutare.Ecto.Vocabulary`: the operators the swap families mutate (the swap tables' keys) plus
@@ -217,13 +257,13 @@ defmodule Mutare.Ecto.Fragment do
   #
   # The catalog's one descent rule, for `Mutare.Ecto.Walk.positions/3`: from a node, the children
   # the walk continues into, each with its context (`child_ctx/3`) and the splice back into its
-  # parent. `mutants/2` and `islands/1` read the positions this rule admits and never descend on
+  # parent. `mutants/2` and `islands/2` read the positions this rule admits and never descend on
   # their own, so the two agree at every node by construction.
 
   # A reverse-polarity unit — `not is_nil(x)`, `x not in list`, `not exists(q)` — is ONE position,
   # the outer `not`. The inner predicate is never a position of its own: its polarity flip would
   # offer the double negation (`not not is_nil(x)`), and its islands are read through the `not`
-  # (`local_islands/1`). But whatever the predicate itself descends into is still descended —
+  # (`local_islands/2`). But whatever the predicate itself descends into is still descended —
   # the `is_nil` argument, the `in` operands — each child spliced back inside the written `not`.
   @spec children(Macro.t(), ctx()) :: [Walk.child(ctx())]
   defp children({:not, meta, [inner]} = node, ctx) do
@@ -236,7 +276,7 @@ defmodule Mutare.Ecto.Fragment do
   end
 
   # `exists`'s argument is a subquery — a query, not this condition's syntax — so it is never
-  # entered *as a condition*; `local/3` and `local_islands/1` hand its interior to
+  # entered *as a condition*; `local/3` and `local_islands/2` hand its interior to
   # `Mutare.Ecto.Subquery` instead. (A value-wrapper's `from` — `all(from …)`, `subquery(from …)`
   # — is reached by ordinary descent and recursed the same way; only `exists` is a unit.)
   defp children({:exists, _meta, [_arg]}, _ctx), do: []
@@ -424,7 +464,7 @@ defmodule Mutare.Ecto.Fragment do
   end
 
   # An interpolation island (`^expr`) is never this catalog's (see the moduledoc): it contributes
-  # nothing here, and `islands/1` collects its interior for the core sub-contract instead.
+  # nothing here, and `islands/2` collects its interior for the core sub-contract instead.
   defp local({:^, _meta, _args}, _position, _config), do: []
 
   # A literal (int/float/string/bool/atom) written directly into the fragment (Sourceror-wrapped):
@@ -473,41 +513,47 @@ defmodule Mutare.Ecto.Fragment do
 
   # ── The islands: what one position hands to core ───────────────────────────────────────────
   #
-  # The second reader of the walk's positions (`islands/1`): a pin's interior, kept inside its
-  # pin; and, from a subquery wrapper, the pins inside the subquery's own mutated clauses
-  # (`Mutare.Ecto.Subquery`), each rebuilt back into the wrapper. Everything else yields nothing.
+  # The second reader of the walk's positions (`islands/2`): a pin's interior, kept inside its
+  # pin, under the role of the position it fills; and, from a subquery wrapper, the pins inside
+  # the subquery's own mutated clauses (`Mutare.Ecto.Subquery`, which reads their roles the same
+  # way), each rebuilt back into the wrapper. Everything else yields nothing.
 
-  defp local_islands({:^, meta, [interior]}), do: [{interior, &{:^, meta, [&1]}}]
+  # The pin's role is the literal arms' own question, asked of the same position: where a
+  # written literal would have been structure, so is the value a pin computes.
+  defp local_islands({:^, meta, [interior]}, position) do
+    role = if structural_position?(position), do: :structural, else: :value
+    [{interior, role, &{:^, meta, [&1]}}]
+  end
 
   # A reverse-polarity unit's islands are its predicate's, rebuilt inside the written `not` —
   # the mirror of `children/2`, which splices the predicate's descent through the `not` the same
   # way (the predicate itself is not a position, so nothing else reads it). A generic `not` over
   # a condition has no pin or subquery of its own.
-  defp local_islands({:not, meta, [inner]}) do
+  defp local_islands({:not, meta, [inner]}, position) do
     if unit?(inner),
       do:
         for(
-          {interior, rebuild} <- local_islands(inner),
-          do: {interior, &{:not, meta, [rebuild.(&1)]}}
+          {interior, role, rebuild} <- local_islands(inner, position),
+          do: {interior, role, &{:not, meta, [rebuild.(&1)]}}
         ),
       else: []
   end
 
   # `exists`'s argument is a unit (`children/2`), so its interior islands are surfaced here (via
   # `Mutare.Ecto.Subquery`), each rebuild re-wrapped inside the `exists`.
-  defp local_islands({:exists, ex_meta, [arg]}) do
-    for {interior, rebuild} <- Subquery.interior_islands(arg, :existence),
-        do: {interior, &{:exists, ex_meta, [rebuild.(&1)]}}
+  defp local_islands({:exists, ex_meta, [arg]}, _position) do
+    for {interior, role, rebuild} <- Subquery.interior_islands(arg, :existence),
+        do: {interior, role, &{:exists, ex_meta, [rebuild.(&1)]}}
   end
 
   # A bare inline subquery `from(...)` (a value-wrapper's argument, reached by the operand descent)
   # surfaces its interior condition pins through `Subquery`; every other call's `interior_islands`
   # is `[]`.
-  defp local_islands({_form, _meta, args} = node) when is_list(args),
+  defp local_islands({_form, _meta, args} = node, _position) when is_list(args),
     do: Subquery.interior_islands(node, :value)
 
   # Variables, field references, literals: no pin can hide here.
-  defp local_islands(_node), do: []
+  defp local_islands(_node, _position), do: []
 
   # Membership set shrink: one mutant per **distinct** element of a **written** in-list, each
   # dropping every occurrence of that element (`x in [1, 2, 3]` → `x in [2, 3]` / `[1, 3]` /
@@ -615,6 +661,17 @@ defmodule Mutare.Ecto.Fragment do
   #   * `selected_as(name)` /
   #     `selected_as(_, name)`         — the last arg names a select alias (a mutated name is an
   #                                      unknown-alias error at query build)
+  #   * `identifier(name)` /
+  #     `literal(name)`                — arg 0 is an SQL identifier a `fragment` quotes into its
+  #                                      template (a collation, a column). Ecto accepts only a
+  #                                      pin there, so this entry exists for the pin's role
+  #                                      alone (`local_islands/2`); `literal/1` is the same
+  #                                      form's older name
+  #
+  # A pin is classified by the same table (`local_islands/2`). Ecto refuses one at two of these
+  # positions — `count/2`'s modifier, and a template beside data arguments — so there the entry
+  # only ever meets a written literal; a lone pinned `fragment(^keywords)` is Ecto's keyword
+  # fragment, whose keys name fields.
   defp structural_position?({:fragment, _arity, 0}), do: true
   defp structural_position?({:datetime_add, 3, 2}), do: true
   defp structural_position?({:date_add, 3, 2}), do: true
@@ -627,6 +684,8 @@ defmodule Mutare.Ecto.Fragment do
   defp structural_position?({:parent_as, 1, 0}), do: true
   defp structural_position?({:selected_as, 1, 0}), do: true
   defp structural_position?({:selected_as, 2, 1}), do: true
+  defp structural_position?({:identifier, 1, 0}), do: true
+  defp structural_position?({:literal, 1, 0}), do: true
   defp structural_position?(_position), do: false
 
   # The atom-form node's own single swap, tagged by family **and** by the operator it swaps (the

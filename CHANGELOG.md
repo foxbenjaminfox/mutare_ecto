@@ -104,6 +104,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   subquery (`exists(from c in "comments", where: [score: 5])`) the pair values
   keep their mutants and the column key is no longer renamed.
 
+- **A structural name keeps its protection behind a `^` pin.** A literal at a
+  structural position — the column of `field/2`, a cast type, an interval unit, a
+  binding or select-alias name — is never mutated when written into the query.
+  The same literal interpolated (`field(p, ^:score)`, `ago(^n, ^"day")`,
+  `type(^v, ^:integer)`, `selected_as(^:total)`, a fragment's
+  `identifier(^"und")`) was handed to Mutare's core families as ordinary data and
+  swapped for a sentinel: an unknown column, or a unit Ecto rejects when the
+  query is built — a broken query under that mutant, not a test signal. An
+  interpolated value now keeps the role of the position it fills. A literal that
+  *is* the name — written directly, or as a `||` default or an
+  `if`/`case`/`cond` branch — is left alone; the Elixir that *computes* a name (the
+  condition choosing a column, a lookup key) still mutates. Conversely, the
+  protection of a pinned keyword filter's column keys (`where: ^[score: 5]`) now
+  applies only where Ecto reads a keyword list as a filter: an option list inside
+  an ordinary interpolated value (`p.score > ^lookup(n, scope: :all)`) gets
+  Mutare's usual mutants again.
+
 ## [0.1.1] - 2026-09-07
 
 ### Fixed

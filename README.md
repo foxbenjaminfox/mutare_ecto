@@ -102,7 +102,9 @@ arms (`integer_literal`/`float_literal`) are on by default. Whatever the selecti
 **structural position** of a known Ecto DSL form — the `fragment` template, the interval unit of
 `datetime_add`/`date_add`/`from_now`/`ago`, the cast type of `type/2`, the name in `field/2`,
 `as/1`/`parent_as/1`, or `selected_as` — is never mutated (it shapes the SQL, so a mutant would
-just be a broken query, not a test signal).
+just be a broken query, not a test signal). An interpolated name is covered too: in
+`field(u, ^(sort || :inserted_at))` Mutare's core families mutate the Elixir that computes the
+name, never a literal that is the name.
 
 **Query shape** — ordering, pagination, joins, aggregates, and the query terminals:
 

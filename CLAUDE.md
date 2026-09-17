@@ -171,9 +171,9 @@ Each row is role + the rule(s) that module is the **home** for.
 | `host/catalog.ex` | the own-catalog + island mutants for one hosted condition |
 | `host/join_on.ex` | home of join `on:` hostability (a join's sole, top-level, non-`assoc` on-expression — an `assoc` join told by its source, named or not) |
 | `host/target.ex` | the `dynamic`-wrap / `^`-pin / splice transforms core consumes; home of the root-pin rule (a condition that *is* a `^` pin — a `:root_pin` predicate — weaves pin-only over its interior) |
-| `fragment.ex` | the SQL-semantics catalog for conditions (public family table); home of the SQL side of the ownership rule, the `is_nil` observation rule (beneath it a mutant is pruned only where the per-form NULL rules *know* it keeps the argument's NULL-ness; an unknown form — and every pin — is emitted), and the structural-position registry |
+| `fragment.ex` | the SQL-semantics catalog for conditions (public family table); home of the SQL side of the ownership rule, the `is_nil` observation rule (beneath it a mutant is pruned only where the per-form NULL rules *know* it keeps the argument's NULL-ness; an unknown form — and every pin — is emitted), and the structural-position registry — which also gives a `^` pin its role (`role/0`: `:value` / `:condition` / `:structural`, reported by `islands/2`) |
 | `subquery.ex` | recurses the catalogs into an inline subquery; home of the wrapper observation modes, of what is pruned as equivalent vs. merely not composed yet, and of the interior keyword-filter rule (a pair's value is a catalog root, its key never) |
-| `island.ex` | the interpolation-island seam; home of the sub-contract and the pin-side keyword-key rule |
+| `island.ex` | the interpolation-island seam; home of the sub-contract and of the role policy — what of a pin's interior is still query structure, held against core's families: a `:condition` pin's keyword keys (the pin-side keyword-key rule), a `:structural` pin's literals known to be the name |
 | `walk.ex` | the one structural walk under every catalog; home of the author-macro rule and node-level attribution |
 | `expression_walk.ex` | the value-expression rules over `walk.ex` (the `over/2` `order_by:` refinement) |
 | `value_catalog.ex` | capability → catalog dispatch for an in-place clause value, and the ordering-position rule (`position/1`) |
@@ -221,6 +221,10 @@ Each is the conclusion; the canonical statement is in the named module.
   Elixir.** The SQL structure/operators/literals are the plugin's (`Mutare.Ecto.Fragment`); a
   `^` pin's interior is ordinary Elixir, sub-contracted to core over the run's full spec set and
   relayed with `producer:` (`Mutare.Ecto.Island`).
+- **A pin moves a value out of the SQL, not out of the position it fills.** `field(p, ^:score)`
+  still names a column, so an interior is never handed to core as unconstrained data: the walk
+  reports each pin's role (`Mutare.Ecto.Fragment`), and the seam holds the literals that role
+  makes structure while the logic computing them stays core's (`Mutare.Ecto.Island`).
 - **A nested author macro may invent its own argument syntax — descend only into `:expression`**
   (or a non-macro node); every other routing is left raw. `Mutare.Ecto.Walk`.
 - **A key that admits a condition does not make its value a predicate.** A list literal at a

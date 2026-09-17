@@ -652,7 +652,7 @@ defmodule Mutare.Ecto.SubcontractTest do
     end
 
     test "the islands follow the catalog's descent rules inside a dynamic too" do
-      # The same `Fragment.islands/1` walk serves both consumers — a pin beneath `is_nil` is an
+      # The same `Fragment.islands/2` walk serves both consumers — a pin beneath `is_nil` is an
       # island in a dynamic exactly as in a hosted where, next to the catalog's own coalesce
       # drop (delivered in place at the collapsing call, not an island).
       src = """
@@ -835,6 +835,245 @@ defmodule Mutare.Ecto.SubcontractTest do
         assert_compiles(src, @with_core)
       end
     end
+  end
+
+  describe "roles — a pin's structure survives the interpolation boundary" do
+    # A pin moves a value out of the SQL, never out of the position it fills: the interior of
+    # `field(p, ^:score)` still names a column. `Mutare.Ecto.Fragment.islands/2` reports each
+    # pin's role, and `Mutare.Ecto.Island` holds, per role, the written literals that are
+    # structure — so core's value families leave `^:score` alone exactly as the plugin's literal
+    # arms leave the written `:score` alone, while the logic that *computes* a name stays core's.
+
+    # Every literal arm in the run: core's, and the plugin's opt-in string/atom/boolean arms.
+    @all_arms [mutators: [:all, {Mutare.Ecto, repo: MyApp.Repo, families: :all}]]
+
+    defp condition_src(condition) do
+      """
+      defmodule M do
+        import Ecto.Query
+
+        def q(asc, params, n, v) do
+          _ = [asc, params, n, v]
+          from(p in Post, as: :post, where: #{String.trim(condition)}, select: p.id)
+        end
+      end
+      """
+    end
+
+    # Every recorded mutant's rendering (`:return_value` rewrites the def body whole, never an
+    # expression).
+    defp mutateds(src, opts \\ @all_arms),
+      do: for({m, _o, mutated} <- diffs(src, opts), m != :return_value, do: mutated)
+
+    test "a structural literal behind a pin mutates exactly as the written one: not at all" do
+      # The same condition twice — the structural literal written, then pinned. With the pin
+      # read back out of each rendering, the two runs record the same mutants: nothing is sourced
+      # from the literal either way, and everything around it (the comparison, the sibling
+      # `:value` pin's interior) mutates identically.
+      for {template, literal} <- [
+            {"field(p, SLOT) > ^(n + 1)", ":score"},
+            {"p.inserted_at > ago(^(n + 1), SLOT)", ~s|"day"|},
+            {"p.inserted_at > datetime_add(^v, ^(n + 1), SLOT)", ~s|"day"|},
+            {"p.score > type(^(n + 1), SLOT)", ":integer"},
+            {"p.tags == type(^[n + 1], SLOT)", "{:array, :integer}"},
+            {"p.uid == type(^(v || n + 1), SLOT)", "Ecto.UUID"},
+            {"field(as(SLOT), :score) > ^(n + 1)", ":post"},
+            {"selected_as(SLOT) > ^(n + 1)", ":total"}
+          ] do
+        written = String.replace(template, "SLOT", literal)
+        pinned = String.replace(template, "SLOT", "^" <> literal)
+
+        written_mutants = written |> condition_src() |> mutateds() |> MapSet.new()
+
+        pinned_mutants =
+          pinned
+          |> condition_src()
+          |> mutateds()
+          |> MapSet.new(&String.replace(&1, "^" <> literal, literal))
+
+        assert pinned_mutants == written_mutants, "the pin changed the mutants of: #{written}"
+
+        # Positive control: the sub-contract ran — the sibling pin's interior is core's.
+        assert Enum.any?(pinned_mutants, &(&1 =~ "n - 1"))
+
+        assert_compiles(condition_src(pinned), @all_arms)
+      end
+    end
+
+    test "the control — the same literals in a :value pin are core's to mutate" do
+      # What the role withholds is not the literal's kind: at a data position every one of them
+      # is a parameter, and core's atom/string/alias families swap it for their sentinel.
+      for {condition, sentinel} <- [
+            {"p.status == ^:score", "^:mutare"},
+            {~s|p.unit == ^"day"|, ~s|^"mutare"|},
+            {"p.mod == ^Ecto.UUID", "^Mutare.Mutant"}
+          ] do
+        assert sentinel in (condition |> condition_src() |> mutateds() |> Enum.map(&pin_of/1)),
+               "expected core to swap the pinned value in: #{condition}"
+      end
+    end
+
+    test "the logic that computes a name stays core's; only a literal that is the name is held" do
+      branches =
+        mutateds(condition_src("field(p, ^(if asc and n > 1, do: :score, else: :views)) > 1"))
+
+      # The condition choosing the column is ordinary Elixir — a live mutant sorts by the other
+      # (valid) column…
+      assert Enum.any?(branches, &(&1 =~ "asc or n > 1"))
+      assert Enum.any?(branches, &(&1 =~ "n >= 1"))
+      # …while either branch's literal *is* the column name.
+      refute Enum.any?(branches, &(&1 =~ "mutare"))
+
+      # `||`: the default is the name; the lookup key beside it is data.
+      default = mutateds(condition_src("field(p, ^(params[:sort] || :inserted_at)) > 1"))
+      assert Enum.any?(default, &(&1 =~ "params[:mutare] || :inserted_at"))
+      refute Enum.any?(default, &(&1 =~ "|| :mutare"))
+
+      # `case`: each clause body is a name; the subject's lookup key is data.
+      clauses =
+        mutateds(
+          condition_src("""
+          field(p, ^(case params["dir"] do
+            "views" -> :views
+            _other -> :score
+          end)) > 1
+          """)
+        )
+
+      assert Enum.any?(clauses, &(&1 =~ ~s|params["mutare"]|))
+      refute Enum.any?(clauses, &(&1 =~ ":mutare"))
+    end
+
+    test "every form the name rule reads through holds its literals, and leaves its logic" do
+      # `unless`, `cond`, a block's last expression, and a `||` nested in a branch — beside the
+      # `if`/`||`/`case` above. Each interior's comparison mutates (the control: the island was
+      # analyzed), and no mutant of the condition loses or renames a column.
+      for interior <- [
+            "unless n > 1, do: :score, else: :views",
+            "cond do\n  n > 1 -> :score\n  true -> :views\nend",
+            "(\n  m = n + 1\n  if m > 1, do: :score, else: :views\n)",
+            "if n > 1, do: :score, else: v || :views"
+          ] do
+        conditions =
+          for mutated <- mutateds(condition_src("field(p, ^(#{interior})) > 1")),
+              mutated =~ "field(",
+              do: mutated
+
+        assert Enum.any?(conditions, &(&1 =~ "> 0")), "the logic did not mutate in: #{interior}"
+
+        assert Enum.all?(conditions, &(&1 =~ ":score" and &1 =~ ":views")),
+               "a column name was renamed or dropped in: #{interior}"
+      end
+    end
+
+    test "a literal handed to a call is not known to reach the slot, so it is emitted" do
+      # The rule prunes only what it knows: a call computes its value by means the seam cannot
+      # read, so `Keyword.get/3`'s default — though it does come back as the column — mutates
+      # like the option key beside it, which is plainly data.
+      mutants = mutateds(condition_src("field(p, ^Keyword.get(params, :sort, :inserted_at)) > 1"))
+
+      assert Enum.any?(mutants, &(&1 =~ "Keyword.get(params, :mutare, :inserted_at)"))
+      assert Enum.any?(mutants, &(&1 =~ "Keyword.get(params, :sort, :mutare)"))
+    end
+
+    test "a fragment's pinned identifier is held; the data pinned beside it is core's" do
+      for modifier <- ["identifier", "literal"] do
+        mutants =
+          mutateds(
+            condition_src(~s|fragment("? COLLATE ? > ?", p.title, #{modifier}(^"und"), ^(n + 1))|)
+          )
+
+        assert Enum.any?(mutants, &(&1 =~ "n - 1"))
+        refute Enum.any?(mutants, &(&1 =~ ~s|#{modifier}(^"")|))
+        refute Enum.any?(mutants, &(&1 =~ "mutare"))
+      end
+
+      # `literal/1` is the spelling every supported Ecto line compiles (`identifier/1` is 3.13's).
+      assert_compiles(
+        condition_src(~s|fragment("? COLLATE ? > ?", p.title, literal(^"und"), ^(n + 1))|),
+        @all_arms
+      )
+    end
+
+    test "the keyword-key rule is the :condition role's — an option list in a :value pin is data" do
+      wrap = fn body ->
+        "defmodule M do\n  import Ecto.Query\n  def q(q, n), do: #{body}\nend\n"
+      end
+
+      # The same interior, twice. As the whole condition its keyword keys may name columns, and
+      # are held; as a compared value it is a parameter like any other, analyzed as top-level
+      # Elixir — core renames the option key there as it would anywhere else.
+      as_condition = mutateds(wrap.("where(q, ^lookup(n, scope: :all))"))
+      as_value = mutateds(wrap.("where(q, [p], p.score > ^lookup(n, scope: :all))"))
+
+      refute Enum.any?(as_condition, &(&1 =~ "mutare: :all"))
+      assert Enum.any?(as_condition, &(&1 =~ "scope: :mutare"))
+
+      assert Enum.any?(as_value, &(&1 =~ "mutare: :all"))
+      assert Enum.any?(as_value, &(&1 =~ "scope: :mutare"))
+    end
+
+    test "a subquery's pins keep their roles through the wrapper" do
+      # A keyword filter's pinned pair value is a :value; the projection's pinned column a name.
+      paired =
+        mutateds(
+          condition_src(
+            "p.id in subquery(from(c in Comment, where: [score: ^(n + 1)], select: field(c, ^:post_id)))"
+          )
+        )
+
+      assert Enum.any?(paired, &(&1 =~ "score: ^(n - 1)"))
+      refute Enum.any?(paired, &(&1 =~ "mutare"))
+
+      # A pinned projection is a list of column names — neither renamed nor emptied.
+      projected =
+        mutateds(condition_src("p.id in subquery(from(c in Comment, select: ^[:post_id]))"))
+
+      refute Enum.any?(projected, &(&1 =~ "mutare"))
+      refute Enum.any?(projected, &(&1 =~ "select: ^[]"))
+
+      # A pinned interior condition is a :condition — keys held, values core's.
+      filtered = mutateds(condition_src("exists(from(c in Comment, where: ^[score: 5]))"))
+      assert Enum.any?(filtered, &(&1 =~ "^[score: 6]"))
+      refute Enum.any?(filtered, &(&1 =~ "mutare"))
+    end
+
+    test "the whole-call seams apply the same policy" do
+      # `Mutare.Ecto.Dynamic` and `Mutare.Ecto.StaticCondition` deliver through
+      # `subcontracted/3` too, so a role is honoured wherever an island is relayed.
+      dynamic =
+        mutateds("""
+        defmodule M do
+          import Ecto.Query
+          def q(n), do: dynamic([p], field(p, ^:score) > ^(n + 1))
+        end
+        """)
+
+      assert Enum.any?(dynamic, &(&1 =~ "n - 1"))
+      refute Enum.any?(dynamic, &(&1 =~ "mutare"))
+
+      static =
+        mutateds("""
+        defmodule M do
+          import Ecto.Query
+
+          def q(q, n) do
+            having(
+              q,
+              [p],
+              field(p, ^:score) >
+                subquery(from(c in Comment, where: c.score > ^(n + 1), select: max(c.score)))
+            )
+          end
+        end
+        """)
+
+      assert Enum.any?(static, &(&1 =~ "n - 1"))
+      refute Enum.any?(static, &(&1 =~ "mutare"))
+    end
+
+    # The pinned operand of a rendered `left == ^value` condition.
+    defp pin_of(mutated), do: mutated |> String.split(" == ", parts: 2) |> List.last()
   end
 
   describe "full set — an inner dynamic inside a pin mutates under SQL semantics, once" do
@@ -1054,6 +1293,48 @@ defmodule Mutare.Ecto.SubcontractTest do
     test "an empty spec set yields no sub-contracted mutants, never crashes" do
       condition = Sourceror.parse_string!("u.age > ^(min * 2)")
       assert Mutare.Ecto.Island.subcontracted(condition, context()) == []
+    end
+  end
+end
+
+defmodule Mutare.Ecto.SubcontractTest.Runtime do
+  # Sync: this module runs a metamutant, and the selector it flips is global
+  # (`Mutare.Ecto.SelectorSyncTest`).
+  use ExUnit.Case, async: false
+
+  import Mutare.Ecto.TestSupport
+
+  describe "roles — every relayed mutant of a structural pin still builds" do
+    test "a pinned interval unit and a computed column build at baseline and under every mutant" do
+      # Ecto checks a pinned interval unit when the query is *built* (`interval!/1` accepts only
+      # its own unit names), so core's string sentinel there raised on every call of the function
+      # under that mutant — a broken query, not a mutant. The role holds the unit; the count
+      # beside it and the logic choosing the column still mutate, and each mutant builds.
+      src = """
+      defmodule Q do
+        import Ecto.Query
+
+        def q(n, asc) do
+          from(p in "posts",
+            where:
+              p.inserted_at > ago(^(n + 1), ^"day") and
+                field(p, ^(if asc and n > 0, do: :score, else: :views)) > ^n,
+            select: p.id
+          )
+        end
+      end
+      """
+
+      # The core families that reach a pin's interior — by name, because `:all` also carries
+      # `:return_value`, whose `nil` body is no queryable to build.
+      core = [:arithmetic, :integer, :relational, :logical, :string, :atom]
+
+      sites =
+        assert_builds(src, & &1.q(1, true), mutators: core ++ [{Mutare.Ecto, repo: MyApp.Repo}])
+
+      assert Enum.any?(sites, &(&1.mutated_code =~ ~s|ago(^(n - 1), ^"day")|))
+      assert Enum.any?(sites, &(&1.mutated_code =~ "asc or n > 0"))
+      refute Enum.any?(sites, &(&1.mutated_code =~ "mutare"))
     end
   end
 end
