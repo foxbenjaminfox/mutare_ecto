@@ -42,6 +42,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Mutare 0.2.1 or newer is now required** (`{:mutare, "~> 0.2.1"}`, raised from
+  `~> 0.1`). Sourceror 1.12.3 corrected two range over-counts that Mutare had
+  compensated for, so against an older Mutare the compensation double-corrects: a
+  mutant whose range ends at a bare `true`/`false`/`nil` renders its diff one
+  character short (`where: :mutatede`), and the JSON/SARIF reporters emit the
+  short `endColumn`. Mutare 0.2.1 drops the compensation and floors Sourceror to
+  match. Only a survivor's reported location was ever affected — never which
+  mutants are generated, nor how they behave.
+
 - **The README states what each query spelling gets, instead of "both syntaxes are
   covered".** Most families reach the same mutated queries from a `from` keyword
   list and from composable stages, but not all: a join, a `select` and a
@@ -71,11 +80,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the rule recognised only `c in assoc(p, :posts)`, so a `from` join written as a
   bare `assoc(p, :posts)` had its `on:` mutated in place all the same. Both
   spellings are now treated alike.
-
-- **The install snippet names Mutare 0.2.** The plugin's own requirement stays
-  `{:mutare, "~> 0.1"}` — it builds and passes its suite against the 0.1 and 0.2
-  core lines alike — but the README now shows `{:mutare, "~> 0.2"}`, and CI
-  builds against 0.2.
 
 ### Fixed
 
