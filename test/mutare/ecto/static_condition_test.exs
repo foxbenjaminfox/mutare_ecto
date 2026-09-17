@@ -342,6 +342,57 @@ defmodule Mutare.Ecto.StaticConditionTest do
     end
   end
 
+  describe "a keyword filter is never the fallback's (`Mutare.Ecto.Host.Condition.shape/1`)" do
+    # Ecto's filter builder accumulates a pair value's subquery too, so a subquery-bearing filter
+    # is not weavable — but the host would not weave a filter anyway: its pairs are routed to
+    # core one by one. The fallback serves what the weave would have carried, which for a filter
+    # is nothing; it must not walk the list as a predicate.
+    @filter_having """
+    defmodule Q do
+      import Ecto.Query
+
+      def q do
+        from p in "posts",
+          group_by: p.user_id,
+          having: [user_id: 3, score: #{@threshold}],
+          select: p.user_id
+      end
+    end
+    """
+
+    test "no column key is renamed, under every family — in a from or the standalone having/3" do
+      standalone = """
+      defmodule Q do
+        import Ecto.Query
+        def q, do: having("posts", [p], user_id: 3, score: #{@threshold})
+      end
+      """
+
+      for src <- [@filter_having, standalone] do
+        mutateds =
+          src
+          |> diffs(mutators: [:all, {Mutare.Ecto, repo: MyApp.Repo, families: :all}])
+          |> Enum.map(fn {_family, _original, mutated} -> mutated end)
+
+        refute Enum.any?(mutateds, &(&1 =~ ~r/mutare:|:mutare =>/))
+      end
+    end
+
+    test "the plugin's only mutant is the clause drop; the scalar pair is core's alone" do
+      # The whole-`from` drop of the clause (`Mutare.Ecto.Query`) — no catalog mutant of a pair.
+      assert [{"[user_id: 3, score: " <> _, ""}] = ecto_diffs(@filter_having)
+
+      opts = [mutators: [Mutare.Mutators.IntegerLiteral, {Mutare.Ecto, repo: MyApp.Repo}]]
+
+      integer =
+        for {:integer, original, mutated} <- diffs(@filter_having, opts), do: {original, mutated}
+
+      assert {"3", "4"} in integer
+      refute rendered(@filter_having, opts) =~ "Query.dynamic("
+      assert_builds(@filter_having, & &1.q(), opts)
+    end
+  end
+
   describe "each condition is delivered exactly once" do
     test "a declined having records the same mutants a woven where does — no more, no fewer" do
       # The same condition text under both clause kinds: the `where` weaves, the `having`

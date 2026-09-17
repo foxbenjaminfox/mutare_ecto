@@ -460,3 +460,42 @@ Hosting unnamed joins exposed the same blind spot in `Mutare.Ecto.Host.JoinOn`: 
 exclusion matched `x in assoc(p, :rel)` only, so a bare `assoc(p, :rel)` join slipped past it (in
 the `from` form its `on:` was already being hosted). An `assoc` join is now told by its source,
 named or not.
+
+### Condition: predicate or keyword filter, decided once
+
+Whether a condition-position value is a predicate or a keyword filter used to be decided in
+several places that did not agree — or not decided at all. The `from`-clause classifier asked
+for a non-empty keyword list (`KeywordList.nonempty/1`); the binding-less argument form refused
+any list; the binding form (`where(q, [p], …)`) asked nothing, treating whatever followed a
+binding list as a predicate; and the host asked nothing either — `from_targets/2`, the join
+target and `Mutare.Ecto.Subquery` applied the predicate catalog to every value whose **key**
+admits a condition. `Mutare.Ecto.Fragment`'s doc promised `[]` for a keyword shorthand, but its
+walk enters a written list and reads a `score: 5` pair as a value tuple, data on both sides.
+
+Two shapes fell through. `where(q, [p], score: 5)` routed `:hosted`. And in
+`from(p in "posts", where: [score: 5], limit: 10)` the classifier routed the pairs to core
+correctly, but the hosted `limit:` made core offer the *whole call* to the host (core does not
+confine returned targets to `:hosted` positions), which then claimed the sibling filter as well.
+Either way the list was wrapped as `dynamic([p], score: 5)` — Ecto's general expression builder,
+which refuses a filter's pairs — so the metamutant failed to compile; the host's splice also
+overwrote the pins core had placed inside the list, leaving core's recorded mutants with no
+selector branch; and with the opt-in atom arm on, the catalog renamed the column
+(`[mutare: 5]`). The same held for a join's `on:` shorthand, and for a pinned pair value
+(`where: [score: ^(min + 1)]`), whose interior — nobody's, by `pair_treatment/1` — was
+sub-contracted to core as soon as a sibling was hosted. The existing mixed-shorthand test used
+`[active: true]` under the default families, where the boolean arm is off and the catalog finds
+nothing, so it never exercised any of this.
+
+`Mutare.Ecto.Host.Condition.shape/1` is now the one classification — Ecto's own rule: a written list
+literal is the filter builder's, anything else the host's (an expression, or a root pin Ecto
+dispatches on its runtime value — "Root pin: from `dynamic`-wrapped to pin-only") — read by the
+classifier, by both argument forms of `locate/1`, by the host's keyword-value paths, by the subquery
+recursion, and by the host's whole-call fallback (`Mutare.Ecto.StaticCondition`), which would
+otherwise take a subquery-bearing filter (`having: [score: subquery(…)]`) for a declined predicate
+and catalog its keys. The subquery case differs in one respect, kept deliberately: an interior
+mutant is delivered as the inner `from` rebuilt, so a filter there stays in a filter position and
+its pair *values* are still the plugin's to mutate (the whole outer condition is hosted; core never
+reaches them) — only the keys stopped being catalog roots. Pinned in `shorthand_test.exs` —
+including the compositional regression (a hosted sibling changes neither the diffs recorded in a
+shorthand nor its rendering in the metamutant) and the reachability invariant (every recorded mutant
+id has a selector branch) — and live against the DB in the semantic suite.

@@ -22,8 +22,14 @@ defmodule Mutare.Ecto.StaticCondition do
   expression (`weavable?/2`): it can unless the expression carries a subquery
   (`Mutare.Ecto.Subquery.present?/1`) *and* the clause rejects one in a dynamic
   (`Mutare.Ecto.Surface.dynamic_subqueries?/1` — everything but `where`/`or_where`). The host
-  declines exactly the conditions this predicate refuses, and `mutations/2` serves exactly
-  those, so each condition is delivered once: woven, or rebuilt here.
+  declines exactly the predicates this rule refuses, and `mutations/2` serves exactly those, so
+  each condition is delivered once: woven, or rebuilt here.
+
+  Only a **predicate** is either's (`Mutare.Ecto.Host.Condition.shape/1`). A keyword filter
+  carries a subquery as readily (`having: [score: subquery(…)]` — Ecto's filter builder
+  accumulates a pair value's), but the weave would carry nothing for it — its pairs are routed
+  to core one by one — so neither is this module's rebuild, which would otherwise read the list
+  as a predicate and rename its column keys.
 
   ## Delivery
 
@@ -90,15 +96,19 @@ defmodule Mutare.Ecto.StaticCondition do
   end
 
   # The weave's own mutant set (`Mutare.Ecto.Host.Catalog.mutants/2`'s two halves), each
-  # delivered through `rebuild` instead — for a condition the host declined, and only for one.
+  # delivered through `rebuild` instead — for a predicate the host declined, and only for one.
+  # (A condition macro's argument is already one: `Condition.locate/1` reads the same shape.)
   defp rebuilt(clause, condition, %Context{config: config} = context, rebuild) do
-    if weavable?(clause, condition) do
-      []
-    else
+    if declined?(clause, condition) do
       own = for tag <- Catalog.own_catalog(condition, config), do: Tag.map_node(tag, rebuild)
 
       # mutare:ignore[operand_swap] equivalent — two independent mutant lists, consumed as a set
       own ++ Island.subcontracted(condition, context, rebuild)
+    else
+      []
     end
   end
+
+  defp declined?(clause, condition),
+    do: Condition.shape(condition) == :predicate and not weavable?(clause, condition)
 end

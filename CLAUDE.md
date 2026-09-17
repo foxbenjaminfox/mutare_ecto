@@ -166,13 +166,13 @@ Each row is role + the rule(s) that module is the **home** for.
 | `tag.ex` | `%Tag{family, node, label, attribution}` — the one shape every producer emits; `to_mutation/1`; home of what the `attribution` field means |
 | `host.ex` | selector-host coordinator (bucket 3): a hosted call → `Target`s |
 | `host/routing.ex` | `route_arguments/2`, the per-argument classifier; home of the routing rationale (`:hosted`/`:expression`/`:skip`/`:interpolated`/`{:keyword, …}`) |
-| `host/condition.ex` | `locate/1`; home of the hosted-condition shapes (binding-form / binding-less / keyword-shorthand) |
+| `host/condition.ex` | `shape/1`, the one predicate-versus-keyword-filter classification routing, hosting (the weave and its `StaticCondition` fallback) and the subquery recursion share; `locate/1`; home of the hosted-condition shapes (binding-form / binding-less) |
 | `host/bindings.ex` | interprets binding declarations and renders the list a woven `dynamic/2` re-declares; home of the join-slot rule (every join — a `from` join clause, or the one a standalone `join/4,5` adds — holds one positional slot; an unnamed one re-declares as `_`) |
 | `host/catalog.ex` | the own-catalog + island mutants for one hosted condition |
 | `host/join_on.ex` | home of join `on:` hostability (a join's sole, top-level, non-`assoc` on-expression — an `assoc` join told by its source, named or not) |
 | `host/target.ex` | the `dynamic`-wrap / `^`-pin / splice transforms core consumes; home of the root-pin rule (a condition that *is* a `^` pin weaves pin-only over its interior) |
 | `fragment.ex` | the SQL-semantics catalog for conditions (public family table); home of the SQL side of the ownership rule, the `is_nil` observation rule (beneath it a mutant is pruned only where the per-form NULL rules *know* it keeps the argument's NULL-ness; an unknown form — and every pin — is emitted), and the structural-position registry |
-| `subquery.ex` | recurses the catalogs into an inline subquery; home of the wrapper observation modes and of what is pruned as equivalent vs. merely not composed yet |
+| `subquery.ex` | recurses the catalogs into an inline subquery; home of the wrapper observation modes, of what is pruned as equivalent vs. merely not composed yet, and of the interior keyword-filter rule (a pair's value is a catalog root, its key never) |
 | `island.ex` | the interpolation-island seam; home of the sub-contract and the pin-side keyword-key rule |
 | `walk.ex` | the one structural walk under every catalog; home of the author-macro rule and node-level attribution |
 | `expression_walk.ex` | the value-expression rules over `walk.ex` (the `over/2` `order_by:` refinement) |
@@ -223,6 +223,10 @@ Each is the conclusion; the canonical statement is in the named module.
   relayed with `producer:` (`Mutare.Ecto.Island`).
 - **A nested author macro may invent its own argument syntax — descend only into `:expression`**
   (or a non-macro node); every other routing is left raw. `Mutare.Ecto.Walk`.
+- **A key that admits a condition does not make its value a predicate.** A list literal at a
+  condition position is a keyword filter — core's, per pair — and core offers the *whole call* to
+  the host once any sibling position is hosted, so every path from a condition value to the
+  predicate catalog reads `Mutare.Ecto.Host.Condition.shape/1` first.
 - **Binding-reorder is always in-place, never a body rewrite.** `Mutare.Ecto.BindingReorder`
   (a `from` source list reorders at the whole-`from` level, `Mutare.Ecto.Query`).
 - **Stay inside the single build.** Any in-query mutation must be `^`-pinned behind the selector —

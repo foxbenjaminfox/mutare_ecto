@@ -376,6 +376,39 @@ defmodule Mutare.Ecto.SemanticCases do
           # The mutant binds 19 — only Frank matches; the parameter, not the source, changed.
           assert mutant == [6]
         end
+
+        # A hosted sibling summons the host for the whole call, and an explicit binding list puts
+        # the shorthand where a predicate usually sits. Neither may turn the filter into a hosted
+        # predicate (`Mutare.Ecto.Host.Condition`): `dynamic/2` refuses its pairs, so the
+        # metamutant would not even compile — and a splice over the clause would orphan core's
+        # mutant. The same observation as above must hold, unchanged, in both shapes.
+        test "the same mutant is live beside a hosted `limit:`" do
+          assert shorthand_age_mutant(
+                   "from(u in User, where: [age: 18], limit: 10, select: u.id)"
+                 ) ==
+                   {[1, 4], [6]}
+        end
+
+        test "the same mutant is live after an explicit binding list" do
+          assert shorthand_age_mutant("User |> where([u], age: 18) |> select([u], u.id)") ==
+                   {[1, 4], [6]}
+        end
+
+        defp shorthand_age_mutant(body) do
+          {mod, sites} =
+            H.compile(
+              """
+              defmodule Q do
+                import Ecto.Query
+                alias MyApp.User
+                def q, do: #{body}
+              end
+              """,
+              mutators: [:integer, {Mutare.Ecto, repo: @repo}]
+            )
+
+          observe_ids(mod, sites, {"18", "19"})
+        end
       end
 
       describe "Comparison — binding-less `as(:_)` condition (empty-binding dynamic)" do

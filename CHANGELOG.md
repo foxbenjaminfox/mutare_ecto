@@ -91,6 +91,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `any`) now keeps its clause static: the same mutants are delivered as whole-call
   rebuilds. `where`/`or_where` accept the dynamic form and weave as before.
 
+- **A keyword-shorthand condition is never hosted as a predicate.** Two shapes
+  were: a shorthand written after a binding list (`where(q, [p], score: 5)`), and
+  a shorthand in a `from` whose sibling is hosted
+  (`from(p in "posts", where: [score: 5], limit: 10)` — also a join's
+  `on: [score: 5]`). The list was wrapped in `dynamic/2`, which rejects keyword
+  pairs, so the instrumented build failed to compile; the weave also displaced
+  Mutare's own `^`-pinned mutants of the pair values, and with the opt-in
+  `atom_literal` family on, the column key itself was renamed.
+  Routing and hosting now share one classification, so a shorthand's values are
+  Mutare's to mutate, per pair, whatever else the call contains. Inside an inline
+  subquery (`exists(from c in "comments", where: [score: 5])`) the pair values
+  keep their mutants and the column key is no longer renamed.
+
 ## [0.1.1] - 2026-09-07
 
 ### Fixed

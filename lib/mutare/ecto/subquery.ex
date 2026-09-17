@@ -67,7 +67,8 @@ defmodule Mutare.Ecto.Subquery do
   alias Mutare.Calls
   alias Mutare.Ecto.{Config, Fragment, Query, Surface, Tag}
   alias Mutare.Ecto.AST.{FromCall, KeywordList}
-  alias Mutare.Ecto.Host.Catalog
+  alias Mutare.Ecto.AST.KeywordList.Entry
+  alias Mutare.Ecto.Host.{Catalog, Condition}
 
   # The `Mutare.Ecto.Query` producers composed into the inner `from`: the ones that change the
   # subquery's **row set** (observable through every wrapper), and — under a value-wrapper only —
@@ -147,8 +148,9 @@ defmodule Mutare.Ecto.Subquery do
     case inline_from(node, mode) do
       {%FromCall{clauses: clauses} = from, wrap} ->
         KeywordList.flat_map(clauses, &island_clause?(&1, mode), fn entry, index ->
-          for {interior, rebuild} <- Fragment.islands(entry.value) do
-            {interior, &wrap.(rebuild_clause(from, index, rebuild.(&1)))}
+          for {root, rebuild_value} <- island_roots(entry),
+              {interior, rebuild} <- Fragment.islands(root) do
+            {interior, &wrap.(rebuild_clause(from, index, rebuild_value.(rebuild.(&1))))}
           end
         end)
 
@@ -196,21 +198,55 @@ defmodule Mutare.Ecto.Subquery do
   defp island_clause?(key, mode),
     do: Surface.from_clause?(key, :hosted) or (mode == :value and key in @projection_keys)
 
+  # The roots whose pins are surfaced in one such clause: a condition's are the very roots its
+  # catalog walks (`catalog_roots/1`), so the two readers keep agreeing about which nodes exist;
+  # a projection is no condition position and is read whole.
+  defp island_roots(%Entry{key: key, value: value}) do
+    if Surface.from_clause?(key, :hosted), do: catalog_roots(value), else: [{value, & &1}]
+  end
+
   # The row-set producers, composed straight from `Mutare.Ecto.Query` — attribution included (the
   # outer condition's walk anchors only an *unattributed* tag, so `Query`'s inner-clause stamp
   # survives to an in-place delivery).
   defp structural(from, config), do: Query.mutations_for(from, config, @structural_producers)
 
   # The hosted-condition catalog (`Mutare.Ecto.Host.Catalog.own_catalog/2`) recursed into each
-  # hosted-clause value (`where`/`having`/`or_where`/`or_having`), rebuilding the whole inner
-  # `from` around each single-point condition mutant. Nesting (`exists` inside the subquery's own
-  # `where`) re-enters `Fragment`, which re-recognizes the wrapper. A clause-less source
-  # (`from(Post)` — its reorder rode `structural/2`) contributes nothing here.
+  # hosted-clause value (`where`/`having`/`or_where`/`or_having`) — through its `catalog_roots/1`
+  # — rebuilding the whole inner `from` around each single-point condition mutant. Nesting
+  # (`exists` inside the subquery's own `where`) re-enters `Fragment`, which re-recognizes the
+  # wrapper. A clause-less source (`from(Post)` — its reorder rode `structural/2`) contributes
+  # nothing here.
   defp conditions(%FromCall{clauses: clauses} = from, config) do
     KeywordList.flat_map(clauses, &Surface.from_clause?(&1, :hosted), fn entry, index ->
-      for tag <- Catalog.own_catalog(entry.value, config),
-          do: Tag.map_node(tag, &rebuild_clause(from, index, &1))
+      for {root, rebuild_value} <- catalog_roots(entry.value),
+          tag <- Catalog.own_catalog(root, config),
+          do: Tag.map_node(tag, &rebuild_clause(from, index, rebuild_value.(&1)))
     end)
+  end
+
+  # What the predicate catalog may walk in one hosted-clause value, by the classification routing
+  # and hosting share (`Mutare.Ecto.Host.Condition.shape/1`), each root with the rebuild of the
+  # whole value around its replacement. A predicate is its own root. A keyword filter
+  # (`where: [score: 5]`) is not the *host's* — but an interior mutant is delivered as the inner
+  # `from` rebuilt, so the filter stays in a filter position (no `dynamic/2` wrap to refuse it)
+  # and, the whole outer condition being hosted, core never reaches its pairs. Each pair
+  # **value** is therefore a root, SQL data like the right side of the `c.score == 5` it
+  # abbreviates. A **key** never is: it names a column, and the catalog would read `score: 5` as
+  # a value tuple with two data sides and rename it (`[mutare: 5]` — an unknown-column query,
+  # not a mutant).
+  defp catalog_roots(value) do
+    case Condition.shape(value) do
+      :predicate ->
+        [{value, & &1}]
+
+      {:keyword_filter, pairs} ->
+        for {%Entry{value: pair_value}, index} <- Enum.with_index(pairs.entries) do
+          {pair_value, &(pairs |> KeywordList.put_value(index, &1) |> KeywordList.to_ast())}
+        end
+
+      :pairless_list ->
+        []
+    end
   end
 
   # The `select`/`select_merge` projection's aggregate/scalar swaps — `Query`'s own

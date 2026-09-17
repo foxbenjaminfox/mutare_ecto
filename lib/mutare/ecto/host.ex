@@ -10,6 +10,14 @@ defmodule Mutare.Ecto.Host do
   catalog) — and `Host.Target` constructs the `dynamic/2` wrap and selector splice consumed by
   Mutare core.
 
+  The host builds a condition target for a **predicate** only. Core offers the *whole call* as
+  soon as any one position routed `:hosted`, and does not confine the returned targets to those
+  positions — so a `from`'s hosted `limit:` brings a sibling `where: [score: 5]` here too. That
+  sibling is a keyword filter, which the classifier already gave to core pair by pair, and
+  which `dynamic/2` would refuse. The host therefore reads every condition value through the
+  same classification the classifier used (`Mutare.Ecto.Host.Condition.shape/1`), wherever the
+  value is written: a `from` clause, a condition macro's argument, a join's `on:` option.
+
   A condition that is itself a `^` pin (`where: ^filters`, `where(q, ^cond)`, a join's
   `on: ^cond`) is woven **pin-only**, over its bare interior: Ecto treats such a root
   interpolation according to its runtime value — a keyword list is a field filter, a boolean a
@@ -76,7 +84,8 @@ defmodule Mutare.Ecto.Host do
         Surface.bound?(key) ->
           bound_from_target(from, value, index)
 
-        # A hostable condition clause. `Bindings.visible_to/2` owns the truncation offset (and
+        # A clause whose key *may* hold a hostable condition — whether its value is one is
+        # `from_target/4`'s question. `Bindings.visible_to/2` owns the truncation offset (and
         # why it includes the current entry itself); each clause sees only the join bindings
         # introduced up to it. A condition the clause cannot take as a dynamic is declined —
         # `Mutare.Ecto.StaticCondition` rebuilds it whole-call instead.
@@ -90,9 +99,10 @@ defmodule Mutare.Ecto.Host do
     end)
   end
 
-  # Whether a `from` clause key's value is a hostable condition: one of the `:hosted` keys
+  # Whether a `from` clause **key** admits a hosted condition: one of the `:hosted` keys
   # (`Mutare.Ecto.Surface`) — `where`/`having` always, an `on:` only when
-  # `Mutare.Ecto.Host.JoinOn` admits it.
+  # `Mutare.Ecto.Host.JoinOn` admits it. Necessary, not sufficient: the value must still be a
+  # predicate (`predicate_mutants/2`).
   defp hostable_clause?(:on, index, hostable_on), do: MapSet.member?(hostable_on, index)
   defp hostable_clause?(key, _index, _hostable_on), do: Surface.from_clause?(key, :hosted)
 
@@ -117,9 +127,22 @@ defmodule Mutare.Ecto.Host do
   # hosts whenever its sub-contract yields something (`Mutare.Ecto.Island`); its weave is
   # pin-only and leaves these bindings unused (`Mutare.Ecto.Host.Target`).
   defp from_target(condition, bindings, index, context) do
-    case Catalog.mutants(condition, context) do
+    case predicate_mutants(condition, context) do
       [] -> []
       mutants -> [Target.from_clause(condition, mutants, bindings, index)]
+    end
+  end
+
+  # The catalog mutants of a condition written as a **keyword value** (a `from` clause, a join's
+  # `on:` option) — of a predicate only (the moduledoc). A keyword filter is not the host's: its
+  # pairs were routed to core one by one, and neither the predicate catalog nor the pin
+  # sub-contract is offered it, so hosting a *sibling* never changes what happens to it. (A
+  # condition macro's argument takes the same decision inside `Condition.locate/1`.)
+  defp predicate_mutants(value, context) do
+    case Condition.shape(value) do
+      :predicate -> Catalog.mutants(value, context)
+      {:keyword_filter, _pairs} -> []
+      :pairless_list -> []
     end
   end
 
@@ -163,7 +186,7 @@ defmodule Mutare.Ecto.Host do
          true <- JoinOn.hostable_standalone?(args, options.entries),
          %Entry{value: condition} = Enum.at(options.entries, pair_index),
          [_ | _] = bindings <- Bindings.join(args),
-         [_ | _] = mutants <- Catalog.mutants(condition, context) do
+         [_ | _] = mutants <- predicate_mutants(condition, context) do
       [Target.keyword_condition(condition, mutants, bindings, arg_index, pair_index)]
     else
       _ -> []

@@ -68,8 +68,9 @@ defmodule Mutare.Ecto.Host.Routing do
     * the composable pipe/standalone form — `q |> where([p], p.x == v)` / `where(q, [p], …)`: the
       threaded query routes `:expression` by form (above), and the condition
       `Mutare.Ecto.Host.Condition` locates (binding-form or binding-less) routes `:hosted`. A
-      keyword-shorthand `where(q, x: v)` routes its trailing pairs `{:keyword, …}` as in the
-      `from` form. The plain clause macros (`limit`/`order_by`/…) thread the query and leave their
+      keyword-shorthand `where(q, x: v)` — or `where(q, [p], x: v)`: a binding list before it
+      does not make it a predicate — routes its trailing pairs `{:keyword, …}` as in the `from`
+      form. The plain clause macros (`limit`/`order_by`/…) thread the query and leave their
       data positions raw — with one exception: a **literal-integer bound** (`limit(q, 10)` /
       `q |> offset(5)`, and the `limit:`/`offset:` keys of the `from` form) routes `:hosted`, so
       the `:bound` ±1 bump is woven pin-only. Routing and hosting both use the literal-only guard
@@ -78,6 +79,11 @@ defmodule Mutare.Ecto.Host.Routing do
       routes `:expression` and the trailing **options list routes per-pair**, so its `on:` value
       routes by the same shape rule as the `from` form's (`:hosted` expression condition, per-pair
       `{:keyword, …}` shorthand) and the remaining options (`as:`/`prefix:`/`hints:`) stay raw.
+
+  Whether a condition-position value is a predicate (`:hosted`) or a keyword shorthand (per-pair)
+  is decided once, by `Mutare.Ecto.Host.Condition`, and the host reads the same decision — so
+  no position is ever both pinned per pair by core and woven by the host, whichever sibling
+  positions are hosted.
 
   This relies on core's recursive per-pair routing, hosted values, and `:interpolated` extensions;
   see `c:Mutare.CallRouting.route_arguments/2`.
@@ -157,7 +163,8 @@ defmodule Mutare.Ecto.Host.Routing do
       # binding form (`where(q, [u], cond)`) — host the condition after the binding list — or the
       # binding-less form (`where(q, as(:post).x > 1)`) — host the trailing condition itself.
       %Condition{index: index} -> List.replace_at(base, index, :hosted)
-      # keyword-shorthand form (`where(q, col: v)`) — route the trailing keyword list per-pair.
+      # keyword-shorthand form (`where(q, col: v)` / `where(q, [p], col: v)`) — route the trailing
+      # keyword list per-pair.
       nil -> shorthand_route(args, base)
     end
   end
@@ -260,13 +267,17 @@ defmodule Mutare.Ecto.Host.Routing do
 
   # === keyword-shorthand routing =============================================
 
-  # No binding list → maybe a keyword-shorthand condition (`where(q, col: v)`). Route the trailing
-  # keyword-list argument `{:keyword, value_treatments}` so core mutates each scalar value
-  # `^`-pinned, leaving keys and nil/compound values alone. A non-shorthand trailing arg → default.
+  # No predicate located → maybe a keyword filter, written with or without a binding list before
+  # it (`where(q, col: v)` / `where(q, [p], col: v)`). Route the trailing argument
+  # `{:keyword, value_treatments}` so core mutates each scalar value `^`-pinned, leaving keys and
+  # nil/compound values alone. Anything else trailing (a lone binding list, `[]`) → default.
   defp shorthand_route(args, default) do
-    case args |> List.last() |> KeywordList.nonempty() do
-      nil -> default
-      pairs -> route_last(default, {:keyword, pair_treatments(pairs)})
+    case args |> List.last() |> Condition.shape() do
+      {:keyword_filter, pairs} -> route_last(default, {:keyword, pair_treatments(pairs)})
+      :pairless_list -> default
+      # Reached only by an argless call (`List.last([])` is `nil`, which is no list): a real
+      # trailing predicate is what `Condition.locate/1` would have located.
+      :predicate -> default
     end
   end
 
@@ -292,14 +303,17 @@ defmodule Mutare.Ecto.Host.Routing do
   end
 
   # The treatment for one condition value, wherever a condition is written as a keyword value — a
-  # `from` clause (`where:`/`having:`/`on:`) or a standalone `join`'s `on:` option: a
-  # keyword-shorthand value (`where: [active: true]`, `on: [views: 5]`) routes its pairs
-  # individually; every other value — a top-level interpolation `where: ^cond` included, whose
-  # interior the host sub-contracts to core (`Mutare.Ecto.Island`) — is `:hosted`.
+  # `from` clause (`where:`/`having:`/`on:`) or a standalone `join`'s `on:` option — by the
+  # classification the host itself reads (`Mutare.Ecto.Host.Condition.shape/1`), so the two can
+  # never disagree about who owns a position: a predicate — a top-level interpolation
+  # `where: ^cond` included, whose interior the host sub-contracts to core (`Mutare.Ecto.Island`)
+  # — is `:hosted`; a keyword filter (`where: [active: true]`, `on: [views: 5]`) routes its pairs
+  # individually; a list with no pair to route (`where: []`) is left raw.
   defp condition_treatment(value) do
-    case KeywordList.nonempty(value) do
-      nil -> :hosted
-      pairs -> {:keyword, pair_treatments(pairs)}
+    case Condition.shape(value) do
+      :predicate -> :hosted
+      {:keyword_filter, pairs} -> {:keyword, pair_treatments(pairs)}
+      :pairless_list -> :raw
     end
   end
 

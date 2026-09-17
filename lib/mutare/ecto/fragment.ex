@@ -160,8 +160,11 @@ defmodule Mutare.Ecto.Fragment do
 
   @doc """
   Every single-point mutant of a `where`/`having` condition as self-tagging `Mutare.Ecto.Tag`s, or
-  `[]` when the condition has nothing the catalog mutates (a bare boolean column, a keyword-shorthand
-  value, an interpolation). One tag per mutatable position, each the full condition with that one
+  `[]` when the condition has nothing the catalog mutates (a bare boolean column, an
+  interpolation). The condition is a **predicate**. A keyword filter (`where: [score: 5]`) is not
+  this catalog's syntax — the walk would read a `score: 5` pair as a value tuple, data on both
+  sides, and rename the column — so every caller classifies a condition-position value first
+  (`Mutare.Ecto.Host.Condition`). One tag per mutatable position, each the full condition with that one
   position swapped, tagged with the SQL family that produced it (so the caller can filter by
   `families:`) **and** the finer label naming the operator/kind it swapped (so a qualified
   `# mutare:ignore[ecto:<]` can suppress just that one). `config` carries `dialects:` — the

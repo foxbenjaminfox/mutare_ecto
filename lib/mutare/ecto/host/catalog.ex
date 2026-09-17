@@ -8,6 +8,9 @@ defmodule Mutare.Ecto.Host.Catalog do
   # `finalize/2` pass (`Mutare.Ecto.Equivalence`), and core drops a target whose mutants all
   # skip.
   #
+  # The condition is a **predicate**, which the caller has established
+  # (`Mutare.Ecto.Host.Condition.shape/1`): a keyword filter is never passed here whole.
+  #
   # Delivery (each fragment's branch form — `dynamic`-wrapped, or the bare interior of a
   # condition that is itself a pin — pinning, splicing) lives in `Mutare.Ecto.Host.Target`; the
   # pin-only `:bound` bumps are `Mutare.Ecto.Bound`'s; a binding-reorder is never hosted
@@ -34,7 +37,8 @@ defmodule Mutare.Ecto.Host.Catalog do
   The plugin's own in-fragment catalog for a condition, as raw `Mutare.Ecto.Tag`s (each anchored
   at the node it mutates — `Mutare.Ecto.Walk`). The single name for "what the plugin itself
   mutates in a hosted condition", shared by the host (`own/2`), `Mutare.Ecto.Dynamic` (whole-call
-  rebuilds), and `Mutare.Ecto.Subquery` (recursed into a subquery's own `where`/`having`).
+  rebuilds), and `Mutare.Ecto.Subquery` (recursed into a subquery's own `where`/`having` — a
+  predicate, or one pair *value* of a keyword filter).
   `config` threads to `Fragment` only for its `dialects:` gate.
   """
   @spec own_catalog(Macro.t(), Config.t()) :: [Tag.t()]
