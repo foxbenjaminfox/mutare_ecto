@@ -1039,10 +1039,13 @@ defmodule Mutare.Ecto.HostTest do
 
   describe "totality — a degenerate zero-arg macro yields no hosted target" do
     # Core routes an argless `q |> limit()` / `q |> where()` like any other call (the macros
-    # register with `:any` arity), so `Host.Routing` sees an empty `args` for real: the empty
-    # `query_threading_route/1` and `Condition.bindingless_form/1` clauses are what keep it
-    # total. Routing never marks such a call `:hosted` (there is no literal bound, no condition),
-    # so `Host.host/2` is never offered it — `bound_target/2` needs no fallback of its own.
+    # register with `:any` arity), so `Host.Routing` sees an empty `args` for real. It stays
+    # total: `query_threading_route/2` routes no argument, `Condition.locate/3` reads the lone
+    # threaded query as an arity the macro does not have (the next test), and the
+    # trailing-argument readers get `List.last([])`, which is `nil` — no keyword filter, no
+    # literal bound. Routing never marks such a call `:hosted` (there is no literal bound, no
+    # condition), so `Host.host/2` is never offered it — `bound_target/2` needs no fallback of
+    # its own.
     test "a piped limit()/offset()/where() with no explicit argument hosts nothing, never crashes" do
       for code <- ["limit()", "offset()", "where()"] do
         src = """
