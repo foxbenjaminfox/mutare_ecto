@@ -596,8 +596,8 @@ defmodule Mutare.Ecto.ExoticQueryTest do
       # …as does dropping the inner filter entirely (the `where` gone, the rest kept).
       assert Enum.any?(mutated, &(&1 =~ ~r/exists\(from\(p in MyApp\.Post, select: max/))
 
-      # But SQL never evaluates an EXISTS subquery's select list, so mutating it there is
-      # unconditionally equivalent — suppressed, exactly like an `is_nil` interior. No `min`.
+      # But EXISTS observes only whether a row comes back, and an aggregate swapped for an
+      # aggregate returns the same number of rows — equivalent, so pruned. No `min`.
       refute Enum.any?(mutated, &(&1 =~ "min(p.views)"))
       refute Enum.any?(mutated, &(&1 =~ "min(p2.views)"))
       refute Enum.any?(mutated, &(&1 =~ "min(p3.views)"))

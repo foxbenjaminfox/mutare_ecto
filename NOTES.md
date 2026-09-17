@@ -114,6 +114,27 @@ someone writes it: the piped `from` in the wild is a bare or computed queryable 
 (`Post |> from(as: :post, …)`), whose conditions reference named bindings or are keyword
 shorthand, and those are exactly the shapes now covered.
 
+### Subquery interiors: bounds and ordering are not composed
+
+`Mutare.Ecto.Subquery` composes the row-set producers and (under a value-wrapper) the projection
+swaps into an inline subquery, and leaves `limit`/`offset` and `order_by` alone. That used to be
+recorded as a rejection on equivalence grounds ("inert under `exists`"), which is not true:
+`exists(… offset: k)` asks for more than `k` rows, `limit: 1` → `0` empties the subquery, and
+an ordering picks the row of a windowed or scalar subquery (`order_by: [desc: c.at], limit: 1`).
+They are unimplemented. What composing them takes:
+
+  * **per-shape gating** — the live set depends on the wrapper *and* the subquery: under
+    `exists`, every `offset` mutant but of a `limit` only the bump to `0`; under a value-wrapper,
+    ordering flips only when the subquery is windowed or scalar; a scalar `subquery`'s `limit`
+    widened past `1` raises on Postgres and is equivalent on SQLite. `mode` alone
+    (`:existence`/`:value`) does not carry that.
+  * **a whole-`from` form of the bump** — `Mutare.Ecto.Bound`'s ±1 is hosted pin-only, which an
+    interior (a whole inner `from` rebuilt as one branch of the outer weave) cannot use; only
+    the bound *drop* (`Mutare.Ecto.Query`) composes as is.
+
+The most valuable single case is probably the ordering flip of the latest-row scalar — "does
+any test pin which row the subquery picks?".
+
 ## Design history
 
 What a thing used to be, what it is now, and why. The moduledocs state only the current shape;

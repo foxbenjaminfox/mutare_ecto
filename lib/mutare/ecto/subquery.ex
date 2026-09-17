@@ -21,22 +21,42 @@ defmodule Mutare.Ecto.Subquery do
   #   * **`select` projection — `mode: :value` only** (`all`/`any`/`subquery`/`in`): `Query`'s
   #     `:aggregate`/`:scalar` producers narrowed to the `select`/`select_merge` keys
   #     (`@projection_producers` over `@projection_keys`), where the projected column *is* the
-  #     observed value. **Suppressed under `mode: :existence`** (`exists`): SQL never evaluates an
-  #     EXISTS subquery's select list for any row on any engine, so a swap there is
-  #     *unconditionally* equivalent — the same category as `Fragment`'s `is_nil`-interior
-  #     suppression, and left uncomposed for the same reason.
+  #     observed value. **Pruned under `mode: :existence`** (`exists`), as equivalent: `EXISTS`
+  #     observes only whether the subquery returns a row, and these families rewrite a projected
+  #     value without changing how many rows there are — an aggregate swaps for an aggregate
+  #     (one row per group either way), an arithmetic swap and a coalesce drop recompute a
+  #     column in place. The premise has one known hole, left open: a set-returning function
+  #     reached through a `fragment` (Postgres' `generate_series`) makes the row count depend on
+  #     the select list, and a swap among its arguments is a live mutant this pruning loses.
   #
-  # Deliberately **not** mutated (considered and rejected): the inner `order_by` (inert under
-  # `exists` and under set-wrappers; only observable in the narrow `order_by … limit 1` scalar
-  # shape), `limit`/`offset` (inert under `exists`, a runtime error under a scalar `subquery`,
-  # nondeterministic under `all`/`in` without an order), and `distinct`/`group_by` (inert under
-  # `exists`/`in`, invisible to `min`/`max`). None is a clean, deterministic, wrapper-general
-  # mutant.
+  # **Not composed — unimplemented, not equivalent.** Which of these mutants is live turns on the
+  # wrapper, on whether the subquery is windowed, and in one case on the engine; no gating for
+  # that exists yet, so none is offered (NOTES "Subquery interiors: bounds and ordering are not
+  # composed"):
+  #
+  #   * `limit`/`offset` (`:bound` — the drop is `Query`'s; the ±1 bump is hosted pin-only by
+  #     `Mutare.Ecto.Bound` and has no whole-`from` form to compose). Under `exists`,
+  #     `offset: k` asks for more than `k` rows, so its drop and both bumps are live; a `limit`
+  #     is unobservable only while it stays ≥ 1 — `limit: 1` → `0` makes the predicate
+  #     constantly false. Under a value-wrapper a window decides the value set or the scalar —
+  #     deterministically given a total `order_by` — and a scalar `subquery` widened past one
+  #     row raises on Postgres where SQLite reads the first row.
+  #   * `order_by` (`:ordering`, and the `:aggregate`/`:scalar` swaps of its sort keys). Row
+  #     order cannot change whether a row exists, nor an unwindowed value set, so it is
+  #     unobservable through `exists` and through an unwindowed `all`/`any`/`in`. It is
+  #     observable wherever it picks rows: through any windowed value-wrapper (a top-N `in`),
+  #     and through a scalar `subquery`, which reads one row — the latest-row idiom
+  #     `order_by: [desc: c.at], limit: 1`, and on SQLite (which reads a multi-row scalar's
+  #     first row rather than raising) without the `limit` too.
+  #   * `distinct`/`group_by`: `Query` has no whole-`from` producer for either (their one
+  #     mutation is the pipe-form stage drop, `Mutare.Ecto.ClauseDrop`), so there is nothing to
+  #     compose.
   #
   # A pinned `^expr` inside a mutated clause is sub-contracted to core like a top-level pin (see
   # `Mutare.Ecto.Island`): `interior_islands/2` surfaces it from exactly the clauses each `mode`
   # mutates — the `where`/`having` conditions under every mode, the `select` projection under a
-  # value-wrapper only (an EXISTS select's pins are as unobserved as its swaps).
+  # value-wrapper only. (An EXISTS select's pin binds a projected value `EXISTS` never reads, so
+  # a core mutant there could change only whether evaluating the interior raises.)
   #
   # Only an inline `from(source, clauses)` is recursed. In `exists` position, the equivalent
   # `exists(subquery(from …))` spelling is normalized too, with the `subquery/1` wrapper preserved
@@ -52,8 +72,8 @@ defmodule Mutare.Ecto.Subquery do
   # The `Mutare.Ecto.Query` producers composed into the inner `from`: the ones that change the
   # subquery's **row set** (observable through every wrapper), and — under a value-wrapper only —
   # its `:aggregate`/`:scalar` value swaps narrowed to the projection keys. `Query`'s remaining
-  # producers (`:ordering`, `:bound`, and those two over `order_by`) are never composed (see the
-  # moduledoc).
+  # producers (`:ordering`, `:bound`, and those two over `order_by`) are not composed yet (see
+  # the module comment).
   @structural_producers [:filter_drop, :join_type, :combination, :binding_reorder]
   @projection_producers [:aggregate, :scalar]
   @projection_keys [:select, :select_merge]
@@ -196,7 +216,7 @@ defmodule Mutare.Ecto.Subquery do
   # The `select`/`select_merge` projection's aggregate/scalar swaps — `Query`'s own
   # `:aggregate`/`:scalar` producers narrowed to the projection keys — only under a value-wrapper,
   # where the projected column is the observed value. `order_by` (the other key those producers
-  # walk) is deliberately excluded: its ordering is inert through every wrapper we host.
+  # walk) is left out with the rest of the ordering mutants (the module comment's "not composed").
   defp projection(from, config, :value),
     do: Query.mutations_for(from, config, @projection_producers, &(&1 in @projection_keys))
 
