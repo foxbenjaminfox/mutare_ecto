@@ -274,6 +274,28 @@ defmodule Mutare.Ecto.SpellingCases do
         end
       end
 
+      describe "Same in both spellings — a join's kind" do
+        test "`left_join:` and `join(q, :left, …)` both narrow to the inner join" do
+          compiled =
+            spellings(
+              from:
+                ~S|from(p in "posts", left_join: c in "comments", on: c.post_id == p.id, select: {p.id, c.id})|,
+              direct:
+                ~S|select(join("posts", :left, [p], c in "comments", on: c.post_id == p.id), [p, c], {p.id, c.id})|,
+              pipe:
+                ~S'"posts" |> join(:left, [p], c in "comments", on: c.post_id == p.id) |> select([p, c], {p.id, c.id})'
+            )
+
+          assert_same(compiled, :join_type, [
+            from(p in "posts",
+              inner_join: c in "comments",
+              on: c.post_id == p.id,
+              select: {p.id, c.id}
+            )
+          ])
+        end
+      end
+
       describe "Same in both spellings — a set operation" do
         test "`intersect` ↔ `except`" do
           compiled =
@@ -322,29 +344,6 @@ defmodule Mutare.Ecto.SpellingCases do
       end
 
       # ── the gaps: one spelling only ─────────────────────────────────────────────────────────
-
-      describe "Gap — the join kind narrows in a `from` only" do
-        test "`left_join:` reaches the inner join; `join(q, :left, …)`'s qualifier is left alone" do
-          %{from: from, pipe: pipe} =
-            spellings(
-              from:
-                ~S|from(p in "posts", left_join: c in "comments", on: c.post_id == p.id, select: {p.id, c.id})|,
-              pipe:
-                ~S'"posts" |> join(:left, [p], c in "comments", on: c.post_id == p.id) |> select([p, c], {p.id, c.id})'
-            )
-
-          assert reached(from, :join_type) ==
-                   statements([
-                     from(p in "posts",
-                       inner_join: c in "comments",
-                       on: c.post_id == p.id,
-                       select: {p.id, c.id}
-                     )
-                   ])
-
-          assert reached(pipe, :join_type) == MapSet.new()
-        end
-      end
 
       describe "Gap — a clause other than a filter or a bound drops from a pipeline only" do
         test "a join, a grouping, a `distinct` and a `preload` each drop as a stage, never as a `from` key" do

@@ -113,7 +113,7 @@ name, never a literal that is the name.
 | `ordering` | `order_by: [asc: u.name]` → `[desc: u.name]` |
 | `ordering_nulls` | `:asc_nulls_first` → `:asc_nulls_last` |
 | `bound` | `limit: 10` → `9` / `11`, or drop the `limit`/`offset` |
-| `join_type` | `left_join` → `inner_join`, `full_join` → `left_join`/`right_join` (narrows cardinality) |
+| `join_type` | `left_join:` → `inner_join:`, `full_join:` → `left_join:`/`right_join:`; likewise `join(q, :left, …)` → `join(q, :inner, …)` (narrows cardinality) |
 | `combination` | `intersect` ↔ `except`, `intersect_all` ↔ `except_all` (`union` is left alone) |
 | `aggregate` | `sum(u.x)` ↔ `avg(u.x)`, `min` ↔ `max` (in `select`/`order_by`/`having`, or `Repo.aggregate`) |
 | `clause_drop` | drop a standalone/pipe stage — `q \|> group_by(…)`, `\|> select(…)`, `\|> join(…)`, … → `q` (never `order_by`: an unordered result has no defined order to test) |
@@ -144,15 +144,14 @@ is a live mutant — that bound alone gone.
 Ecto lets one query be written as a `from` keyword list (piped too:
 `User |> from(as: :u, where: …)`) or as composable stages (`q |> where([u], …)`, or the same
 calls written directly, `where(q, [u], …)`). Most families reach the same mutated queries either
-way; the last four rows are the ones that do not, so respelling a query there changes which
+way; the last three rows are the ones that do not, so respelling a query there changes which
 mutants it gets.
 
 | | `from` keyword form | composable stages |
 |---|---|---|
 | A condition (`where`/`having`/`or_*`, a join's `on:`): every in-condition family, `filter_drop`, keyword-shorthand values | ✓ | ✓ |
-| `bound`, `ordering`, `ordering_nulls`, `combination`; `aggregate`/`arithmetic`/`coalesce` in a `select`/`order_by` | ✓ | ✓ |
+| `bound`, `ordering`, `ordering_nulls`, `join_type`, `combination`; `aggregate`/`arithmetic`/`coalesce` in a `select`/`order_by` | ✓ | ✓ |
 | `binding_reorder` | the source list (`from [a, b] in q`), which every clause reads | each stage's own list |
-| `join_type` | ✓ `left_join:` → `inner_join:` | ✗ `join(q, :left, …)` keeps its qualifier |
 | `clause_drop` — a join, `group_by`, `distinct`, `select`, `preload`, `lock`, `windows`, `with_cte`, a set operation | ✗ only `where`/`having` (`filter_drop`) and `limit`/`offset` (`bound`) drop | ✓ |
 | The query being refined, when computed — `recent(2)` | ✗ `from p in recent(2)`: the `2` is not mutated | ✓ `where(recent(2), …)` and `recent(2) \|> where(…)`: Mutare's own families mutate it |
 | The query being refined, when a schema or table name | held back from Mutare's families (a swapped name is a broken query) | held back written directly (`where(Post, …)`), but **not** on a pipe's left: `Post \|> where(…)` → `Mutare.Mutant \|> where(…)` |

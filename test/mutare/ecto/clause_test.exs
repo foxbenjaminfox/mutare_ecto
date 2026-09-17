@@ -283,6 +283,119 @@ defmodule Mutare.Ecto.ClauseTest do
     end
   end
 
+  describe "JoinType (standalone / pipe join)" do
+    # The standalone twin of `Mutare.Ecto.Query`'s `left_join:` key swap, over the same
+    # `Mutare.Ecto.JoinType` catalog: reported at the written qualifier, as that one is at the key.
+    @postgres [mutators: [{Mutare.Ecto, repo: MyApp.Repo, dialects: [:postgres]}]]
+
+    defp join_type_diffs(src, opts \\ []) do
+      for site <- sites(src, opts),
+          "join_type" in site.variant,
+          do: {site.original_code, site.mutated_code}
+    end
+
+    test "narrows a left join in the pipe form, where the qualifier is the first visible argument" do
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q(query), do: query |> join(:left, [p], c in "comments", on: c.post_id == p.id)
+      end
+      """
+
+      assert join_type_diffs(src) == [{":left", ":inner"}]
+      assert metamutant(src) =~ ~s|join(:inner, [p], c in "comments"|
+      assert_compiles(src)
+    end
+
+    test "narrows a full join in the direct form, where it follows the query" do
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q(query), do: join(query, :full, [p], c in "comments", on: c.post_id == p.id)
+      end
+      """
+
+      assert join_type_diffs(src) == [{":full", ":left"}]
+      assert metamutant(src) =~ ~s|join(query, :left, [p], c in "comments"|
+      assert_compiles(src)
+    end
+
+    test "the RIGHT-JOIN targets are dialect-gated, exactly as the `from` key swap's are" do
+      for {qualifier, portable, gated} <- [
+            {":left", [":inner"], [":inner", ":right"]},
+            {":right", [], [":left"]},
+            {":full", [":left"], [":left", ":right"]}
+          ] do
+        src = """
+        defmodule M do
+          import Ecto.Query
+          def q(query), do: join(query, #{qualifier}, [p], c in "comments", on: c.post_id == p.id)
+        end
+        """
+
+        assert for({^qualifier, to} <- join_type_diffs(src), do: to) == portable
+        assert for({^qualifier, to} <- join_type_diffs(src, @postgres), do: to) == gated
+        assert_compiles(src, @postgres)
+      end
+    end
+
+    test "a kind that is never widened, and every short arity, yields no swap" do
+      for call <- [
+            ~s|join(query, :inner, [p], c in "comments", on: c.post_id == p.id)|,
+            ~s|join(query, :cross, [p], c in "comments")|,
+            ~s|join(query, :left_lateral, [p], c in "comments", on: true)|,
+            # join/3 and join/4: the qualifier keeps its place whatever follows it.
+            ~s|join(query, :inner, "comments")|,
+            ~s|query \|> join(:cross, "comments")|
+          ] do
+        src = """
+        defmodule M do
+          import Ecto.Query
+          def q(query), do: #{call}
+        end
+        """
+
+        assert join_type_diffs(src, @postgres) == [], "expected no join_type mutant for #{call}"
+      end
+    end
+
+    test "a short arity still swaps: `join/3` and `join/4` carry the qualifier in the same place" do
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q(query), do: query |> join(:left, [p], c in assoc(p, :user))
+        def r(query), do: join(query, :left, "comments")
+      end
+      """
+
+      assert join_type_diffs(src) == [{":left", ":inner"}, {":left", ":inner"}]
+      assert_compiles(src)
+    end
+
+    test "a computed qualifier is a value, mutated where it is bound — not swapped here" do
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q(query, kind), do: join(query, kind, [p], c in "comments", on: c.post_id == p.id)
+      end
+      """
+
+      assert join_type_diffs(src, @postgres) == []
+    end
+
+    test "the swap carries the source qualifier as its finer label" do
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q(query), do: query |> join(:left, [p], c in "comments", on: c.post_id == p.id) # mutare:ignore[ecto:left]
+      end
+      """
+
+      assert [%{variant: ["join_type", "left"], ignored: true}] =
+               Enum.filter(sites(src), &("join_type" in &1.variant))
+    end
+  end
+
   describe "Arithmetic (standalone / pipe select)" do
     test "swaps an arithmetic operator in the pipe select form" do
       src = """
@@ -372,7 +485,7 @@ defmodule Mutare.Ecto.ClauseTest do
     # `%QueryCall{}` (mirroring `Mutare.Ecto.NormalizedASTTest`) since a real zero-arg call has no
     # matching macro arity to route through the full pipeline.
     test "an empty-args order_by / limit / select returns []" do
-      for name <- [:order_by, :limit, :offset, :select, :select_merge, :intersect] do
+      for name <- [:order_by, :limit, :offset, :select, :select_merge, :intersect, :join] do
         {head, meta, args} = Sourceror.parse_string!("#{name}()")
         meta = Meta.stamp_routed_call(meta, {Mutare.Calls.module_key(Ecto.Query), name, :unpiped})
         call = QueryCall.parse({head, meta, args})

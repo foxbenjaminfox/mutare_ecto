@@ -180,6 +180,7 @@ Each row is role + the rule(s) that module is the **home** for.
 | `ordering.ex` | direction / nulls-placement flips and the implicit-`asc` re-tag; home of the engine-default NULL placement table and of why `order_by` is never dropped |
 | `aggregate.ex` / `scalar.ex` | shared per-node catalogs (the aggregate ladder; arithmetic swaps + the coalesce drop); `aggregate.ex` is home of the `count` exclusion and of the ladder's ownership rule (Ecto's `/1` aggregates only, never a same-named author macro) |
 | `combination.ex` | the set-operation swap table (`union` deliberately unswapped) |
+| `join_type.ex` | the join-kind swap table, keyed by qualifier and read by both spellings (`query.ex` rewrites a `left_join:` key, `clause.ex` a `join(q, :left, …)` qualifier); the direction policy stays `query.ex`'s |
 | `bound.ex` | the `:bound` ±1 bump; home of pin-only hosting and the `literal?/1` = `bumps/1` agreement |
 | `dynamic.ex` | free-standing `dynamic/1,2`; home of its whole-call in-place delivery |
 | `static_condition.ex` | the condition the host cannot weave (a subquery in a `having`; a declaration the plugin cannot re-declare); home of the delivery rule (`delivery/4` — receiving clause × expression × predicate kind × declaration, consulted by the host and the fallback alike) and of its whole-call fallback delivery |

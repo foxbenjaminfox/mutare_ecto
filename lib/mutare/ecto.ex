@@ -124,8 +124,8 @@ defmodule Mutare.Ecto do
     Equivalence,
     Fragment,
     Host,
+    JoinType,
     Ordering,
-    Query,
     Scalar,
     Surface,
     Tag,
@@ -175,7 +175,7 @@ defmodule Mutare.Ecto do
   """
   # Every producer contributing finer labels (`Mutare.Ecto.Vocabulary`). The arithmetic operators
   # arrive via `Scalar`, which owns them (`Fragment` only applies its swaps per condition node).
-  @vocabularies [Fragment, Scalar, Aggregate, Ordering, Query, Combination, ValidationBoundary]
+  @vocabularies [Fragment, Scalar, Aggregate, Ordering, JoinType, Combination, ValidationBoundary]
   @impl Mutare.Mutator
   @spec variants() :: [atom() | String.t()]
   def variants do

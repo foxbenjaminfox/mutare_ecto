@@ -17,6 +17,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   deliberately not swapped; `validate_length`'s inclusive `min`/`max` have no
   strict counterpart, so Mutare's integer family still provides their off-by-one mutations.
 
+- **`join_type` reaches a standalone join.** `join(q, :left, [p], c in Comment, on: …)`
+  and `q |> join(:full, …)` now have their qualifier narrowed — `:left` → `:inner`,
+  `:full` → `:left`/`:right`, and `:left` ↔ `:right` under `dialects: [:postgres]` or
+  `[:mysql]` — exactly as a `from`'s `left_join:` key always was, under the same
+  `# mutare:ignore[ecto:left]` labels. Only a written qualifier is swapped, never a
+  computed one.
+
 - **A standalone join written without a binding variable has its `on:` mutated.**
   `join(q, :inner, [p], "audit", on: p.id > 1)` (or a bare `subquery`, `fragment`,
   `^source` join — typically reached through its `as:` name) used to receive only
@@ -26,15 +33,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **The README states what each query spelling gets, instead of "both syntaxes are
   covered".** Most families reach the same mutated queries from a `from` keyword
-  list and from composable stages, but not all: `join_type` applies to a `from`
-  join key only, `clause_drop` to a pipeline stage only, a computed query is
+  list and from composable stages, but not all: `clause_drop` applies to a
+  pipeline stage only, a computed query is
   mutated under `where(recent(2), …)` and not under `from p in recent(2)`, and a
   schema or table name on a pipe's left (`Post |> where(…)`) is not held back from
   Mutare's own families. The new "Coverage by spelling" section lists these, along
   with two placement effects — only an inline `from` subquery is entered, and a
   `^` pin's interior is mutated inside a condition only — and what a dropped stage
-  does when a later stage depended on it. No mutant changed; each row is now
-  pinned by a test.
+  does when a later stage depended on it. Each row is pinned by a test.
 
 - **Changeset stages are routed.** Listing the plugin now holds back from Mutare's
   core families the changeset positions where a core swap is a crash rather than

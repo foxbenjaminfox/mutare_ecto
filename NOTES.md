@@ -147,13 +147,6 @@ mutants agree. A gap is asserted as "this family reaches nothing here", so closi
 its test until the table is rewritten. None of the gaps below rests on an equivalence argument;
 each is unimplemented.
 
-  * **`join_type` on a standalone `join/3,4,5`.** Plugin-side and small. The narrowing rationale
-    (`Mutare.Ecto.Query`) carries over unchanged, and the qualifier is an ordinary runtime
-    expression — Ecto validates a non-literal one through `Ecto.Query.Builder.Join.qual!/1` —
-    so a literal `:left`/`:full`/`:right` can be swapped in a whole-call rewrite like
-    `Mutare.Ecto.Clause`'s. It needs the flip tables keyed by qualifier rather than by `from`
-    key, the dialect gate threaded into `Clause` (which ignores its context today), and
-    `Surface`'s ":mutations require macro :clause" rule widened to `:join`.
   * **`clause_drop` on a `from` key.** For a key nothing else can reference (`group_by:`,
     `distinct:`, `preload:`, `lock:`, `select:` over a schema source) it is one more `from_drop`
     family through `Query`'s existing `drops/3`. A `join:` is the hard one, and the reason the
@@ -361,6 +354,20 @@ and each needed a dialect gate for the introduced kind. The family now only narr
 `left_join` ↔ `right_join`; every flip permutes a form already reachable from the source, so the
 remaining gates (`RIGHT JOIN` under `:postgres`/`:mysql`) are purely about the *target* kind's
 portability (`Mutare.Ecto.Query`).
+
+### JoinType: one catalog for both spellings
+
+The join-kind flips used to be two maps inside `Mutare.Ecto.Query`, keyed by `from` clause key
+(`left_join: [:inner_join]`), and the only thing that read them was the whole-`from` key swap —
+so `join(q, :left, …)` kept its qualifier, a gap nobody had decided on (it surfaced when the
+spellings were first compared by the statements they reach). The flips are keyed by
+**qualifier** now, the one name both spellings write, in a shared `Mutare.Ecto.JoinType`
+catalog beside `Mutare.Ecto.Combination`: `Query` converts a join key to its qualifier and the
+targets back, `Mutare.Ecto.Clause` swaps the qualifier argument in a whole-call rewrite, and
+the policy, the `dialects:` gate and the `# mutare:ignore` labels are the same by construction
+rather than by parallel maintenance. Only a literal qualifier is swapped: Ecto accepts a
+computed one (validated at runtime, `Ecto.Query.Builder.Join.qual!/1`), which is a value
+mutated where it is bound.
 
 ### Surface: one descriptor table instead of parallel lists
 

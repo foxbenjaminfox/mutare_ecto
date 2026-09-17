@@ -7,13 +7,14 @@ defmodule Mutare.Ecto.Surface do
   #
   # The two spellings of a name are declared **independently**: `:mutations`/`:stage_drop` are
   # what it gets as a composable stage, `:from`/`:from_drop` what it gets as a `from` key. A
-  # spelling gap is therefore a key present on one side only — `:join_type` under `:from` alone,
-  # `:clause_drop` under `:stage_drop` alone. Each is stated in the README's "Coverage by
-  # spelling" table and pinned by `Mutare.Ecto.SpellingCases`, so closing one is an edit to all
-  # three (NOTES "Spelling gaps: what the README table declares, and what closing each takes").
+  # spelling gap is therefore a key present on one side only — `:clause_drop` under
+  # `:stage_drop` alone — where a shared capability sits on both (`:join_type` under `:from`
+  # *and* `:mutations`). Each gap is stated in the README's "Coverage by spelling" table and
+  # pinned by `Mutare.Ecto.SpellingCases`, so closing one is an edit to all three (NOTES
+  # "Spelling gaps: what the README table declares, and what closing each takes").
 
   @macro_kinds [:from, :condition, :join, :clause, :dynamic, :raw]
-  @mutation_capabilities [:ordering, :aggregate, :scalar, :combination]
+  @mutation_capabilities [:ordering, :aggregate, :scalar, :combination, :join_type]
   @from_capabilities [
     :hosted,
     :ordering,
@@ -110,6 +111,7 @@ defmodule Mutare.Ecto.Surface do
     %{
       name: :join,
       macro: :join,
+      mutations: [:join_type],
       stage_drop: :clause_drop,
       from: [:join_binding, :join_type]
     },
@@ -180,7 +182,12 @@ defmodule Mutare.Ecto.Surface do
        ":dynamic_subqueries is declared only as true"},
       {is_nil(dynamic_subqueries) or :hosted in from,
        ":dynamic_subqueries requires a :hosted :from capability"},
-      {mutations == [] or macro_kind == :clause, ":mutations require macro :clause"},
+      # The qualifier swap is the standalone `join`'s and nothing else's; every other standalone
+      # capability mutates a plain clause macro's value or name.
+      {:join_type not in mutations or macro_kind == :join,
+       ":join_type mutation requires macro :join"},
+      {mutations -- [:join_type] == [] or macro_kind == :clause,
+       ":mutations other than :join_type require macro :clause"},
       {is_nil(stage_drop) or macro_kind in [:condition, :join, :clause],
        ":stage_drop requires a composable macro (:condition/:join/:clause)"},
       {is_nil(from_drop) or from != [], ":from_drop requires a non-empty :from"},
@@ -197,7 +204,7 @@ defmodule Mutare.Ecto.Surface do
   end)
 
   @type macro_kind :: :from | :condition | :join | :clause | :dynamic | :skip
-  @type mutation_capability :: :ordering | :aggregate | :scalar | :combination
+  @type mutation_capability :: :ordering | :aggregate | :scalar | :combination | :join_type
   @type from_capability ::
           :hosted
           | :ordering

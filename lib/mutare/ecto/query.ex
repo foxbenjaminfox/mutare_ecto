@@ -29,6 +29,8 @@ defmodule Mutare.Ecto.Query do
       `left_join`↔`right_join` swap and `full_join`→`left_join` are portable (every adapter
       supports `INNER`/`LEFT`); `full_join`→`right_join` and the `RIGHT` leg of `left_join`↔
       `right_join` are **dialect-gated** (`:postgres`/`:mysql` — SQLite lacks `RIGHT JOIN`).
+      The flips are the shared `Mutare.Ecto.JoinType` catalog's, keyed by join qualifier, which
+      `Mutare.Ecto.Clause` applies to a standalone `join(q, :left, …)` under this same policy.
     * **Combination** — swap a set-operation clause's *key*: `intersect:`↔`except:` and
       `intersect_all:`↔`except_all:`. "Does any test pin which rows the combination keeps?" The
       shared `Mutare.Ecto.Combination` catalog defines the pairing, its portability, and the
@@ -59,25 +61,12 @@ defmodule Mutare.Ecto.Query do
   a source binding list (`from([a, b] in query)`) can still reorder.
   """
 
-  alias Mutare.Ecto.{Combination, Config, Context, Surface, Tag, ValueCatalog}
+  alias Mutare.Ecto.{Combination, Config, Context, JoinType, Surface, Tag, ValueCatalog}
   alias Mutare.Ecto.AST.{BindingList, FromCall, KeywordList, QueryCall}
   alias Mutare.Ecto.AST.KeywordList.Entry
   alias Mutare.Mutator.Mutation
 
   @behaviour Mutare.Ecto.SubMutator
-  @behaviour Mutare.Ecto.Vocabulary
-
-  # JoinType flip tables (the direction policy is the moduledoc's; history in NOTES "JoinType:
-  # narrowing only, no introducing swaps"). The gate is about the **target** kind's portability:
-  # `left_join`↔`right_join` and `full_join`→`right_join` need `RIGHT JOIN` (`@right_join_dialects`
-  # — SQLite lacks it); `left_join`→`inner_join` and `full_join`→`left_join` need no gate.
-  @portable_join_flips %{left_join: [:inner_join], full_join: [:left_join]}
-  @right_join_flips %{
-    left_join: [:right_join],
-    right_join: [:left_join],
-    full_join: [:right_join]
-  }
-  @right_join_dialects [:postgres, :mysql]
 
   @doc """
   Whole-`from` mutations for a `from(...)` node as self-tagging `Mutare.Ecto.Tag`s (the label the
@@ -230,40 +219,23 @@ defmodule Mutare.Ecto.Query do
 
   # Swap each join clause's *kind* by rewriting its key (`left_join`→`inner_join`,
   # `full_join`→`left_join`/`right_join`, and `left_join`↔`right_join` under a `RIGHT`-capable
-  # dialect), keeping the join's value (`c in assoc(p, :x)`). `join`/`inner_join` are never a
-  # flip source, so they never match here. One mutant per enabled target.
+  # dialect), keeping the join's value (`c in assoc(p, :x)`). The flips are the shared
+  # `Mutare.Ecto.JoinType` catalog's, keyed by qualifier: a key that spells none (`join:`,
+  # `cross_join:`, a lateral) reads as `nil`, which is no flip source. One mutant per enabled
+  # target.
   defp join_swaps(from, config, clause?) do
-    flips = join_flips(config)
+    targets = fn key ->
+      key |> JoinType.qualifier() |> JoinType.targets(config) |> Enum.map(&JoinType.from_key/1)
+    end
 
-    key_swaps(from, :join_type, clause?, &Map.get(flips, &1, []), &join_label/1)
+    key_swaps(
+      from,
+      :join_type,
+      clause?,
+      targets,
+      &(&1 |> JoinType.qualifier() |> JoinType.label())
+    )
   end
-
-  # The `# mutare:ignore` label for a join swap: the **source** join kind without its `_join`
-  # suffix, so `# mutare:ignore[ecto:left]` leaves a left join's kind alone. Derived structurally
-  # (like `Mutare.Ecto.Combination.label/1`) rather than hand-listed, so a new flip source can't
-  # go unmapped — in practice only ever `left_join`/`right_join`/`full_join`, since `join`/
-  # `inner_join` are never a flip source.
-  defp join_label(key), do: String.replace_suffix(Atom.to_string(key), "_join", "")
-
-  # `Mutare.Ecto.Vocabulary`: each source join kind, under both flip tables (`left_join` sits in
-  # both, so it repeats — the assembler dedupes).
-  @impl Mutare.Ecto.Vocabulary
-  def variant_labels do
-    [@portable_join_flips, @right_join_flips]
-    |> Enum.flat_map(&Map.keys/1)
-    |> Enum.map(&join_label/1)
-  end
-
-  # The portable (narrowing) flips, plus the RIGHT-capable map when `config` enables a dialect
-  # that supports it.
-  defp join_flips(config) do
-    @portable_join_flips
-    |> maybe_merge(@right_join_flips, Config.dialect_enabled?(config, @right_join_dialects))
-  end
-
-  defp maybe_merge(flips, _added, false), do: flips
-  # mutare:ignore[operand_swap] merge order is irrelevant — targets are consumed as a set
-  defp maybe_merge(flips, added, true), do: Map.merge(flips, added, fn _k, a, b -> a ++ b end)
 
   # Swap each set-operation clause's *kind* by rewriting its key (`intersect:`↔`except:`,
   # `intersect_all:`↔`except_all:`), keeping the clause's value (the `^combined` query) — exactly

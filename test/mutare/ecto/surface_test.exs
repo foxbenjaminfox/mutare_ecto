@@ -116,6 +116,14 @@ defmodule Mutare.Ecto.SurfaceTest do
 
     assert Surface.macro_kind(:join) == :join
     assert Surface.macro_kind(:inner_join) == nil
+
+    # The standalone side of the same capability: `join/3,4,5` is the one macro that writes a
+    # qualifier, so it alone carries the swap (`Mutare.Ecto.Clause`).
+    assert Surface.mutations(:join) == [:join_type]
+
+    for %{name: name} <- Surface.descriptors(),
+        name != :join,
+        do: refute(:join_type in Surface.mutations(name))
   end
 
   test "unknown names are inert" do
