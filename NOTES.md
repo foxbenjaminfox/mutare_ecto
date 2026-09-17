@@ -242,6 +242,12 @@ alone — which also fixed the lowered rebuild of an inner query's root pin, sin
 through the same `wrap` (`Mutare.Ecto.Host.Target`; `root_pin_delivery_test.exs` holds the
 baseline-parity check across every arm of Ecto's dispatch and every hosted position).
 
+`Host.Target` first told a root pin by matching the written `^` itself — a second reading of a value
+`Mutare.Ecto.Host.Condition.shape/1` had already classified, as a predicate. The kind is now part of
+that one classification (`{:predicate, :root_pin}` beside `{:predicate, :expression}`), carried by
+`locate/1`'s struct and the host's keyword-value paths into every condition target, so the same
+decision says whether the host owns a value and how it weaves it.
+
 ### Ordering: implicit-direction flip replaces the order_by clause drop
 
 `order_by` used to be droppable like any other clause. But an `ORDER BY`-less query's row order

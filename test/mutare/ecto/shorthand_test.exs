@@ -115,9 +115,39 @@ defmodule Mutare.Ecto.ShorthandTest do
   describe "Condition.shape/1 — the one predicate-versus-keyword-filter classification" do
     defp shape(code), do: code |> Sourceror.parse_string!() |> Host.Condition.shape()
 
-    test "anything but a list literal is a predicate — a top-level pin included" do
-      for code <- ["p.score > 5", "p.a == 1 and p.b == 2", "is_nil(p.x)", "^cond", "true", "x"] do
-        assert shape(code) == :predicate, "expected `#{code}` to be a predicate"
+    test "an expression is a predicate of kind :expression — a pin inside it included" do
+      for code <- [
+            "p.score > 5",
+            "p.a == 1 and p.b == 2",
+            "is_nil(p.x)",
+            "p.score > ^min",
+            "not ^cond",
+            "true",
+            "x"
+          ] do
+        assert shape(code) == {:predicate, :expression}, "expected `#{code}` to be an expression"
+      end
+    end
+
+    test "a pin that is the whole condition is a predicate of kind :root_pin, whatever it carries" do
+      # Ecto dispatches such a pin on its runtime value, so what the interior computes — a
+      # dynamic, a boolean, a keyword list — never changes the kind.
+      for code <- ["^cond", "^[score: 5]", "^true", "^(if on?, do: [active: true], else: [])"] do
+        assert shape(code) == {:predicate, :root_pin}, "expected `#{code}` to be a root pin"
+      end
+    end
+
+    test "locate/1 reports the kind of the predicate it located, in both argument forms" do
+      for {code, kind} <- [
+            {"where(q, [p], p.score > ^min)", :expression},
+            {"where(q, as(:post).score > 5)", :expression},
+            {"where(q, [p], ^cond)", :root_pin},
+            {"where(q, ^cond)", :root_pin}
+          ] do
+        {:where, _meta, args} = Sourceror.parse_string!(code)
+
+        assert %Host.Condition{kind: ^kind} = Host.Condition.locate(args),
+               "expected `#{code}` to locate a #{kind}"
       end
     end
 

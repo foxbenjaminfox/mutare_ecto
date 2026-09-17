@@ -277,7 +277,7 @@ defmodule Mutare.Ecto.Host.Routing do
       :pairless_list -> default
       # Reached only by an argless call (`List.last([])` is `nil`, which is no list): a real
       # trailing predicate is what `Condition.locate/1` would have located.
-      :predicate -> default
+      {:predicate, _kind} -> default
     end
   end
 
@@ -311,7 +311,7 @@ defmodule Mutare.Ecto.Host.Routing do
   # individually; a list with no pair to route (`where: []`) is left raw.
   defp condition_treatment(value) do
     case Condition.shape(value) do
-      :predicate -> :hosted
+      {:predicate, _kind} -> :hosted
       {:keyword_filter, pairs} -> {:keyword, pair_treatments(pairs)}
       :pairless_list -> :raw
     end

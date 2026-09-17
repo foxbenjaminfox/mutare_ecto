@@ -109,6 +109,10 @@ defmodule Mutare.Ecto.StaticCondition do
     end
   end
 
-  defp declined?(clause, condition),
-    do: Condition.shape(condition) == :predicate and not weavable?(clause, condition)
+  # The host's own test, for either predicate kind — though a `:root_pin` never fails
+  # `weavable?/2`: `Subquery.present?/1` does not enter a pin, and the pin-only weave hands Ecto
+  # the value the written pin did.
+  defp declined?(clause, condition) do
+    match?({:predicate, _kind}, Condition.shape(condition)) and not weavable?(clause, condition)
+  end
 end

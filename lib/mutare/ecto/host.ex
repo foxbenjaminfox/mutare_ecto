@@ -18,12 +18,12 @@ defmodule Mutare.Ecto.Host do
   same classification the classifier used (`Mutare.Ecto.Host.Condition.shape/1`), wherever the
   value is written: a `from` clause, a condition macro's argument, a join's `on:` option.
 
-  A condition that is itself a `^` pin (`where: ^filters`, `where(q, ^cond)`, a join's
-  `on: ^cond`) is woven **pin-only**, over its bare interior: Ecto treats such a root
-  interpolation according to its runtime value — a keyword list is a field filter, a boolean a
-  literal condition, a dynamic is expanded — and a `dynamic/2` wrap would turn the first two into
-  plain parameters. Pinning the selector alone hands Ecto the same kind of value the written pin
-  did, so the instrumented query behaves as the original.
+  A condition that is itself a `^` pin (`where: ^filters`, `where(q, ^cond)`, a join's `on: ^cond` —
+  a predicate of kind `:root_pin`, by the same classification) is woven **pin-only**, over its bare
+  interior: Ecto treats such a root interpolation according to its runtime value — a keyword list is
+  a field filter, a boolean a literal condition, a dynamic is expanded — and a `dynamic/2` wrap
+  would turn the first two into plain parameters. Pinning the selector alone hands Ecto the same
+  kind of value the written pin did, so the instrumented query behaves as the original.
 
   Besides conditions, the host also weaves the `:bound` ±1 bump of a literal `limit`/`offset`
   value, as a **pin-only** target with no `dynamic/2` wrap and no bindings — see
@@ -128,21 +128,22 @@ defmodule Mutare.Ecto.Host do
   # pin-only and leaves these bindings unused (`Mutare.Ecto.Host.Target`).
   defp from_target(condition, bindings, index, context) do
     case predicate_mutants(condition, context) do
-      [] -> []
-      mutants -> [Target.from_clause(condition, mutants, bindings, index)]
+      {kind, [_ | _] = mutants} -> [Target.from_clause(condition, kind, mutants, bindings, index)]
+      _none -> []
     end
   end
 
-  # The catalog mutants of a condition written as a **keyword value** (a `from` clause, a join's
-  # `on:` option) — of a predicate only (the moduledoc). A keyword filter is not the host's: its
-  # pairs were routed to core one by one, and neither the predicate catalog nor the pin
-  # sub-contract is offered it, so hosting a *sibling* never changes what happens to it. (A
-  # condition macro's argument takes the same decision inside `Condition.locate/1`.)
+  # The predicate kind and catalog mutants of a condition written as a **keyword value** (a
+  # `from` clause, a join's `on:` option) — of a predicate only (the moduledoc), `nil` otherwise.
+  # A keyword filter is not the host's: its pairs were routed to core one by one, and neither the
+  # predicate catalog nor the pin sub-contract is offered it, so hosting a *sibling* never
+  # changes what happens to it. (A condition macro's argument takes the same decision inside
+  # `Condition.locate/1`.)
   defp predicate_mutants(value, context) do
     case Condition.shape(value) do
-      :predicate -> Catalog.mutants(value, context)
-      {:keyword_filter, _pairs} -> []
-      :pairless_list -> []
+      {:predicate, kind} -> {kind, Catalog.mutants(value, context)}
+      {:keyword_filter, _pairs} -> nil
+      :pairless_list -> nil
     end
   end
 
@@ -151,10 +152,11 @@ defmodule Mutare.Ecto.Host do
   # `Bindings.declarations/1` renders as `[]`. A condition that `macro` cannot take as a dynamic
   # is declined, as in the `from` form (`Mutare.Ecto.StaticCondition`).
   defp condition_target(macro, args, context) do
-    with %Condition{node: condition, index: index, bindings: list} <- Condition.locate(args),
+    with %Condition{node: condition, index: index, kind: kind, bindings: list} <-
+           Condition.locate(args),
          true <- StaticCondition.weavable?(macro, condition),
          [_ | _] = mutants <- Catalog.mutants(condition, context) do
-      [Target.condition(condition, mutants, Bindings.declarations(list), index)]
+      [Target.condition(condition, kind, mutants, Bindings.declarations(list), index)]
     else
       _ -> []
     end
@@ -186,8 +188,8 @@ defmodule Mutare.Ecto.Host do
          true <- JoinOn.hostable_standalone?(args, options.entries),
          %Entry{value: condition} = Enum.at(options.entries, pair_index),
          [_ | _] = bindings <- Bindings.join(args),
-         [_ | _] = mutants <- predicate_mutants(condition, context) do
-      [Target.keyword_condition(condition, mutants, bindings, arg_index, pair_index)]
+         {kind, [_ | _] = mutants} <- predicate_mutants(condition, context) do
+      [Target.keyword_condition(condition, kind, mutants, bindings, arg_index, pair_index)]
     else
       _ -> []
     end

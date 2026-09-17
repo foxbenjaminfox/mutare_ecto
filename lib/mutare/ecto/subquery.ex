@@ -226,17 +226,17 @@ defmodule Mutare.Ecto.Subquery do
 
   # What the predicate catalog may walk in one hosted-clause value, by the classification routing
   # and hosting share (`Mutare.Ecto.Host.Condition.shape/1`), each root with the rebuild of the
-  # whole value around its replacement. A predicate is its own root. A keyword filter
-  # (`where: [score: 5]`) is not the *host's* — but an interior mutant is delivered as the inner
-  # `from` rebuilt, so the filter stays in a filter position (no `dynamic/2` wrap to refuse it)
-  # and, the whole outer condition being hosted, core never reaches its pairs. Each pair
-  # **value** is therefore a root, SQL data like the right side of the `c.score == 5` it
-  # abbreviates. A **key** never is: it names a column, and the catalog would read `score: 5` as
-  # a value tuple with two data sides and rename it (`[mutare: 5]` — an unknown-column query,
-  # not a mutant).
+  # whole value around its replacement. An interior mutant is delivered as the inner `from`
+  # rebuilt — never through `Mutare.Ecto.Host.Target`, so with no `dynamic/2` wrap — and so a
+  # predicate, of either kind, is its own root. A keyword filter (`where: [score: 5]`) is not the
+  # *host's*, but it stays in a filter position, where nothing refuses it, and, the whole outer
+  # condition being hosted, core never reaches its pairs. Each pair **value** is therefore a root,
+  # SQL data like the right side of the `c.score == 5` it abbreviates. A **key** never is: it
+  # names a column, and the catalog would read `score: 5` as a value tuple with two data sides and
+  # rename it (`[mutare: 5]` — an unknown-column query, not a mutant).
   defp catalog_roots(value) do
     case Condition.shape(value) do
-      :predicate ->
+      {:predicate, _kind} ->
         [{value, & &1}]
 
       {:keyword_filter, pairs} ->

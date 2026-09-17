@@ -27,42 +27,61 @@ defmodule Mutare.Ecto.Host.Target do
   #     `^interior` did, and Ecto's dispatch is untouched by construction — with no binding
   #     list re-declared, since nothing is wrapped.
   #
+  # Which of the two a condition is, this module does not decide: every condition target takes
+  # the predicate kind (`:expression` / `:root_pin`) that `Mutare.Ecto.Host.Condition.shape/1`
+  # reported, the one classification that also decides whether the host owns the value at all.
+  #
   # The logical fragment (the Site's diff, the ignore range) stays the written condition, `^`
   # included; only the branch is unpinned, by `:wrap` — which core applies to the mutant
   # branches, the fallback branch, and a nested host's lowered rebuild alike, so the one choice
   # in `branch/2` covers all three.
 
   alias Mutare.Ecto.AST.{FromCall, KeywordList, QueryCall}
+  alias Mutare.Ecto.Host.Condition
   alias Mutare.Mutator.MacroHost
 
   @type t :: MacroHost.Target.t()
 
-  @doc "A target for one condition in a `from` keyword clause."
+  @doc """
+  A target for one condition in a `from` keyword clause. `bindings` are what an `:expression`'s
+  `dynamic/2` re-declares; a `:root_pin` weaves without them.
+  """
   @spec from_clause(
           Macro.t(),
+          Condition.predicate_kind(),
           [Mutare.Mutator.mutation()],
           [Macro.t()],
           non_neg_integer()
         ) ::
           t()
-  def from_clause(original, mutants, bindings, index),
-    do: new(original, mutants, bindings, from_clause_splice(index))
+  def from_clause(original, kind, mutants, bindings, index),
+    do: new(original, kind, mutants, bindings, from_clause_splice(index))
 
-  @doc "A target for a standalone or piped condition macro argument."
-  @spec condition(Macro.t(), [Mutare.Mutator.mutation()], [Macro.t()], non_neg_integer()) :: t()
-  def condition(original, mutants, bindings, index),
-    do: new(original, mutants, bindings, argument_splice(index))
+  @doc "A target for a standalone or piped condition macro argument (`bindings` as in `from_clause/5`)."
+  @spec condition(
+          Macro.t(),
+          Condition.predicate_kind(),
+          [Mutare.Mutator.mutation()],
+          [Macro.t()],
+          non_neg_integer()
+        ) :: t()
+  def condition(original, kind, mutants, bindings, index),
+    do: new(original, kind, mutants, bindings, argument_splice(index))
 
-  @doc "A target nested under one keyword option in a standalone query macro."
+  @doc """
+  A target nested under one keyword option in a standalone query macro (`bindings` as in
+  `from_clause/5`).
+  """
   @spec keyword_condition(
           Macro.t(),
+          Condition.predicate_kind(),
           [Mutare.Mutator.mutation()],
           [Macro.t()],
           non_neg_integer(),
           non_neg_integer()
         ) :: t()
-  def keyword_condition(original, mutants, bindings, arg_index, pair_index) do
-    new(original, mutants, bindings, fn node, case_node ->
+  def keyword_condition(original, kind, mutants, bindings, arg_index, pair_index) do
+    new(original, kind, mutants, bindings, fn node, case_node ->
       %QueryCall{args: args} = call = QueryCall.parse(node)
       options = args |> Enum.at(arg_index) |> KeywordList.parse()
 
@@ -85,8 +104,8 @@ defmodule Mutare.Ecto.Host.Target do
     do: MacroHost.Target.new(original, mutants, argument_splice(index))
 
   # The splice that pins the selector into a `from` keyword clause's value at `index` — shared by
-  # the `dynamic/2`-wrapped condition target (`from_clause/4`) and the pin-only bound target
-  # (`bound_from_clause/3`); only the `:wrap` differs between them.
+  # the condition target (`from_clause/5`) and the pin-only bound target (`bound_from_clause/3`);
+  # only the `:wrap` differs between them.
   defp from_clause_splice(index) do
     fn node, case_node ->
       %FromCall{} = from = FromCall.parse(node)
@@ -95,7 +114,7 @@ defmodule Mutare.Ecto.Host.Target do
   end
 
   # The splice that pins the selector into a positional call argument at `index` — shared by the
-  # wrapped condition target (`condition/4`) and the pin-only bound target (`bound_argument/3`).
+  # condition target (`condition/5`) and the pin-only bound target (`bound_argument/3`).
   defp argument_splice(index) do
     fn node, case_node ->
       %QueryCall{} = call = QueryCall.parse(node)
@@ -103,15 +122,15 @@ defmodule Mutare.Ecto.Host.Target do
     end
   end
 
-  defp new(original, mutants, bindings, splice) do
-    MacroHost.Target.new(original, mutants, splice, wrap: branch(original, bindings))
+  defp new(original, kind, mutants, bindings, splice) do
+    MacroHost.Target.new(original, mutants, splice, wrap: branch(kind, bindings))
   end
 
-  # The fragment → branch mapping, chosen once per target by the written condition's shape (the
+  # The fragment → branch mapping, chosen once per target by the condition's predicate kind (the
   # root-pin rule, in the module header).
-  defp branch({:^, _meta, [_interior]}, _bindings), do: &interior/1
+  defp branch(:root_pin, _bindings), do: &interior/1
 
-  defp branch(_predicate, bindings) do
+  defp branch(:expression, bindings) do
     fn fragment ->
       Mutare.AST.absolute_call([:Ecto, :Query], :dynamic, [bindings, fragment])
     end
