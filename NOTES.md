@@ -377,7 +377,7 @@ each parsed a clause-less `from` and produced nothing. `FromCall` now places the
 call's `pipe_mode` (`Mutare.Ecto.AST.QueryCall` carries core's stamp): piped, the source is
 `nil` — hidden, on the pipe's left — and every edit rebuilds the `from(…)` half at its written
 arity, so the routing classifier, the host splice, and the whole-`from` rewrites all read the same
-shape and the two spellings yield the same mutants. The hidden source itself routes `:skip`
+shape and the two spellings yield the same mutants. The hidden source itself routes `:raw`
 (`route_arguments/2`'s `piped:` override — the plugin never sees its shape, and `from`'s source
 is never routed in the direct form either), which also stops core's `:alias` family from swapping
 a structural `Post |>` for a nonexistent module, as `from_visible`'s `:expression` default had let
