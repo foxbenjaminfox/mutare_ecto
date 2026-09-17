@@ -382,22 +382,29 @@ defmodule Mutare.Ecto.SubcontractTest do
       assert_compiles(src, @with_core)
     end
 
-    test "an island under is_nil is not sub-contracted (value mutants preserve NULL-ness)" do
-      # The walk never descends an `is_nil` argument — a parameter's value mutants keep a
-      # non-NULL value non-NULL, so inside the one predicate that observes only NULL-ness they
-      # are provably equivalent. The island walk honors the same boundary…
+    test "an island under is_nil is sub-contracted — an Elixir mutant's nil-ness is not known" do
+      # `is_nil` observes only NULL-ness, and the SQL catalog prunes the mutants it *knows* keep
+      # it. It knows nothing of the kind about a pin: with `opts[:floor]` unset, `||` binds the
+      # fallback `d` and `&&` binds `nil` — the parameter turns NULL, and so does the
+      # `coalesce` on every row whose age is. So the interior goes to core like any other pin…
       src = """
       defmodule M do
         import Ecto.Query
-        def q(d), do: from(u in User, where: is_nil(coalesce(u.age, ^(d + 1))), select: u.id)
+
+        def q(opts, d),
+          do: from(u in User, where: is_nil(coalesce(u.age, ^(opts[:floor] || d))), select: u.id)
       end
       """
 
-      assert island_diffs(src, @with_core) == []
+      assert {:logical, "is_nil(coalesce(u.age, ^(opts[:floor] || d)))",
+              "is_nil(coalesce(u.age, ^(opts[:floor] && d)))"} in island_diffs(src, @with_core)
 
-      # …while the coalesce drop beneath the predicate — the plugin's own SQL mutant, which
-      # removes the pin rather than mutating it — is still offered.
-      assert {"is_nil(coalesce(u.age, ^(d + 1)))", "is_nil(u.age)"} in ecto_diffs(src, @with_core)
+      # …alongside the coalesce drop beneath the predicate — the plugin's own SQL mutant, which
+      # removes the pin rather than mutating it.
+      assert {"is_nil(coalesce(u.age, ^(opts[:floor] || d)))", "is_nil(u.age)"} in ecto_diffs(
+               src,
+               @with_core
+             )
 
       assert_compiles(src, @with_core)
     end
@@ -452,9 +459,9 @@ defmodule Mutare.Ecto.SubcontractTest do
       assert_compiles(src, @with_core)
     end
 
-    test "an island as a coalesce default is reached — the contrast with is_nil" do
+    test "an island as a coalesce default is reached" do
       # `coalesce`'s arguments are descended (the catalog's own drop keeps walking), so its
-      # NULL-fallback pin is sub-contracted — unlike the same pin under `is_nil` above.
+      # NULL-fallback pin is sub-contracted.
       src = """
       defmodule M do
         import Ecto.Query
@@ -643,19 +650,24 @@ defmodule Mutare.Ecto.SubcontractTest do
       assert_compiles(src, @with_core)
     end
 
-    test "the islands honor the catalog's descent rules inside a dynamic too" do
-      # The same `Fragment.islands/1` walk serves both consumers — an `is_nil` argument is a
-      # hard boundary in a dynamic exactly as in a hosted where (the coalesce drop beneath it is
-      # the catalog's own, delivered in place at the collapsing call, not an island).
+    test "the islands follow the catalog's descent rules inside a dynamic too" do
+      # The same `Fragment.islands/1` walk serves both consumers — a pin beneath `is_nil` is an
+      # island in a dynamic exactly as in a hosted where, next to the catalog's own coalesce
+      # drop (delivered in place at the collapsing call, not an island).
       src = """
       defmodule M do
         import Ecto.Query
-        def d(v), do: dynamic([p], is_nil(coalesce(p.views, ^(v + 1))))
+        def d(opts, v), do: dynamic([p], is_nil(coalesce(p.views, ^(opts[:floor] || v))))
       end
       """
 
-      assert island_diffs(src, @with_core) == []
-      assert {"coalesce(p.views, ^(v + 1))", "p.views"} in ecto_diffs(src, @with_core)
+      assert {:logical, "dynamic([p], is_nil(coalesce(p.views, ^(opts[:floor] || v))))",
+              "dynamic([p], is_nil(coalesce(p.views, ^(opts[:floor] && v))))"} in island_diffs(
+               src,
+               @with_core
+             )
+
+      assert {"coalesce(p.views, ^(opts[:floor] || v))", "p.views"} in ecto_diffs(src, @with_core)
       assert_compiles(src, @with_core)
     end
 

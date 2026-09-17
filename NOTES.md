@@ -252,19 +252,29 @@ mutation for a query builder — was originally only reachable in the `from`-key
 drop over the shared `Mutare.Ecto.StageDrop` delivery, recording the **same** family as `Query`
 for the same semantic mutation regardless of which syntax wrote it.
 
-### Fragment: the coalesce drop is read beneath `is_nil`
+### Fragment: beneath `is_nil`, pruned only where NULL-ness is known
 
 `is_nil`'s argument used to be a hard boundary for every family: the walk never entered it, on
-two claims — that the value families preserve NULL-ness (true: an arithmetic, aggregate or
-literal swap under `is_nil` is provably equivalent), and that the coalesce drop, the one
-NULL-ness-changing mutation, could only fire under an `is_nil` the author had written constantly
-false. The second assumed a non-NULL default; with a nullable `d` — a column, a pin —
-`is_nil(coalesce(u.name, u.role))` is live, and `is_nil(u.name)` differs on every row where
-`name` is NULL and `role` is not. The walk still never enters the argument (no island and no
-value-family mutant surfaces there — `fragment_descent_test.exs` pins it); the unit's own
-`local/3` now reads the argument through a narrowed walk (`Mutare.Ecto.Fragment`'s
-`null_interior/1`, the same shape as `exists`'s subquery interior) that offers exactly the
-coalesce drop, at every depth, in both polarities.
+the claim that the value families preserve NULL-ness, so that any mutant there is equivalent. A
+first correction read the coalesce drop — the one mutation *named* as NULL-ness-changing —
+beneath it through a narrowed walk of the unit's own (`is_nil(coalesce(u.name, u.role))` →
+`is_nil(u.name)` is live for a nullable default), and kept the boundary for everything else,
+islands included.
+
+The claim itself was too strong, for the catalog's own families and for everything around them:
+`*`→`/` turns a product NULL on a zero divisor (SQLite, MySQL; Postgres raises); `and`↔`or`
+is three-valued; a literal is data wherever a form's NULL-ness depends on a *value* — the
+comparand of `fragment("NULLIF(?, ?)", p.score, 0)`, a JSON path key, a divisor; and a pin's
+interior is Elixir that can compute `nil` by any route (`^(opts[:min] || default)`), which the
+boundary kept from core altogether. So the boundary is gone. The argument is ordinary descent
+under a narrower *observation* (the walk's context carries `:nullness` beneath `is_nil`), and a
+mutant is pruned only when one table of per-form NULL rules (`Mutare.Ecto.Fragment`'s
+`nullness/1`: literals, `+`/`-`/`*`, `coalesce`, the four aggregates) shows it NULL on exactly
+the original's rows; the same table decides how far down the narrow observation reaches.
+Everything outside the table is unknown and emitted — the error now costs an equivalent mutant
+in code nobody writes (`is_nil(p.a > 1)`), where it used to cost live ones. Pinned in
+`fragment_test.exs`/`fragment_descent_test.exs`/`subcontract_test.exs`, and live on both
+engines in the semantic suite (the `NULLIF` literal, the connective, the pin).
 
 ### Fragment: a tuple is told by position, not refused wholesale
 

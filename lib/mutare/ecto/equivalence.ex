@@ -17,7 +17,8 @@ defmodule Mutare.Ecto.Equivalence do
   #   * `:comparison` — a strict↔non-strict swap needs a row on the bound; `==`↔`!=` needs a
   #     non-NULL row (both exclude NULLs);
   #   * `:arithmetic` — `+`↔`-` needs a nonzero right operand; `*`↔`/` a right operand off ±1 (a
-  #     zero divisor raises — a kill, not an equivalence);
+  #     zero divisor raises on Postgres and yields NULL on SQLite/MySQL — a kill either way,
+  #     not an equivalence);
   #   * `:coalesce` — in a value position the drop needs a NULL row; under the
   #     `"coalesce_in_ordering"` label `Mutare.Ecto.Scalar` attaches to a sort-key drop it also
   #     needs the fallback to disagree with the engine's default NULL placement (the per-engine
@@ -34,7 +35,7 @@ defmodule Mutare.Ecto.Equivalence do
   @connective_note "kill may require a row where the operands disagree — and/or coincide while both operands are true or both false on every row (SQL three-valued logic: a NULL operand is unknown, neither)"
   @null_predicate_note "kill may require NULL data in the column — is_nil and not is_nil keep complementary row sets, told apart only by which rows are NULL"
   @arithmetic_additive_note "kill may require a row whose right operand is nonzero — a + b and a - b compute the same value exactly when b is 0 (the identity of both)"
-  @arithmetic_multiplicative_note "kill may require a row whose right operand is not ±1 (with a nonzero left) — a * b and a / b coincide there, while a zero divisor raises (a kill, not an equivalence)"
+  @arithmetic_multiplicative_note "kill may require a row whose right operand is not ±1 (with a nonzero left) — a * b and a / b coincide there, while a zero divisor raises or yields NULL, by engine (a kill, not an equivalence)"
   @coalesce_note "kill may require NULL rows in the wrapped expression — coalesce(x, default) and x differ only where x is NULL, the exact rows the default exists for"
   @coalesce_ordering_note "kill may require NULL rows in the wrapped expression and a test pinning where they rank — in an ordering position the drop re-sorts only those rows to the engine's default NULL placement (Postgres sorts NULL as larger than every value, SQLite/MySQL as smaller), which may coincide with where the fallback already put them"
   @temporal_note "kill may require a row timestamped near now — ago(n, unit) and from_now(n, unit) sit the same distance on opposite sides of now, so comparisons against them differ only for rows between the two instants"

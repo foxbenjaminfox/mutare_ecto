@@ -35,28 +35,27 @@ defmodule Mutare.Ecto.Fragment do
     * **Connective** — `and`↔`or`. Genuinely three-valued (a `NULL` operand is neither true nor
       false), so its equivalences differ from Elixir's.
     * **NullPredicate** — `is_nil(x)`↔`not is_nil(x)`, treated as one unit so `not is_nil(x)`
-      flips back rather than double-negating. Its argument is **never descended** — the value
-      families preserve NULL-ness, so their mutants are provably equivalent there — with one
-      exception handled directly: the coalesce drop, the one mutation that changes
-      NULL-ness (see the `children/2` `is_nil` clause and `null_interior/1`).
+      flips back rather than double-negating. Its argument is descended like any other, but
+      `is_nil` observes only *whether* the argument is NULL, so a mutant there is pruned when —
+      and only when — it is **known** to be NULL on exactly the original's rows (see
+      "What `is_nil` observes" below).
     * **Membership** — `x in ^list`↔`x not in ^list` and `exists(subquery)`↔`not exists(subquery)`
       (unit polarity flips, no double negation), one **element drop** per *distinct* entry of a
       *written* in-list, removing every occurrence (`x in [1, 2, 3]` → `x in [2, 3]`/…; `IN` is
       set membership, so `[1, 1, 2]` shrinks to `[2]`/`[1, 1]`, never to the equivalent
       `[1, 2]`), and `like`↔`ilike` — **dialect-gated** on
-      `:postgres` (`ilike` is Postgres-specific; the rest is portable). Unlike `is_nil`, the `in`
-      operands **are** descended (a swap on the left or a literal in the written list changes
-      which rows match). A subquery argument is not descended *as a condition*; its interior is
-      recursed by `Mutare.Ecto.Subquery`, each mutant rebuilt into this condition.
+      `:postgres` (`ilike` is Postgres-specific; the rest is portable). The `in` operands are
+      descended (a swap on the left or a literal in the written list changes which rows match).
+      A subquery argument is not descended *as a condition*; its interior is recursed by
+      `Mutare.Ecto.Subquery`, each mutant rebuilt into this condition.
     * **Arithmetic** — `+`↔`-`, `*`↔`/`, the shared `Mutare.Ecto.Scalar` catalog (also delivered
       in `select`/`order_by` values); binary forms only.
-    * **Coalesce** — `coalesce(x, default)` → `x` (also `Mutare.Ecto.Scalar`): the one catalog
-      mutation that *changes* NULL-ness, differing exactly on the rows where `x` is NULL — which
-      is why it is also the one family offered beneath `is_nil`: `is_nil(coalesce(x, d))` →
+    * **Coalesce** — `coalesce(x, default)` → `x` (also `Mutare.Ecto.Scalar`): differs exactly
+      on the rows where `x` is NULL. Beneath `is_nil` too: `is_nil(coalesce(x, d))` →
       `is_nil(x)` differs on every row where `x` is NULL and `d` is not.
     * **Aggregate** — `sum`↔`avg`, `min`↔`max` (the shared `Mutare.Ecto.Aggregate`), for a
       `having: sum(p.x) > n`. Applied per node by this walk, so a condition is walked **once**
-      for every family and the `is_nil` rule covers it.
+      for every family.
     * **Temporal** — `ago(n, unit)`↔`from_now(n, unit)`: symmetric around *now*, so a comparison
       against them differs only for rows inside that window. The `unit` is structural (below);
       the count keeps its literal mutants.
@@ -82,16 +81,52 @@ defmodule Mutare.Ecto.Fragment do
   Ecto's tuple comparison (`{p.views, p.id} > {1, 2}`), walked like a written list — each element
   a data position of the comparison (`children/2`).
 
+  ## What `is_nil` observes
+
+  `is_nil(x)` reads one bit of `x` per row — whether it is NULL — so a mutant inside `x` that is
+  NULL on exactly the original's rows cannot change the predicate: it is equivalent, and pruned.
+  That property is claimed only where it is **known**, from one table of per-form NULL rules
+  (`nullness/1`):
+
+    * a non-`nil` literal (a written negative number included) is never NULL;
+    * `a + b`, `a - b` and `a * b` are NULL exactly when an operand is;
+    * `coalesce(a, b)` is NULL exactly when both operands are;
+    * `sum`/`avg`/`min`/`max` of `x` is NULL exactly when no input row has a non-NULL `x`.
+
+  Two decisions read that table. A mutant is pruned when it and the node it replaces are both
+  never NULL (a literal bump) or follow the same rule over the same operands (`+`→`-`,
+  `sum`→`avg`). And the NULL-ness-only observation passes down through a form only while that
+  form has a rule: each rule makes the form's NULL-ness a function of its operands' NULL-ness,
+  never of their values. Beneath any other form an operand's *value* may decide whether the
+  whole is NULL, so the full catalog applies there again.
+
+  Every other form is **unknown**, and an unknown is never pruned:
+
+    * `a / b` — a zero divisor yields NULL on SQLite and MySQL and raises on Postgres, so
+      `is_nil(a * b)` → `is_nil(a / b)` is live, and so is a literal inside a divisor;
+    * `and`/`or` — three-valued (`NULL and false` is false where `NULL or false` is NULL);
+    * `in` and a tuple comparison — NULL or not depending on which values match;
+    * a JSON path (`is_nil(p.meta["k"])` — the key picks the element), a `fragment(...)`
+      (`is_nil(fragment("NULLIF(?, ?)", p.score, 0))` — the `0` decides which scores read as
+      NULL), a subquery, a nested author macro;
+    * a `^` pin — ordinary Elixir, free to compute `nil` or a value by any route
+      (`^(opts[:min] || default)`), so an island beneath `is_nil` is passed to core like any other.
+
+  A form missing from the table costs an equivalent mutant (`is_nil(p.a > 1)` → `>=`: a scalar
+  comparison is NULL exactly when an operand is, but it has no rule here), never a live one.
+
   ## Traversal
 
   The traversal is the plugin's one shared walk (`Mutare.Ecto.Walk`, whose author-macro rule
   specifies which nested-call arguments are entered): this module supplies its descent rule
-  (`children/2` — the unit predicates, the `{parent_form, arity, index}` position) and two
-  per-node readers over the positions traversed — the catalog (`local/3`, behind `mutants/2`)
-  and the island collector (`local_islands/1`, behind `islands/1`) — so the two can never
-  traverse different sets of nodes in a condition.
+  (`children/2` — the unit predicates, and each child's context: its
+  `{parent_form, arity, index}` position and what the enclosing predicate observes of it) and
+  two per-node readers over the positions traversed — the catalog (`local/3`, behind
+  `mutants/2`) and the island collector (`local_islands/1`, behind `islands/1`) — so the two
+  can never traverse different sets of nodes in a condition.
   """
 
+  alias Mutare.Calls
   alias Mutare.Ecto.{Aggregate, Config, Scalar, Subquery, Tag, Walk}
 
   @behaviour Mutare.Ecto.Vocabulary
@@ -114,6 +149,15 @@ defmodule Mutare.Ecto.Fragment do
   @atom_sentinel Mutare.AST.sentinel_atom()
   @string_sentinel Mutare.AST.sentinel_string()
 
+  # The context the walk threads to every node: its `{parent_form, arity, index}` position (the
+  # key the literal arms consult) and what the enclosing predicate observes of it — its `:value`,
+  # or beneath an `is_nil` only its `:nullness` (`child_observed/3`). The condition itself has no
+  # parent, and its value is what the clause filters by.
+  @typep position :: {term(), non_neg_integer(), non_neg_integer()} | nil
+  @typep observed :: :value | :nullness
+  @typep ctx :: {position(), observed()}
+  @root {nil, :value}
+
   @doc """
   Every single-point mutant of a `where`/`having` condition as self-tagging `Mutare.Ecto.Tag`s, or
   `[]` when the condition has nothing the catalog mutates (a bare boolean column, a keyword-shorthand
@@ -125,11 +169,12 @@ defmodule Mutare.Ecto.Fragment do
 
   The catalog proper is `local/3` — the mutations for one node, at its `{parent_form, arity, index}`
   position — applied at every position the shared walk (`Mutare.Ecto.Walk`) traverses under this
-  catalog's own descent rule (`children/2`).
+  catalog's own descent rule (`children/2`), and narrowed beneath an `is_nil` to the mutants not
+  known to keep the node's NULL-ness (`observable/3`).
   """
   @spec mutants(Macro.t(), Config.t()) :: [Tag.t()]
   def mutants(condition, %Config{} = config),
-    do: Walk.mutants(condition, nil, &children/2, &local(&1, &2, config))
+    do: Walk.mutants(condition, @root, &children/2, &observable(&1, &2, config))
 
   @doc """
   Every interpolation **island** (`^expr`) in the condition, as `{interior, rebuild}` pairs —
@@ -140,13 +185,15 @@ defmodule Mutare.Ecto.Fragment do
   The islands are a second reader of the **same** positions `mutants/2` reads
   (`local_islands/1` over `Mutare.Ecto.Walk.positions/3`, under the same `children/2`), so a
   caller cannot reach an island the catalog would not have walked past — by construction, not by
-  a parallel walk kept in step. So an `is_nil` argument surfaces no island, a subquery argument
-  surfaces the pins of the clauses `Mutare.Ecto.Subquery` mutates under that wrapper, and the pin
-  itself is the boundary (everything beneath it is passed to core for mutation).
+  a parallel walk kept in step. So a subquery argument surfaces the pins of the clauses
+  `Mutare.Ecto.Subquery` mutates under that wrapper, and the pin itself is the boundary
+  (everything beneath it is passed to core for mutation). What the enclosing predicate observes
+  never narrows this reader: a pin beneath `is_nil` is an island too, because nothing is known
+  about which Elixir mutants keep a parameter's `nil`-ness (see "What `is_nil` observes").
   """
   @spec islands(Macro.t()) :: [{Macro.t(), (Macro.t() -> Macro.t())}]
   def islands(condition) do
-    for {node, _position, rebuild} <- Walk.positions(condition, nil, &children/2),
+    for {node, _ctx, rebuild} <- Walk.positions(condition, @root, &children/2),
         {interior, inner} <- local_islands(node),
         do: {interior, &rebuild.(inner.(&1))}
   end
@@ -166,40 +213,30 @@ defmodule Mutare.Ecto.Fragment do
   # ── Descent: which nodes of a condition are positions ──────────────────────────────────────
   #
   # The catalog's one descent rule, for `Mutare.Ecto.Walk.positions/3`: from a node, the children
-  # the walk continues into, each with its `{parent_form, arity, index}` position and the splice
-  # back into its parent. `mutants/2` and `islands/1` read the positions this rule admits and
-  # never descend on their own, so the two agree at every node by construction.
+  # the walk continues into, each with its context (`child_ctx/3`) and the splice back into its
+  # parent. `mutants/2` and `islands/1` read the positions this rule admits and never descend on
+  # their own, so the two agree at every node by construction.
 
   # A reverse-polarity unit — `not is_nil(x)`, `x not in list`, `not exists(q)` — is ONE position,
   # the outer `not`. The inner predicate is never a position of its own: its polarity flip would
   # offer the double negation (`not not is_nil(x)`), and its islands are read through the `not`
   # (`local_islands/1`). But whatever the predicate itself descends into is still descended —
-  # the `in` operands: an arithmetic swap on the left or a literal in a written list changes
-  # which rows match — each child spliced back inside the written `not`.
-  defp children({:not, meta, [inner]} = node, position) do
+  # the `is_nil` argument, the `in` operands — each child spliced back inside the written `not`.
+  @spec children(Macro.t(), ctx()) :: [Walk.child(ctx())]
+  defp children({:not, meta, [inner]} = node, ctx) do
     if unit?(inner) do
-      for {child, child_position, splice} <- children(inner, position),
-          do: {child, child_position, &{:not, meta, [splice.(&1)]}}
+      for {child, child_ctx, splice} <- children(inner, ctx),
+          do: {child, child_ctx, &{:not, meta, [splice.(&1)]}}
     else
-      Walk.structural(node, position, &child_position/3)
+      Walk.structural(node, ctx, &child_ctx/3)
     end
   end
-
-  # `is_nil`'s argument is never entered by the walk — and not because there is nothing there
-  # (`is_nil(u.a + u.b)` is legal SQL): the value families preserve an expression's NULL-ness (an
-  # arithmetic/aggregate/literal swap changes the value, never whether it is NULL), so inside a
-  # predicate that asks *only* about NULL-ness their mutants are provably equivalent. The same
-  # holds of a pin's value mutants, so no island surfaces beneath it either. The one mutation
-  # that *does* change NULL-ness — the coalesce drop — is the unit's own to offer (`local/3` via
-  # `null_interior/1`), read over the argument by a narrowed walk rather than by admitting the
-  # argument's positions here: that way the drop reaches every depth while nothing else does.
-  defp children({:is_nil, _meta, [_arg]}, _position), do: []
 
   # `exists`'s argument is a subquery — a query, not this condition's syntax — so it is never
   # entered *as a condition*; `local/3` and `local_islands/1` hand its interior to
   # `Mutare.Ecto.Subquery` instead. (A value-wrapper's `from` — `all(from …)`, `subquery(from …)`
   # — is reached by ordinary descent and recursed the same way; only `exists` is a unit.)
-  defp children({:exists, _meta, [_arg]}, _position), do: []
+  defp children({:exists, _meta, [_arg]}, _ctx), do: []
 
   # A tuple — `{left, right}` (a 2-tuple is bare AST) or `{:{}, meta, elements}` (every other
   # size) — plays two roles in a condition, told apart by its position. At a *structural*
@@ -214,19 +251,25 @@ defmodule Mutare.Ecto.Fragment do
   # the enclosing comparison's position (`child_position/3`) — so a literal element is data and
   # mutated, a field/arithmetic element is walked, and a pinned element is an island. There is
   # no element drop (unlike an in-list, the two sides must keep one size).
-  defp children({:{}, _meta, _elements} = tuple, position), do: tuple_children(tuple, position)
-  defp children({_left, _right} = tuple, position), do: tuple_children(tuple, position)
+  defp children({:{}, _meta, _elements} = tuple, ctx), do: tuple_children(tuple, ctx)
+  defp children({_left, _right} = tuple, ctx), do: tuple_children(tuple, ctx)
 
   # Everything else — an operator/call (its arguments under the author-macro rule), a written
   # list, a Sourceror block — descends structurally; a `^` pin is a leaf (`Mutare.Ecto.Walk`).
-  defp children(node, position), do: Walk.structural(node, position, &child_position/3)
+  # That includes `is_nil`: its argument is ordinary syntax, entered like any other, under the
+  # narrower observation `child_observed/3` hands it.
+  defp children(node, ctx), do: Walk.structural(node, ctx, &child_ctx/3)
 
   # The tuple rule's one decision (above): a cast spec is a leaf, a value tuple descends.
-  defp tuple_children(tuple, position) do
+  defp tuple_children(tuple, {position, _observed} = ctx) do
     if structural_position?(position),
       do: [],
-      else: Walk.structural(tuple, position, &child_position/3)
+      else: Walk.structural(tuple, ctx, &child_ctx/3)
   end
+
+  # A child's context, from its parent: where it sits, and what is observed of it.
+  defp child_ctx(parent, index, {position, observed}),
+    do: {child_position(parent, index, position), child_observed(parent, index, observed)}
 
   # A child's `{parent_form, arity, index}` — the key the literal arms consult
   # (`structural_position?/1`, `json_path_position?/1`). A Sourceror block, a written list and a
@@ -245,6 +288,81 @@ defmodule Mutare.Ecto.Fragment do
   defp unit?({:exists, _meta, [_arg]}), do: true
   defp unit?(_node), do: false
 
+  # ── What `is_nil` observes: NULL-ness, pruned only where it is known ────────────────────────
+  #
+  # The moduledoc's "What `is_nil` observes" is the rule; this is its whole implementation. One
+  # table (`nullness/1`) says what is known about when a node is NULL; the descent
+  # (`child_observed/3`) and the pruning (`observable/3`, via `same_nullness?/2`) both read it
+  # and nothing else, so neither can claim a property the other does not.
+
+  # What the enclosing predicate observes of a child. `is_nil` observes only its argument's
+  # NULL-ness, whatever was observed of the `is_nil` itself. That narrow observation passes down
+  # through a parent only while the parent has a rule — its NULL-ness then depends on its
+  # operands' NULL-ness alone. Beneath any other parent (`fragment("NULLIF(?, ?)", x, 0)`,
+  # `a / b`, `a and b`, a JSON path, a tuple, a list) the child's value may decide whether the
+  # parent is NULL, so its value is observed again.
+  @spec child_observed(Macro.t(), non_neg_integer(), observed()) :: observed()
+  defp child_observed({:is_nil, _meta, [_arg]}, _index, _observed), do: :nullness
+  defp child_observed(_parent, _index, :value), do: :value
+
+  defp child_observed(parent, _index, :nullness),
+    do: if(nullness(parent) == :unknown, do: :value, else: :nullness)
+
+  # The catalog as the enclosing predicate can observe it: all of `local/3` where the node's
+  # value is observed; where only its NULL-ness is, the mutants **not known** to be NULL on
+  # exactly the rows the node is. (A subquery's interior mutants ride `local/3` too, and a query
+  # has no rule, so they are never pruned.)
+  @spec observable(Macro.t(), ctx(), Config.t()) :: [Tag.t()]
+  defp observable(node, {position, :value}, config), do: local(node, position, config)
+
+  defp observable(node, {position, :nullness}, config),
+    do: node |> local(position, config) |> Enum.reject(&same_nullness?(node, &1.node))
+
+  # Known to be NULL on exactly the same rows: both never NULL, or the same rule over the same
+  # operands. Two unknowns are not the same unknown.
+  defp same_nullness?(node, mutant) do
+    case {nullness(node), nullness(mutant)} do
+      {:never, :never} -> true
+      {{rule, operands}, {rule, operands}} -> true
+      _unknown -> false
+    end
+  end
+
+  # What is known about when a node is NULL — `:never`, or `{rule, operands}`: NULL exactly when
+  # `:any_operand` is, when `:every_operand` is, or when an aggregate has `:no_input` row whose
+  # operand is non-NULL. Every rule depends on the operands' NULL-ness alone, which is what
+  # `child_observed/3` relies on. Everything else is `:unknown` — including a **registered
+  # macro** wearing one of these names (stamped by the resolve pass; its meaning is its
+  # author's, the same ownership test as `Mutare.Ecto.Aggregate`'s ladder), and including `/`,
+  # whose zero divisor is NULL on SQLite and MySQL and an error on Postgres.
+  @spec nullness(Macro.t()) :: :never | {atom(), [Macro.t()]} | :unknown
+  defp nullness({:__block__, _meta, [literal]})
+       when (is_number(literal) or is_binary(literal) or is_atom(literal)) and
+              not is_nil(literal),
+       do: :never
+
+  # A written negative number is the arity-1 `-` over the wrapped literal — sign syntax, the
+  # only unary minus Ecto accepts — and `Mutare.AST.literal/1` emits a negative mutant in the
+  # same shape.
+  defp nullness({:-, _meta, [{:__block__, _literal_meta, [number]}]}) when is_number(number),
+    do: :never
+
+  defp nullness({form, _meta, args} = node) when is_atom(form) and is_list(args) do
+    if Calls.routed_treatments(node), do: :unknown, else: ecto_nullness(form, args)
+  end
+
+  defp nullness(_node), do: :unknown
+
+  defp ecto_nullness(op, [_left, _right] = operands) when op in [:+, :-, :*],
+    do: {:any_operand, operands}
+
+  defp ecto_nullness(:coalesce, [_x, _default] = operands), do: {:every_operand, operands}
+
+  defp ecto_nullness(aggregate, [_x] = operands) when aggregate in [:sum, :avg, :min, :max],
+    do: {:no_input, operands}
+
+  defp ecto_nullness(_form, _args), do: :unknown
+
   # ── The catalog: what one position offers ──────────────────────────────────────────────────
   #
   # `local/3` is the SQL catalog proper: the tagged single-point alternatives of **one** node at
@@ -253,18 +371,15 @@ defmodule Mutare.Ecto.Fragment do
 
   # NullPredicate, as a unit. `not is_nil(x)` → `is_nil(x)`: flip the whole predicate (the inner
   # `is_nil` is not a position — `children/2` — so it never also offers `is_nil` → `not is_nil`,
-  # a redundant `not not is_nil(x)`), plus the argument's coalesce drops (`null_interior/1`),
-  # each rebuilt inside the written `not` so it stays a single-point variant of the full predicate.
-  # Both directions are tagged `"is_nil"` (`not is_nil` has a space — not a wire-safe label), so
-  # `# mutare:ignore[ecto:is_nil]` suppresses the null-predicate flip whichever way it points.
-  defp local({:not, meta, [{:is_nil, _, [_arg]} = inner]}, _position, _config),
-    do: [Tag.new(:null_predicate, inner, "is_nil") | rewrap(null_interior(inner), meta)]
+  # a redundant `not not is_nil(x)`). Both directions are tagged `"is_nil"` (`not is_nil` has a
+  # space — not a wire-safe label), so `# mutare:ignore[ecto:is_nil]` suppresses the
+  # null-predicate flip whichever way it points. The argument's own mutants are the walk's.
+  defp local({:not, _meta, [{:is_nil, _, [_arg]} = inner]}, _position, _config),
+    do: [Tag.new(:null_predicate, inner, "is_nil")]
 
-  # `is_nil(x)` → `not is_nil(x)`, clean meta on the fresh `not`, plus the argument's coalesce
-  # drops. (Why the walk never descends the argument, and why the drop is the one exception:
-  # `children/2`.)
+  # `is_nil(x)` → `not is_nil(x)`, clean meta on the fresh `not`.
   defp local({:is_nil, _meta, [_arg]} = node, _position, _config),
-    do: [Tag.new(:null_predicate, {:not, [], [node]}, "is_nil") | null_interior(node)]
+    do: [Tag.new(:null_predicate, {:not, [], [node]}, "is_nil")]
 
   # Membership. `x not in list` → `x in list`: flip the whole predicate as a unit (no double
   # negation), plus the element drops of a written list, rebuilt inside the `not` so each stays a
@@ -418,25 +533,6 @@ defmodule Mutare.Ecto.Fragment do
   # written `not`, keeping the tag — so the emitted node is the full condition, single-point.
   defp rewrap(mutants, meta),
     do: Enum.map(mutants, &Tag.map_node(&1, fn m -> {:not, meta, [m]} end))
-
-  # The one family read beneath `is_nil`: the coalesce drop (`Mutare.Ecto.Scalar`), at every
-  # depth of the argument, each rebuilt inside the `is_nil`. `is_nil(coalesce(x, d))` →
-  # `is_nil(x)` differs on every row where `x` is NULL and `d` is not — a live mutant whenever
-  # `d` can be NULL (a nullable column, a pin), and a trivially killable one when it cannot (the
-  # original was constantly false; the mutant merely says so). The argument is read by a
-  # narrowed walk under the catalog's own descent rule (`children/2` — so a pin, a unit, a
-  # cast-spec tuple and the author-macro rule bound it exactly as they bound the condition walk)
-  # with a per-node reader that offers only the drop: no literal, arithmetic or aggregate mutant — nor
-  # an island, which stays `local_islands/1`'s — ever surfaces here. Each drop is anchored at
-  # the coalesce call it collapses (`Mutare.Ecto.Walk.mutants/4`), like any other.
-  defp null_interior({:is_nil, meta, [arg]}) do
-    for tag <- Walk.mutants(arg, {:is_nil, 1, 0}, &children/2, &coalesce_drop/2),
-        do: Tag.map_node(tag, &{:is_nil, meta, [&1]})
-  end
-
-  # `Mutare.Ecto.Scalar.local/1` narrowed to its coalesce arm (its arity guard included).
-  defp coalesce_drop({:coalesce, _meta, [_x, _default]} = node, _position), do: Scalar.local(node)
-  defp coalesce_drop(_node, _position), do: []
 
   # IntegerLiteral: core's own off-by-one/zero table (`Mutare.AST.numeric_alternatives/3`: `n±1`
   # plus the zero sentinel, deduped and never equal to `n`, a collapse carrying both labels).

@@ -56,6 +56,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   returned the wrong rows, so tests could fail (or mutants be misjudged) under
   Mutare that pass without it. An unnamed join is now re-declared as `_`
   (`[p, _, c]`; `[p, ..., c, _]` when the source is a composed query).
+- **Live mutants beneath `is_nil` are no longer pruned.** Every mutant inside an
+  `is_nil(...)` argument except the coalesce drop used to be suppressed as
+  equivalent, on the claim that value mutations preserve NULL-ness. They do only
+  for some forms. A mutant there is now pruned only when it is *known* to be NULL
+  on exactly the original's rows — a literal bump, `+`↔`-`, `sum`↔`avg`/`min`↔`max`,
+  beneath `+`/`-`/`*`, `coalesce` and the aggregates — and everything else is
+  offered: `*`↔`/` (a zero divisor is NULL on SQLite and MySQL), `and`↔`or`, a
+  literal or swap inside a `fragment(...)`
+  (`is_nil(fragment("NULLIF(?, ?)", p.score, 0))`), a JSON path key, a divisor.
+  A `^` pin beneath `is_nil` is now handed to Mutare's core families like any
+  other pin (`^(opts[:min] || default)` can turn `nil`). Expect new mutants on
+  such conditions; a plain `is_nil(p.column)` is unchanged.
+- The `*`↔`/` survivor note no longer says a zero divisor always raises: it
+  raises on Postgres and yields NULL on SQLite and MySQL.
 
 - **A subquery in a `having` no longer breaks the instrumented build.** Ecto accepts
   `having: count(p.id) > subquery(…)` written statically but rejects the same subquery

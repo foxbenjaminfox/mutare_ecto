@@ -863,6 +863,104 @@ defmodule Mutare.Ecto.SemanticCases do
         end
       end
 
+      describe "Beneath `is_nil` — a mutant whose NULL-ness is not known is live (dynamic-injected)" do
+        # `is_nil` observes only whether its argument is NULL, and the catalog prunes a mutant
+        # there only when it is *known* to be NULL on the original's rows (`Mutare.Ecto.Fragment`,
+        # "What `is_nil` observes"). These three are the unknowns — each moves the row set.
+
+        # An opaque fragment: `NULLIF(score, 0)` reads a zero score as NULL, `NULLIF(score, 1)`
+        # does not — the literal is data, not a NULL-ness-preserving value bump.
+        test "a literal inside a fragment decides which rows read as NULL" do
+          {mod, sites} =
+            build("""
+            defmodule Q do
+              import Ecto.Query
+              alias MyApp.User
+
+              def q,
+                do:
+                  from(u in User,
+                    where: is_nil(fragment("NULLIF(?, ?)", u.score, 0)),
+                    select: u.id
+                  )
+            end
+            """)
+
+          {baseline, mutant} =
+            observe_ids(
+              mod,
+              sites,
+              {~s|is_nil(fragment("NULLIF(?, ?)", u.score, 0))|,
+               ~s|is_nil(fragment("NULLIF(?, ?)", u.score, 1))|}
+            )
+
+          # The NULL scores (Bob, Dave) plus the zero one (Eve).
+          assert baseline == [2, 4, 5]
+          # No score is 1, so only the genuinely NULL ones remain.
+          assert mutant == [2, 4]
+        end
+
+        # A connective has no NULL rule: it is three-valued. `true and NULL` is NULL (Bob) where
+        # `true or NULL` is true, and `false or NULL` is NULL (Dave) where `false and NULL` is
+        # false.
+        test "`and` → `or` changes the rows the predicate keeps" do
+          {mod, sites} =
+            build("""
+            defmodule Q do
+              import Ecto.Query
+              alias MyApp.User
+              def q, do: from(u in User, where: is_nil(u.active and u.score > 50), select: u.id)
+            end
+            """)
+
+          {baseline, mutant} =
+            observe_ids(
+              mod,
+              sites,
+              {"is_nil(u.active and u.score > 50)", "is_nil(u.active or u.score > 50)"}
+            )
+
+          # Bob: active with a NULL score.
+          assert baseline == [2]
+          # Dave: inactive with a NULL score.
+          assert 4 in mutant
+        end
+
+        # A pin: ordinary Elixir, sub-contracted to core. With the floor unconfigured, `||` binds
+        # the `0` fallback (the coalesce is never NULL) and core's `&&` binds `nil` — the
+        # parameter itself turns NULL, and so does the coalesce on every NULL-score row.
+        test "a core mutant of a pin interior changes the parameter's nil-ness" do
+          {mod, sites} =
+            H.compile(
+              """
+              defmodule Q do
+                import Ecto.Query
+                alias MyApp.User
+
+                def q do
+                  from(u in User,
+                    where:
+                      is_nil(
+                        coalesce(
+                          u.score,
+                          type(^(Application.get_env(:mutare_ecto, :semantic_floor) || 0), :integer)
+                        )
+                      ),
+                    select: u.id
+                  )
+                end
+              end
+              """,
+              mutators: [:logical, {Mutare.Ecto, repo: @repo}]
+            )
+
+          {baseline, mutant} = observe_ids(mod, sites, {~r/\|\| 0\)/, ~r/&& 0\)/})
+
+          assert baseline == []
+          assert mutant == [2, 4]
+        end
+      end
+
       describe "Coalesce — drop the fallback in a `select` (whole-`from`)" do
         # The in-place twin: a `select` coalesce is rewritten as a whole-`from` mutant
         # (`Mutare.Ecto.Scalar` via `Mutare.Ecto.Query`), so the selected value itself goes NULL.

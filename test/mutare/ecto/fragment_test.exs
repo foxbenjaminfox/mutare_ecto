@@ -123,20 +123,74 @@ defmodule Mutare.Ecto.FragmentTest do
       assert mutants("not is_nil(u.name)") == MapSet.new(["is_nil(u.name)"])
     end
 
-    test "the is_nil argument is never descended — a value mutant there is provably equivalent" do
-      # `is_nil(u.a + u.b)` is legal SQL, but an arithmetic (or literal) swap inside it can never
-      # change the predicate: NULL propagates through every arm alike, so the mutant's NULL-ness —
-      # the only thing `is_nil` observes — is exactly the original's. Only the polarity flips.
+    test "beneath is_nil a mutant known to keep the argument's NULL-ness is pruned" do
+      # `is_nil` observes only whether its argument is NULL. `a + b` and `a - b` are both NULL
+      # exactly when an operand is, and a non-nil literal is never NULL, so these mutants cannot
+      # change the predicate: only the polarity flips.
       assert mutants("is_nil(u.a + u.b)") == MapSet.new(["not is_nil(u.a + u.b)"])
       assert mutants("not is_nil(u.a + u.b)") == MapSet.new(["is_nil(u.a + u.b)"])
       assert mutants("is_nil(u.a + 5)") == MapSet.new(["not is_nil(u.a + 5)"])
+
+      # A written negative is the arity-1 `-` over the literal, and a negative mutant is emitted
+      # in that shape too (`0` → `-1`): still never NULL, so `0`'s bumps are pruned like `5`'s.
+      assert mutants("is_nil(u.a + -5)") == MapSet.new(["not is_nil(u.a + -5)"])
+      assert mutants("is_nil(u.a * 0)") == MapSet.new(["not is_nil(u.a * 0)", "is_nil(u.a / 0)"])
     end
 
-    test "the coalesce drop is the one mutant read beneath is_nil — it changes NULL-ness" do
+    test "beneath is_nil a mutant whose NULL-ness is not known is kept — `/`, `and`/`or`" do
+      # A zero divisor is NULL on SQLite and MySQL (and raises on Postgres), so `*` → `/` turns
+      # a non-NULL product NULL on every row whose right operand is 0 — and `/` → `*` back.
+      assert mutants("is_nil(u.a * u.b)") ==
+               MapSet.new(["not is_nil(u.a * u.b)", "is_nil(u.a / u.b)"])
+
+      # Beneath a `/` the operands' *values* decide NULL-ness (which rows divide by zero), so
+      # the whole catalog applies again: the divisor's `-` swaps and its literal bumps.
+      assert mutants("is_nil(u.a / (u.b - 1))") ==
+               MapSet.new([
+                 "not is_nil(u.a / (u.b - 1))",
+                 "is_nil(u.a * (u.b - 1))",
+                 "is_nil(u.a / (u.b + 1))",
+                 "is_nil(u.a / (u.b - 2))",
+                 "is_nil(u.a / (u.b - 0))"
+               ])
+
+      # The known forms around it still prune: of `u.a + u.b * 2` only the `*` → `/` survives
+      # (the `+` and the `2` cannot change whether the sum is NULL).
+      assert mutants("is_nil(u.a + u.b * 2)") ==
+               MapSet.new(["not is_nil(u.a + u.b * 2)", "is_nil(u.a + u.b / 2)"])
+
+      # Three-valued logic: `NULL and false` is false, `NULL or false` is NULL.
+      assert "is_nil(u.active or u.score > 50)" in mutants("is_nil(u.active and u.score > 50)")
+    end
+
+    test "beneath is_nil an opaque form's operands are data — a fragment, a JSON path" do
+      # `NULLIF(score, 0)` is NULL for a zero score; `NULLIF(score, 1)` is not. Nothing is known
+      # about what a fragment computes, so its arguments' values are observed.
+      assert mutants(~s|is_nil(fragment("NULLIF(?, ?)", p.score, 0))|) ==
+               MapSet.new([
+                 ~s|not is_nil(fragment("NULLIF(?, ?)", p.score, 0))|,
+                 ~s|is_nil(fragment("NULLIF(?, ?)", p.score, 1))|,
+                 ~s|is_nil(fragment("NULLIF(?, ?)", p.score, -1))|
+               ])
+
+      # …and the opacity does not leak upward: the `+` around the fragment keeps its swap to
+      # itself, as before.
+      assert mutants(~s|is_nil(u.a + fragment("NULLIF(?, ?)", p.score, 0))|) ==
+               MapSet.new([
+                 ~s|not is_nil(u.a + fragment("NULLIF(?, ?)", p.score, 0))|,
+                 ~s|is_nil(u.a + fragment("NULLIF(?, ?)", p.score, 1))|,
+                 ~s|is_nil(u.a + fragment("NULLIF(?, ?)", p.score, -1))|
+               ])
+
+      # A JSON path's key picks the element read — a different index is NULL on different rows.
+      assert mutants("is_nil(p.tags[0])") ==
+               MapSet.new(["not is_nil(p.tags[0])", "is_nil(p.tags[1])"])
+    end
+
+    test "the coalesce drop beneath is_nil changes NULL-ness, so it is kept" do
       # `is_nil(coalesce(u.name, u.role))` asks about the *fallback chain*; dropping the fallback
       # asks about `u.name` alone, which differs on every row where `name` is NULL and `role` is
-      # not. Both polarities offer it (rebuilt inside the written `not`), and nothing else
-      # beneath the predicate does.
+      # not. Both polarities offer it (rebuilt inside the written `not`).
       assert mutants("is_nil(coalesce(u.name, u.role))") ==
                MapSet.new(["not is_nil(coalesce(u.name, u.role))", "is_nil(u.name)"])
 
@@ -150,7 +204,7 @@ defmodule Mutare.Ecto.FragmentTest do
                MapSet.new(["not is_nil(coalesce(u.score, 0))", "is_nil(u.score)"])
     end
 
-    test "the drop is read at every depth of the is_nil argument, and only the drop" do
+    test "the drop is read at every depth of the is_nil argument" do
       # Nested fallbacks drop one layer per mutant, the default's own chain included…
       assert mutants("is_nil(coalesce(u.a, coalesce(u.b, u.c)))") ==
                MapSet.new([
@@ -161,13 +215,12 @@ defmodule Mutare.Ecto.FragmentTest do
 
       # …and a coalesce under an arithmetic wrapper still drops (`is_nil(u.a + u.b)` differs
       # where `a` is NULL and `b` is not), while the `+` keeps its swap to itself and the written
-      # `0` its literal mutants: NULL propagates through `+` and `-`, `0` and `1`, alike.
+      # `0` its literal mutants: `+` and `-`, `0` and `1`, are NULL on the same rows.
       assert mutants("is_nil(coalesce(u.a, 0) + u.b)") ==
                MapSet.new(["not is_nil(coalesce(u.a, 0) + u.b)", "is_nil(u.a + u.b)"])
 
-      # A pinned default is a leaf for the narrowed walk as for the full one: the drop removes
-      # the pin, and the pin's interior is never this catalog's (nor an island here — see the
-      # island tests below).
+      # A pinned default is a leaf: the drop removes the pin, and the pin's interior is never
+      # this catalog's (it is an island — see the island tests below).
       assert mutants("is_nil(coalesce(u.a, ^d))") ==
                MapSet.new(["not is_nil(coalesce(u.a, ^d))", "is_nil(u.a)"])
     end
@@ -531,13 +584,13 @@ defmodule Mutare.Ecto.FragmentTest do
       assert labels("min(u.x) == max(u.y)") == MapSet.new(["min", "max", "=="])
     end
 
-    test "never under is_nil — a value aggregate is NULL exactly when it has no non-NULL input" do
-      # `is_nil(sum(x))` ≡ `is_nil(avg(x))` on every engine (each is NULL iff the group has no
-      # non-NULL value), so the swap would be unconditionally equivalent: the `is_nil` unit claims
-      # its argument for the aggregate exactly as for the arithmetic and literal arms. (A second,
-      # separate aggregate pass used to leak it.)
+    test "pruned under is_nil — a value aggregate is NULL exactly when it has no non-NULL input" do
+      # `is_nil(sum(x))` ≡ `is_nil(avg(x))` (each is NULL iff the group has no non-NULL value),
+      # so the swap cannot change the predicate — pruned like the arithmetic and literal arms,
+      # and the aggregate's operand stays under the same NULL-ness-only observation.
       assert mutants("is_nil(sum(u.x))") == MapSet.new(["not is_nil(sum(u.x))"])
       assert mutants("not is_nil(min(u.x))") == MapSet.new(["is_nil(min(u.x))"])
+      assert mutants("is_nil(max(u.x + 1) - 1)") == MapSet.new(["not is_nil(max(u.x + 1) - 1)"])
     end
   end
 
@@ -635,14 +688,28 @@ defmodule Mutare.Ecto.FragmentTest do
                "u.age in [18, ^(base - 1)]"
     end
 
-    test "islands honor the catalog's no-descent predicates (is_nil) and a pinned subquery" do
-      # `is_nil`: value mutants of a parameter preserve its NULL-ness — provably equivalent inside the
-      # one predicate that observes only NULL-ness, so its argument is never entered. (The coalesce
-      # drop the unit reads beneath itself — `is_nil(u.age)` — is the catalog's own mutant, not an
-      # island: the pin is gone from it.)
-      assert islands("is_nil(coalesce(u.age, ^default))") == []
-      assert islands("not is_nil(coalesce(u.age, ^default))") == []
+    test "a pin beneath is_nil is an island — nothing is known about an Elixir mutant's nil-ness" do
+      # `is_nil` observes only NULL-ness, and the SQL catalog prunes what it *knows* keeps it —
+      # but a pin's interior is ordinary Elixir, free to compute `nil` or a value by any route
+      # (`opts[:min] || default` → `opts[:min] && default`), so it goes to core like any other
+      # pin. Both polarities, the rebuild inside the written `not`.
+      assert [{"opts[:min] || default", rebuild}] =
+               islands("is_nil(coalesce(u.age, ^(opts[:min] || default)))")
 
+      assert rebuild.(Sourceror.parse_string!("opts[:min] && default")) |> Sourceror.to_string() ==
+               "is_nil(coalesce(u.age, ^(opts[:min] && default)))"
+
+      assert [{"default", rebuild}] = islands("not is_nil(coalesce(u.age, ^default))")
+
+      assert rebuild.(Sourceror.parse_string!("other")) |> Sourceror.to_string() ==
+               "not is_nil(coalesce(u.age, ^other))"
+
+      # …through an opaque form too — the fragment's pinned argument decides which rows are NULL.
+      assert [{"floor", _rebuild}] =
+               islands(~s|is_nil(fragment("NULLIF(?, ?)", u.score, ^floor))|)
+    end
+
+    test "a pinned subquery has no interior to surface islands from" do
       # `exists(^sub)`: the argument is a pinned query built elsewhere (mutated where bound), not an
       # inline `from` — so there is no interior for `Mutare.Ecto.Subquery` to surface pins from.
       assert islands("exists(^sub)") == []
@@ -700,18 +767,18 @@ defmodule Mutare.Ecto.FragmentTest do
                "{p.views, p.id} > {^a, ^(b + 1)}"
     end
 
-    test "a coalesce default is descended — the NULL-fallback pin is an island (unlike is_nil's)" do
+    test "a coalesce default is descended — the NULL-fallback pin is an island" do
       # The catalog descends coalesce's arguments (its own drop keeps the walk going), so the
-      # island walk does too — the contrast with `is_nil`, whose argument is a hard boundary.
+      # island walk does too.
       assert [{"d * 2", rebuild}] = islands("coalesce(u.score, ^(d * 2)) > 10")
 
       assert rebuild.(Sourceror.parse_string!("d + 2")) |> Sourceror.to_string() ==
                "coalesce(u.score, ^(d + 2)) > 10"
     end
 
-    test "deeply nested pins each rebuild single-point, and a no-descent branch stays empty" do
+    test "deeply nested pins each rebuild single-point, and a pin-less branch stays empty" do
       # Two pins under different connective branches — each island's rebuild replaces exactly
-      # its own pin; the `is_nil` branch between them contributes nothing.
+      # its own pin; the pin-less `is_nil` branch between them contributes nothing.
       assert [{"x", rebuild_x}, {"y", rebuild_y}] =
                islands("(u.a > ^x or is_nil(u.b)) and u.c < ^y")
 

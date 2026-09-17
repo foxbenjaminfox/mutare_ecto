@@ -15,11 +15,13 @@ defmodule Mutare.Ecto.Scalar do
   # `select`/`select_merge`/`order_by` value (`Mutare.Ecto.ExpressionWalk`) for the in-place
   # deliveries (`Mutare.Ecto.Query`, `Mutare.Ecto.Clause`).
   #
-  # SQL-owned (see `Mutare.Ecto.Fragment`): NULL propagates through every arm alike (a swap
-  # changes a row's computed value, never its NULL-ness), and `/` is the *database's* division —
-  # integer truncation and a zero divisor raising are the engine's behaviour, not Elixir's float
-  # `//2`. **Binary** forms only: a written negative number parses as the arity-1 `-` over the
-  # wrapped literal — sign syntax, not an operator to swap.
+  # SQL-owned (see `Mutare.Ecto.Fragment`): a NULL operand makes every arm NULL, and `/` is the
+  # *database's* division — integer truncation and the zero divisor are the engine's behaviour
+  # (NULL on SQLite and MySQL, an error on Postgres), not Elixir's float `//2`. So `+`↔`-`
+  # changes a row's computed value and never its NULL-ness, while `*`↔`/` can change both
+  # (what `Fragment` relies on beneath `is_nil`). **Binary** forms only: a written negative
+  # number parses as the arity-1 `-` over the wrapped literal — sign syntax, not an operator to
+  # swap.
 
   alias Mutare.Ecto.{ExpressionWalk, Tag}
 

@@ -336,6 +336,47 @@ defmodule Mutare.Ecto.MacroSkipTest do
       assert "avg(p.views)" in rendered
       assert "min(p.views)" in rendered
     end
+
+    test "has no NULL rule beneath is_nil — its :expression argument is observed by value" do
+      # Ecto's `max(x)` is NULL exactly when no input row has a non-NULL `x`, so beneath `is_nil`
+      # a swap inside `x` cannot change the predicate and is pruned (`Mutare.Ecto.Fragment`,
+      # "What `is_nil` observes"). The author's `max/1` means whatever its owner wrote — `x * 2`
+      # here, a `NULLIF` for all the catalog knows — so the same swap is offered.
+      mutated = fn src, opts ->
+        for {_original, mutated} <- ecto_diffs(src, opts), into: MapSet.new(), do: mutated
+      end
+
+      authors = """
+      defmodule M do
+        import Ecto.Query
+        import Mutare.Ecto.AuthorMacros
+        def q, do: from(p in MyApp.Post, where: is_nil(max(p.views + 1)), select: p.id)
+      end
+      """
+
+      ectos = """
+      defmodule M do
+        import Ecto.Query
+
+        def q do
+          from(p in MyApp.Post,
+            group_by: p.user_id,
+            having: is_nil(max(p.views + 1)),
+            select: p.user_id
+          )
+        end
+      end
+      """
+
+      assert "is_nil(max(p.views - 1))" in mutated.(authors,
+               mutators: @mutators,
+               extensions: @author
+             )
+
+      refute "is_nil(max(p.views - 1))" in mutated.(ectos, mutators: @mutators)
+
+      assert_compiles(authors, mutators: @mutators, extensions: @author)
+    end
   end
 
   describe "the declarative `:call_routes` config channel" do

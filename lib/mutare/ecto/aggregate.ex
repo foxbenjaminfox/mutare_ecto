@@ -9,10 +9,10 @@ defmodule Mutare.Ecto.Aggregate do
   #
   # Two consumers, like `Mutare.Ecto.Scalar`: `Mutare.Ecto.Fragment` applies `local/1` per node in
   # a condition (a `having: sum(p.x) > n` swaps behind the same selector as its operators, or
-  # inside the same whole-call `dynamic` rewrite — and never under `is_nil`, per `Fragment`'s
-  # descent rule), and `swaps/1` walks a `select`/`select_merge`/`order_by` value
-  # (`Mutare.Ecto.ExpressionWalk`) for the in-place deliveries (`Mutare.Ecto.Query`,
-  # `Mutare.Ecto.Clause`).
+  # inside the same whole-call `dynamic` rewrite — pruned beneath `is_nil`, where `Fragment`
+  # knows both rungs are NULL on the same rows), and `swaps/1` walks a
+  # `select`/`select_merge`/`order_by` value (`Mutare.Ecto.ExpressionWalk`) for the in-place
+  # deliveries (`Mutare.Ecto.Query`, `Mutare.Ecto.Clause`).
   #
   # `count` is deliberately excluded — here and in `Mutare.Ecto.RepoAggregate`, which swaps the
   # atom form along this same ladder: it has a different arity/`:distinct` contract

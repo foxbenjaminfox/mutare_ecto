@@ -18,9 +18,10 @@ defmodule Mutare.Ecto.Walk do
   # rule below, a written list's elements, a 2-tuple's sides — and a `^` pin is a leaf for every
   # SQL-side walk (its interior is sub-contracted to core — see `Mutare.Ecto.Island`). A
   # catalog's own rule wraps it to claim a **unit** (a whole subtree whose inner nodes are not
-  # positions — `Fragment`'s `not is_nil(x)`), to refuse a shape it does not speak, or to refine
-  # a child's context (`ExpressionWalk`'s `order_by:` option of an `over/2` window). A rule can
-  # only ever *narrow* what a reader sees: readers never descend on their own.
+  # positions — `Fragment`'s `exists(subquery)`), to refuse a shape it does not speak, or to
+  # refine a child's context (`ExpressionWalk`'s `order_by:` option of an `over/2` window;
+  # `Fragment`'s NULL-ness-only observation beneath `is_nil`). A rule can only ever *narrow*
+  # what a reader sees: readers never descend on their own.
   #
   # ## Node-level attribution
   #

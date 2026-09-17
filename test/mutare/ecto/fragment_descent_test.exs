@@ -11,11 +11,12 @@ defmodule Mutare.Ecto.FragmentDescentTest do
   # agree at every node by construction: neither descends on its own. (They used to be two
   # hand-rolled copies of the traversal, and this file guarded their parity.) What is still worth
   # pinning is the descent **policy** itself — the decisions a condition's SQL semantics dictate,
-  # which a well-meaning edit to `children/2` could silently flip: `is_nil` claims its whole
-  # argument (never entered — its one interior mutant, the coalesce drop, is read by the unit's
-  # own narrowed walk in `local/3`, not by the shared descent), the `in` operands are entered
-  # (through a written `not` too), and a written list's elements are entered. A wrong turn there is a false negative (a real pin island
-  # uncollected, a real literal never mutated) or a pin mutated as SQL the catalog does not own.
+  # which a well-meaning edit to `children/2` could silently flip: the `is_nil` argument is
+  # entered (what is pruned beneath it is the catalog's decision per mutant, never the walk's —
+  # so the probe sits under an opaque `fragment`, where nothing is pruned), the `in` operands
+  # are entered (through a written `not` too), and a written list's elements are entered. A
+  # wrong turn there is a false negative (a real pin island uncollected, a real literal never
+  # mutated) or a pin mutated as SQL the catalog does not own.
   #
   # The nested-author-macro rule is `Mutare.Ecto.Walk`'s, and the subquery-interior recursion is
   # `Mutare.Ecto.Subquery`'s (its interiors only resolve under the full transform pipeline, so that
@@ -40,11 +41,16 @@ defmodule Mutare.Ecto.FragmentDescentTest do
       literal: "u.a and u.b > 4242"
     },
     %{
-      desc:
-        "is_nil argument (never entered — value mutants preserve NULL-ness; the coalesce drop is the unit's, not the walk's)",
-      descend?: false,
-      pinned: "is_nil(u.a + ^v)",
-      literal: "is_nil(u.a + 4242)"
+      desc: "is_nil argument (an opaque form's operand decides which rows are NULL)",
+      descend?: true,
+      pinned: ~s|is_nil(fragment("NULLIF(?, ?)", u.a, ^v))|,
+      literal: ~s|is_nil(fragment("NULLIF(?, ?)", u.a, 4242))|
+    },
+    %{
+      desc: "not-is_nil argument (reached through the outer `not`)",
+      descend?: true,
+      pinned: ~s|not is_nil(fragment("NULLIF(?, ?)", u.a, ^v))|,
+      literal: ~s|not is_nil(fragment("NULLIF(?, ?)", u.a, 4242))|
     },
     %{
       desc: "membership left operand",
@@ -80,6 +86,15 @@ defmodule Mutare.Ecto.FragmentDescentTest do
       assert literal_descended?(unquote(literal)) == unquote(descend?),
              "mutants/2 disagreed with the expected descent for: #{unquote(literal)}"
     end
+  end
+
+  # The one place the two readers part ways — by design, and only in what they *offer* at a
+  # position both reach. Beneath `is_nil` a known form's literal bump is pruned (`u.a + 4242` is
+  # NULL on the rows `u.a + 4243` is), while the pin at the same position is still an island:
+  # nothing is known about which Elixir mutants keep a parameter's `nil`-ness.
+  test "beneath is_nil a known form prunes the catalog's literal but still surfaces the pin" do
+    refute literal_descended?("is_nil(u.a + 4242)")
+    assert island_surfaced?("is_nil(u.a + ^v)")
   end
 
   # Whether `islands/1` surfaced the fixture's single pin — i.e. the walk reached that position.
