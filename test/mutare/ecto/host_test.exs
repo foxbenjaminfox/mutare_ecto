@@ -20,78 +20,6 @@ defmodule Mutare.Ecto.HostTest do
     |> Enum.reject(fn {_original, mutated} -> mutated == "" end)
   end
 
-  # The source for one enumerated join pattern (see the oracle tests): a named join is
-  # `join: cN in "comments"` with an `on:` against `p`, and an unnamed join a bare
-  # `cross_join: "audit"`. `"audit"` and `"comments"` share their column names, so a misplaced slot
-  # still compiles. The `where:`s — one per named join — follow *all* the joins, as they would be
-  # written: Ecto applies a `from`'s clauses in written order and resolves a `^dynamic` against the
-  # query built so far, so an `on:` is resolved with only the joins up to its own in place, but
-  # these `where:`s with every join in place — including an unnamed one *after* the join they name.
-  defp slot_pattern_source(module, source, pattern) do
-    numbered = Enum.with_index(pattern, 1)
-
-    joins =
-      Enum.map_join(numbered, "\n", fn
-        {true, n} -> ~s(      join: c#{n} in "comments",\n      on: c#{n}.post_id == p.id,)
-        {false, _n} -> ~s(      cross_join: "audit",)
-      end)
-
-    wheres =
-      for {true, n} <- numbered, into: "", do: "      where: c#{n}.score > 10,\n"
-
-    """
-    defmodule #{module} do
-      import Ecto.Query
-
-      def base, do: from(p in "posts", left_join: u in "users", on: u.id == p.user_id)
-
-      def q do
-        from p in #{source},
-    #{joins}
-    #{wheres}      where: p.id > 0,
-          select: p.id
-      end
-    end
-    """
-  end
-
-  # The oracle for binding *positions*, independent of how the host computes them: Ecto itself.
-  # `source_for.(module_name)` renders a fixture exposing `q/0`. The untouched source is compiled
-  # here under a name unique to this test (the metamutant gets its own from core's wrapper), since
-  # `Code.compile_string` is global and these run async. A hosted condition is woven as
-  # `^dynamic(bindings, condition)`, which Ecto resolves to binding indices when it builds the
-  # query — so if the re-declared list is faithful, the metamutant's baseline builds the very query
-  # the untouched source does, and `inspect/1` (which renders every reference by index:
-  # `c2.score`) reads identically. A dropped or misplaced slot shows up as a different index
-  # (`a1.score`), however plausible the SQL.
-  defp assert_baseline_builds_original(source_for) do
-    original = Module.concat(__MODULE__, :"SlotOracle#{System.unique_integer([:positive])}")
-    [{^original, _binary} | _] = Code.compile_string(source_for.(inspect(original)))
-
-    on_exit(fn ->
-      :code.purge(original)
-      :code.delete(original)
-    end)
-
-    {[woven], _sites} = Mutare.Test.compile_metamutant(source_for.("Q"), mutators([]))
-
-    assert inspect(woven.q()) == inspect(original.q())
-  end
-
-  defp assert_pattern_baseline_builds_original(source, pattern) do
-    # Every condition was in fact hosted, so the oracle's comparison is not vacuous.
-    named = for {true, n} <- Enum.with_index(pattern, 1), do: n
-    conditions = hosted(slot_pattern_source("Q", source, pattern))
-    assert {"p.id > 0", "p.id >= 0"} in conditions
-
-    for n <- named do
-      assert {"c#{n}.post_id == p.id", "c#{n}.post_id != p.id"} in conditions
-      assert {"c#{n}.score > 10", "c#{n}.score >= 10"} in conditions
-    end
-
-    assert_baseline_builds_original(&slot_pattern_source(&1, source, pattern))
-  end
-
   describe "binding extraction — the dynamic wrap" do
     test "a single-binding from re-declares [u] in the woven dynamic" do
       src = """
@@ -685,27 +613,6 @@ defmodule Mutare.Ecto.HostTest do
       assert_compiles(src)
     end
 
-    # Positions checked against Ecto itself (`assert_baseline_builds_original/1`). Every
-    # named/unnamed pattern of one to three joins is enumerated — which covers an unnamed join
-    # before, between, and after named ones, several in a row, and none at all — over a literal
-    # and a composed source (whose hidden join makes the `...` anchor load-bearing).
-    join_patterns =
-      for length <- 1..3,
-          pattern <-
-            Enum.reduce(1..length, [[]], fn _, acc ->
-              for p <- acc, n <- [true, false], do: [n | p]
-            end),
-          do: pattern
-
-    for {source_kind, source} <- [literal: ~s("posts"), composed: "base()"],
-        pattern <- join_patterns do
-      label = Enum.map_join(pattern, ", ", &if(&1, do: "named", else: "unnamed"))
-
-      test "baseline builds the original query — #{source_kind} source, joins: #{label}" do
-        assert_pattern_baseline_builds_original(unquote(source), unquote(pattern))
-      end
-    end
-
     test "the pipe form re-declares its stage binding list" do
       src = """
       defmodule M do
@@ -952,40 +859,6 @@ defmodule Mutare.Ecto.HostTest do
 
         assert metamutant(src) =~ "dynamic([..., _]"
         assert_compiles(src)
-      end
-    end
-
-    # Positions checked against Ecto itself, as for the `from` form. `base/0` hides a second
-    # binding, so `...` has something to skip and a misplaced `x` reads a different table.
-    for {label, bindings, condition} <- [
-          {"a written `...` list", "[..., x]", "x.score > 10"},
-          {"a leading positional", "[p]", "p.id > 1"},
-          {"a full written list", "[p, x]", "x.score > p.id"},
-          {"an empty list", "[]", "as(:c).score > 10"}
-        ] do
-      test "baseline builds the original query — standalone unnamed join, #{label}" do
-        source_for = fn module ->
-          """
-          defmodule #{module} do
-            import Ecto.Query
-
-            def base,
-              do: from(p in "posts", join: c in "comments", as: :c, on: c.post_id == p.id)
-
-            def q do
-              base()
-              |> join(:inner, #{unquote(bindings)}, "audit", on: #{unquote(condition)})
-              |> select([p], p.id)
-            end
-          end
-          """
-        end
-
-        assert Enum.any?(hosted(source_for.("Q")), fn {original, _mutated} ->
-                 original == unquote(condition)
-               end)
-
-        assert_baseline_builds_original(source_for)
       end
     end
   end
@@ -2006,6 +1879,154 @@ defmodule Mutare.Ecto.HostTest do
       for {original, mutated} <- bumps, code <- [original, mutated] do
         refute code =~ "case"
         refute code =~ "^"
+      end
+    end
+  end
+end
+
+defmodule Mutare.Ecto.HostTest.Runtime do
+  # Sync: this module runs a metamutant, and the selector that picks its branch is global
+  # (`Mutare.Ecto.SelectorSyncTest`).
+  use ExUnit.Case, async: false
+
+  import Mutare.Ecto.TestSupport
+
+  # The source for one enumerated join pattern (see the oracle tests): a named join is
+  # `join: cN in "comments"` with an `on:` against `p`, and an unnamed join a bare
+  # `cross_join: "audit"`. `"audit"` and `"comments"` share their column names, so a misplaced slot
+  # still compiles. The `where:`s — one per named join — follow *all* the joins, as they would be
+  # written: Ecto applies a `from`'s clauses in written order and resolves a `^dynamic` against the
+  # query built so far, so an `on:` is resolved with only the joins up to its own in place, but
+  # these `where:`s with every join in place — including an unnamed one *after* the join they name.
+  defp slot_pattern_source(module, source, pattern) do
+    numbered = Enum.with_index(pattern, 1)
+
+    joins =
+      Enum.map_join(numbered, "\n", fn
+        {true, n} -> ~s(      join: c#{n} in "comments",\n      on: c#{n}.post_id == p.id,)
+        {false, _n} -> ~s(      cross_join: "audit",)
+      end)
+
+    wheres =
+      for {true, n} <- numbered, into: "", do: "      where: c#{n}.score > 10,\n"
+
+    """
+    defmodule #{module} do
+      import Ecto.Query
+
+      def base, do: from(p in "posts", left_join: u in "users", on: u.id == p.user_id)
+
+      def q do
+        from p in #{source},
+    #{joins}
+    #{wheres}      where: p.id > 0,
+          select: p.id
+      end
+    end
+    """
+  end
+
+  # The oracle for binding *positions*, independent of how the host computes them: Ecto itself.
+  # `source_for.(module_name)` renders a fixture exposing `q/0`. The untouched source is compiled
+  # here under a name unique to this test (the metamutant gets its own from core's wrapper), since
+  # `Code.compile_string` defines modules globally. A hosted condition is woven as
+  # `^dynamic(bindings, condition)`, which Ecto resolves to binding indices when it builds the
+  # query — so if the re-declared list is faithful, the metamutant's baseline builds the very query
+  # the untouched source does, and `inspect/1` (which renders every reference by index:
+  # `c2.score`) reads identically. A dropped or misplaced slot shows up as a different index
+  # (`a1.score`), however plausible the SQL.
+  #
+  # Returns the build's hosted `{original, mutated}` pairs, for the caller to check that the
+  # comparison was not vacuous — read from the sites of the build under test, not from a second
+  # transform of the same source.
+  defp assert_baseline_builds_original(source_for) do
+    original = Module.concat(__MODULE__, :"SlotOracle#{System.unique_integer([:positive])}")
+    [{^original, _binary} | _] = Code.compile_string(source_for.(inspect(original)))
+
+    on_exit(fn ->
+      :code.purge(original)
+      :code.delete(original)
+    end)
+
+    {[woven], sites} = Mutare.Test.compile_metamutant(source_for.("Q"), mutators([]))
+
+    # The baseline is pinned, not assumed: the ambient selection is a global another test may
+    # have left at a mutant, and an unpinned `woven.q()` would then build that mutant's query.
+    baseline = Mutare.Test.with_active_mutant(0, fn -> woven.q() end)
+    assert inspect(baseline) == inspect(original.q())
+
+    # A hosted mutant always rewrites to non-empty text; a clause drop is a deletion
+    # (`HostTest`'s `hosted/1`).
+    for %{mutator: :ecto, mutated_code: mutated} = site <- sites,
+        mutated != "",
+        do: {site.original_code, mutated}
+  end
+
+  defp assert_pattern_baseline_builds_original(source, pattern) do
+    conditions = assert_baseline_builds_original(&slot_pattern_source(&1, source, pattern))
+
+    # Every condition was in fact hosted.
+    assert {"p.id > 0", "p.id >= 0"} in conditions
+
+    for {true, n} <- Enum.with_index(pattern, 1) do
+      assert {"c#{n}.post_id == p.id", "c#{n}.post_id != p.id"} in conditions
+      assert {"c#{n}.score > 10", "c#{n}.score >= 10"} in conditions
+    end
+  end
+
+  describe "binding extraction — the woven baseline, built by Ecto" do
+    # Positions checked against Ecto itself (`assert_baseline_builds_original/1`). Every
+    # named/unnamed pattern of one to three joins is enumerated — which covers an unnamed join
+    # before, between, and after named ones, several in a row, and none at all — over a literal
+    # and a composed source (whose hidden join makes the `...` anchor load-bearing).
+    join_patterns =
+      for length <- 1..3,
+          pattern <-
+            Enum.reduce(1..length, [[]], fn _, acc ->
+              for p <- acc, n <- [true, false], do: [n | p]
+            end),
+          do: pattern
+
+    for {source_kind, source} <- [literal: ~s("posts"), composed: "base()"],
+        pattern <- join_patterns do
+      label = Enum.map_join(pattern, ", ", &if(&1, do: "named", else: "unnamed"))
+
+      test "baseline builds the original query — #{source_kind} source, joins: #{label}" do
+        assert_pattern_baseline_builds_original(unquote(source), unquote(pattern))
+      end
+    end
+
+    # Positions checked against Ecto itself, as for the `from` form. `base/0` hides a second
+    # binding, so `...` has something to skip and a misplaced `x` reads a different table.
+    for {label, bindings, condition} <- [
+          {"a written `...` list", "[..., x]", "x.score > 10"},
+          {"a leading positional", "[p]", "p.id > 1"},
+          {"a full written list", "[p, x]", "x.score > p.id"},
+          {"an empty list", "[]", "as(:c).score > 10"}
+        ] do
+      test "baseline builds the original query — standalone unnamed join, #{label}" do
+        source_for = fn module ->
+          """
+          defmodule #{module} do
+            import Ecto.Query
+
+            def base,
+              do: from(p in "posts", join: c in "comments", as: :c, on: c.post_id == p.id)
+
+            def q do
+              base()
+              |> join(:inner, #{unquote(bindings)}, "audit", on: #{unquote(condition)})
+              |> select([p], p.id)
+            end
+          end
+          """
+        end
+
+        conditions = assert_baseline_builds_original(source_for)
+
+        assert Enum.any?(conditions, fn {original, _mutated} ->
+                 original == unquote(condition)
+               end)
       end
     end
   end

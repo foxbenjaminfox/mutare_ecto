@@ -183,6 +183,14 @@ defmodule Mutare.Ecto.ValidationBoundaryTest do
       assert :validation_boundary in Mutare.Ecto.equivalence_sensitive_families()
     end
   end
+end
+
+defmodule Mutare.Ecto.ValidationBoundaryTest.Runtime do
+  # Sync: this module runs a metamutant, and the selector it flips is global
+  # (`Mutare.Ecto.SelectorSyncTest`).
+  use ExUnit.Case, async: false
+
+  import Mutare.Ecto.TestSupport
 
   describe "liveness" do
     test "a value exactly on the bound flips the verdict under the mutant" do

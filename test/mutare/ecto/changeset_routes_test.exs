@@ -126,6 +126,35 @@ defmodule Mutare.Ecto.ChangesetRoutesTest do
     end
   end
 
+  test "an unlisted stage's options stay ordinary expressions" do
+    # Only `validate_number` rejects an unknown key; a constraint's `name:` pair — key and value
+    # alike — is left to core like `validate_length`'s keys (an unknown key is ignored, so the swap
+    # is core's mutant, and an index name is not the plugin's to hold back). The field atom before
+    # it is still pinned.
+    stage = "unique_constraint(cs, :email, name: :accounts_email_index)"
+
+    assert [{"name:", "mutare:"}, {":accounts_email_index", ":mutare"}] =
+             atom_diffs(src(stage), [@atom, @plugin])
+  end
+
+  test "a non-atom field slot (prepare_changes' function) is untouched by the pin" do
+    stage = "prepare_changes(cs, fn c -> put_change(c, :kind, :x) end)"
+    # The pin is positional and shape-gated; the function body's atoms still mutate.
+    assert Enum.any?(atom_diffs(src(stage), [@atom, @plugin]), fn {original, _} ->
+             original == ":x"
+           end)
+  end
+end
+
+defmodule Mutare.Ecto.ChangesetRoutesTest.Runtime do
+  # Sync: this module runs a metamutant, and the selector it flips is global
+  # (`Mutare.Ecto.SelectorSyncTest`). These are the routes observed live: what the positions
+  # core keeps do at runtime.
+  use ExUnit.Case, async: false
+
+  @atom Mutare.Mutators.AtomLiteral
+  @plugin {Mutare.Ecto, repo: MyApp.Repo}
+
   test "a mutation inside count changes the selected valid mode" do
     source = """
     defmodule Acct do
@@ -171,24 +200,5 @@ defmodule Mutare.Ecto.ChangesetRoutesTest do
              Mutare.Test.observe_mutant(sites, mutant, fn ->
                mod.check(String.duplicate("a", 41))
              end)
-  end
-
-  test "an unlisted stage's options stay ordinary expressions" do
-    # Only `validate_number` rejects an unknown key; a constraint's `name:` pair — key and value
-    # alike — is left to core like `validate_length`'s keys (an unknown key is ignored, so the swap
-    # is core's mutant, and an index name is not the plugin's to hold back). The field atom before
-    # it is still pinned.
-    stage = "unique_constraint(cs, :email, name: :accounts_email_index)"
-
-    assert [{"name:", "mutare:"}, {":accounts_email_index", ":mutare"}] =
-             atom_diffs(src(stage), [@atom, @plugin])
-  end
-
-  test "a non-atom field slot (prepare_changes' function) is untouched by the pin" do
-    stage = "prepare_changes(cs, fn c -> put_change(c, :kind, :x) end)"
-    # The pin is positional and shape-gated; the function body's atoms still mutate.
-    assert Enum.any?(atom_diffs(src(stage), [@atom, @plugin]), fn {original, _} ->
-             original == ":x"
-           end)
   end
 end
