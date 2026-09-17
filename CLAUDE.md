@@ -170,7 +170,7 @@ Each row is role + the rule(s) that module is the **home** for.
 | `host/bindings.ex` | interprets binding declarations and renders the list a woven `dynamic/2` re-declares, as `{:ok, declarations} \| :error`; home of join placement (the join-slot rule: every join, whether a `from` join clause or the one a standalone `join/4,5` adds, holds one positional slot, an unnamed one re-declaring as `_`; and the `...` anchor rule) and of the hidden-source assumption |
 | `host/catalog.ex` | the own-catalog + island mutants for one hosted condition |
 | `host/join_on.ex` | home of join `on:` hostability (a join's sole, top-level, non-`assoc` on-expression — an `assoc` join told by its source, named or not) |
-| `host/target.ex` | the `dynamic`-wrap / `^`-pin / splice transforms core consumes; home of the root-pin rule (a condition that *is* a `^` pin — a `:root_pin` predicate — weaves pin-only over its interior) |
+| `host/target.ex` | the `dynamic`-wrap / `^`-pin / splice transforms core consumes; home of the root-pin rule (a condition that *is* a `^` pin — a `:root_pin` predicate — weaves pin-only over its interior, re-declaring no bindings, so under any declaration) |
 | `fragment.ex` | the SQL-semantics catalog for conditions (public family table); home of the SQL side of the ownership rule, the `is_nil` observation rule (beneath it a mutant is pruned only where the per-form NULL rules *know* it keeps the argument's NULL-ness; an unknown form — and every pin — is emitted), and the structural-position registry — which also gives a `^` pin its role (`role/0`: `:value` / `:condition` / `:structural`, reported by `islands/2`) |
 | `subquery.ex` | recurses the catalogs into an inline subquery; home of the wrapper observation modes, of what is pruned as equivalent vs. merely not composed yet, and of the interior keyword-filter rule (a pair's value is a catalog root, its key never) |
 | `island.ex` | the interpolation-island seam; home of the sub-contract and of the role policy — what of a pin's interior is still query structure, held against core's families: a `:condition` pin's keyword keys (the pin-side keyword-key rule), a `:structural` pin's literals known to be the name |
@@ -182,7 +182,7 @@ Each row is role + the rule(s) that module is the **home** for.
 | `combination.ex` | the set-operation swap table (`union` deliberately unswapped) |
 | `bound.ex` | the `:bound` ±1 bump; home of pin-only hosting and the `literal?/1` = `bumps/1` agreement |
 | `dynamic.ex` | free-standing `dynamic/1,2`; home of its whole-call in-place delivery |
-| `static_condition.ex` | the condition the host cannot weave (a subquery in a `having`; a declaration the plugin cannot re-declare); home of the delivery rule (`delivery/3` — receiving clause × expression × declaration, consulted by the host and the fallback alike) and of its whole-call fallback delivery |
+| `static_condition.ex` | the condition the host cannot weave (a subquery in a `having`; a declaration the plugin cannot re-declare); home of the delivery rule (`delivery/4` — receiving clause × expression × predicate kind × declaration, consulted by the host and the fallback alike) and of its whole-call fallback delivery |
 | `query.ex` | whole-`from` rewrites; home of the JoinType narrowing rationale |
 | `clause.ex` | standalone/pipe cousins of `query.ex` |
 | `clause_drop.ex` / `changeset.ex` | stage drops (a query clause / a changeset validator or hook) over `stage_drop.ex`; `changeset.ex` is home of the stage table (`stages/0`) the changeset routes derive from |

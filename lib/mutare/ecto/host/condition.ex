@@ -70,7 +70,7 @@ defmodule Mutare.Ecto.Host.Condition do
   #     `Mutare.Ecto.Binding`'s grammar (or hidden on a pipe's left, `[p] |> dynamic(…)`). No
   #     `dynamic/2` can re-declare it, so the condition is rebuilt whole-call under the written
   #     list instead (`Mutare.Ecto.StaticCondition`), as `Mutare.Ecto.Dynamic` rebuilds every
-  #     free-standing `dynamic`.
+  #     free-standing `dynamic` — unless it is a root pin, whose weave re-declares nothing.
   #
   # Under any of the three, only a predicate is located. A keyword filter, **with or without a
   # binding list before it** (`where(q, col: v)`, `where(q, [p], col: v)`), makes `locate/3`

@@ -36,7 +36,7 @@ defmodule Mutare.Ecto.Host do
   A condition the host cannot weave — a subquery in a `having`, which Ecto accepts only
   statically built, or a condition under a binding declaration the plugin cannot re-declare — is
   delivered as a whole-call rebuild instead, by `Mutare.Ecto.StaticCondition` — whose
-  `delivery/3` decides, for the host and the rebuild alike, which conditions those are.
+  `delivery/4` decides, for the host and the rebuild alike, which conditions those are.
   """
 
   alias Mutare.Ecto.{Bound, Context, StaticCondition, Surface}
@@ -115,7 +115,7 @@ defmodule Mutare.Ecto.Host do
     end
   end
 
-  # Every condition target weaves only what `StaticCondition.delivery/3` assigns it; a
+  # Every condition target weaves only what `StaticCondition.delivery/4` assigns it; a
   # `:rebuilt` condition — one the clause cannot take as a dynamic, or one whose declaration
   # `Bindings` cannot re-declare — is `Mutare.Ecto.StaticCondition`'s, delivered whole-call.
   #
@@ -125,10 +125,10 @@ defmodule Mutare.Ecto.Host do
   # a *named* binding. Hostability is decided by the clause (`Condition.from_indices/1`, in the
   # caller), the delivery, and a non-empty catalog, not the binding count — so a top-level-pin
   # condition (`where: ^cond`) hosts whenever its sub-contract yields something
-  # (`Mutare.Ecto.Island`); its weave is pin-only and leaves these bindings unused
-  # (`Mutare.Ecto.Host.Target`).
+  # (`Mutare.Ecto.Island`); its weave is pin-only and carries no bindings, so it hosts under any
+  # declaration (`Mutare.Ecto.Host.Target`).
   defp from_target(key, condition, kind, bindings, index, context) do
-    with {:woven, bindings} <- StaticCondition.delivery(key, condition, bindings),
+    with {:woven, bindings} <- StaticCondition.delivery(key, condition, kind, bindings),
          [_ | _] = mutants <- Catalog.mutants(condition, context) do
       [Target.from_clause(condition, kind, mutants, bindings, index)]
     else
@@ -137,13 +137,13 @@ defmodule Mutare.Ecto.Host do
   end
 
   # The woven `dynamic/2` re-declares the written binding list — or an empty one when none was
-  # written (`Mutare.Ecto.Host.Condition`'s three outcomes; the third, uninterpretable, is
-  # rebuilt instead).
+  # written (`Mutare.Ecto.Host.Condition`'s three outcomes; under the third, uninterpretable,
+  # only a root pin is woven, and every other condition is rebuilt).
   defp condition_target(macro, args, pipe_mode, context) do
     with %Condition{node: condition, index: index, kind: kind, declaration: declaration} <-
            Condition.locate(:condition, args, pipe_mode),
          {:woven, bindings} <-
-           StaticCondition.delivery(macro, condition, Bindings.declarations(declaration)),
+           StaticCondition.delivery(macro, condition, kind, Bindings.declarations(declaration)),
          [_ | _] = mutants <- Catalog.mutants(condition, context) do
       [Target.condition(condition, kind, mutants, bindings, index)]
     else
@@ -172,7 +172,7 @@ defmodule Mutare.Ecto.Host do
 
   defp join_target(args, context) do
     with {condition, kind, arg_index, pair_index} <- Condition.locate_on(args),
-         {:woven, bindings} <- StaticCondition.delivery(:on, condition, Bindings.join(args)),
+         {:woven, bindings} <- StaticCondition.delivery(:on, condition, kind, Bindings.join(args)),
          [_ | _] = mutants <- Catalog.mutants(condition, context) do
       [Target.keyword_condition(condition, kind, mutants, bindings, arg_index, pair_index)]
     else

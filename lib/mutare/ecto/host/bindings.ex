@@ -17,7 +17,7 @@ defmodule Mutare.Ecto.Host.Bindings do
   # queryable source), so a woven `dynamic([], …)` is faithful; `:error` says a declaration was
   # written that this module **cannot interpret** (`Mutare.Ecto.Binding`'s grammar), so *any*
   # re-declaration would be a guess and the condition is never woven — it is rebuilt whole-call
-  # instead (`Mutare.Ecto.StaticCondition.delivery/3`). The work is done on parsed entries
+  # instead (`Mutare.Ecto.StaticCondition.delivery/4`). The work is done on parsed entries
   # (`t:Mutare.Ecto.Binding.entry/0`) and rendered to AST once, at the end — placement never
   # re-reads a node's shape to learn what kind of entry it is.
 

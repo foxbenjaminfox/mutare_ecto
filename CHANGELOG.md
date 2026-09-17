@@ -100,7 +100,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   re-declared as written. A condition under a declaration still outside the
   grammar — a computed index, or a name that calls a function, either of which
   the re-declaration would evaluate a second time — gets the same mutants,
-  delivered as rebuilds of the whole call under the declaration as written.
+  delivered as rebuilds of the whole call under the declaration as written; a
+  condition that is itself a `^` pin re-declares nothing, and is woven as usual.
 - **Several entries over a literal source no longer misplace its joins.**
   `from([p, q] in Post, join: c in Comment, …)` re-declared `[p, q, c]`, placing
   `c` at a binding that does not exist; it is now tail-anchored (`[p, q, ..., c]`).

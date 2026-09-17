@@ -34,7 +34,10 @@ defmodule Mutare.Ecto.RootPinDeliveryTest do
     {"piped where/2", &__MODULE__.where_piped/1},
     {"binding-less where/2", &__MODULE__.where_bare/1},
     {"join on:", &__MODULE__.join_on/1},
-    {"unnamed join on:", &__MODULE__.unnamed_join_on/1}
+    {"unnamed join on:", &__MODULE__.unnamed_join_on/1},
+    {"where/3 under an unread declaration", &__MODULE__.where_unread/1},
+    {"from where: under an unread source", &__MODULE__.from_where_unread/1},
+    {"join on: under an unread declaration", &__MODULE__.join_on_unread/1}
   ]
 
   def from_where(interior), do: ~s|from(p in "posts", where: ^(#{interior}))|
@@ -45,6 +48,14 @@ defmodule Mutare.Ecto.RootPinDeliveryTest do
   def where_bare(interior), do: ~s|where(q, ^(#{interior}))|
   def join_on(interior), do: ~s|join(q, :inner, [c], p in "posts", on: ^(#{interior}))|
   def unnamed_join_on(interior), do: ~s|join(q, :inner, [c], "posts", on: ^(#{interior}))|
+
+  # A computed index (`0 + 0`) is a declaration the plugin does not re-declare
+  # (`Mutare.Ecto.Binding`) — irrelevant to a root pin, whose weave re-declares nothing.
+  def where_unread(interior), do: ~s|where(q, [{p, 0 + 0}], ^(#{interior}))|
+  def from_where_unread(interior), do: ~s|from([{p, 0 + 0}] in "posts", where: ^(#{interior}))|
+
+  def join_on_unread(interior),
+    do: ~s|join(q, :inner, [{c, 0 + 0}], p in "posts", on: ^(#{interior}))|
 
   defp module_source(body) do
     """
@@ -125,6 +136,24 @@ defmodule Mutare.Ecto.RootPinDeliveryTest do
 
     # The logical fragment is still the written condition, `^` included — only delivery unpins.
     assert {:integer, "^[views: 5]", "^[views: 6]"} in diffs(source, @with_core)
+  end
+
+  test "under a declaration the plugin cannot re-declare, a root pin is still woven, not rebuilt" do
+    # Beside it, a predicate under the same declaration is rebuilt whole-call
+    # (`Mutare.Ecto.StaticCondition`); the root pin needs no declaration, so it keeps the weave —
+    # and its diff stays at the condition, where a rebuild would report the whole call.
+    source =
+      module_source(
+        ~s|[where(q, [{p, 0 + 0}], ^[views: 5]), where(q, [{p, 0 + 0}], p.views > 1)]|
+      )
+
+    # Whitespace collapsed, so the checks do not depend on where the formatter breaks a line.
+    woven = source |> metamutant(@with_core) |> String.replace(~r/\s+/, " ")
+    assert woven =~ "[{p, 0 + 0}], ^case mutare_active do"
+    assert woven =~ "where(q, [{p, 0 + 0}], p.views >= 1)"
+    refute woven =~ "dynamic"
+    assert {:integer, "^[views: 5]", "^[views: 6]"} in diffs(source, @with_core)
+    assert {:ecto, "p.views > 1", "p.views >= 1"} in diffs(source, @with_core)
   end
 
   test "a pin *inside* a predicate still rides the dynamic wrap" do
