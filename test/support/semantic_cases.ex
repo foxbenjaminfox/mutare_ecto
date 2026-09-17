@@ -971,6 +971,32 @@ defmodule Mutare.Ecto.SemanticCases do
         test "a composed source: the slot is counted from the tail (`[p, ..., c, _]`)" do
           assert_anonymous_join_slots("base()")
         end
+
+        # The standalone `join/4,5` twin. The author's own `[..., c]` names the query's last
+        # binding *before* the join, but the hosted `on:` is resolved with the unnamed join in
+        # place — as the last binding. The woven list declares that slot (`[..., c, _]`), so `c`
+        # still reads `comments`; re-declaring `[..., c]` alone would read the audit row's score
+        # (50) and pass every comment.
+        test "a standalone unnamed join: a written `[..., c]` still names the binding before it" do
+          {mod, sites} =
+            build("""
+            defmodule Q do
+              import Ecto.Query
+              def base, do: from(p in "posts", join: c in "comments", on: c.post_id == p.id)
+
+              def q do
+                base()
+                |> join(:inner, [..., c], "audit", on: c.score > 10)
+                |> select([p, c], c.id)
+              end
+            end
+            """)
+
+          {baseline, mutant} = observe_ids(mod, sites, {"c.score > 10", "c.score >= 10"})
+
+          assert baseline == [1]
+          assert mutant == [1, 2]
+        end
       end
 
       describe "filter-drop — remove a `where` clause (whole-`from`)" do

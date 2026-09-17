@@ -34,8 +34,8 @@ defmodule Mutare.Ecto.Host.JoinOn do
 
   @doc """
   Whether a standalone `join/4,5`'s lone `on:` is safe to host: the call has exactly one `on:` option
-  and a non-`assoc` source (`join(q, :inner, [p], c in Schema, on: …)`, not `c in assoc(p, :x)` —
-  whose implicit condition Ecto would fold the hosted `^dynamic` under).
+  and a non-`assoc` source (`join(q, :inner, [p], c in Schema, on: …)`, not `c in assoc(p, :x)` or
+  a bare `assoc(p, :x)` — whose implicit condition Ecto would fold the hosted `^dynamic` under).
   """
   @spec hostable_standalone?([Macro.t()], [Entry.t()]) :: boolean()
   def hostable_standalone?(args, option_entries) do
@@ -62,12 +62,14 @@ defmodule Mutare.Ecto.Host.JoinOn do
   defp hostable_group({{_join_index, value}, [index]}),
     do: if(assoc_value?(value), do: [], else: [index])
 
-  # A join source `x in assoc(p, :rel)` — its implicit join condition forces the `and` fold. Every
-  # other source (a schema, table, subquery, bound query) contributes only its explicit `on:`.
-  # Neither node is ever `__block__`-wrapped: Sourceror wraps only a leaf literal, never an
-  # operator/call node — parenthesized or not.
+  # A join over `assoc(p, :rel)` — its implicit join condition forces the `and` fold. Every other
+  # source (a schema, table, subquery, bound query) contributes only its explicit `on:`. The join
+  # is told by its *source*, named (`x in assoc(p, :rel)`) or not (a bare `assoc(p, :rel)`, which
+  # Ecto binds anonymously): the implicit condition is the association's either way. Neither node
+  # is ever `__block__`-wrapped: Sourceror wraps only a leaf literal, never an operator/call node —
+  # parenthesized or not.
   defp assoc_value?({:in, _meta, [_lhs, rhs]}), do: assoc_call?(rhs)
-  defp assoc_value?(_node), do: false
+  defp assoc_value?(node), do: assoc_call?(node)
 
   defp assoc_call?({:assoc, _meta, [_source, _name]}), do: true
   defp assoc_call?(_node), do: false

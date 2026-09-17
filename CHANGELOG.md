@@ -17,6 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   deliberately not swapped; `validate_length`'s inclusive `min`/`max` have no
   strict counterpart, so Mutare's integer family still provides their off-by-one mutations.
 
+- **A standalone join written without a binding variable has its `on:` mutated.**
+  `join(q, :inner, [p], "audit", on: p.id > 1)` (or a bare `subquery`, `fragment`,
+  `^source` join — typically reached through its `as:` name) used to receive only
+  its stage drop; its `on:` now gets the same in-query mutants as a named join's.
+
 ### Changed
 
 - **Changeset stages are routed.** Listing the plugin now holds back from Mutare's
@@ -31,6 +36,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   receive core's literal mutants, and a field *list*
   (`validate_required(cs, [:name, :email])`) stays an ordinary expression for
   core's list families.
+
+- **An unnamed `assoc` join follows the `assoc` rule.** The `on:` of an
+  `assoc` join is left to the whole-query families, never mutated in place — but
+  the rule recognised only `c in assoc(p, :posts)`, so a `from` join written as a
+  bare `assoc(p, :posts)` had its `on:` mutated in place all the same. Both
+  spellings are now treated alike.
 
 ### Fixed
 

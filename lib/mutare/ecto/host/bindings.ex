@@ -8,8 +8,9 @@ defmodule Mutare.Ecto.Host.Bindings do
   # The list is positional, and every branch of a hosted selector is resolved through it — the
   # *original* condition's branch included. So a list that misplaces a binding does not just emit
   # a bad mutant: it rewrites the baseline, and where two tables share a column name the result is
-  # valid SQL over the wrong table. Hence the rule `join_slots/1` is the home of: a `from`'s list
-  # accounts for **every** position the query establishes, named by the author or not.
+  # valid SQL over the wrong table. Hence the rule `join_slot/1` is the home of: a synthesized list
+  # accounts for **every** position its joins establish, named by the author or not — each join
+  # clause of a `from` (`join_slots/1`), and the one join a standalone `join/4,5` adds (`join/1`).
 
   alias Mutare.Ecto.{AST, Binding, Surface}
   alias Mutare.Ecto.AST.{BindingList, KeywordList}
@@ -60,18 +61,20 @@ defmodule Mutare.Ecto.Host.Bindings do
   @doc "The dynamic binding list visible to a standalone `join` on-condition."
   @spec join([Macro.t()]) :: [Macro.t()]
   def join(args) do
-    # The join's `x in Source` expression sits one slot past the written binding list: Ecto's
-    # `join(query, qual, binding \\ [], expr, opts \\ [])` can't skip the middle default, so a
-    # join written with options (the `on:` the host weaves) always writes its list too — and may
-    # legally write it **empty** (`join(q, :inner, [], p in Post, on: p.views > 1)`: the
-    # condition references only the joined binding). The list is located through `written/1`,
-    # not `BindingList.find/1`, precisely so that `[]` counts as the declaration it is; located
-    # through `find/1` it fell through here, and the join kept only its stage drop.
+    # The join expression — `x in Source`, or a bare `Source` — sits one argument past the written
+    # binding list: Ecto's `join(query, qual, binding \\ [], expr, opts \\ [])` can't skip the
+    # middle default, so a join written with options (the `on:` the host weaves) always writes its
+    # list too — and may legally write it **empty** (`join(q, :inner, [], p in Post, on: p.views >
+    # 1)`: the condition references only the joined binding). The list is located through
+    # `written/1`, not `BindingList.find/1`, precisely so that `[]` counts as the declaration it
+    # is; located through `find/1` it fell through here, and the join kept only its stage drop.
     with {index, written} <- find_written(args),
-         {:in, _, [lhs, _source]} <- Enum.at(args, index + 1),
-         [_ | _] = join_declarations <- declarations(lhs) do
-      # A standalone `join` always composes an external query, so the new binding anchors to the tail.
-      append_positionals(written, join_declarations, true)
+         {:ok, join} <- Enum.fetch(args, index + 1) do
+      # The `on:` is resolved with the new join in place, so the join's slot is declared whether
+      # or not it is named (`join_slot/1`) — after an author-written `[..., x]` the `_` is what
+      # keeps `x` on the binding it named: `[..., x, _]`, where `[..., x]` would now read the new
+      # join. A standalone `join` always composes an external query, so the slot anchors to the tail.
+      append_positionals(written, [join_slot(join)], true)
     else
       _ -> []
     end
@@ -171,10 +174,11 @@ defmodule Mutare.Ecto.Host.Bindings do
         do: join_slot(value)
   end
 
-  # A keyword `from` join names its slot only as `var in source` — the LHS is a plain variable,
-  # with no list and no `key: var` form (Ecto reads anything else as a malformed join), so a slot
-  # is a positional entry by construction and `clean_var/1` fails loudly on a foreign LHS shape
-  # rather than mis-declare it.
+  # The slot of one join expression — a `from` join clause's value, or a standalone `join/4,5`'s
+  # `expr` argument: Ecto reads both through the same `Join.escape/3`. A join names its slot only
+  # as `var in source` — the LHS is a plain variable, with no list and no `key: var` form (Ecto
+  # reads anything else as a malformed join), so a slot is a positional entry by construction and
+  # `clean_var/1` fails loudly on a foreign LHS shape rather than mis-declare it.
   defp join_slot({:in, _meta, [var, _source]}), do: Mutare.AST.clean_var(var)
   defp join_slot(_unnamed), do: Binding.placeholder()
 

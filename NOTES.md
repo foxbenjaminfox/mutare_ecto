@@ -368,6 +368,16 @@ source builds, over every named/unnamed pattern of one to three joins and both s
 the semantic suite runs the placements against `comments`/`audit`, two tables seeded with the same
 columns so that a wrong slot returns different rows rather than an error.
 
-The standalone `join/4,5` was never affected — it re-declares the author's own written list and
-always tail-anchors the one join it adds — and an unnamed standalone join's `on:` stays un-hosted
-(`Bindings.join/1` weaves nothing for it), which is a missed mutation, not a miscount.
+The standalone `join/4,5` never miscounted — it re-declares the author's own written list and
+tail-anchors the one join it adds — but only because it declined an unnamed join altogether:
+`Bindings.join/1` matched `x in Source`, wove nothing for a bare `Source`, and the `on:` of
+`join(q, :inner, [p], "audit", on: …)` kept only its stage drop. It now takes the join's slot from
+the same `join_slot/1`, so that `on:` is hosted behind `[p, ..., _]`. The placeholder is
+load-bearing there too: the `on:` is resolved with the new join in place, so after an
+author-written `[..., x]` the list must be `[..., x, _]` — `[..., x]` alone would read the new
+join as `x`.
+
+Hosting unnamed joins exposed the same blind spot in `Mutare.Ecto.Host.JoinOn`: its `assoc`
+exclusion matched `x in assoc(p, :rel)` only, so a bare `assoc(p, :rel)` join slipped past it (in
+the `from` form its `on:` was already being hosted). An `assoc` join is now told by its source,
+named or not.

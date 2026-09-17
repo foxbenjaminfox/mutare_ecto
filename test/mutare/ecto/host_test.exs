@@ -55,26 +55,33 @@ defmodule Mutare.Ecto.HostTest do
     """
   end
 
-  defp assert_baseline_builds_original(source, pattern, index) do
-    # The untouched source is compiled here under a name unique to this test (the metamutant gets
-    # its own from core's wrapper), since `Code.compile_string` is global and these run async.
-    original =
-      Module.concat(__MODULE__, :"SlotOracle#{index}_#{System.unique_integer([:positive])}")
-
-    [{^original, _binary} | _] =
-      Code.compile_string(slot_pattern_source(inspect(original), source, pattern))
+  # The oracle for binding *positions*, independent of how the host computes them: Ecto itself.
+  # `source_for.(module_name)` renders a fixture exposing `q/0`. The untouched source is compiled
+  # here under a name unique to this test (the metamutant gets its own from core's wrapper), since
+  # `Code.compile_string` is global and these run async. A hosted condition is woven as
+  # `^dynamic(bindings, condition)`, which Ecto resolves to binding indices when it builds the
+  # query — so if the re-declared list is faithful, the metamutant's baseline builds the very query
+  # the untouched source does, and `inspect/1` (which renders every reference by index:
+  # `c2.score`) reads identically. A dropped or misplaced slot shows up as a different index
+  # (`a1.score`), however plausible the SQL.
+  defp assert_baseline_builds_original(source_for) do
+    original = Module.concat(__MODULE__, :"SlotOracle#{System.unique_integer([:positive])}")
+    [{^original, _binary} | _] = Code.compile_string(source_for.(inspect(original)))
 
     on_exit(fn ->
       :code.purge(original)
       :code.delete(original)
     end)
 
-    woven_source = slot_pattern_source("Q", source, pattern)
-    {[woven], _sites} = Mutare.Test.compile_metamutant(woven_source, mutators([]))
+    {[woven], _sites} = Mutare.Test.compile_metamutant(source_for.("Q"), mutators([]))
 
-    # Every condition was in fact hosted, so the comparison below is not vacuous.
+    assert inspect(woven.q()) == inspect(original.q())
+  end
+
+  defp assert_pattern_baseline_builds_original(source, pattern) do
+    # Every condition was in fact hosted, so the oracle's comparison is not vacuous.
     named = for {true, n} <- Enum.with_index(pattern, 1), do: n
-    conditions = hosted(woven_source)
+    conditions = hosted(slot_pattern_source("Q", source, pattern))
     assert {"p.id > 0", "p.id >= 0"} in conditions
 
     for n <- named do
@@ -82,7 +89,7 @@ defmodule Mutare.Ecto.HostTest do
       assert {"c#{n}.score > 10", "c#{n}.score >= 10"} in conditions
     end
 
-    assert inspect(woven.q()) == inspect(original.q())
+    assert_baseline_builds_original(&slot_pattern_source(&1, source, pattern))
   end
 
   describe "binding extraction — the dynamic wrap" do
@@ -678,16 +685,11 @@ defmodule Mutare.Ecto.HostTest do
       assert_compiles(src)
     end
 
-    # The oracle for binding *positions*, independent of how the host computes them: Ecto itself.
-    # A hosted condition is woven as `^dynamic(bindings, condition)`, which Ecto resolves to
-    # binding indices when it builds the query — so if the re-declared list is faithful, the
-    # metamutant's baseline builds the very query the untouched source does, and `inspect/1` (which
-    # renders every reference by index: `c2.score`) reads identically. A dropped or misplaced slot
-    # shows up as a different index (`a1.score`), however plausible the SQL. Every named/unnamed
-    # pattern of one to three joins is enumerated — which covers an unnamed join before, between,
-    # and after named ones, several in a row, and none at all — over a literal and a composed
-    # source (whose hidden join makes the `...` anchor load-bearing).
-    describe_patterns =
+    # Positions checked against Ecto itself (`assert_baseline_builds_original/1`). Every
+    # named/unnamed pattern of one to three joins is enumerated — which covers an unnamed join
+    # before, between, and after named ones, several in a row, and none at all — over a literal
+    # and a composed source (whose hidden join makes the `...` anchor load-bearing).
+    join_patterns =
       for length <- 1..3,
           pattern <-
             Enum.reduce(1..length, [[]], fn _, acc ->
@@ -696,11 +698,11 @@ defmodule Mutare.Ecto.HostTest do
           do: pattern
 
     for {source_kind, source} <- [literal: ~s("posts"), composed: "base()"],
-        {pattern, index} <- Enum.with_index(describe_patterns) do
+        pattern <- join_patterns do
       label = Enum.map_join(pattern, ", ", &if(&1, do: "named", else: "unnamed"))
 
       test "baseline builds the original query — #{source_kind} source, joins: #{label}" do
-        assert_baseline_builds_original(unquote(source), unquote(pattern), unquote(index))
+        assert_pattern_baseline_builds_original(unquote(source), unquote(pattern))
       end
     end
 
@@ -871,6 +873,120 @@ defmodule Mutare.Ecto.HostTest do
       assert {"p.views > 1", "p.views >= 1"} in hosted(src)
       assert metamutant(src) =~ "dynamic([..., p]"
       assert_compiles(src)
+    end
+
+    test "a standalone unnamed join hosts its on condition, re-declaring the joined slot as `_`" do
+      # `join(q, :inner, [p], "audit", on: …)` names no variable for the join it adds, but the
+      # join still takes the query's next position, and its `on:` is resolved with that join in
+      # place. So the woven list declares the slot — `[p, ..., _]` — exactly as a `from`'s does
+      # (`Mutare.Ecto.Host.Bindings`). The host used to weave nothing here, and the comparison and
+      # literal mutants of the condition were lost; only the stage drop was recorded.
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q(query), do: join(query, :inner, [p], "audit", on: p.id > 1)
+      end
+      """
+
+      assert {"p.id > 1", "p.id >= 1"} in hosted(src)
+      assert {"p.id > 1", "p.id > 2"} in hosted(src)
+      assert metamutant(src) =~ "dynamic([p, ..., _]"
+      assert_compiles(src)
+    end
+
+    test "a written `...` list keeps its tail meaning: `[..., x]` weaves `[..., x, _]`" do
+      # The case the placeholder is load-bearing for. The author's `[..., x]` names the query's
+      # last binding *before* the join; the woven dynamic is resolved *after* it, when the unnamed
+      # join is the last binding and `x` the second-to-last. Re-declaring the written list alone
+      # (`[..., x]`) would name the audit join `x` — in the baseline branch too.
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q(query), do: join(query, :inner, [..., x], "audit", on: x.score > 10)
+      end
+      """
+
+      assert {"x.score > 10", "x.score >= 10"} in hosted(src)
+      assert metamutant(src) =~ "dynamic([..., x, _]"
+      refute metamutant(src) =~ "dynamic([..., x]"
+      assert_compiles(src)
+    end
+
+    test "the piped unnamed join hosts a condition on the binding its `as:` names" do
+      # The shape an unnamed join's `on:` most plausibly takes: the join is reachable only through
+      # its `as:` name, which resolves against the query the dynamic is spliced into.
+      src = """
+      defmodule M do
+        import Ecto.Query
+
+        def q(query) do
+          query
+          |> join(:inner, [p], "audit", as: :audit, on: as(:audit).post_id == p.id)
+        end
+      end
+      """
+
+      assert {"as(:audit).post_id == p.id", "as(:audit).post_id != p.id"} in hosted(src)
+      assert metamutant(src) =~ "dynamic([p, ..., _]"
+      assert_compiles(src)
+    end
+
+    test "every unnamed standalone join source shape hosts, one slot each (an `assoc` excepted)" do
+      for source <- [
+            ~s("audit"),
+            "Audit",
+            ~s({"audit", Audit}),
+            "subquery(inner)",
+            ~s|fragment("select 1 as post_id")|,
+            "^inner"
+          ] do
+        src = """
+        defmodule M do
+          import Ecto.Query
+          def q(query, inner), do: join(query, :inner, [], #{source}, on: as(:post).id > 1)
+        end
+        """
+
+        assert {"as(:post).id > 1", "as(:post).id >= 1"} in hosted(src),
+               "expected the unnamed join #{source} to host its on:"
+
+        assert metamutant(src) =~ "dynamic([..., _]"
+        assert_compiles(src)
+      end
+    end
+
+    # Positions checked against Ecto itself, as for the `from` form. `base/0` hides a second
+    # binding, so `...` has something to skip and a misplaced `x` reads a different table.
+    for {label, bindings, condition} <- [
+          {"a written `...` list", "[..., x]", "x.score > 10"},
+          {"a leading positional", "[p]", "p.id > 1"},
+          {"a full written list", "[p, x]", "x.score > p.id"},
+          {"an empty list", "[]", "as(:c).score > 10"}
+        ] do
+      test "baseline builds the original query — standalone unnamed join, #{label}" do
+        source_for = fn module ->
+          """
+          defmodule #{module} do
+            import Ecto.Query
+
+            def base,
+              do: from(p in "posts", join: c in "comments", as: :c, on: c.post_id == p.id)
+
+            def q do
+              base()
+              |> join(:inner, #{unquote(bindings)}, "audit", on: #{unquote(condition)})
+              |> select([p], p.id)
+            end
+          end
+          """
+        end
+
+        assert Enum.any?(hosted(source_for.("Q")), fn {original, _mutated} ->
+                 original == unquote(condition)
+               end)
+
+        assert_baseline_builds_original(source_for)
+      end
     end
   end
 
@@ -1190,6 +1306,36 @@ defmodule Mutare.Ecto.HostTest do
       # `on:` weaves no `^dynamic` — were it hosted, a `dynamic(` would appear in the metamutant.
       refute metamutant(src) =~ "dynamic("
       assert_compiles(src)
+    end
+
+    test "an unnamed `assoc` join is an `assoc` join: its `on:` is not hosted either" do
+      # `assoc(u, :posts)` carries its implicit condition whether or not the join names a variable,
+      # so the exclusion is read off the join's *source*, not off an `x in` around it. The unnamed
+      # spelling used to slip past the rule in the `from` form (its `on:` was hosted); in the
+      # standalone form it must not start to, now that unnamed joins host at all.
+      for src <- [
+            """
+            defmodule M do
+              import Ecto.Query
+              def q do
+                from u in User, left_join: assoc(u, :posts), on: u.age > 1, select: u.id
+              end
+            end
+            """,
+            """
+            defmodule M do
+              import Ecto.Query
+              def q do
+                User
+                |> join(:left, [u], assoc(u, :posts), on: u.age > 1)
+                |> select([u], u.id)
+              end
+            end
+            """
+          ] do
+        refute metamutant(src) =~ "dynamic("
+        assert_compiles(src)
+      end
     end
 
     test "a standalone join with two `on:` keys is not hosted" do
