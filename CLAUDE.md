@@ -166,7 +166,7 @@ Each row is role + the rule(s) that module is the **home** for.
 | `host.ex` | selector-host coordinator (bucket 3): a hosted call → `Target`s |
 | `host/routing.ex` | `route_arguments/2`, the per-argument classifier; home of the routing rationale (`:hosted`/`:expression`/`:skip`/`:interpolated`/`{:keyword, …}`) |
 | `host/condition.ex` | `locate/1`; home of the hosted-condition shapes (binding-form / binding-less / keyword-shorthand) |
-| `host/bindings.ex` | interprets binding declarations and renders the list a woven `dynamic/2` re-declares |
+| `host/bindings.ex` | interprets binding declarations and renders the list a woven `dynamic/2` re-declares; home of the join-slot rule (every `from` join holds one positional slot — an unnamed one re-declares as `_`) |
 | `host/catalog.ex` | the own-catalog + island mutants for one hosted condition |
 | `host/join_on.ex` | home of join `on:` hostability (a join's sole, top-level, non-`assoc` on-expression) |
 | `host/target.ex` | the `dynamic`-wrap / `^`-pin / splice transforms core consumes |

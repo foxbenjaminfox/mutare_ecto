@@ -37,6 +37,13 @@ defmodule MyApp.Seed do
   #                                      `select`, and grouped by `role` in a `having: _ > 25`, where
   #                                      sum keeps admin+user but avg keeps only admin).
   #   * binding_reorder                — a posts self-join on `views` is asymmetric under the swap.
+  #   * Anonymous join slots           — `comments` and `audit` carry the *same* columns
+  #     (comments, audit)                (`post_id`, `score`), so a hosted condition resolved against
+  #                                      the wrong one of them is still valid SQL. The rows make it
+  #                                      return different rows instead: one comment per post, only
+  #                                      P1's over the `score > 10` bound (P2's sits *on* it, for
+  #                                      the `>=` mutant), against a lone audit row whose score
+  #                                      clears the bound for every row it is joined to.
   #
   # The read-only dataset above serves the query families. The one **write-path** family —
   # `:on_conflict` — needs a separate, mutable `accounts` table (UNIQUE `email`), reset to a single
@@ -113,6 +120,17 @@ defmodule MyApp.Seed do
     %{id: 3, title: "P3", views: 5, published: true, user_id: 99}
   ]
 
+  # Schemaless (queried as `"comments"` / `"audit"`), and identical in shape on purpose — see
+  # "Anonymous join slots" above. Read through `comments`, `score > 10` keeps comment 1 alone;
+  # read through `audit`, it keeps every row the audit row is joined to.
+  @comments [
+    %{id: 1, post_id: 1, score: 20},
+    %{id: 2, post_id: 2, score: 10},
+    %{id: 3, post_id: 3, score: 5}
+  ]
+
+  @audit [%{id: 1, post_id: 2, score: 50}]
+
   # The baseline row the on_conflict write tests reset `accounts` to before each activation: a single
   # row on email "a@x" whose `name` the swap is observed through (`:replace_all` rewrites it to the
   # upserted value, `:nothing` leaves it "Original"). Kept off the read-only query dataset entirely.
@@ -123,6 +141,8 @@ defmodule MyApp.Seed do
     create_tables!(repo)
     repo.insert_all(MyApp.User, Enum.map(@users, &put_joined_at/1))
     repo.insert_all(MyApp.Post, @posts)
+    repo.insert_all("comments", @comments)
+    repo.insert_all("audit", @audit)
     :ok
   end
 
@@ -169,6 +189,8 @@ defmodule MyApp.Seed do
     Ecto.Adapters.SQL.query!(repo, "DROP TABLE IF EXISTS users", [])
     Ecto.Adapters.SQL.query!(repo, "DROP TABLE IF EXISTS posts", [])
     Ecto.Adapters.SQL.query!(repo, "DROP TABLE IF EXISTS accounts", [])
+    Ecto.Adapters.SQL.query!(repo, "DROP TABLE IF EXISTS comments", [])
+    Ecto.Adapters.SQL.query!(repo, "DROP TABLE IF EXISTS audit", [])
 
     Ecto.Adapters.SQL.query!(
       repo,
@@ -201,6 +223,15 @@ defmodule MyApp.Seed do
       """,
       []
     )
+
+    # One DDL for both: the shared column names are the point (see "Anonymous join slots").
+    for table <- ["comments", "audit"] do
+      Ecto.Adapters.SQL.query!(
+        repo,
+        "CREATE TABLE #{table} (id INTEGER PRIMARY KEY, post_id INTEGER, score INTEGER)",
+        []
+      )
+    end
 
     # The write-path `accounts` table. The UNIQUE index on `email` is what makes a second insert of
     # the same email a *conflict* the `on_conflict:` option resolves — without it, `conflict_target:

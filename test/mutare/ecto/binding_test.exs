@@ -50,6 +50,16 @@ defmodule Mutare.Ecto.BindingTest do
     end
   end
 
+  describe "placeholder/0" do
+    test "is a clean `_` node: a binding-list entry that renders as `_` and is never reordered" do
+      assert {:_, [], nil} = Binding.placeholder()
+      assert Sourceror.to_string(Binding.placeholder()) == "_"
+      assert Binding.variable?(Binding.placeholder())
+      assert Binding.entry?(Binding.placeholder())
+      refute Binding.reorderable_name(Binding.placeholder())
+    end
+  end
+
   describe "entry?/1" do
     test "accepts positional, named, and ellipsis entries" do
       assert Binding.entry?({:u, [], nil})

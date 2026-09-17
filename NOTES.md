@@ -340,3 +340,34 @@ Only the `from` keyword form is in view — a bound repeated across a pipe
 (`q |> limit(5) |> limit(10)`) or across functions composes at runtime, where no single node sees
 both occurrences, so those stay mutated (suppressing the pipe form would need a sibling-aware
 seam in core).
+
+
+### Bindings: an unnamed join still holds its slot
+
+`Mutare.Ecto.Host.Bindings.from/2` used to build a `from`'s binding list out of the joins that
+*declare a variable* — it matched `join: c in Source` and passed over everything else. But Ecto
+binds a join written without `x in` (`cross_join: "audit"`, `join: subquery(q)`,
+`left_join: assoc(p, :x)`, a `fragment`, a `^source`) anonymously, and still advances the binding
+count. So for `from p in "posts", cross_join: "audit", join: c in "comments", …` — `p` &0, the
+audit join &1, `c` &2 — the host wove `dynamic([p, c], …)` and named &1 `c`.
+
+That was worse than a bad mutant. Every branch of a hosted selector resolves through the
+re-declared list, the *original* condition's included, so the miscount rewrote the **baseline**;
+and a misplaced binding raises only if the table it lands on lacks the column the condition reads.
+Where the two tables share that column name the SQL was valid over the wrong table — the
+instrumented query ran and returned the wrong rows, invisible to `assert_compiles`.
+
+Each join now yields exactly one slot (`join_slots/1`): its variable, or the `_` placeholder
+(`Mutare.Ecto.Binding.placeholder/0`). A `...` could not have repaired it, because the miscount
+runs in both directions: under a literal source slots count from the front, so a dropped slot
+displaces the joins *after* it; under a composed source the `...` anchor counts from the tail, so
+it displaces the joins *before* it (`[p, ..., c]` named a trailing audit join `c`; the list is
+`[p, ..., c, _]`). For the same reason a trailing `_` is kept rather than trimmed. `host_test.exs`
+checks positions against Ecto itself — the metamutant's baseline must build the query the untouched
+source builds, over every named/unnamed pattern of one to three joins and both source kinds — and
+the semantic suite runs the placements against `comments`/`audit`, two tables seeded with the same
+columns so that a wrong slot returns different rows rather than an error.
+
+The standalone `join/4,5` was never affected — it re-declares the author's own written list and
+always tail-anchors the one join it adds — and an unnamed standalone join's `on:` stays un-hosted
+(`Bindings.join/1` weaves nothing for it), which is a missed mutation, not a miscount.

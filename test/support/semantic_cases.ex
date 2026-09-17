@@ -915,6 +915,64 @@ defmodule Mutare.Ecto.SemanticCases do
         end
       end
 
+      describe "Anonymous join slots — an unnamed join still occupies a binding position" do
+        # A join written without `x in` (`cross_join: "audit"`) is bound anonymously, and Ecto still
+        # counts it. The woven `dynamic` re-declares it as `_` (`Mutare.Ecto.Host.Bindings`); when
+        # it was left out instead, `c` resolved one position off — onto `"audit"` — in **every**
+        # branch of the hosted selector, the original condition's included. `"audit"` and
+        # `"comments"` share their column names (`MyApp.Seed`), so that was never a SQL error: the
+        # instrumented query ran and returned the wrong rows. These fixtures therefore pin the
+        # **baseline** as hard as the mutant. The same three placements run over a literal source
+        # (slots counted from the front, so the join *before* `c` displaces it) and over a composed
+        # one whose hidden join forces the `...` anchor (slots counted from the tail, so the join
+        # *after* `c` does) — every one of the six reads `comments` exactly as the untouched query
+        # does: comment 1 alone clears `score > 10`, and the `>=` mutant adds comment 2, on the bound.
+        # Read through `audit` instead, the lone audit row (score 50) would pass every joined row.
+        @anonymous_join_placements [
+          {"before the named join",
+           ~s(cross_join: "audit", join: c in "comments", on: c.post_id == p.id)},
+          {"between two named joins",
+           ~s(left_join: u in "users", on: u.id == p.user_id, cross_join: "audit", ) <>
+             ~s(join: c in "comments", on: c.post_id == p.id)},
+          {"after the named join",
+           ~s(join: c in "comments", on: c.post_id == p.id, cross_join: "audit")}
+        ]
+
+        defp assert_anonymous_join_slots(source) do
+          for {placement, joins} <- @anonymous_join_placements do
+            {mod, sites} =
+              build("""
+              defmodule Q do
+                import Ecto.Query
+                def base, do: from(p in "posts", left_join: u in "users", on: u.id == p.user_id)
+                def q, do: from(p in #{source}, #{joins}, where: c.score > 10, select: c.id)
+              end
+              """)
+
+            {baseline, mutant} = observe_ids(mod, sites, {"c.score > 10", "c.score >= 10"})
+
+            assert baseline == [1], "baseline read the wrong binding, unnamed join #{placement}"
+            assert mutant == [1, 2], "mutant read the wrong binding, unnamed join #{placement}"
+
+            # The hosted `on:` names `c` too. Its `!=` mutant pairs each post with the *other*
+            # posts' comments — and comment 1, the only one over the bound, belongs to neither of
+            # two posts (every placement keeps all three: the `users` join is a LEFT join).
+            {^baseline, flipped} =
+              observe_ids(mod, sites, {"c.post_id == p.id", "c.post_id != p.id"})
+
+            assert flipped == [1, 1], "`on:` read the wrong binding, unnamed join #{placement}"
+          end
+        end
+
+        test "a literal source: the slot is counted from the front (`[p, _, c]`)" do
+          assert_anonymous_join_slots(~s("posts"))
+        end
+
+        test "a composed source: the slot is counted from the tail (`[p, ..., c, _]`)" do
+          assert_anonymous_join_slots("base()")
+        end
+      end
+
       describe "filter-drop — remove a `where` clause (whole-`from`)" do
         # "Is this filter tested?" Dropping the whole `where: u.age > 18` clause widens the result to the
         # entire table. The drop is now reported (as a deletion) at the condition itself, so it's the

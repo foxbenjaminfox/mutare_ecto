@@ -4,6 +4,12 @@ defmodule Mutare.Ecto.Host.Bindings do
   # `dynamic/2`. This is the only module that reasons about positional, named, ellipsis, and join
   # placement. Locating the condition argument those declarations precede is
   # `Mutare.Ecto.Host.Condition`'s job, not this module's.
+  #
+  # The list is positional, and every branch of a hosted selector is resolved through it — the
+  # *original* condition's branch included. So a list that misplaces a binding does not just emit
+  # a bad mutant: it rewrites the baseline, and where two tables share a column name the result is
+  # valid SQL over the wrong table. Hence the rule `join_slots/1` is the home of: a `from`'s list
+  # accounts for **every** position the query establishes, named by the author or not.
 
   alias Mutare.Ecto.{AST, Binding, Surface}
   alias Mutare.Ecto.AST.{BindingList, KeywordList}
@@ -31,12 +37,7 @@ defmodule Mutare.Ecto.Host.Bindings do
         _ -> {[], composed_source?(source)}
       end
 
-    # A keyword `from` join LHS is always a plain positional variable (`join: c in assoc(p, :x)`) —
-    # it has no `key: var` named form — so `join_bindings/1` never yields a named declaration and the
-    # named half of the split is always empty. The `[]` match asserts that invariant loudly: if a
-    # future/foreign shape ever violates it, fail here rather than silently drop a binding.
-    {join_positional, []} = Enum.split_with(join_bindings(clauses), &Binding.variable?/1)
-    append_positionals(source_decls, join_positional, composed?)
+    append_positionals(source_decls, join_slots(clauses), composed?)
   end
 
   @doc """
@@ -154,12 +155,28 @@ defmodule Mutare.Ecto.Host.Bindings do
   defp literal_queryable?(node) when is_binary(node) or is_atom(node), do: true
   defp literal_queryable?(_node), do: false
 
-  defp join_bindings(%KeywordList{entries: entries}) do
-    for %Entry{key: key, value: {:in, _, [lhs, _src]}} <- entries,
+  # One declaration per join clause, in written order: **every join occupies exactly one
+  # positional slot**, whether or not the author names it. Ecto's join builder binds a join written
+  # without `x in` — `cross_join: "audit"`, `join: subquery(q)`, `left_join: assoc(p, :x)`, a
+  # `fragment`, a `^source` — anonymously, and still advances the binding count
+  # (`Ecto.Query.Builder.Join.escape/3` answers `:_`). So an unnamed join re-declares as the `_`
+  # placeholder, never as nothing: a dropped slot shifts every join counted *across* it onto its
+  # neighbour's table — the joins after it under a literal source (counted from the front), the
+  # joins before it under a `...`-anchored one (counted from the tail). That second direction is
+  # why no ellipsis can stand in for a missing slot, and why a trailing `_` is kept rather than
+  # trimmed: redundant after a literal source, it is what places `c` in `[p, ..., c, _]`.
+  defp join_slots(%KeywordList{entries: entries}) do
+    for %Entry{key: key, value: value} <- entries,
         Surface.from_clause?(key, :join_binding),
-        declaration <- declarations(lhs),
-        do: declaration
+        do: join_slot(value)
   end
+
+  # A keyword `from` join names its slot only as `var in source` — the LHS is a plain variable,
+  # with no list and no `key: var` form (Ecto reads anything else as a malformed join), so a slot
+  # is a positional entry by construction and `clean_var/1` fails loudly on a foreign LHS shape
+  # rather than mis-declare it.
+  defp join_slot({:in, _meta, [var, _source]}), do: Mutare.AST.clean_var(var)
+  defp join_slot(_unnamed), do: Binding.placeholder()
 
   defp append_positionals(declarations, added, composed?) do
     {named, source_positional} = Enum.split_with(declarations, &named?/1)

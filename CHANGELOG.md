@@ -32,6 +32,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`validate_required(cs, [:name, :email])`) stays an ordinary expression for
   core's list families.
 
+### Fixed
+
+- **A `from` join written without a binding variable no longer shifts the bindings
+  of the joins around it.** Ecto binds `cross_join: "audit"` (or a bare `subquery`,
+  `fragment`, `assoc`, `^source` join) anonymously and still counts it, but the
+  binding list the plugin re-declares for a hosted `where`/`having`/`on:` left it
+  out — so in `from p in "posts", cross_join: "audit", join: c in "comments", …`
+  a condition on `c` was resolved against `"audit"`. That held for every branch of
+  the woven selector, the unmutated one included: where the two tables share the
+  column the condition reads, the instrumented query ran without error and
+  returned the wrong rows, so tests could fail (or mutants be misjudged) under
+  Mutare that pass without it. An unnamed join is now re-declared as `_`
+  (`[p, _, c]`; `[p, ..., c, _]` when the source is a composed query).
+
 ## [0.1.1] - 2026-09-07
 
 ### Fixed

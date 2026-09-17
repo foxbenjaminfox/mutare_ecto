@@ -42,4 +42,12 @@ defmodule Mutare.Ecto.Binding do
   @doc "A fresh clean-meta `...` node, for re-emitting the anchor in a synthesized binding list."
   @spec ellipsis() :: Macro.t()
   def ellipsis, do: {:..., [], []}
+
+  @doc """
+  A fresh `_` node — the entry that holds a binding position without naming it (`[p, _, c]`), for
+  a synthesized binding list. An ordinary positional variable to `variable?/1` and to Ecto, which
+  lets it repeat (`[p, _, _, c]`) where a repeated name is an error.
+  """
+  @spec placeholder() :: Macro.t()
+  def placeholder, do: {:_, [], nil}
 end

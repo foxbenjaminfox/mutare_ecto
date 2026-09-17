@@ -20,6 +20,71 @@ defmodule Mutare.Ecto.HostTest do
     |> Enum.reject(fn {_original, mutated} -> mutated == "" end)
   end
 
+  # The source for one enumerated join pattern (see the oracle tests): a named join is
+  # `join: cN in "comments"` with an `on:` against `p`, and an unnamed join a bare
+  # `cross_join: "audit"`. `"audit"` and `"comments"` share their column names, so a misplaced slot
+  # still compiles. The `where:`s — one per named join — follow *all* the joins, as they would be
+  # written: Ecto applies a `from`'s clauses in written order and resolves a `^dynamic` against the
+  # query built so far, so an `on:` is resolved with only the joins up to its own in place, but
+  # these `where:`s with every join in place — including an unnamed one *after* the join they name.
+  defp slot_pattern_source(module, source, pattern) do
+    numbered = Enum.with_index(pattern, 1)
+
+    joins =
+      Enum.map_join(numbered, "\n", fn
+        {true, n} -> ~s(      join: c#{n} in "comments",\n      on: c#{n}.post_id == p.id,)
+        {false, _n} -> ~s(      cross_join: "audit",)
+      end)
+
+    wheres =
+      for {true, n} <- numbered, into: "", do: "      where: c#{n}.score > 10,\n"
+
+    """
+    defmodule #{module} do
+      import Ecto.Query
+
+      def base, do: from(p in "posts", left_join: u in "users", on: u.id == p.user_id)
+
+      def q do
+        from p in #{source},
+    #{joins}
+    #{wheres}      where: p.id > 0,
+          select: p.id
+      end
+    end
+    """
+  end
+
+  defp assert_baseline_builds_original(source, pattern, index) do
+    # The untouched source is compiled here under a name unique to this test (the metamutant gets
+    # its own from core's wrapper), since `Code.compile_string` is global and these run async.
+    original =
+      Module.concat(__MODULE__, :"SlotOracle#{index}_#{System.unique_integer([:positive])}")
+
+    [{^original, _binary} | _] =
+      Code.compile_string(slot_pattern_source(inspect(original), source, pattern))
+
+    on_exit(fn ->
+      :code.purge(original)
+      :code.delete(original)
+    end)
+
+    woven_source = slot_pattern_source("Q", source, pattern)
+    {[woven], _sites} = Mutare.Test.compile_metamutant(woven_source, mutators([]))
+
+    # Every condition was in fact hosted, so the comparison below is not vacuous.
+    named = for {true, n} <- Enum.with_index(pattern, 1), do: n
+    conditions = hosted(woven_source)
+    assert {"p.id > 0", "p.id >= 0"} in conditions
+
+    for n <- named do
+      assert {"c#{n}.post_id == p.id", "c#{n}.post_id != p.id"} in conditions
+      assert {"c#{n}.score > 10", "c#{n}.score >= 10"} in conditions
+    end
+
+    assert inspect(woven.q()) == inspect(original.q())
+  end
+
   describe "binding extraction — the dynamic wrap" do
     test "a single-binding from re-declares [u] in the woven dynamic" do
       src = """
@@ -474,6 +539,169 @@ defmodule Mutare.Ecto.HostTest do
 
       assert metamutant(src) =~ "dynamic([a, ..., b]"
       assert_compiles(src)
+    end
+
+    test "an unnamed join still occupies its binding slot: `[p, _, c]`, not `[p, c]`" do
+      # Regression: Ecto binds a join written without `x in` anonymously and *still advances the
+      # binding count* (`Ecto.Query.Builder.Join.escape/3` answers `:_` for it), so here `p` is &0,
+      # the `"audit"` cross join &1, and `c` &2. The host used to collect only the joins that
+      # declare a variable and wove `[p, c]` — binding `c` to &1, the audit table, in *every* branch
+      # of the selector, the baseline included. With same-named columns on both tables that is
+      # valid SQL returning the wrong rows, which `assert_compiles` can never see; the oracle test
+      # below and the semantic suite's "Anonymous join slots" fixtures are what prove the positions.
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q do
+          from p in "posts",
+            cross_join: "audit",
+            join: c in "comments",
+            on: c.post_id == p.id,
+            where: c.score > 10,
+            select: c.id
+        end
+      end
+      """
+
+      assert {"c.post_id == p.id", "c.post_id != p.id"} in hosted(src)
+      assert {"c.score > 10", "c.score >= 10"} in hosted(src)
+      assert metamutant(src) =~ "dynamic([p, _, c]"
+      refute metamutant(src) =~ "dynamic([p, c]"
+      assert_compiles(src)
+    end
+
+    test "an unnamed join between and after named ones holds its slot too" do
+      # Between: `d` is &3, past the anonymous &2. After: the trailing `_` is redundant under a
+      # literal source (nothing follows it to displace) but is emitted all the same — one slot per
+      # join is the whole rule, and under a composed source that same trailing slot is load-bearing
+      # (next test). Each `on:` still sees only the joins up to its own.
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q do
+          from p in "posts",
+            join: c in "comments",
+            on: c.post_id == p.id,
+            cross_join: "audit",
+            join: d in "comments",
+            on: d.id == c.id,
+            cross_join: "audit",
+            where: d.score > 10,
+            select: d.id
+        end
+      end
+      """
+
+      mm = metamutant(src)
+      assert mm =~ "dynamic([p, c], c.post_id"
+      assert mm =~ "dynamic([p, c, _, d], d.id"
+      assert mm =~ "dynamic([p, c, _, d, _]"
+      assert_compiles(src)
+    end
+
+    test "under a composed source an unnamed join counts from the tail: `[p, ..., c, _]`" do
+      # The `...` anchor counts the entries after it back from the query's *last* binding, so a
+      # dropped slot is just as wrong at the tail as at the front: after `join: c`, an unnamed join
+      # is the last binding and `c` the second-to-last. The old `[p, ..., c]` named the audit join
+      # `c`. (An ellipsis alone can't repair a missing slot — it only says where counting starts.)
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q(base) do
+          from p in base,
+            cross_join: "audit",
+            join: c in "comments",
+            on: c.post_id == p.id,
+            cross_join: "audit",
+            where: c.score > 10,
+            select: c.id
+        end
+      end
+      """
+
+      mm = metamutant(src)
+      assert mm =~ "dynamic([p, ..., _, c], c.post_id"
+      assert mm =~ "dynamic([p, ..., _, c, _]"
+      refute mm =~ "dynamic([p, ..., c]"
+      assert_compiles(src)
+    end
+
+    test "every unnamed join source shape holds exactly one slot" do
+      # Ecto's join builder binds each of these anonymously (`:_`): a table string, a schema, a
+      # `{table, schema}` pair, a `subquery`, a `fragment`, an interpolated source, and an `assoc`
+      # (a `left_join`, its condition being implicit; the rest are cross joins, which need none).
+      for {join, source} <- [
+            {"cross_join", ~s("audit")},
+            {"cross_join", "Audit"},
+            {"cross_join", ~s({"audit", Audit})},
+            {"cross_join", "subquery(inner)"},
+            {"cross_join", ~s|fragment("select 1 as post_id")|},
+            {"cross_join", "^inner"},
+            {"left_join", "assoc(p, :audits)"}
+          ] do
+        src = """
+        defmodule M do
+          import Ecto.Query
+          def q(inner) do
+            from p in Post,
+              #{join}: #{source},
+              join: c in Comment,
+              on: c.post_id == p.id,
+              where: c.score > 10,
+              select: c.id
+          end
+        end
+        """
+
+        assert metamutant(src) =~ "dynamic([p, _, c]",
+               "expected the unnamed join #{source} to hold slot 1"
+
+        assert_compiles(src)
+      end
+    end
+
+    test "an unnamed join's own `on:` re-declares its slot" do
+      # The unnamed join's condition can't name the join positionally, but it is hosted like any
+      # other sole, top-level `on:` — and the slot it occupies is declared, so the list has the
+      # query's true width at that point.
+      src = """
+      defmodule M do
+        import Ecto.Query
+        def q do
+          from p in "posts", join: "audit", on: p.id > 1, select: p.id
+        end
+      end
+      """
+
+      assert {"p.id > 1", "p.id >= 1"} in hosted(src)
+      assert metamutant(src) =~ "dynamic([p, _]"
+      assert_compiles(src)
+    end
+
+    # The oracle for binding *positions*, independent of how the host computes them: Ecto itself.
+    # A hosted condition is woven as `^dynamic(bindings, condition)`, which Ecto resolves to
+    # binding indices when it builds the query — so if the re-declared list is faithful, the
+    # metamutant's baseline builds the very query the untouched source does, and `inspect/1` (which
+    # renders every reference by index: `c2.score`) reads identically. A dropped or misplaced slot
+    # shows up as a different index (`a1.score`), however plausible the SQL. Every named/unnamed
+    # pattern of one to three joins is enumerated — which covers an unnamed join before, between,
+    # and after named ones, several in a row, and none at all — over a literal and a composed
+    # source (whose hidden join makes the `...` anchor load-bearing).
+    describe_patterns =
+      for length <- 1..3,
+          pattern <-
+            Enum.reduce(1..length, [[]], fn _, acc ->
+              for p <- acc, n <- [true, false], do: [n | p]
+            end),
+          do: pattern
+
+    for {source_kind, source} <- [literal: ~s("posts"), composed: "base()"],
+        {pattern, index} <- Enum.with_index(describe_patterns) do
+      label = Enum.map_join(pattern, ", ", &if(&1, do: "named", else: "unnamed"))
+
+      test "baseline builds the original query — #{source_kind} source, joins: #{label}" do
+        assert_baseline_builds_original(unquote(source), unquote(pattern), unquote(index))
+      end
     end
 
     test "the pipe form re-declares its stage binding list" do
