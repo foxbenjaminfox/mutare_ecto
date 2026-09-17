@@ -46,7 +46,8 @@ defmodule Mutare.Ecto.Dynamic do
   `Mutare.Mutator.Mutation`s — or `[]` when there is nothing to mutate. The condition is located
   by `Mutare.Ecto.Host.Condition.locate/3`, exactly as for a standalone `where` — but its
   declaration is never read: the whole-call rebuild re-emits the written list as it stands, so
-  even one the plugin cannot interpret (which the host would decline) is mutated here.
+  even one the plugin cannot interpret (which a woven `dynamic/2` could not re-declare) is
+  mutated here.
   """
   @spec mutations(QueryCall.t(), Context.t()) :: [
           Mutare.Ecto.SubMutator.tagged() | Mutare.Mutator.Mutation.t()

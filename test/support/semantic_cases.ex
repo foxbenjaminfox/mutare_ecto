@@ -2493,6 +2493,31 @@ defmodule Mutare.Ecto.SemanticCases do
             assert mutant == [1, 2], declaration
           end
         end
+
+        test "a computed index is rebuilt whole-call: the baseline runs, and its mutant is live" do
+          # `{u, index}` is outside the grammar the plugin re-declares — a woven `dynamic/2` would
+          # compute the index a second time — so `Mutare.Ecto.StaticCondition` delivers the
+          # condition's mutants as rebuilds of the whole `where`, under the declaration as written.
+          # The rows prove the rebuilt branches filter the binding the computed index names.
+          {mod, sites} =
+            build("""
+            defmodule Q do
+              import Ecto.Query
+              alias MyApp.{Post, User}
+              def q do
+                index = 1
+                from(p in Post, join: u in User, on: u.id == p.user_id, select: u.id)
+                |> where([{u, index}], u.age > 18)
+              end
+            end
+            """)
+
+          {baseline, mutant} = observe_ids(mod, sites, {"u.age > 18", "u.age >= 18"})
+
+          # As for the literal index above: P1 → Alice (18), P2 → Bob (25).
+          assert baseline == [2]
+          assert mutant == [1, 2]
+        end
       end
 
       describe "Regression — a join written without `in` holds its binding position (baseline correctness)" do

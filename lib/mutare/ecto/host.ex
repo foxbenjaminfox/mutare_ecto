@@ -16,7 +16,10 @@ defmodule Mutare.Ecto.Host do
   sibling is a keyword filter, which the classifier already gave to core pair by pair, and
   which `dynamic/2` would refuse. The host therefore reads every condition value through the
   same classification the classifier used (`Mutare.Ecto.Host.Condition.shape/1`), wherever the
-  value is written: a `from` clause, a condition macro's argument, a join's `on:` option.
+  value is written: a `from` clause, a condition macro's argument, a join's `on:` option —
+  `Host.Condition` locates each of the three for a predicate only. Neither the predicate catalog
+  nor the pin sub-contract is offered a keyword filter, so hosting a *sibling* never changes
+  what happens to it.
 
   A condition that is itself a `^` pin (`where: ^filters`, `where(q, ^cond)`, a join's `on: ^cond` —
   a predicate of kind `:root_pin`, by the same classification) is woven **pin-only**, over its bare
@@ -30,14 +33,16 @@ defmodule Mutare.Ecto.Host do
   `Mutare.Ecto.Bound`, the bump catalog and its literal guard. In a `from`, only the
   *effective* occurrence of a repeated bound weaves (`Mutare.Ecto.AST.FromCall.effective_clause?/2`).
 
-  A condition Ecto accepts only statically built — a subquery in a `having` — is declined here
-  and delivered as a whole-call rebuild instead: `Mutare.Ecto.StaticCondition`.
+  A condition the host cannot weave — a subquery in a `having`, which Ecto accepts only
+  statically built, or a condition under a binding declaration the plugin cannot re-declare — is
+  delivered as a whole-call rebuild instead, by `Mutare.Ecto.StaticCondition` — whose
+  `delivery/3` decides, for the host and the rebuild alike, which conditions those are.
   """
 
   alias Mutare.Ecto.{Bound, Context, StaticCondition, Surface}
   alias Mutare.Ecto.AST.{FromCall, KeywordList, QueryCall}
   alias Mutare.Ecto.AST.KeywordList.Entry
-  alias Mutare.Ecto.Host.{Bindings, Catalog, Condition, JoinOn, Target}
+  alias Mutare.Ecto.Host.{Bindings, Catalog, Condition, Target}
   alias Mutare.CallRouting.Call
 
   @doc """
@@ -75,7 +80,7 @@ defmodule Mutare.Ecto.Host do
   defp from_targets(nil, _context), do: []
 
   defp from_targets(%FromCall{source: source, clauses: clauses} = from, context) do
-    hostable_on = JoinOn.hostable_from_indices(clauses.entries)
+    conditions = Condition.from_indices(clauses)
 
     KeywordList.flat_map(clauses, fn %Entry{key: key, value: value}, index ->
       cond do
@@ -84,30 +89,18 @@ defmodule Mutare.Ecto.Host do
         Surface.bound?(key) ->
           bound_from_target(from, value, index)
 
-        # A clause whose key *may* hold a hostable condition — whether its value is one is
-        # `from_target/4`'s question. `Bindings.visible_to/2` owns the truncation offset (and
-        # why it includes the current entry itself); each clause sees only the join bindings
-        # introduced up to it. A condition the clause cannot take as a dynamic is declined —
-        # `Mutare.Ecto.StaticCondition` rebuilds it whole-call instead — and so is one behind a
-        # source or join declaration `Bindings` cannot interpret, which stays as written.
-        hostable_clause?(key, index, hostable_on) and StaticCondition.weavable?(key, value) ->
-          case Bindings.from(source, Bindings.visible_to(clauses, index)) do
-            {:ok, bindings} -> from_target(value, bindings, index, context)
-            :error -> []
-          end
+        # A hosted predicate clause (`Condition.from_indices/1`, which reports its kind).
+        # `Bindings.visible_to/2` owns the truncation offset (and why it includes the current
+        # entry itself); each clause sees only the join bindings introduced up to it.
+        Map.has_key?(conditions, index) ->
+          bindings = Bindings.from(source, Bindings.visible_to(clauses, index))
+          from_target(key, value, Map.fetch!(conditions, index), bindings, index, context)
 
         true ->
           []
       end
     end)
   end
-
-  # Whether a `from` clause **key** admits a hosted condition: one of the `:hosted` keys
-  # (`Mutare.Ecto.Surface`) — `where`/`having` always, an `on:` only when
-  # `Mutare.Ecto.Host.JoinOn` admits it. Necessary, not sufficient: the value must still be a
-  # predicate (`predicate_mutants/2`).
-  defp hostable_clause?(:on, index, hostable_on), do: MapSet.member?(hostable_on, index)
-  defp hostable_clause?(key, _index, _hostable_on), do: Surface.from_clause?(key, :hosted)
 
   # A bound weaves at its *effective* occurrence only: one a later same-key clause overrides
   # (`limit: 5, limit: 10`'s `5`) never reaches the query, so its bump would be equivalent
@@ -122,44 +115,35 @@ defmodule Mutare.Ecto.Host do
     end
   end
 
+  # Every condition target weaves only what `StaticCondition.delivery/3` assigns it; a
+  # `:rebuilt` condition — one the clause cannot take as a dynamic, or one whose declaration
+  # `Bindings` cannot re-declare — is `Mutare.Ecto.StaticCondition`'s, delivered whole-call.
+  #
   # No `bindings` non-emptiness guard: a bare-queryable source (`from("t", as: :t, where:
   # as(:t).x > 1)`) declares no positional binding, so `Bindings.from/2` returns `{:ok, []}` and
   # the woven `dynamic([], …)` re-declares none — valid, since such a condition can only reference
-  # a *named* binding. Hostability is decided by the clause key (`hostable_clause?/3`, in the caller) and a
-  # non-empty catalog, not the binding count — so a top-level-pin condition (`where: ^cond`)
-  # hosts whenever its sub-contract yields something (`Mutare.Ecto.Island`); its weave is
-  # pin-only and leaves these bindings unused (`Mutare.Ecto.Host.Target`).
-  defp from_target(condition, bindings, index, context) do
-    case predicate_mutants(condition, context) do
-      {kind, [_ | _] = mutants} -> [Target.from_clause(condition, kind, mutants, bindings, index)]
-      _none -> []
-    end
-  end
-
-  # The predicate kind and catalog mutants of a condition written as a **keyword value** (a
-  # `from` clause, a join's `on:` option) — of a predicate only (the moduledoc), `nil` otherwise.
-  # A keyword filter is not the host's: its pairs were routed to core one by one, and neither the
-  # predicate catalog nor the pin sub-contract is offered it, so hosting a *sibling* never
-  # changes what happens to it. (A condition macro's argument takes the same decision inside
-  # `Condition.locate/3`.)
-  defp predicate_mutants(value, context) do
-    case Condition.shape(value) do
-      {:predicate, kind} -> {kind, Catalog.mutants(value, context)}
-      {:keyword_filter, _pairs} -> nil
-      :pairless_list -> nil
+  # a *named* binding. Hostability is decided by the clause (`Condition.from_indices/1`, in the
+  # caller), the delivery, and a non-empty catalog, not the binding count — so a top-level-pin
+  # condition (`where: ^cond`) hosts whenever its sub-contract yields something
+  # (`Mutare.Ecto.Island`); its weave is pin-only and leaves these bindings unused
+  # (`Mutare.Ecto.Host.Target`).
+  defp from_target(key, condition, kind, bindings, index, context) do
+    with {:woven, bindings} <- StaticCondition.delivery(key, condition, bindings),
+         [_ | _] = mutants <- Catalog.mutants(condition, context) do
+      [Target.from_clause(condition, kind, mutants, bindings, index)]
+    else
+      _ -> []
     end
   end
 
   # The woven `dynamic/2` re-declares the written binding list — or an empty one when none was
-  # written. A declaration the plugin cannot interpret is neither: `Bindings.declarations/1`
-  # answers `:error` and the condition is declined (`Mutare.Ecto.Host.Condition`'s three outcomes).
-  # So is a condition that `macro` cannot take as a dynamic, as in the `from` form
-  # (`Mutare.Ecto.StaticCondition`).
+  # written (`Mutare.Ecto.Host.Condition`'s three outcomes; the third, uninterpretable, is
+  # rebuilt instead).
   defp condition_target(macro, args, pipe_mode, context) do
     with %Condition{node: condition, index: index, kind: kind, declaration: declaration} <-
            Condition.locate(:condition, args, pipe_mode),
-         true <- StaticCondition.weavable?(macro, condition),
-         {:ok, bindings} <- Bindings.declarations(declaration),
+         {:woven, bindings} <-
+           StaticCondition.delivery(macro, condition, Bindings.declarations(declaration)),
          [_ | _] = mutants <- Catalog.mutants(condition, context) do
       [Target.condition(condition, kind, mutants, bindings, index)]
     else
@@ -187,30 +171,17 @@ defmodule Mutare.Ecto.Host do
   end
 
   defp join_target(args, context) do
-    with {arg_index, options} <- trailing_options(args),
-         pair_index when not is_nil(pair_index) <-
-           Enum.find_index(options.entries, &(&1.key == :on)),
-         true <- JoinOn.hostable_standalone?(args, options.entries),
-         %Entry{value: condition} = Enum.at(options.entries, pair_index),
-         {:ok, bindings} <- Bindings.join(args),
-         {kind, [_ | _] = mutants} <- predicate_mutants(condition, context) do
+    with {condition, kind, arg_index, pair_index} <- Condition.locate_on(args),
+         {:woven, bindings} <- StaticCondition.delivery(:on, condition, Bindings.join(args)),
+         [_ | _] = mutants <- Catalog.mutants(condition, context) do
       [Target.keyword_condition(condition, kind, mutants, bindings, arg_index, pair_index)]
     else
       _ -> []
     end
   end
 
-  defp trailing_options(args) do
-    {trailing, index} = last_argument(args)
-
-    case KeywordList.nonempty(trailing) do
-      %KeywordList{} = options -> {index, options}
-      _ -> nil
-    end
-  end
-
-  # The trailing argument and its index. A bound value (`limit(q, 10)` / `q |> limit(10)`) and a
-  # join's options list sit last in the direct and pipe forms alike — a piped call's visible args
-  # exclude the threaded query, so "last" is the one position that holds in both.
+  # The trailing argument and its index. A bound value (`limit(q, 10)` / `q |> limit(10)`) sits
+  # last in the direct and pipe forms alike — a piped call's visible args exclude the threaded
+  # query, so "last" is the one position that holds in both.
   defp last_argument(args), do: {List.last(args), length(args) - 1}
 end

@@ -10,9 +10,10 @@ defmodule Mutare.Ecto.AST.BindingList do
   #
   # `:error` means "not a declaration the plugin can interpret" and nothing more. Whether that is
   # harmless (the node was never a declaration — a `select` list, a keyword shorthand) or a
-  # reason to decline (the node *is* the declaration, by position, and the plugin cannot read it)
-  # is the caller's knowledge, not this module's: `find/1` searches by shape and may skip it;
-  # `Mutare.Ecto.Host.Condition` and `Mutare.Ecto.Host.Bindings` know the slot and must not.
+  # reason not to re-declare (the node *is* the declaration, by position, and the plugin cannot
+  # read it) is the caller's knowledge, not this module's: `find/1` searches by shape and may
+  # skip it; `Mutare.Ecto.Host.Condition` and `Mutare.Ecto.Host.Bindings` know the slot and must
+  # not.
 
   alias Mutare.Ecto.{AST, Binding}
 

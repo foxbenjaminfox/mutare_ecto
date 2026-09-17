@@ -42,6 +42,12 @@ defmodule Mutare.Ecto.Host.Condition do
   # `Mutare.Ecto.Host.Routing` (marks `index` `:hosted`), and `Mutare.Ecto.Dynamic` (rebuilds the
   # whole call around `index`).
   #
+  # It also locates the other two places a host-owned predicate sits — a `from`'s condition
+  # clauses (`from_indices/1`) and a standalone join's `on:` (`locate_on/1`) — so that the weave
+  # (`Mutare.Ecto.Host`) and the whole-call fallback (`Mutare.Ecto.StaticCondition`) enumerate
+  # the same conditions and split them by delivery alone. Like `locate/3`, each reports a
+  # predicate only, with its kind.
+  #
   # ### Located by position, never searched for
   #
   # Both macros end `(…, binding \\ [], expr)`, so the call's **effective arity** says whether a
@@ -61,9 +67,10 @@ defmodule Mutare.Ecto.Host.Condition do
   #     Ecto's own `where(q, ^dynamic)` form does — which is what lets a binding-less
   #     `where`/`having` still have its SQL operators/literals mutated;
   #   * an **uninterpretable** one — written, by position, but outside
-  #     `Mutare.Ecto.Binding`'s grammar (or hidden on a pipe's left, `[p] |> dynamic(…)`). The
-  #     host declines it; `Mutare.Ecto.Dynamic`, which re-emits the written list untouched,
-  #     needs no declaration and mutates it all the same.
+  #     `Mutare.Ecto.Binding`'s grammar (or hidden on a pipe's left, `[p] |> dynamic(…)`). No
+  #     `dynamic/2` can re-declare it, so the condition is rebuilt whole-call under the written
+  #     list instead (`Mutare.Ecto.StaticCondition`), as `Mutare.Ecto.Dynamic` rebuilds every
+  #     free-standing `dynamic`.
   #
   # Under any of the three, only a predicate is located. A keyword filter, **with or without a
   # binding list before it** (`where(q, col: v)`, `where(q, [p], col: v)`), makes `locate/3`
@@ -73,7 +80,10 @@ defmodule Mutare.Ecto.Host.Condition do
   # (`Mutare.Ecto.Island`) — and woven pin-only, with no `dynamic/2` and so no re-declared
   # bindings at all (the root-pin rule, `Mutare.Ecto.Host.Target`).
 
+  alias Mutare.Ecto.Surface
   alias Mutare.Ecto.AST.{BindingList, KeywordList}
+  alias Mutare.Ecto.AST.KeywordList.Entry
+  alias Mutare.Ecto.Host.JoinOn
   alias Mutare.Mutator
 
   @enforce_keys [:node, :index, :kind, :declaration]
@@ -168,6 +178,51 @@ defmodule Mutare.Ecto.Host.Condition do
         kind: kind,
         declaration: declaration(declaration_position, args, pipe_mode)
       }
+    else
+      _ -> nil
+    end
+  end
+
+  @doc """
+  The `from` clauses that hold a host-owned predicate, as a map from each one's index to its
+  kind (`shape/1`). A clause qualifies by its key — a `where`/`having`-kind key, or an `on:`
+  where `Mutare.Ecto.Host.JoinOn` admits it — and by its value, which must be a predicate: a
+  keyword filter under such a key is core's, per pair. A bound (`limit:`/`offset:`) is a
+  `:hosted` key too, but it holds a value, not a condition (`Mutare.Ecto.Bound`).
+  """
+  @spec from_indices(KeywordList.t()) :: %{non_neg_integer() => predicate_kind()}
+  def from_indices(%KeywordList{entries: entries}) do
+    hostable_on = JoinOn.hostable_from_indices(entries)
+
+    for {%Entry{key: key, value: value}, index} <- Enum.with_index(entries),
+        condition_clause?(key, index, hostable_on),
+        {:predicate, kind} <- [shape(value)],
+        into: %{},
+        do: {index, kind}
+  end
+
+  defp condition_clause?(:on, index, hostable_on), do: MapSet.member?(hostable_on, index)
+
+  defp condition_clause?(key, _index, _hostable_on),
+    do: Surface.from_clause?(key, :hosted) and not Surface.bound?(key)
+
+  @doc """
+  The host-owned `on:` predicate of a standalone `join/4,5`, from its visible `args`, as
+  `{condition, kind, arg_index, pair_index}` — the predicate and its kind (`shape/1`), where the
+  trailing options list sits among the arguments, and where the `on:` pair sits within it — or
+  `nil` when the call has no `on:` `Mutare.Ecto.Host.JoinOn` admits, or its `on:` is a keyword
+  filter. The options list is the last argument in the direct and piped forms alike.
+  """
+  @spec locate_on([Macro.t()]) ::
+          {Macro.t(), predicate_kind(), non_neg_integer(), non_neg_integer()} | nil
+  def locate_on(args) do
+    with %KeywordList{entries: entries} <- args |> List.last() |> KeywordList.nonempty(),
+         true <- JoinOn.hostable_standalone?(args, entries),
+         # `hostable_standalone?/2` admits exactly one `on:`, so the index is found.
+         pair_index = Enum.find_index(entries, &(&1.key == :on)),
+         %Entry{value: condition} = Enum.at(entries, pair_index),
+         {:predicate, kind} <- shape(condition) do
+      {condition, kind, length(args) - 1, pair_index}
     else
       _ -> nil
     end

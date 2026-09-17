@@ -7,11 +7,12 @@ defmodule Mutare.Ecto.StaticConditionTest do
 
   alias Mutare.Ecto.{StaticCondition, Subquery}
 
-  # A condition Ecto accepts only statically built (`Mutare.Ecto.StaticCondition`): a subquery in
-  # a `having`. The host must decline it — weaving turns a valid static clause into a
-  # `having: ^dynamic(…)` Ecto rejects when the query is *built* — and its mutants must arrive as
-  # whole-call rebuilds instead. `assert_compiles/2` cannot see this failure (the module compiles
-  # either way), so every delivery test here goes through `assert_builds/3`.
+  # The conditions the host cannot weave (`Mutare.Ecto.StaticCondition`). A subquery in a
+  # `having`: weaving turns a valid static clause into a `having: ^dynamic(…)` Ecto rejects when
+  # the query is *built*. And a condition under a binding declaration the plugin cannot
+  # re-declare: the woven `dynamic/2` has no faithful list to carry. Their mutants must arrive as
+  # whole-call rebuilds instead. `assert_compiles/2` cannot see a build failure (the module
+  # compiles either way), so every delivery test here goes through `assert_builds/3`.
 
   @threshold ~s|subquery(from(t in "thresholds", select: max(t.value)))|
 
@@ -391,6 +392,104 @@ defmodule Mutare.Ecto.StaticConditionTest do
       refute rendered(@filter_having, opts) =~ "Query.dynamic("
       assert_builds(@filter_having, & &1.q(), opts)
     end
+
+    test "nor is a filter under a declaration the plugin cannot re-declare" do
+      # Such a declaration sends a *predicate* to the fallback (the describe below); a filter in
+      # the same position stays core's, per pair — whether it is written in a `from`, as a
+      # condition macro's argument, or as a join's `on:`.
+      every_family = [mutators: [:all, {Mutare.Ecto, repo: MyApp.Repo, families: :all}]]
+
+      # The build narrows core to the integer family: `:all` would also mutate the test's own
+      # `{index, …}` wrapper, which the build unwraps.
+      pair_value = [
+        mutators: [
+          Mutare.Mutators.IntegerLiteral,
+          {Mutare.Ecto, repo: MyApp.Repo, families: :all}
+        ]
+      ]
+
+      for stage <- [
+            "from([{p, index}] in query, where: [score: 5], limit: 10)",
+            "where(query, [{p, index}], score: 5)",
+            ~s|from([{p, index}] in query, join: c in "comments", on: [score: 5])|,
+            ~s|join(query, :inner, [{p, index}], c in "comments", on: [score: 5])|
+          ] do
+        src = """
+        defmodule Q do
+          import Ecto.Query
+          def q(query, index), do: {index, #{stage}}
+        end
+        """
+
+        mutateds = for {_family, _original, mutated} <- diffs(src, every_family), do: mutated
+        refute Enum.any?(mutateds, &(&1 =~ ~r/mutare:|:mutare =>/)), stage
+
+        integer =
+          for {:integer, original, mutated} <- diffs(src, pair_value), do: {original, mutated}
+
+        assert {"5", "6"} in integer, stage
+        assert_builds(src, &elem(&1.q(from(p in "posts"), 0), 1), pair_value)
+      end
+    end
+  end
+
+  describe "a condition under a declaration the plugin cannot re-declare" do
+    # `Mutare.Ecto.Binding` reads a computed index and a name that calls a function narrower than
+    # Ecto does: a woven `dynamic/2` re-declares its list beside the written one, so either would
+    # be evaluated twice. Rebuilt whole-call, every branch keeps the declaration as written.
+
+    for {label, declaration} <- [
+          {"a computed index", "{p, index}"},
+          {"a name that calls a function", "{^name(), p}"}
+        ] do
+      test "#{label}: each hosted form is rebuilt, and builds under every mutant" do
+        declaration = unquote(declaration)
+
+        for {stage, swap} <- [
+              {"where(query, [#{declaration}], p.views > 10)", {"p.views > 10", "p.views >= 10"}},
+              {"query |> having([#{declaration}], p.views > 10)",
+               {"p.views > 10", "p.views >= 10"}},
+              {"from([#{declaration}] in query, where: p.views > 10)",
+               {"p.views > 10", "p.views >= 10"}},
+              {~s|from([#{declaration}] in query, join: c in "comments", on: c.score > p.views)|,
+               {"c.score > p.views", "c.score >= p.views"}},
+              {~s|join(query, :inner, [#{declaration}], c in "comments", on: c.score > p.views)|,
+               {"c.score > p.views", "c.score >= p.views"}}
+            ] do
+          src = """
+          defmodule Q do
+            import Ecto.Query
+            def q(query, index), do: {index, #{stage}}
+            def name, do: :post
+          end
+          """
+
+          assert swap in ecto_diffs(src), stage
+          refute metamutant(src) =~ "Query.dynamic(", stage
+          # The base names its binding for `name/0` and holds it at the index `index` names.
+          assert_builds(src, &elem(&1.q(from(p in "posts", as: :post), 0), 1))
+        end
+      end
+    end
+
+    test "an on: the host would not weave under any declaration stays unmutated in place" do
+      # `Mutare.Ecto.Host.JoinOn` keeps an `assoc` join's `on:` out of the weave for a reason of
+      # its own; an unread declaration does not make that `on:` the fallback's.
+      for stage <- [
+            "from([{p, index}] in query, join: c in assoc(p, :comments), on: c.score > 2)",
+            "join(query, :inner, [{p, index}], c in assoc(p, :comments), on: c.score > 2)"
+          ] do
+        src = """
+        defmodule Q do
+          import Ecto.Query
+          def q(query, index), do: {index, #{stage}}
+        end
+        """
+
+        refute {"c.score > 2", "c.score >= 2"} in ecto_diffs(src), stage
+        assert_compiles(src)
+      end
+    end
   end
 
   describe "each condition is delivered exactly once" do
@@ -418,6 +517,38 @@ defmodule Mutare.Ecto.StaticConditionTest do
       assert ["aggregate", "max"] in hosted
       assert ["comparison", ">"] in hosted
       assert variants.("having") == hosted
+    end
+
+    test "an unread declaration records the same mutants a readable one does" do
+      # The same calls under `[p]` (woven) and `[{p, index}]` (rebuilt), compared as above.
+      source = fn declaration ->
+        """
+        defmodule Q do
+          import Ecto.Query
+
+          def q(query, index) do
+            {index,
+             [
+               where(query, [#{declaration}], p.id > 1 and p.views < 9),
+               from([#{declaration}] in query, where: p.id > 1, having: count(p.id) < 9),
+               join(query, :inner, [#{declaration}], c in "comments", on: c.post_id == p.id)
+             ]}
+          end
+        end
+        """
+      end
+
+      variants = fn declaration ->
+        declaration |> source.() |> sites() |> Enum.map(& &1.variant) |> Enum.sort()
+      end
+
+      woven = variants.("p")
+
+      assert ["comparison", ">"] in woven
+      assert ["aggregate", "count"] not in woven
+      assert rendered(source.("p")) =~ "Query.dynamic("
+      refute rendered(source.("{p, index}")) =~ "Query.dynamic("
+      assert variants.("{p, index}") == woven
     end
   end
 end

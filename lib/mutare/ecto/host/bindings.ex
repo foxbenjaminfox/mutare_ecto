@@ -16,9 +16,10 @@ defmodule Mutare.Ecto.Host.Bindings do
   # `{:ok, []}` says the query position declares **nothing** (an omitted or empty list, a bare
   # queryable source), so a woven `dynamic([], …)` is faithful; `:error` says a declaration was
   # written that this module **cannot interpret** (`Mutare.Ecto.Binding`'s grammar), so *any*
-  # re-declaration would be a guess and the host declines the condition. The work is done on
-  # parsed entries (`t:Mutare.Ecto.Binding.entry/0`) and rendered to AST once, at the end —
-  # placement never re-reads a node's shape to learn what kind of entry it is.
+  # re-declaration would be a guess and the condition is never woven — it is rebuilt whole-call
+  # instead (`Mutare.Ecto.StaticCondition.delivery/3`). The work is done on parsed entries
+  # (`t:Mutare.Ecto.Binding.entry/0`) and rendered to AST once, at the end — placement never
+  # re-reads a node's shape to learn what kind of entry it is.
 
   alias Mutare.Ecto.{Binding, Surface}
   alias Mutare.Ecto.AST.{BindingList, KeywordList}

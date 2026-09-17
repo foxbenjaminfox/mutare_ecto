@@ -47,23 +47,28 @@ defmodule Mutare.Ecto.Dispatcher do
     end
   end
 
-  # A `from`'s conditions are the host's, except one it declines as unweavable, which
+  # A `from`'s conditions are the host's, except one it cannot weave, which
   # `Mutare.Ecto.StaticCondition` rebuilds whole-call.
   defp query_macro_mutations(:from, call, context),
     # mutare:ignore[operand_swap] equivalent — two independent sub-mutator result lists, consumed as a set
     do: Query.mutations(call, context) ++ StaticCondition.mutations(call, context)
 
   # A condition macro's operator/literal swaps are the host's (`Mutare.Ecto.Host`) — or
-  # `Mutare.Ecto.StaticCondition`'s, for a condition the host declines as unweavable; its written
-  # binding list reorders in place (`Mutare.Ecto.BindingReorder`).
+  # `Mutare.Ecto.StaticCondition`'s, for a condition the host cannot weave; its written binding
+  # list reorders in place (`Mutare.Ecto.BindingReorder`).
   defp query_macro_mutations(:condition, %QueryCall{node: node} = call, context) do
     # mutare:ignore[operand_swap] equivalent — three independent result lists, consumed as a set
     BindingReorder.mutations(call, context) ++
       ClauseDrop.mutations(node, context) ++ StaticCondition.mutations(call, context)
   end
 
-  defp query_macro_mutations(kind, %QueryCall{node: node} = call, context)
-       when kind in [:clause, :join] do
+  # A join is a clause macro whose `on:` is a hosted condition — the host's, or
+  # `Mutare.Ecto.StaticCondition`'s when the host cannot weave it.
+  defp query_macro_mutations(:join, call, context),
+    # mutare:ignore[operand_swap] equivalent — two independent result lists, consumed as a set
+    do: query_macro_mutations(:clause, call, context) ++ StaticCondition.mutations(call, context)
+
+  defp query_macro_mutations(:clause, %QueryCall{node: node} = call, context) do
     # mutare:ignore[operand_swap] equivalent — three independent result lists, consumed as a set
     Clause.mutations(call, context) ++
       BindingReorder.mutations(call, context) ++ ClauseDrop.mutations(node, context)

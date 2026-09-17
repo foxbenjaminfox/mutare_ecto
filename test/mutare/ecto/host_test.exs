@@ -1473,7 +1473,8 @@ defmodule Mutare.Ecto.HostTest do
     # read was indistinguishable from none, the condition fell to the binding-less form, and the
     # weave was `dynamic([], p.score > 10)`: an unbound `p`, failing the single build. The slot
     # is now read by position (`Mutare.Ecto.Host.Condition`), its entries by Ecto's own grammar
-    # (`Mutare.Ecto.Binding`), and whatever is still unread **declines**.
+    # (`Mutare.Ecto.Binding`), and whatever is still unread is never woven: its condition is
+    # rebuilt whole-call (`Mutare.Ecto.StaticCondition`, and `static_condition_test.exs`).
 
     # The standalone/piped forms and a `from` source all re-declare the written entry verbatim.
     for {label, declaration} <- [
@@ -1518,39 +1519,6 @@ defmodule Mutare.Ecto.HostTest do
 
       assert metamutant(src) =~ "dynamic([{a, 0}, {c, 2}, {^name, p}]"
       assert_compiles(src)
-    end
-
-    # What the grammar deliberately leaves out (`Mutare.Ecto.Binding`): a re-declared entry is
-    # evaluated a second time, so a computed index or a name that could run code is unread.
-    # Unread is not empty — the condition is left as written (its stage drop, a whole-call
-    # rewrite that never reads the list, is all that remains).
-    for {label, declaration} <- [
-          {"a name that calls a function", "{^name(), p}"},
-          {"a computed index", "{p, index}"}
-        ] do
-      test "#{label} declines hosting rather than weaving an empty declaration" do
-        declaration = unquote(declaration)
-
-        for stage <- [
-              "where(query, [#{declaration}], p.score > 10)",
-              "query |> where([#{declaration}], p.score > 10)",
-              "from([#{declaration}] in query, where: p.score > 10)",
-              "join(query, :inner, [#{declaration}], c in Comment, on: c.id > p.score)"
-            ] do
-          src = """
-          defmodule M do
-            import Ecto.Query
-            def q(query, index), do: {index, #{stage}}
-            defp name, do: :post
-          end
-          """
-
-          conditions = ["p.score > 10", "c.id > p.score"]
-          refute Enum.any?(hosted(src), fn {original, _} -> original in conditions end), stage
-          refute metamutant(src) =~ "dynamic(", stage
-          assert_compiles(src)
-        end
-      end
     end
 
     test "a free-standing dynamic mutates under any declaration: it re-emits the written list" do

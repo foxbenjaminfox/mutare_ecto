@@ -141,8 +141,8 @@ The surface divides by **how a mutation is delivered**, not by what it mutates:
    selector: `RepoAggregate`, `RepoWrite`, `Changeset`, `QueryTerminal`; the whole-`from`
    rewrites (`Query`); the standalone/pipe rewrites (`Clause`, `ClauseDrop`, `BindingReorder`);
    the free-standing `dynamic/1,2`, mutated whole-call where it is built (`Dynamic`); a
-   condition the host declines as unweavable, rebuilt whole-call (`StaticCondition`); and the
-   changeset bound swap (`ValidationBoundary`).
+   condition the host cannot weave, rebuilt whole-call (`StaticCondition`); and the changeset
+   bound swap (`ValidationBoundary`).
 2. **Skipped** — `schema`/`embedded_schema` bodies: a mutated field name/type is a broken schema,
    not a mutant.
 3. **Hosted DSL** (the heart) — in-fragment `where`/`having`/`on:` mutations, woven behind Ecto's
@@ -166,7 +166,7 @@ Each row is role + the rule(s) that module is the **home** for.
 | `tag.ex` | `%Tag{family, node, label, attribution}` — the one shape every producer emits; `to_mutation/1`; home of what the `attribution` field means |
 | `host.ex` | selector-host coordinator (bucket 3): a hosted call → `Target`s |
 | `host/routing.ex` | `route_arguments/2`, the per-argument classifier; home of the routing rationale (`:hosted`/`:expression`/`:skip`/`:interpolated`/`{:keyword, …}`) |
-| `host/condition.ex` | `shape/1`, the one predicate-versus-keyword-filter classification routing, hosting (the weave and its `StaticCondition` fallback) and the subquery recursion share, reporting a predicate's kind (`:expression` / `:root_pin`) for `Target` to deliver by; `locate/3`; home of the hosted-condition shapes and of the located-by-position rule — a condition's binding declaration is read from its arity-determined slot, never searched for, and is one of *written* / *omitted* / *uninterpretable* |
+| `host/condition.ex` | `shape/1`, the one predicate-versus-keyword-filter classification routing, hosting (the weave and its `StaticCondition` fallback) and the subquery recursion share, reporting a predicate's kind (`:expression` / `:root_pin`) for `Target` to deliver by; `locate/3`, `from_indices/1`, `locate_on/1` — where a host-owned predicate sits, shared by the weave and its fallback; home of the hosted-condition shapes and of the located-by-position rule — a condition's binding declaration is read from its arity-determined slot, never searched for, and is one of *written* / *omitted* / *uninterpretable* |
 | `host/bindings.ex` | interprets binding declarations and renders the list a woven `dynamic/2` re-declares, as `{:ok, declarations} \| :error`; home of join placement (the join-slot rule: every join, whether a `from` join clause or the one a standalone `join/4,5` adds, holds one positional slot, an unnamed one re-declaring as `_`; and the `...` anchor rule) and of the hidden-source assumption |
 | `host/catalog.ex` | the own-catalog + island mutants for one hosted condition |
 | `host/join_on.ex` | home of join `on:` hostability (a join's sole, top-level, non-`assoc` on-expression — an `assoc` join told by its source, named or not) |
@@ -182,7 +182,7 @@ Each row is role + the rule(s) that module is the **home** for.
 | `combination.ex` | the set-operation swap table (`union` deliberately unswapped) |
 | `bound.ex` | the `:bound` ±1 bump; home of pin-only hosting and the `literal?/1` = `bumps/1` agreement |
 | `dynamic.ex` | free-standing `dynamic/1,2`; home of its whole-call in-place delivery |
-| `static_condition.ex` | the condition Ecto accepts only statically built (a subquery in a `having`); home of the weavability rule (`weavable?/2` — receiving clause × expression) and of its whole-call fallback delivery |
+| `static_condition.ex` | the condition the host cannot weave (a subquery in a `having`; a declaration the plugin cannot re-declare); home of the delivery rule (`delivery/3` — receiving clause × expression × declaration, consulted by the host and the fallback alike) and of its whole-call fallback delivery |
 | `query.ex` | whole-`from` rewrites; home of the JoinType narrowing rationale |
 | `clause.ex` | standalone/pipe cousins of `query.ex` |
 | `clause_drop.ex` / `changeset.ex` | stage drops (a query clause / a changeset validator or hook) over `stage_drop.ex`; `changeset.ex` is home of the stage table (`stages/0`) the changeset routes derive from |
@@ -234,9 +234,10 @@ Each is the conclusion; the canonical statement is in the named module.
 - **Binding-reorder is always in-place, never a body rewrite.** `Mutare.Ecto.BindingReorder`
   (a `from` source list reorders at the whole-`from` level, `Mutare.Ecto.Query`).
 - **A declaration the plugin cannot read is never an empty one.** A re-declaring consumer
-  locates the declaration by position and declines on `:error`; only the reorder may search by
-  shape (`BindingList.find/1`), where an unread list costs its own mutants and nothing else.
-  `Mutare.Ecto.Host.Condition`, `Mutare.Ecto.Host.Bindings`.
+  locates the declaration by position and never weaves on `:error` (the condition is rebuilt
+  whole-call instead); only the reorder may search by shape (`BindingList.find/1`), where an
+  unread list costs its own mutants and nothing else. `Mutare.Ecto.Host.Condition`,
+  `Mutare.Ecto.Host.Bindings`, `Mutare.Ecto.StaticCondition`.
 - **Stay inside the single build.** Any in-query mutation must be `^`-pinned behind the selector —
   a bare `case` in a query position poisons compilation. New query-position families go through
   the host (`Mutare.Ecto.Host`); the pin-only bound bump (`Mutare.Ecto.Bound`) is the precedent.

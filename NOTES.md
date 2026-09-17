@@ -577,11 +577,18 @@ entries and renders once.
 Two forms are read narrower than Ecto reads them, because the woven `dynamic/2` *re-declares*
 the list beside the original, evaluating whatever an entry computes a second time: an index must
 be a literal, and an interpolated name a variable or module attribute. `{^next_name(), p}` would
-run `next_name/0` twice in the **unmutated** branch. Those decline hosting. The alternative —
-deliver such a condition as a whole-call rebuild, as `Mutare.Ecto.Dynamic` does, which re-emits
-the written list and needs no reading of it — was weighed and left: once the grammar is Ecto's,
-what remains unread is either invalid Ecto or these two computed forms, too rare to carry a
-second delivery path for.
+run `next_name/0` twice in the **unmutated** branch. Such a condition is never woven. It was
+first left unmutated in-fragment, a whole-call delivery judged too rare a need to carry a second
+delivery path for; but `Mutare.Ecto.StaticCondition` had meanwhile become that path (for a
+subquery in a `having`), so the condition is now rebuilt whole-call there under the written
+list, as `Mutare.Ecto.Dynamic` rebuilds a free-standing `dynamic`. To keep each condition
+delivered exactly once, the host and the fallback now enumerate the same conditions
+(`Host.Condition.from_indices/1`, `locate_on/1`) and split them by one decision,
+`StaticCondition.delivery/3` — which is also what brought a standalone `join`'s `on:` into the
+fallback. An `on:` that `Host.JoinOn` keeps out of the weave stays out of the fallback, under
+any declaration: Ecto's objection there is to a dynamic, not to the condition, so a rebuild
+would be valid — but offering one is a coverage change for every such `on:`, not a consequence
+of this one.
 
 The same rewrite surfaced a placement bug that corrupted the **baseline**, not just the mutants:
 the contiguity rule counted a literal source's joins from the *number of declared entries*, where
@@ -590,4 +597,4 @@ the first join at position 2 instead of 1. The anchor rule is now exact — join
 only behind exactly one positional entry. (The rewrite ran into the unnamed-join miscount too,
 fixed on its own in "Bindings: an unnamed join still holds its slot" above; entry-based
 placement keeps that section's `_` slot as a parsed positional entry, and a join's named left
-side outside the grammar declines the condition rather than failing the run.)
+side outside the grammar reads as an uninterpretable declaration rather than failing the run.)
