@@ -51,19 +51,10 @@ defmodule Mutare.Ecto.Host.Bindings do
     with {:ok, declared} <- pattern_entries(lhs), do: {:ok, declared, composed_source?(rhs)}
   end
 
-  # A piped `from`'s source is the hidden `|>` left side (`Mutare.Ecto.AST.FromCall`), which no
-  # callback is shown. It is read as a **queryable value** — declaring nothing, and composed,
-  # since unseen it may be any query. That is an assumption, not an observation, and it is
-  # exactly the one core's pipe hoisting already makes about every pipe's left side (it binds it
-  # to a variable): a binding *pattern* there (`(p in Post) |> from(…)`) breaks core's delivery
-  # before this reading of it matters (NOTES "A binding pattern on a pipe's left
-  # (`(p in Post) |> from(…)`) is unsupported").
-  defp source_entries(nil), do: {:ok, [], true}
-
   # A bare queryable source (`from(Post, …)`, `from("t", as: :t, …)`, `from(q, …)`) declares
   # no binding; its composed-ness is read off the queryable itself, exactly as for an `in`
   # rhs. (With no positional to count from, `join_anchor/4` anchors an appended join either
-  # way — the value is honest, not load-bearing, for this and the hidden source alike.)
+  # way — the value is honest, not load-bearing, for this source too.)
   defp source_entries(source), do: {:ok, [], composed_source?(source)}
 
   # The `lhs` of a `lhs in rhs` source: Ecto `List.wrap/1`s it, so it is a declaration list or

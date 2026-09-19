@@ -20,11 +20,14 @@ defmodule Mutare.Ecto.ShorthandTest do
   # column. The ownership tests below run under this set so nothing hides.
   @every_family [:all, {Mutare.Ecto, repo: MyApp.Repo, families: :all}]
 
-  # A `q |> macro(…)` snippet routes `:piped` — its visible args exclude the query, as core's do.
+  # A pipe supplies its source separately from the stage's visible arguments, as core does.
   defp routing(code) do
     case Sourceror.parse_string!(code) do
-      {:|>, _meta, [_query, {name, _, args}]} -> Host.Routing.treatments(name, args, :piped)
-      {name, _meta, args} -> Host.Routing.treatments(name, args, :unpiped)
+      {:|>, _meta, [query, {name, _, args}]} ->
+        Host.Routing.treatments(name, args, {:piped, query})
+
+      {name, _meta, args} ->
+        Host.Routing.treatments(name, args, :unpiped)
     end
   end
 

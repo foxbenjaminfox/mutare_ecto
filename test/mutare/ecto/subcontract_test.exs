@@ -1247,7 +1247,7 @@ defmodule Mutare.Ecto.SubcontractTest do
       # by construction the value the top-level weave takes when this branch is active.
       assert original =~ "p.views > 10"
       assert mutated =~ "where: ^"
-      assert mutated =~ "dynamic(p, p.views >= 10)"
+      assert mutated =~ "dynamic([p], p.views >= 10)"
 
       # The literal-bound bumps of the inner condition ride the same lowering.
       assert Enum.any?(ecto, fn {_o, m} -> m =~ "p.views > 11" end)

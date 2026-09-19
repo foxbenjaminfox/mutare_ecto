@@ -8,6 +8,8 @@ defmodule Mutare.Ecto.Island do
   # the relayed mutants with the plugin's own SQL catalog as branches of the weave) and the
   # free-standing `dynamic` (`Mutare.Ecto.Dynamic` rebuilds the whole call around each) — and
   # host-specific to neither.
+  # Computed subquery sources use this same seam as unpinned Elixir islands; their location
+  # and reconstruction belong to `Mutare.Ecto.Subquery.source_islands/1`.
   #
   # `subcontracted/3` runs each pin interior (`Mutare.Ecto.Fragment.islands/2` — collected under
   # the catalog's own descent rules, so no island is reached that the catalog would not have

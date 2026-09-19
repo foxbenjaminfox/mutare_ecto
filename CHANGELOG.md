@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Computed `from` sources retain their upstream mutants, in both direct and piped forms.
+  Schema aliases, table names and source tuples now stay unmutated on the left of composable
+  query stages, just as they do in direct calls.
+- Piped binding declarations (`(p in Post) |> from(where: p.views > 5)`) supply their bindings
+  to hosted conditions. Whole-call rewrites on this spelling are withheld until core supports
+  delivering them without evaluating the declaration; hosted conditions and bounds still run.
+
+### Changed
+
+- **Mutare 0.3.0 or newer is required** (`{:mutare, "~> 0.3.0"}`) for the
+  `Call.pipe_left` API used by source routing and binding discovery.
+
 ## [0.2.0] - 2026-09-17
 
 ### Added

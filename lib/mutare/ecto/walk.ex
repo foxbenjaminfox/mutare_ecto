@@ -52,8 +52,13 @@ defmodule Mutare.Ecto.Walk do
   # routing is read from the resolve-pass stamp via `Mutare.Calls.routed_treatments/1`. Every
   # catalog (`Fragment`'s `mutants`/`islands`, `ExpressionWalk`) is a reader over this walk and
   # never descends on its own, so the rule is applied in exactly one place.
+  #
+  # Query-building macros are a separate boundary: their `:expression` source computes a query
+  # in Elixir, not an SQL value. Their arguments and a query pipe's left side stay out of this
+  # walk. Subquery reads their SQL clauses explicitly and hands computed sources to core.
 
   alias Mutare.Calls
+  alias Mutare.Ecto.AST.QueryCall
   alias Mutare.Ecto.Tag
   alias Mutare.Mutator.Mutation
 
@@ -124,12 +129,19 @@ defmodule Mutare.Ecto.Walk do
 
   def structural({:^, _meta, _args}, _ctx, _child_ctx), do: []
 
-  def structural({form, meta, args} = node, ctx, child_ctx) when is_list(args) do
-    routing = Calls.routed_treatments(node)
+  def structural({:|>, meta, [left, right]} = node, ctx, child_ctx) do
+    if QueryCall.parse(right) do
+      # The left side computes the query or declares its bindings, never a SQL operand.
+      [{right, child_ctx.(node, 1, ctx), &{:|>, meta, [left, &1]}}]
+    else
+      arguments(node, ctx, child_ctx)
+    end
+  end
 
-    for {arg, index} <- Enum.with_index(args),
-        descend_arg?(routing, index),
-        do: {arg, child_ctx.(node, index, ctx), &{form, meta, List.replace_at(args, index, &1)}}
+  def structural({_form, _meta, args} = node, ctx, child_ctx) when is_list(args) do
+    # Query macros build queries; even their :expression sources are Elixir, not SQL.
+    # Subquery reads their clauses explicitly and sub-contracts computed sources to core.
+    if QueryCall.parse(node), do: [], else: arguments(node, ctx, child_ctx)
   end
 
   def structural({left, right} = node, ctx, child_ctx) do
@@ -146,8 +158,17 @@ defmodule Mutare.Ecto.Walk do
 
   def structural(_leaf, _ctx, _child_ctx), do: []
 
+  defp arguments({form, meta, args} = node, ctx, child_ctx) do
+    routing = Calls.routed_treatments(node)
+
+    for {arg, index} <- Enum.with_index(args),
+        descend_arg?(routing, index),
+        do: {arg, child_ctx.(node, index, ctx), &{form, meta, List.replace_at(args, index, &1)}}
+  end
+
   defp inherit(_parent, _index, ctx), do: ctx
 
   defp descend_arg?(nil, _index), do: true
+  defp descend_arg?(:skip, _index), do: false
   defp descend_arg?(routing, index), do: Enum.at(routing, index) == :expression
 end

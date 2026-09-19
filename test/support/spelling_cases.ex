@@ -432,12 +432,14 @@ defmodule Mutare.Ecto.SpellingCases do
         end
       end
 
-      describe "Gap — an upstream query expression is core's in a composable stage only" do
+      describe "Gap — a binding declaration keeps its queryable raw" do
         test "`from p in recent(2)` keeps the source raw; `where(recent(2), …)` hands it to core" do
-          %{from: from, direct: direct, pipe: pipe} =
+          %{from: from, bare_from: bare_from, piped_from: piped_from, direct: direct, pipe: pipe} =
             spellings(
               [
                 from: ~S|from(p in recent(2), where: p.published)|,
+                bare_from: ~S|from(recent(2), as: :post, where: as(:post).published)|,
+                piped_from: ~S'recent(2) |> from(as: :post, where: as(:post).published)',
                 direct: ~S|where(recent(2), [p], p.published)|,
                 pipe: ~S'recent(2) |> where([p], p.published)'
               ],
@@ -452,14 +454,15 @@ defmodule Mutare.Ecto.SpellingCases do
           end
 
           assert reached(from, :integer) == MapSet.new()
-          assert reached(direct, :integer) == statements([recent.(3), recent.(1), recent.(0)])
-          assert reached(pipe, :integer) == statements([recent.(3), recent.(1), recent.(0)])
+
+          for computed <- [bare_from, piped_from, direct, pipe] do
+            assert reached(computed, :integer) == statements([recent.(3), recent.(1), recent.(0)])
+          end
         end
       end
 
-      describe "Gap — a schema or table name is held back from core, except on a pipe's left" do
-        # The classifier reads a call's visible arguments; a pipe's left side is not one.
-        test "`Post |> where(…)` hands `Post` to core's alias family; every other spelling keeps it" do
+      describe "Parity — schema and table names stay unmutated in every spelling" do
+        test "a schema alias is held back in direct and piped query stages" do
           %{from: from, piped_from: piped_from, direct: direct, pipe: pipe} =
             spellings(
               [
@@ -471,11 +474,8 @@ defmodule Mutare.Ecto.SpellingCases do
               [helpers: "alias MyApp.Post"] ++ @with_core
             )
 
-          for held_back <- [from, piped_from, direct],
+          for held_back <- [from, piped_from, direct, pipe],
               do: assert(reached(held_back, :alias) == MapSet.new())
-
-          # `Mutare.Mutant |> where(…)`: no such queryable.
-          assert reached(pipe, :alias) == MapSet.new([{:breaks, :build}])
         end
 
         test "likewise a table name, and core's string family" do
@@ -489,18 +489,16 @@ defmodule Mutare.Ecto.SpellingCases do
             )
 
           assert reached(direct, :string) == MapSet.new()
-
-          # `""` and `"mutare"`: no such table.
-          assert reached(pipe, :string) == MapSet.new([{:breaks, :run}])
+          assert reached(pipe, :string) == MapSet.new()
         end
       end
 
       # ── one spelling, written in different places ───────────────────────────────────────────
 
-      describe "Placement — a subquery's interior is mutated when it is an inline `from`" do
+      describe "Placement — inline subquery catalogs and upstream sources" do
         @outer ~S|from(p in "posts", where: p.id in subquery(INNER), select: p.id)|
 
-        test "an inline pipeline, and a `from`-source subquery, are not entered" do
+        test "upstream pipeline conditions mutate, but final stages and binding sources do not" do
           inline_from =
             fixture(
               String.replace(
@@ -519,6 +517,15 @@ defmodule Mutare.Ecto.SpellingCases do
               )
             )
 
+          final_stage =
+            fixture(
+              String.replace(
+                @outer,
+                "INNER",
+                ~S'"comments" |> select([c], c.post_id) |> where([c], c.score > 3)'
+              )
+            )
+
           from_source =
             fixture(~S"""
             from(s in subquery(from(c in "comments", where: c.score > 3, select: %{id: c.post_id})),
@@ -527,13 +534,16 @@ defmodule Mutare.Ecto.SpellingCases do
             """)
 
           assert baseline(inline_from) == baseline(inline_pipe)
+          assert baseline(inline_from) == baseline(final_stage)
 
           inner = from(c in "comments", where: c.score >= 3, select: c.post_id)
 
-          assert reached(inline_from, :comparison) ==
-                   statements([from(p in "posts", where: p.id in subquery(inner), select: p.id)])
+          expected =
+            statements([from(p in "posts", where: p.id in subquery(inner), select: p.id)])
 
-          assert reached(inline_pipe, :comparison) == MapSet.new()
+          assert reached(inline_from, :comparison) == expected
+          assert reached(inline_pipe, :comparison) == expected
+          assert reached(final_stage, :comparison) == MapSet.new()
           assert reached(from_source, :comparison) == MapSet.new()
         end
 

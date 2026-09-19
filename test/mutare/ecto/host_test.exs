@@ -985,7 +985,7 @@ defmodule Mutare.Ecto.HostTest do
       assert_compiles(src)
     end
 
-    test "a piped `from` hosts exactly what its direct twin does (hidden source)" do
+    test "a piped `from` hosts exactly what its direct twin does (bare source)" do
       # `Post |> from(…)`: the source is the `|>` left side, so the call's one visible argument is
       # the clause list. Before this it landed in the source slot and the whole call stayed raw —
       # zero mutants for a perfectly ordinary query. Now `FromCall` places the clauses by
@@ -1713,11 +1713,12 @@ defmodule Mutare.Ecto.HostTest do
       # A schema alias, a table-name string, or a `{"table", Schema}` pair names a table rather
       # than computing a query: none of core's `:alias`/`:string`/`:tuple` families reach it,
       # while the condition beside it is still hosted.
-      for source <- ["Post", ~S|"posts"|, ~S|{"posts", Post}|] do
+      for source <- ["Post", ~S|"posts"|, ~S|{"posts", Post}|],
+          piped? <- [false, true] do
         src = """
         defmodule Posts do
           import Ecto.Query
-          def q, do: where(#{source}, [p], p.views > 1)
+          def q, do: #{if piped?, do: "#{source} |> where([p], p.views > 1)", else: "where(#{source}, [p], p.views > 1)"}
         end
         """
 
@@ -1728,12 +1729,7 @@ defmodule Mutare.Ecto.HostTest do
       end
     end
 
-    test "a piped `from`'s hidden source is never routed — in the pipe as in the direct form" do
-      # `from`'s source is the one position the plugin never routes, and piped it is the one
-      # position whose shape the classifier cannot even see (core's `Call` carries only visible
-      # arguments), so `route_arguments/2` marks the pipe's left side `:raw` outright: a
-      # structural `Post |> from(…)` is never handed to core's `:alias` family (it used to be —
-      # `from_visible`'s `:expression` default), while every clause beside it is still mutated.
+    test "a piped from holds structural sources raw while hosting its clauses" do
       for source <- ["Post", ~S|"posts"|, ~S|{"posts", Post}|] do
         src = """
         defmodule Posts do
@@ -1749,31 +1745,29 @@ defmodule Mutare.Ecto.HostTest do
       end
     end
 
-    test "route_arguments/2 routes only a piped from's left side :skip" do
-      # The classifier-level pin for the test above: the `ArgumentRoutes` a piped `from` returns
-      # carries `piped: :skip`, while a piped composable macro keeps the `:expression` default
-      # (its left side is the threaded query — its upstream mutations must stay reachable).
+    test "route_arguments/2 uses the same source treatment for from and composable stages" do
       alias Mutare.CallRouting.{ArgumentRoutes, Call}
 
-      piped_call = fn name, args ->
-        %Call{
-          node: {name, [], args},
-          module: Ecto.Query,
-          name: name,
-          arguments: args,
-          pipe_mode: :piped,
-          effective_arity: length(args) + 1,
-          rebuild: fn new_name, new_args -> {new_name, [], new_args} end
-        }
+      piped_call = fn name, args, left ->
+        Call.new(
+          {name, [], args},
+          Ecto.Query,
+          name,
+          {:piped, Sourceror.parse_string!(left)},
+          fn new_name, new_args -> {new_name, [], new_args} end
+        )
       end
 
       [clauses] = Sourceror.parse_string!("from(as: :post, where: as(:post).x > 1)") |> elem(2)
-      from_routes = Host.Routing.route_arguments(piped_call.(:from, [clauses]), %{})
+      from_routes = Host.Routing.route_arguments(piped_call.(:from, [clauses], "Post"), %{})
       assert ArgumentRoutes.piped(from_routes) == :raw
       assert ArgumentRoutes.visible(from_routes) == [{:keyword, [:raw, :hosted]}]
 
       [bindings, cond] = Sourceror.parse_string!("where([p], p.x > 1)") |> elem(2)
-      where_routes = Host.Routing.route_arguments(piped_call.(:where, [bindings, cond]), %{})
+
+      where_routes =
+        Host.Routing.route_arguments(piped_call.(:where, [bindings, cond], "query"), %{})
+
       assert ArgumentRoutes.piped(where_routes) == :expression
       assert ArgumentRoutes.visible(where_routes) == [:raw, :hosted]
     end
@@ -1784,13 +1778,16 @@ defmodule Mutare.Ecto.HostTest do
   # public transform for mutation delivery.
 
   describe "treatments/3 — per-argument treatment" do
-    # The classifier takes the resolved macro name, visible args, and pipe mode (what core reads
+    # The classifier takes the resolved macro name, visible args, and pipe-left identity (what core reads
     # off a `Mutare.CallRouting.Call`); a snippet's own head and args stand in for them here, and
-    # a `q |> macro(…)` snippet routes `:piped` — its visible args exclude the query, as core's do.
+    # a `q |> macro(…)` snippet supplies `{:piped, left}` — its visible args exclude the query, as core's do.
     defp routing(code) do
       case Sourceror.parse_string!(code) do
-        {:|>, _meta, [_query, {name, _, args}]} -> Host.Routing.treatments(name, args, :piped)
-        {name, _meta, args} -> Host.Routing.treatments(name, args, :unpiped)
+        {:|>, _meta, [query, {name, _, args}]} ->
+          Host.Routing.treatments(name, args, {:piped, query})
+
+        {name, _meta, args} ->
+          Host.Routing.treatments(name, args, :unpiped)
       end
     end
 

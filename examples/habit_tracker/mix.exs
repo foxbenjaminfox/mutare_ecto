@@ -50,7 +50,7 @@ defmodule HabitTracker.MixProject do
       # The mutator under test — a path dep to this checkout, so the example runs the
       # plugin as it is here — and the released Mutare core it plugs into (the same
       # Hex requirement the plugin itself declares). Both are dev/test tooling.
-      {:mutare, "~> 0.1", only: [:dev, :test], runtime: false},
+      {:mutare, "~> 0.3.0", only: [:dev, :test], runtime: false},
       {:mutare_ecto, path: "../..", only: [:dev, :test], runtime: false},
       # Ecto + a self-contained SQLite adapter, so the app needs no database
       # server: data lives in a local file, and the test database is in-memory.

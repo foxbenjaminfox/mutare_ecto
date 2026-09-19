@@ -17,7 +17,7 @@ plumbing. The SQL half is `Mutare.Ecto.Fragment`'s; the `^`-pin half is `Mutare.
 ## Commands
 
 ```bash
-mix test                                     # full suite (compiles ../mutare + this app first)
+mix test                                     # full suite (compiles deps + this app first)
 mix test test/mutare/ecto/query_test.exs     # one file
 mix test test/mutare/ecto/query_test.exs:42  # one test by line
 mix test test/mutare/ecto/semantic_test.exs  # the only DB-backed file (SQLite by default)
@@ -73,12 +73,11 @@ analyzes `lib/`, not the test-only fixtures.
 
 ## The `mutare` dependency and the `../mutare` checkout
 
-`mix.exs` depends on the published `{:mutare, "~> 0.1"}`, so local development and CI both build
-against the Hex release. The sibling checkout at `../mutare` is still where to read the exact
-contract of a core callback or helper. To develop against unreleased core, switch the dep to
-`{:mutare, path: "../mutare"}` locally and switch it back before committing (the compile hook
-runs against whichever is declared). When a task seems to need core machinery that doesn't
-exist yet, extending `../mutare` is an **option**, not the default — **consult the user before
+`mix.exs` depends on the published `{:mutare, "~> 0.3.0"}`, which provides `Call.pipe_left`.
+The sibling `../mutare` checkout is where to read core callback contracts. To develop against
+unreleased core, temporarily use `{:mutare, path: "../mutare"}` and restore the published
+dependency before committing. When a task seems to need core machinery that doesn't exist yet,
+extending `../mutare` is an **option**, not the default — **consult the user before
 adding anything to core** (the alternatives: a plugin-side approach, or narrowing the task).
 Core seams that have gone that route after such a decision:
 
@@ -167,7 +166,7 @@ Each row is role + the rule(s) that module is the **home** for.
 | `host.ex` | selector-host coordinator (bucket 3): a hosted call → `Target`s |
 | `host/routing.ex` | `route_arguments/2`, the per-argument classifier; home of the routing rationale (`:hosted`/`:expression`/`:skip`/`:interpolated`/`{:keyword, …}`) |
 | `host/condition.ex` | `shape/1`, the one predicate-versus-keyword-filter classification routing, hosting (the weave and its `StaticCondition` fallback) and the subquery recursion share, reporting a predicate's kind (`:expression` / `:root_pin`) for `Target` to deliver by; `locate/3`, `from_indices/1`, `locate_on/1` — where a host-owned predicate sits, shared by the weave and its fallback; home of the hosted-condition shapes and of the located-by-position rule — a condition's binding declaration is read from its arity-determined slot, never searched for, and is one of *written* / *omitted* / *uninterpretable* |
-| `host/bindings.ex` | interprets binding declarations and renders the list a woven `dynamic/2` re-declares, as `{:ok, declarations} \| :error`; home of join placement (the join-slot rule: every join, whether a `from` join clause or the one a standalone `join/4,5` adds, holds one positional slot, an unnamed one re-declaring as `_`; and the `...` anchor rule) and of the hidden-source assumption |
+| `host/bindings.ex` | interprets binding declarations and renders the list a woven `dynamic/2` re-declares, as `{:ok, declarations} \| :error`; home of join placement (the join-slot rule: every join, whether a `from` join clause or the one a standalone `join/4,5` adds, holds one positional slot, an unnamed one re-declaring as `_`; and the `...` anchor rule) and of source-binding discovery |
 | `host/catalog.ex` | the own-catalog + island mutants for one hosted condition |
 | `host/join_on.ex` | home of join `on:` hostability (a join's sole, top-level, non-`assoc` on-expression — an `assoc` join told by its source, named or not) |
 | `host/target.ex` | the `dynamic`-wrap / `^`-pin / splice transforms core consumes; home of the root-pin rule (a condition that *is* a `^` pin — a `:root_pin` predicate — weaves pin-only over its interior, re-declaring no bindings, so under any declaration) |

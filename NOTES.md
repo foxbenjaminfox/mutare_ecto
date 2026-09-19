@@ -100,19 +100,19 @@ stale in the dangerous direction: a form it fails to recognize only downgrades t
 the whole-call delivery, which is valid either way. The cost is that every innocent macro in a
 `having` (a `fragment` helper, say) gives up the weave too.
 
-### A binding pattern on a pipe's left (`(p in Post) |> from(…)`) is unsupported
+### A binding pattern on a pipe's left: hosted only
 
-Ecto accepts `(p in Post) |> from(where: p.x > 1)` — `|>` rewrites it to `from(p in Post, …)`
-before `from` expands — but the shape is pathological, and neither core nor the plugin can
-serve it: core's pipe hoisting binds the left side to `mutare_piped` as a *value*
-(`Kernel.in/2` on an unbound `p`), and the plugin's hidden-source `FromCall` (design history
-"Piped `from`: the hidden source") declares no bindings for it, so a hosted `where:` would weave
-`dynamic([], p.x > 1)`. Either would fail the single build. The plugin cannot guard it —
-`Mutare.CallRouting.Call` carries only the visible arguments, so the left side's shape is
-unseen — and core exposing the pipe-left is a core seam (consult before adding). Deferred until
-someone writes it: the piped `from` in the wild is a bare or computed queryable on the left
-(`Post |> from(as: :post, …)`), whose conditions reference named bindings or are keyword
-shorthand, and those are exactly the shapes now covered.
+`(p in Post) |> from(where: p.x > 1)` now exposes its source through core's `Call.pipe_left`.
+`FromCall` reads that source, and `Host.Bindings` re-declares `p` in the hosted `dynamic`.
+The source itself stays raw, so no core family treats the binding declaration as an expression.
+
+**Deferred:** whole-call mutants on this shape. Core still delivers a mutated pipe stage through
+`lhs |> (fn value -> … end).()`, which evaluates the declaration and hides its syntax from
+`from`. `Dispatcher` therefore withholds both `Query`'s rewrites and `StaticCondition`'s fallback
+rewrites for a piped `in` source. Hosted conditions, shorthand values and literal bounds remain
+available. Core's pipe-left proposal Part B would remove that delivery limitation; until then
+order flips, clause drops and source binding reorders are intentionally absent for this spelling.
+A piped source is read-only: `FromCall.replace_source/2` accepts only a directly written source.
 
 ### Subquery interiors: bounds and ordering are not composed
 
@@ -161,9 +161,9 @@ each is unimplemented.
   * **A computed `from` source** (`from p in recent(2)`). The source argument is an `in`
     pattern, and core's treatments are per argument: nothing routes "the right side of this
     `in`" `:expression` while the left stays raw. A nested treatment is a core seam.
-  * **An inline piped subquery** (`subquery(Comment |> where(…))` inside a condition).
-    `Mutare.Ecto.Subquery` recurses a parsed `FromCall`; a pipeline is a chain of stage calls
-    with no such normal form, so each stage's condition would have to be located
+  * **The final stage of an inline piped subquery** (`subquery(Comment |> where(…))` inside
+    a condition). Upstream stages now reach the island seam, but the final stage's own
+    clauses still have no subquery catalog. Its condition would have to be located
     (`Mutare.Ecto.Host.Condition`) and rebuilt into the chain.
 
 ### Stage drops: a dependency break is not told from a weakened query
@@ -202,17 +202,19 @@ either the host taking these values as `:hosted` targets, one per pin (the root-
 pin-only bound weaves in `Mutare.Ecto.Host.Target` are the precedent), or a core treatment
 meaning "raw, except beneath a `^`". The second is a core seam; consult before adding.
 
-### A structural queryable on a pipe's left is core's
+### Source routing agrees across direct and piped queries `[done]`
 
-`where(Post, …)` holds `Post` back from core's `:alias` family (a swapped schema is a broken
-query — `Mutare.Ecto.Host.Routing`), and the piped `from` routes its hidden source `:raw` for the
-same reason. A composable stage cannot do either: piped, the queryable is no visible argument,
-the classifier never sees its shape, and routing the hidden side `:raw` wholesale would give up
-every computed upstream query (`recent(2) |> where(…)`), which is the case the `:expression`
-default exists for. So `Post |> where(…)`, a very common spelling, gets
-`Mutare.Mutant |> where(…)`, and `"posts" |> where(…)` a query over `""`: each raises, and is
-killed by any test that runs the query. Closing it needs core to show the classifier the pipe's
-left side, the same seam "A binding pattern on a pipe's left" is waiting on.
+Core's `Call.pipe_left` lets the classifier read a piped source. `Host.Routing` now applies one
+shape table to the source of `from` and every composable query stage, in both spellings:
+structural queryables and `in` declarations stay raw, computed values remain expressions.
+This removes alias/string mutants from `Post |> where(…)` and restores upstream mutants in
+`q |> where(…) |> from(limit: 5)` as well as `from(q |> where(…), limit: 5)`.
+
+Previously a piped `from` hid every upstream mutation by routing its source raw, whereas a
+composable stage always treated its pipe-left as an expression and mutated schema/table names.
+The direct `from` source was also always raw despite being visible. `FromCall` now carries the
+actual piped source rather than a `nil` sentinel, so the host reads its bindings and whether it
+is composed just as it does for a direct source. Core's read-only boundary still applies to edits.
 
 ## Design history
 
@@ -482,6 +484,9 @@ because a table/schema swap is a broken query, not a mutant. `Surface.query_buil
 the heuristic.
 
 ### Piped `from`: the hidden source
+
+Superseded by "Source routing agrees across direct and piped queries" above; the account below
+records the original implementation before core exposed `Call.pipe_left`.
 
 `Post |> from(as: :post, where: as(:post).views > 5, limit: 5)` used to receive **no** mutations
 at all — no comparison, no literal, no filter drop, no bound — while the identical

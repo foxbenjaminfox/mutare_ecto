@@ -9,18 +9,9 @@ defmodule Mutare.Ecto.AST.FromCall do
   # and its splice (`Mutare.Ecto.Host`/`Host.Target`), and — through the identity-free
   # `parse_args/2` — the routing classifier (`Mutare.Ecto.Host.Routing`).
   #
-  # ## The piped form: a hidden source
-  #
-  # Written directly, the source is the first argument. Piped (`Post |> from(as: :post, where: …)`),
-  # the source is the `|>` left side — core's effective argument zero, which is **not** part of
-  # the call node (`Mutare.CallRouting.Call`) — so the visible argument list holds only the clause
-  # list (or nothing). The call's `pipe_mode` (stamped by core, carried by `QueryCall`) is what
-  # places the clauses; nothing here reads an argument's *shape* to guess. A piped `from` parses
-  # with `source: nil` — "hidden, on the pipe's left" — and rebuilds to the same visible arity it
-  # was written with, so the source is never touched by any edit: it is unreachable, and the only
-  # source edit (`replace_source/2`, the binding-list reorder) matches an `in` source, which a
-  # pipe's left side never is (`(p in Post) |> from(…)` is legal Elixir but not a shape anyone
-  # writes; it would parse the same as a bare hidden source).
+  # The source is readable in both forms: the first visible argument of a direct call, or
+  # `QueryCall.pipe_left` in a pipe. Reconstruction still edits only the visible call, so a
+  # piped source is read-only. `replace_source/2` accepts only a directly written source.
   #
   # Every edit (`replace_source/2`, `replace_clause/3`, `rekey_clause/3`, `delete_clauses/2`)
   # returns a new value, so edits compose; `to_ast/1` renders through the call's own `rebuild`,
@@ -41,11 +32,7 @@ defmodule Mutare.Ecto.AST.FromCall do
   @enforce_keys [:call, :source, :clauses]
   defstruct [:call, :source, :clauses]
 
-  @typedoc """
-  `source` is the written source, or `nil` for a piped `from` whose source is the hidden `|>`
-  left side (see the module comment).
-  """
-  @type t :: %__MODULE__{call: QueryCall.t(), source: Macro.t() | nil, clauses: KeywordList.t()}
+  @type t :: %__MODULE__{call: QueryCall.t(), source: Macro.t(), clauses: KeywordList.t()}
 
   @doc """
   The normalized `from` for a resolved `Ecto.Query.from` call — a `QueryCall`, or a stamped node
@@ -53,8 +40,8 @@ defmodule Mutare.Ecto.AST.FromCall do
   argument is not a keyword list (`from(p in Post, ^clauses)`).
   """
   @spec parse(QueryCall.t() | Macro.t()) :: t() | nil
-  def parse(%QueryCall{name: :from, args: args, pipe_mode: pipe_mode} = call) do
-    case parse_args(args, pipe_mode) do
+  def parse(%QueryCall{name: :from, args: args, pipe_left: pipe_left} = call) do
+    case parse_args(args, pipe_left) do
       {source, %KeywordList{} = clauses} ->
         %__MODULE__{call: call, source: source, clauses: clauses}
 
@@ -73,20 +60,16 @@ defmodule Mutare.Ecto.AST.FromCall do
   end
 
   @doc """
-  The `{source, clauses}` shape of a `from`'s **visible argument list** under `pipe_mode` —
-  `from(source)` yields an empty clause list, `from(source, clauses)` the parsed keyword list; a
-  piped `source |> from()` / `source |> from(clauses)` the same with a `nil` (hidden) source — or
-  `nil` for any other shape (a non-keyword clause argument, or a malformed arity). The
-  identity-free half of `parse/1`: the routing classifier reads it before descent has stamped the
-  call, with the `pipe_mode` core hands it.
+  Read `{source, clauses}` from a `from`'s visible arguments and its pipe-left identity.
+  The source is the actual AST in either form; malformed arities and non-keyword clauses
+  return `nil`. Routing uses this before the visible arguments have been resolved.
   """
-  @spec parse_args([Macro.t()], Mutare.Mutator.pipe_mode()) ::
-          {Macro.t() | nil, KeywordList.t()} | nil
+  @spec parse_args([Macro.t()], Mutare.CallRouting.Call.pipe_left()) ::
+          {Macro.t(), KeywordList.t()} | nil
+  def parse_args(args, {:piped, source}), do: parse_args([source | args], :unpiped)
   def parse_args([source], :unpiped), do: {source, KeywordList.empty()}
   def parse_args([source, clauses], :unpiped), do: with_clauses(source, clauses)
-  def parse_args([], :piped), do: {nil, KeywordList.empty()}
-  def parse_args([clauses], :piped), do: with_clauses(nil, clauses)
-  def parse_args(_args, _pipe_mode), do: nil
+  def parse_args(_args, :unpiped), do: nil
 
   defp with_clauses(source, clauses) do
     case KeywordList.parse(clauses) do
@@ -115,9 +98,10 @@ defmodule Mutare.Ecto.AST.FromCall do
     not Surface.last_wins?(key) or KeywordList.last_of_key?(clauses, index)
   end
 
-  @doc "The `from` with `source` in place of its written source, the clauses untouched."
+  @doc "Replace a directly written source, keeping its clauses. A piped source is read-only."
   @spec replace_source(t(), Macro.t()) :: t()
-  def replace_source(%__MODULE__{} = from, source), do: %{from | source: source}
+  def replace_source(%__MODULE__{call: %QueryCall{pipe_left: :unpiped}} = from, source),
+    do: %{from | source: source}
 
   @doc "The `from` with `value` as the value of the clause at `index` — its key and every other clause kept."
   @spec replace_clause(t(), non_neg_integer(), Macro.t()) :: t()
@@ -136,15 +120,16 @@ defmodule Mutare.Ecto.AST.FromCall do
 
   @doc """
   Render the `from` back to AST through the call's own `rebuild`, keeping the written form — a
-  hidden (piped) source is simply not re-emitted, so the visible arity is the written one. An
+  piped source is simply not re-emitted, so the visible arity is the written one. An
   empty clause list collapses to the clause-less form (see the module comment).
   """
   @spec to_ast(t()) :: Macro.t()
-  def to_ast(%__MODULE__{call: call, source: source, clauses: clauses}),
-    do: QueryCall.rebuild(call, visible_source(source) ++ visible_clauses(clauses))
+  def to_ast(%__MODULE__{call: call, source: source, clauses: clauses}) do
+    QueryCall.rebuild(call, visible_source(call.pipe_left, source) ++ visible_clauses(clauses))
+  end
 
-  defp visible_source(nil), do: []
-  defp visible_source(source), do: [source]
+  defp visible_source({:piped, _left}, _source), do: []
+  defp visible_source(:unpiped, source), do: [source]
 
   defp visible_clauses(%KeywordList{entries: []}), do: []
   defp visible_clauses(clauses), do: [KeywordList.to_ast(clauses)]

@@ -36,7 +36,7 @@ Add both Mutare and this plugin to the app you want to test, in `:dev`/`:test`:
 # mix.exs
 defp deps do
   [
-    {:mutare, "~> 0.2.1"},
+    {:mutare, "~> 0.3.0"},
     {:mutare_ecto, "~> 0.2"}
   ]
 end
@@ -144,8 +144,7 @@ is a live mutant — that bound alone gone.
 Ecto lets one query be written as a `from` keyword list (piped too:
 `User |> from(as: :u, where: …)`) or as composable stages (`q |> where([u], …)`, or the same
 calls written directly, `where(q, [u], …)`). Most families reach the same mutated queries either
-way; the last three rows are the ones that do not, so respelling a query there changes which
-mutants it gets.
+way; the differences below mean that respelling some queries changes which mutants they get.
 
 | | `from` keyword form | composable stages |
 |---|---|---|
@@ -153,16 +152,21 @@ mutants it gets.
 | `bound`, `ordering`, `ordering_nulls`, `join_type`, `combination`; `aggregate`/`arithmetic`/`coalesce` in a `select`/`order_by` | ✓ | ✓ |
 | `binding_reorder` | the source list (`from [a, b] in q`), which every clause reads | each stage's own list |
 | `clause_drop` | ✓ `group_by:`, `distinct:`, `preload:`, `lock:`, `select_merge:`, `with_ties:`, a set operation; ✗ a join, `select:`, `update:`, `windows:` — the rest of the keyword list may need them, and it is compiled as a whole | ✓ each of those, and `with_cte` |
-| The query being refined, when computed — `recent(2)` | ✗ `from p in recent(2)`: the `2` is not mutated | ✓ `where(recent(2), …)` and `recent(2) \|> where(…)`: Mutare's own families mutate it |
-| The query being refined, when a schema or table name | held back from Mutare's families (a swapped name is a broken query) | held back written directly (`where(Post, …)`), but **not** on a pipe's left: `Post \|> where(…)` → `Mutare.Mutant \|> where(…)` |
+| The query being refined, when computed — `recent(2)` | ✓ `from(recent(2), …)` and `recent(2) \|> from(…)`; ✗ inside a binding declaration (`from p in recent(2)`) | ✓ `where(recent(2), …)` and `recent(2) \|> where(…)`: Mutare's own families mutate it |
+| The query being refined, when a schema or table name | held back from Mutare's families (a swapped name is a broken query) | held back in both direct and piped calls (`where(Post, …)`, `Post \|> where(…)`) |
+
+A binding declaration piped into `from`, such as `(p in User) |> from(where: p.age > 18)`,
+gets hosted condition and literal-bound mutations. Whole-call rewrites (clause drops, ordering
+flips and source binding reorders) are currently withheld for that spelling.
 
 Where an expression is written matters as well:
 
 - **A subquery's interior** is mutated when it is an inline `from` inside a condition
-  (`p.id in subquery(from c in …)`, `exists(from …)`). An inline pipeline
-  (`subquery(Comment |> where(…))`) and a subquery used as a `from` source
-  (`from s in subquery(…)`) are not entered. Built first and passed by variable, the subquery
-  is an ordinary query and gets every family.
+  (`p.id in subquery(from c in …)`, `exists(from …)`). Composed stages retain upstream
+  mutations: `subquery(Comment |> where(…) |> select(…))` mutates the `where`. The final
+  stage's own clauses (`where` in `subquery(Comment |> where(…))`) and a subquery inside a
+  `from` binding (`from s in subquery(…)`) are not entered. Built first and passed by
+  variable, the subquery is an ordinary query and gets every family.
 - **A `^` pin's interior** is ordinary Elixir, which Mutare's own families mutate when the pin
   sits in a condition (`where: p.views > ^(min + 1)`). In any other clause — `limit:
   ^(page_size + 1)`, `order_by: ^[asc: dynamic(…)]`, a `select` — the interior is left alone. An

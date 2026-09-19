@@ -131,6 +131,10 @@ defmodule Mutare.Ecto.Host.Target do
   defp branch(:root_pin, _bindings), do: &interior/1
 
   defp branch(:expression, bindings) do
+    # A lowered hosted mutant can be rendered as a logical diff before metamutant emission.
+    # Emit the declaration as a Sourceror literal there too: a bare empty list fails formatting.
+    bindings = Mutare.AST.literal(bindings)
+
     fn fragment ->
       Mutare.AST.absolute_call([:Ecto, :Query], :dynamic, [bindings, fragment])
     end

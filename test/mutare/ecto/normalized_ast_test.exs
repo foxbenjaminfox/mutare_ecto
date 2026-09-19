@@ -229,16 +229,25 @@ defmodule Mutare.Ecto.NormalizedASTTest do
     # A stamped **piped** `from` (`Post |> from(…)`): the call node is the `from(…)` right side
     # alone, its source the hidden `|>` left — exactly what core's resolver leaves behind.
     defp piped_from(code) do
-      {:|>, _pipe_meta, [_source, {head, meta, args}]} = parse(code)
-      meta = Meta.stamp_routed_call(meta, {Mutare.Calls.module_key(Ecto.Query), :from, :piped})
+      {:|>, _pipe_meta, [source, {head, meta, args}]} = parse(code)
+
+      meta =
+        Meta.stamp_routed_call(
+          meta,
+          {Mutare.Calls.module_key(Ecto.Query), :from, {:piped, source}}
+        )
+
       FromCall.parse({head, meta, args})
     end
 
-    test "a piped from parses with a hidden source and rebuilds at its written arity" do
+    test "a piped from parses with its written source and rebuilds at its written arity" do
       from = piped_from("Post |> from(as: :post, where: as(:post).x > 1, limit: 10)")
 
-      # The source is hidden (`nil`); the visible argument is the clause list, read as usual.
-      assert %FromCall{source: nil, clauses: %KeywordList{entries: [_, _, _]}} = from
+      # The source is readable; reconstruction still takes only the visible arguments.
+      assert %FromCall{
+               source: {:__aliases__, _, [:Post]},
+               clauses: %KeywordList{entries: [_, _, _]}
+             } = from
 
       # Every edit rebuilds the `from(…)` half only — the source is never re-emitted, so the pipe
       # it sits on is untouched.
@@ -260,24 +269,38 @@ defmodule Mutare.Ecto.NormalizedASTTest do
              |> Sourceror.to_string() == "Elixir.Ecto.Query.from()"
 
       # The argless spelling parses too, and a non-keyword clause argument is still rejected.
-      assert %FromCall{source: nil, clauses: %KeywordList{entries: []}} =
+      assert %FromCall{source: {:__aliases__, _, [:Post]}, clauses: %KeywordList{entries: []}} =
                piped_from("Post |> from()")
 
       assert piped_from("Post |> from(^clauses)") == nil
     end
 
-    test "parse_args places the clauses by pipe mode" do
+    test "a piped source cannot be silently replaced by a visible-call edit" do
+      from = piped_from("([p, q] in query) |> from(where: p.id == q.id)")
+      assert {:in, _, _} = from.source
+
+      assert_raise FunctionClauseError, fn ->
+        FromCall.replace_source(from, parse("[q, p] in query"))
+      end
+    end
+
+    test "a literal nil source is not mistaken for a hidden argument" do
+      assert from("from(nil)") |> FromCall.to_ast() |> Sourceror.to_string() == "from(nil)"
+      assert %FromCall{source: {:__block__, _, [nil]}} = piped_from("nil |> from()")
+    end
+
+    test "parse_args reads the source from pipe-left identity" do
       [source, clauses] = parse("from(p in Post, where: p.x > 1)") |> elem(2)
 
-      # Piped, the one visible argument is the clause list and the source is hidden…
-      assert {nil, %KeywordList{entries: [%KeywordList.Entry{key: :where}]}} =
-               FromCall.parse_args([clauses], :piped)
+      # Piped, the one visible argument is the clause list; the source comes from the stamp.
+      assert {^source, %KeywordList{entries: [%KeywordList.Entry{key: :where}]}} =
+               FromCall.parse_args([clauses], {:piped, source})
 
-      assert {nil, %KeywordList{entries: []}} = FromCall.parse_args([], :piped)
+      assert {^source, %KeywordList{entries: []}} = FromCall.parse_args([], {:piped, source})
 
       # …so a two-argument piped `from` is malformed, as is a one-argument direct one that is not
       # a queryable-only call (`from(where: …)` has no source — Ecto rejects it too).
-      assert FromCall.parse_args([source, clauses], :piped) == nil
+      assert FromCall.parse_args([source, clauses], {:piped, source}) == nil
       assert FromCall.parse_args([], :unpiped) == nil
     end
   end

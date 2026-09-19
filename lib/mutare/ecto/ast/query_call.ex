@@ -5,29 +5,44 @@ defmodule Mutare.Ecto.AST.QueryCall do
   alias Mutare.Calls
   alias Mutare.CallRouting.Call
 
-  @enforce_keys [:node, :name, :args, :pipe_mode, :rebuild]
-  defstruct [:node, :name, :args, :pipe_mode, :rebuild]
+  @enforce_keys [:node, :name, :args, :pipe_left, :pipe_mode, :rebuild]
+  defstruct [:node, :name, :args, :pipe_left, :pipe_mode, :rebuild]
 
   @type rebuild :: (atom(), [Macro.t()] -> Macro.t())
   @type t :: %__MODULE__{
           node: Macro.t(),
           name: atom(),
           args: [Macro.t()],
+          pipe_left: Call.pipe_left(),
           pipe_mode: Mutare.Mutator.pipe_mode(),
           rebuild: rebuild()
         }
 
   @doc """
   The normalized call for `node` if it resolves to an `Ecto.Query` macro, else `nil`. `args` are
-  the **visible** arguments and `pipe_mode` says whether a hidden `|>` left side precedes them —
-  core's stamped identity, so a piped call (`Post |> from(…)`) is a fact of the normalized call,
-  not something a consumer re-derives from the node.
+  the **visible** arguments; `pipe_mode` says whether a `|>` left side precedes them, and
+  `pipe_left` carries that source AST. Both come from core's stamped identity, so a piped call
+  (`Post |> from(…)`) is a fact of the normalized call, not something a consumer re-derives.
   """
   @spec parse(Macro.t()) :: t() | nil
   def parse(node) do
     case Calls.resolved_routed_call(node) do
-      %Call{module: Ecto.Query, name: name, arguments: args, pipe_mode: mode, rebuild: rebuild} ->
-        %__MODULE__{node: node, name: name, args: args, pipe_mode: mode, rebuild: rebuild}
+      %Call{
+        module: Ecto.Query,
+        name: name,
+        arguments: args,
+        pipe_left: left,
+        pipe_mode: mode,
+        rebuild: rebuild
+      } ->
+        %__MODULE__{
+          node: node,
+          name: name,
+          args: args,
+          pipe_left: left,
+          pipe_mode: mode,
+          rebuild: rebuild
+        }
 
       _other ->
         nil

@@ -211,11 +211,14 @@ defmodule Mutare.Ecto.Fragment do
     do: Walk.mutants(condition, @root, &children/2, &observable(&1, &2, config))
 
   @doc """
-  Every interpolation **island** (`^expr`) in `root`, as `t:island/0` triples — `interior` is
-  the pin's Elixir expression, `role` what the pin's value is to the query (`t:role/0`), and
+  Every Elixir **island** in `root`, as `t:island/0` triples — `interior` is
+  a pin's Elixir expression, `role` what the pin's value is to the query (`t:role/0`), and
   `rebuild.(mutated_interior)` the full `root` with exactly that pin's interior replaced (the
   pin itself kept). The calling module passes each interior to core, under the policy its role
   selects — see `Mutare.Ecto.Island`.
+
+  A subquery's computed source is also an island, with role `:value`; its rebuild replaces the
+  source expression directly. `Mutare.Ecto.Subquery` identifies those query-building positions.
 
   The islands are a second reader of the **same** positions `mutants/2` reads
   (`local_islands/2` over `Mutare.Ecto.Walk.positions/3`, under the same `children/2`), so a
@@ -546,9 +549,12 @@ defmodule Mutare.Ecto.Fragment do
         do: {interior, role, &{:exists, ex_meta, [rebuild.(&1)]}}
   end
 
+  defp local_islands({:|>, _meta, _args} = node, _position),
+    do: Subquery.source_islands(node)
+
   # A bare inline subquery `from(...)` (a value-wrapper's argument, reached by the operand descent)
-  # surfaces its interior condition pins through `Subquery`; every other call's `interior_islands`
-  # is `[]`.
+  # surfaces its interior condition pins through `Subquery`; other query stages relay their
+  # computed sources through the same seam.
   defp local_islands({_form, _meta, args} = node, _position) when is_list(args),
     do: Subquery.interior_islands(node, :value)
 

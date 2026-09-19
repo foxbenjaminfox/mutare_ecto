@@ -459,7 +459,7 @@ defmodule Mutare.Ecto.SemanticCases do
           assert mutant -- baseline == [1, 4]
         end
 
-        test "the same fires in a piped `from` (hidden source, empty-binding dynamic)" do
+        test "the same fires in a piped `from` (bare source, empty-binding dynamic)" do
           # The pipe twin of the bare-queryable `from`: `User |> from(as: :user, where: …)`. The
           # source is the `|>` left side, so the host splices into the call's one visible
           # argument (`FromCall` rebuilt at the written arity) — a different rebuild than the
@@ -494,6 +494,42 @@ defmodule Mutare.Ecto.SemanticCases do
 
           # The pin-only bound bump on the same piped `from` widens the window.
           assert ids(mod, site_id(sites, {"2", "3"})) == [2, 5, 6]
+        end
+      end
+
+      test "a piped binding source delivers live condition and bound mutants" do
+        {mod, sites} =
+          build("""
+          defmodule Q do
+            import Ecto.Query
+            def q do
+              (u in MyApp.User)
+              |> from(where: u.age > 18, order_by: u.id, limit: 2, select: u.id)
+            end
+          end
+          """)
+
+        assert observe_ids(mod, sites, {"u.age > 18", "u.age >= 18"}) == {[2, 5], [1, 2]}
+        assert observe_ids(mod, sites, {"2", "3"}) == {[2, 5], [2, 5, 6]}
+        refute Enum.any?(sites, &(&1.mutated_code == ""))
+      end
+
+      test "an upstream condition stays live through a computed from source in either spelling" do
+        for body <- [
+              "MyApp.User |> where([u], u.age > 18) |> from(select: [:id])",
+              "from(MyApp.User |> where([u], u.age > 18), select: [:id])"
+            ] do
+          {mod, sites} =
+            build("""
+            defmodule Q do
+              import Ecto.Query
+              def q, do: #{body}
+            end
+            """)
+
+          {baseline, mutant} = observe_rows(mod, sites, {"u.age > 18", "u.age >= 18"})
+          assert Enum.sort(Enum.map(baseline, & &1.id)) == [2, 5, 6]
+          assert Enum.sort(Enum.map(mutant, & &1.id)) == [1, 2, 4, 5, 6]
         end
       end
 

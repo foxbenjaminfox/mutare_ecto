@@ -62,18 +62,23 @@ defmodule Mutare.Ecto.Subquery do
   # mutates — the `where`/`having` conditions under every mode, the `select` projection under a
   # value-wrapper only. (An EXISTS select's pin binds a projected value `EXISTS` never reads, so
   # a core mutant there could change only whether evaluating the interior raises.)
+  # Computed sources are also Elixir islands, with the unrestricted `:value` role. The SQL
+  # walk stops at query sources; `source_islands/1` relays their mutations through core instead,
+  # preserving the source classifier's raw forms (bindings, names, fragments).
   #
-  # Only an inline `from(source, clauses)` is recursed. In `exists` position, the equivalent
-  # `exists(subquery(from …))` spelling is normalized too, with the `subquery/1` wrapper preserved
-  # around each rebuilt mutant. A `subquery(var)`, a scalar `from(Post)`, a piped subquery
-  # (`exists(q |> where(…))`), and a *from-source* subquery (`from s in subquery(…)`, routed
-  # `:raw` and never walked) all yield nothing.
+  # Only an inline `from(source, clauses)` is recursed by the SQL catalogs. In `exists` position,
+  # the equivalent `exists(subquery(from …))` spelling is normalized too, with the `subquery/1`
+  # wrapper preserved around each rebuilt mutant. Composed query stages relay their upstream
+  # source through the island seam; the stage's own clauses are not recursed here. A
+  # `subquery(var)`, a scalar `from(Post)`, and a *from-source* subquery
+  # (`from s in subquery(…)`, routed `:raw` and never walked) all yield nothing.
 
   alias Mutare.Calls
   alias Mutare.Ecto.{Config, Fragment, Query, Surface, Tag}
-  alias Mutare.Ecto.AST.{FromCall, KeywordList}
+  alias Mutare.Ecto.AST.{FromCall, KeywordList, QueryCall}
   alias Mutare.Ecto.AST.KeywordList.Entry
   alias Mutare.Ecto.Host.{Catalog, Condition}
+  alias Mutare.Transform.Meta
 
   # The `Mutare.Ecto.Query` producers composed into the inner `from`: the ones that change the
   # subquery's **row set** (observable through every wrapper), and — under a value-wrapper only —
@@ -142,26 +147,66 @@ defmodule Mutare.Ecto.Subquery do
   end
 
   @doc """
-  Every interpolation **island** (`^expr`) inside the subquery's own mutated clauses, as
-  `t:Mutare.Ecto.Fragment.island/0` triples whose `rebuild` reconstructs the whole inner `from` —
-  composed outward by the caller. `[]` unless `node` is an inline `from(source, clauses)` (or,
-  in `:existence` mode, `subquery(from(source, clauses))`). Which clauses' pins are surfaced
-  tracks exactly what each `mode` mutates (see the module comment).
+  Every Elixir **island** (a computed source or `^expr` inside the mutated clauses), as
+  `t:Mutare.Ecto.Fragment.island/0` triples whose `rebuild` reconstructs the whole inner query —
+  composed outward by the caller. An inline `from(source, clauses)` (or, in `:existence` mode,
+  `subquery(from(source, clauses))`) also surfaces its clauses' pins, tracking exactly what
+  each `mode` mutates (see the module comment). Other query stages relay only their source.
   """
   @spec interior_islands(Macro.t(), mode()) :: [Fragment.island()]
   def interior_islands(node, mode) do
     case inline_from(node, mode) do
       {%FromCall{clauses: clauses} = from, wrap} ->
-        KeywordList.flat_map(clauses, &island_clause?(&1, mode), fn entry, index ->
-          for {root, root_role, rebuild_value} <- island_roots(entry),
-              {interior, role, rebuild} <- Fragment.islands(root, root_role) do
-            {interior, role, &wrap.(rebuild_clause(from, index, rebuild_value.(rebuild.(&1))))}
-          end
-        end)
+        Enum.map(source_islands(from.call.node), fn {source, role, rebuild} ->
+          {source, role, &wrap.(rebuild.(&1))}
+        end) ++
+          KeywordList.flat_map(clauses, &island_clause?(&1, mode), fn entry, index ->
+            for {root, root_role, rebuild_value} <- island_roots(entry),
+                {interior, role, rebuild} <- Fragment.islands(root, root_role) do
+              {interior, role, &wrap.(rebuild_clause(from, index, rebuild_value.(rebuild.(&1))))}
+            end
+          end)
+
+      nil ->
+        source_islands(node)
+    end
+  end
+
+  # A computed source is ordinary Elixir, just like a pin's interior.
+  # Keep its producer attribution and suppression by sending it through the same core seam.
+  # A piped source can only be replaced at the pipe, not through the visible call's rebuild.
+  @doc false
+  @spec source_islands(Macro.t()) :: [Fragment.island()]
+  def source_islands({:|>, meta, [source, right]}) do
+    case QueryCall.parse(right) do
+      %QueryCall{} ->
+        if piped_source_expression?(right),
+          do: [{source, :value, &{:|>, meta, [&1, right]}}],
+          else: []
 
       nil ->
         []
     end
+  end
+
+  def source_islands(node) do
+    case QueryCall.parse(node) do
+      %QueryCall{pipe_left: :unpiped, args: [source | _]} = call ->
+        case Calls.routed_treatments(node) do
+          [:expression | _] -> [{source, :value, &QueryCall.replace_arg(call, 0, &1)}]
+          _ -> []
+        end
+
+      _ ->
+        []
+    end
+  end
+
+  # Read resolved routes, including user overrides, rather than re-running our classifier.
+  # Core omits the piped stamp for :expression. Calls.routed_treatments/1 only exposes visible
+  # arguments, so the piped position currently needs core's metadata reader.
+  defp piped_source_expression?({_head, meta, _args} = node) do
+    Calls.routed_treatments(node) != :skip and Meta.piped_routing(meta) in [nil, :expression]
   end
 
   # The caller normally reaches value-wrapper `subquery(from …)` interiors by ordinary descent:
