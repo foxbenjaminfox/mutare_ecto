@@ -100,19 +100,22 @@ stale in the dangerous direction: a form it fails to recognize only downgrades t
 the whole-call delivery, which is valid either way. The cost is that every innocent macro in a
 `having` (a `fragment` helper, say) gives up the weave too.
 
-### A binding pattern on a pipe's left: hosted only
+### A binding pattern on a pipe's left: syntax-preserving delivery `[done]`
 
 `(p in Post) |> from(where: p.x > 1)` now exposes its source through core's `Call.pipe_left`.
 `FromCall` reads that source, and `Host.Bindings` re-declares `p` in the hosted `dynamic`.
 The source itself stays raw, so no core family treats the binding declaration as an expression.
 
-**Deferred:** whole-call mutants on this shape. Core still delivers a mutated pipe stage through
-`lhs |> (fn value -> … end).()`, which evaluates the declaration and hides its syntax from
-`from`. `Dispatcher` therefore withholds both `Query`'s rewrites and `StaticCondition`'s fallback
-rewrites for a piped `in` source. Hosted conditions, shorthand values and literal bounds remain
-available. Core's pipe-left proposal Part B would remove that delivery limitation; until then
-order flips, clause drops and source binding reorders are intentionally absent for this spelling.
-A piped source is read-only: `FromCall.replace_source/2` accepts only a directly written source.
+Core's pipe-left proposal Part B now preserves the declaration in each whole-call mutant branch.
+`Dispatcher` no longer withholds `Query`'s rewrites or `StaticCondition`'s fallbacks for a piped
+`in` source. Order flips and clause drops build alongside hosted conditions and bounds, and the
+runtime tests compare direct and piped query structures under every mutant, ignoring only their
+diagnostic file/line locations. This requires the core fix planned for 0.3.1; test the unreleased
+pair with a local path dependency until that release is available.
+
+**Still deferred:** source binding reorders. A piped source is read-only:
+`FromCall.replace_source/2` accepts only a directly written source. Changing delivery does not
+let the plugin edit the left operand; the `Query.binding_reorders/1` guard remains.
 
 ### Subquery interiors: bounds and ordering are not composed
 

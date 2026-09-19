@@ -47,17 +47,6 @@ defmodule Mutare.Ecto.Dispatcher do
     end
   end
 
-  # Core currently delivers whole pipe-stage mutants through a closure over the left side.
-  # A `from` binding declaration is syntax, not a value that closure can evaluate. Withhold
-  # both Query's rewrites and StaticCondition's fallbacks; hosted fragments remain available.
-  # NOTES "A binding pattern on a pipe's left: hosted only".
-  defp query_macro_mutations(
-         :from,
-         %QueryCall{pipe_left: {:piped, {:in, _meta, [_bindings, _queryable]}}},
-         _context
-       ),
-       do: []
-
   # A `from`'s conditions are the host's, except one it cannot weave, which
   # `Mutare.Ecto.StaticCondition` rebuilds whole-call.
   defp query_macro_mutations(:from, call, context),

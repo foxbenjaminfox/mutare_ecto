@@ -36,7 +36,7 @@ Add both Mutare and this plugin to the app you want to test, in `:dev`/`:test`:
 # mix.exs
 defp deps do
   [
-    {:mutare, "~> 0.3.0"},
+    {:mutare, "~> 0.3.1"},
     {:mutare_ecto, "~> 0.2"}
   ]
 end
@@ -156,8 +156,9 @@ way; the differences below mean that respelling some queries changes which mutan
 | The query being refined, when a schema or table name | held back from Mutare's families (a swapped name is a broken query) | held back in both direct and piped calls (`where(Post, …)`, `Post \|> where(…)`) |
 
 A binding declaration piped into `from`, such as `(p in User) |> from(where: p.age > 18)`,
-gets hosted condition and literal-bound mutations. Whole-call rewrites (clause drops, ordering
-flips and source binding reorders) are currently withheld for that spelling.
+gets hosted condition and literal-bound mutations as well as whole-call rewrites, including
+clause drops and ordering flips. Source binding reorders remain unavailable in that spelling:
+the pipe's left operand is read-only to the plugin.
 
 Where an expression is written matters as well:
 

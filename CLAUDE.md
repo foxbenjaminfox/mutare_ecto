@@ -73,7 +73,8 @@ analyzes `lib/`, not the test-only fixtures.
 
 ## The `mutare` dependency and the `../mutare` checkout
 
-`mix.exs` depends on the published `{:mutare, "~> 0.3.0"}`, which provides `Call.pipe_left`.
+`mix.exs` targets `{:mutare, "~> 0.3.1"}`, which adds syntax-preserving pipe-stage delivery
+to `Call.pipe_left`. Core 0.3.1 must be released before this adapter change can ship.
 The sibling `../mutare` checkout is where to read core callback contracts. To develop against
 unreleased core, temporarily use `{:mutare, path: "../mutare"}` and restore the published
 dependency before committing. When a task seems to need core machinery that doesn't exist yet,

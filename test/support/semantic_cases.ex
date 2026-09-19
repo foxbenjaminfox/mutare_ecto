@@ -497,7 +497,7 @@ defmodule Mutare.Ecto.SemanticCases do
         end
       end
 
-      test "a piped binding source delivers live condition and bound mutants" do
+      test "a piped binding source delivers live hosted and whole-call mutants" do
         {mod, sites} =
           build("""
           defmodule Q do
@@ -511,7 +511,8 @@ defmodule Mutare.Ecto.SemanticCases do
 
         assert observe_ids(mod, sites, {"u.age > 18", "u.age >= 18"}) == {[2, 5], [1, 2]}
         assert observe_ids(mod, sites, {"2", "3"}) == {[2, 5], [2, 5, 6]}
-        refute Enum.any?(sites, &(&1.mutated_code == ""))
+        assert observe_ids(mod, sites, {"u.age > 18", ""}) == {[2, 5], [1, 2]}
+        assert observe_ids(mod, sites, {"2", ""}) == {[2, 5], [2, 5, 6]}
       end
 
       test "an upstream condition stays live through a computed from source in either spelling" do

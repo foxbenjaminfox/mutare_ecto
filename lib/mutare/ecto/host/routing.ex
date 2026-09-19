@@ -29,10 +29,8 @@ defmodule Mutare.Ecto.Host.Routing do
       route `:hosted`; keyword-shorthand conditions route their scalar values `:interpolated`.
       Literal `limit:`/`offset:` values route `:hosted` for the pin-only bound bumps. Other
       clause values stay raw for the whole-`from` producers. `Mutare.Ecto.AST.FromCall` places
-      the clauses and reads the source in both spellings. For a piped binding declaration,
-      hosting remains available but whole-call rewrites are withheld until core can preserve
-      that syntax when delivering a pipe-stage mutant (NOTES "A binding pattern on a pipe's
-      left: hosted only").
+      the clauses and reads the source in both spellings. Core preserves a piped binding
+      declaration as syntax in each whole-call mutant branch.
     * **Composable conditions** locate their condition through `Mutare.Ecto.Host.Condition`.
       A predicate routes `:hosted`; a keyword shorthand routes per pair, exactly as in `from`.
       Written binding lists stay raw.

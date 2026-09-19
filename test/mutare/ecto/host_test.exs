@@ -1009,11 +1009,10 @@ defmodule Mutare.Ecto.HostTest do
       assert {"as(:post).views > 100", "as(:post).views >= 100"} in hosted(piped)
       assert {"5", "6"} in hosted(piped)
 
-      # Core hoists the piped stage (it also carries whole-call drop mutants) into a closure over
-      # the pipe's left side, so the woven `from(…)` reads `mutare_piped |> from(…)`: the
-      # condition pinned behind an empty-binding `dynamic`, the bound pinned bare.
+      # The catch-all preserves the raw source beside the woven call: the condition
+      # is pinned behind an empty-binding dynamic, the bound pinned bare.
       mm = metamutant(piped)
-      assert mm =~ ~r/mutare_piped\s*\|> from\(\s*as: :post,\s*where:\s*\^case/
+      assert mm =~ ~r/Post\s*\|> from\(\s*as: :post,\s*where:\s*\^case/
       assert mm =~ "dynamic([], as(:post).views"
       assert mm =~ ~r/limit:\s*\^case/
       refute mm =~ "from(Post"

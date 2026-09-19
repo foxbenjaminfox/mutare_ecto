@@ -13,13 +13,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Schema aliases, table names and source tuples now stay unmutated on the left of composable
   query stages, just as they do in direct calls.
 - Piped binding declarations (`(p in Post) |> from(where: p.views > 5)`) supply their bindings
-  to hosted conditions. Whole-call rewrites on this spelling are withheld until core supports
-  delivering them without evaluating the declaration; hosted conditions and bounds still run.
+  to hosted conditions. Whole-call rewrites, including clause drops, ordering flips and
+  fallback condition rewrites, also run on this spelling. Source binding reorders remain
+  unavailable because the left operand is read-only.
 
 ### Changed
 
-- **Mutare 0.3.0 or newer is required** (`{:mutare, "~> 0.3.0"}`) for the
-  `Call.pipe_left` API used by source routing and binding discovery.
+- **Mutare 0.3.1 or newer is required** (`{:mutare, "~> 0.3.1"}`) for syntax-preserving
+  pipe-stage delivery and the `Call.pipe_left` API used by source routing and binding discovery.
 
 ## [0.2.0] - 2026-09-17
 

@@ -72,12 +72,11 @@ defmodule Mutare.Ecto.PipeLeftTest do
     end
   end
 
-  test "binding-pattern pipes withhold whole-call rewrites, including static fallbacks" do
-    for body <- [
-          "(p in MyApp.Post) |> from(order_by: [asc: p.title])",
-          "(p in MyApp.Post) |> from(limit: ^n)",
-          "([p, q] in query) |> from(select: {p.id, q.id})",
-          "(p in MyApp.Post) |> from(having: p.views > subquery(from(q in MyApp.Post, select: max(q.views))))"
+  test "binding-pattern pipes deliver whole-call rewrites and static fallbacks" do
+    for {body, expected} <- [
+          {"(p in MyApp.Post) |> from(order_by: [asc: p.title])", "desc"},
+          {"(p in MyApp.Post) |> from(having: p.views > subquery(from(q in MyApp.Post, select: max(q.views))))",
+           ">="}
         ] do
       source = """
       defmodule Q do
@@ -86,9 +85,16 @@ defmodule Mutare.Ecto.PipeLeftTest do
       end
       """
 
-      assert ecto_diffs(source) == []
+      assert Enum.any?(ecto_diffs(source), fn {_, mutated} -> mutated =~ expected end)
       assert_compiles(source, mutators: @with_core)
     end
+
+    assert {"p.title", ""} in ecto_diffs("""
+           defmodule Q do
+             import Ecto.Query
+             def q, do: (p in MyApp.Post) |> from(group_by: p.title)
+           end
+           """)
   end
 
   test "fragment sources remain SQL syntax with core enabled" do
@@ -282,13 +288,13 @@ defmodule Mutare.Ecto.PipeLeftTest.Runtime do
     end
   end
 
-  test "piped binding sources host conditions and bounds without evaluating the declaration" do
+  test "piped binding sources combine whole-call, hosted and bound mutants" do
     source = """
     defmodule Q do
       import Ecto.Query
       def q do
         (p in MyApp.Post)
-        |> from(where: p.views > 5, order_by: [asc: p.title], limit: 5)
+        |> from(where: p.views > 5, order_by: [asc: p.title], group_by: p.title, limit: 5)
       end
     end
     """
@@ -301,8 +307,56 @@ defmodule Mutare.Ecto.PipeLeftTest.Runtime do
            )
 
     assert Enum.any?(sites, &(&1.original_code == "5" and &1.mutated_code == "6"))
-    refute Enum.any?(sites, &(&1.mutated_code == "" or &1.original_code =~ "asc"))
+    assert Enum.any?(sites, &(&1.mutated_code =~ "desc"))
+    assert Enum.any?(sites, &(&1.original_code == "p.title" and &1.mutated_code == ""))
   end
+
+  test "piped binding whole-call mutants build the same queries as direct spellings" do
+    for clauses <- [
+          "order_by: [asc: p.title], group_by: p.title",
+          "having: p.views > subquery(from(q in MyApp.Post, select: max(q.views)))"
+        ] do
+      source = """
+      defmodule Q do
+        import Ecto.Query
+        def direct, do: from(p in MyApp.Post, #{clauses})
+        def piped, do: (p in MyApp.Post) |> from(#{clauses})
+      end
+      """
+
+      {[module], sites} = Mutare.Test.compile_metamutant(source, mutators([]))
+      assert query_shape(module.direct()) == query_shape(module.piped())
+
+      outcomes = fn run ->
+        baseline = query_shape(run.())
+
+        sites
+        |> Enum.map(fn site -> query_shape(Mutare.Test.with_active_mutant(site.id, run)) end)
+        |> Enum.reject(&(&1 == baseline))
+        |> MapSet.new()
+      end
+
+      direct = outcomes.(fn -> module.direct() end)
+      assert MapSet.size(direct) > 0
+      assert direct == outcomes.(fn -> module.piped() end)
+    end
+  end
+
+  # Query expressions retain their source locations; spellings on different lines
+  # should agree on every query field except those diagnostic locations.
+  defp query_shape(value) when is_map(value) do
+    value
+    |> Map.drop([:file, :line])
+    |> Map.to_list()
+    |> Map.new(fn {key, child} -> {key, query_shape(child)} end)
+  end
+
+  defp query_shape(value) when is_list(value), do: Enum.map(value, &query_shape/1)
+
+  defp query_shape(value) when is_tuple(value),
+    do: value |> Tuple.to_list() |> Enum.map(&query_shape/1) |> List.to_tuple()
+
+  defp query_shape(value), do: value
 
   test "piped source bindings and subsequent joins keep their original positions" do
     source = """

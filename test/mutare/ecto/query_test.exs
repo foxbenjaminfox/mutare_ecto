@@ -118,13 +118,11 @@ defmodule Mutare.Ecto.QueryTest do
       drops = Enum.filter(ecto_diffs(src), fn {_original, mutated} -> mutated == "" end)
       assert drops == [{"[active: true]", ""}, {"[deleted: false]", ""}, {"10", ""}]
 
-      # Core hoists a piped stage with whole-call mutants into a closure over the pipe's left side
-      # (`Post |> (fn mutare_piped -> case … end).()`), so each drop mutant is `mutare_piped |>
-      # from(…)` with one clause fewer — the source is never re-emitted into the call.
+      # The structural source routes raw, so core preserves it in each stage's branch.
       mm = metamutant(src)
-      assert mm =~ "mutare_piped |> from(where: [deleted: false], limit: 10)"
-      assert mm =~ "mutare_piped |> from(where: [active: true], limit: 10)"
-      assert mm =~ "mutare_piped |> from(where: [active: true], where: [deleted: false])"
+      assert mm =~ "Post |> from(where: [deleted: false], limit: 10)"
+      assert mm =~ "Post |> from(where: [active: true], limit: 10)"
+      assert mm =~ "Post |> from(where: [active: true], where: [deleted: false])"
       refute mm =~ "from(Post"
       assert_compiles(src)
     end
@@ -139,9 +137,8 @@ defmodule Mutare.Ecto.QueryTest do
 
       assert ecto_diffs(src) == [{"[active: true]", ""}]
 
-      # The piped twin of the `from(source)` collapse — never `from([])`. (`mutare_piped` is core's
-      # hoisted pipe-left variable — see the drop test above.)
-      assert metamutant(src) =~ "mutare_piped |> from()"
+      # The piped twin of the `from(source)` collapse — never `from([])`.
+      assert metamutant(src) =~ "Post |> from()"
       assert_compiles(src)
     end
 
