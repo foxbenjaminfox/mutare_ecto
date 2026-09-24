@@ -10,7 +10,7 @@ defmodule Mutare.Ecto.SpellingCases do
   # mutants reach (`Mutare.Ecto.SemanticHarness.outcome/3`), which is independent of spelling and
   # of delivery by construction. Each test states that set as hand-written queries, so it reads as
   # "these are the mutated queries" rather than as rendered diffs — which differ between
-  # spellings even where the mutants agree (`"p.active" → ""` vs. `where(…) → identity()`).
+  # spellings even where the mutants agree (`"p.active" → ""` vs. `q |> where(…) → q`).
   #
   # The same normal form carries the second distinction the suite holds: a **stage drop** that
   # weakens a query still runs, as another statement, while one that removes something a later
@@ -65,7 +65,7 @@ defmodule Mutare.Ecto.SpellingCases do
 
       # The outcome of dropping the one pipe stage whose source matches `stage`.
       defp dropped({mod, sites}, stage) do
-        id = Mutare.Test.site_id(sites, {stage, ~r/identity/})
+        id = Mutare.Test.site_id(sites, H.stage_drop(stage))
         H.outcome(@repo, id, &mod.q/0)
       end
 
@@ -633,7 +633,7 @@ defmodule Mutare.Ecto.SpellingCases do
               ~S'"posts" |> join(:inner, [p], c in "comments", on: c.post_id == p.id) |> select([p], p.id)'
             )
 
-          assert dropped(compiled, ~r/^join\(/) ==
+          assert dropped(compiled, ~r/\|> join\(/) ==
                    H.outcome(@repo, 0, fn -> from(p in "posts", select: p.id) end)
         end
 
@@ -656,7 +656,7 @@ defmodule Mutare.Ecto.SpellingCases do
               select: p.id
             )
 
-          assert dropped(compiled, ~r/^join\(:inner, \[p\], c in/) ==
+          assert dropped(compiled, ~r/\|> join\(:inner, \[p\], c in/) ==
                    H.outcome(@repo, 0, fn -> shifted end)
         end
       end
@@ -676,8 +676,8 @@ defmodule Mutare.Ecto.SpellingCases do
             )
 
           # Ecto counts positional bindings when it plans, and resolves a name as the stage builds.
-          assert dropped(positional, ~r/^join\(/) == {:breaks, :plan}
-          assert dropped(named, ~r/^join\(/) == {:breaks, :build}
+          assert dropped(positional, ~r/\|> join\(/) == {:breaks, :plan}
+          assert dropped(named, ~r/\|> join\(/) == {:breaks, :build}
         end
 
         test "the `limit` a `with_ties` qualifies" do
@@ -686,7 +686,7 @@ defmodule Mutare.Ecto.SpellingCases do
               ~S'"posts" |> order_by([p], p.id) |> limit(2) |> with_ties(true) |> select([p], p.id)'
             )
 
-          assert dropped(compiled, ~r/^limit\(/) == {:breaks, :build}
+          assert dropped(compiled, ~r/\|> limit\(/) == {:breaks, :build}
         end
 
         test "the `windows` an `over/2` names" do
@@ -695,7 +695,7 @@ defmodule Mutare.Ecto.SpellingCases do
               ~S'"posts" |> windows([p], w: [partition_by: p.user_id]) |> select([p], over(count(p.id), :w))'
             )
 
-          assert dropped(compiled, ~r/^windows\(/) == {:breaks, :plan}
+          assert dropped(compiled, ~r/\|> windows\(/) == {:breaks, :plan}
         end
 
         test "the `with_cte` a join reads from" do
@@ -707,13 +707,13 @@ defmodule Mutare.Ecto.SpellingCases do
             |> select([p], p.id)
             """)
 
-          assert dropped(compiled, ~r/^with_cte\(/) == {:breaks, :run}
+          assert dropped(compiled, ~r/\|> with_cte\(/) == {:breaks, :run}
         end
 
         test "the `select` a schemaless source needs" do
           compiled = fixture(~S'"posts" |> select([p], p.id)')
 
-          assert dropped(compiled, ~r/^select\(/) == {:breaks, :plan}
+          assert dropped(compiled, ~r/\|> select\(/) == {:breaks, :plan}
         end
       end
     end

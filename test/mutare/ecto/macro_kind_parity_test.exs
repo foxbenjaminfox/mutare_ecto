@@ -11,7 +11,7 @@ defmodule Mutare.Ecto.MacroKindParityTest do
   #   * `Mutare.Ecto.Dispatcher.query_macro_mutations/3` — which sub-mutators see the whole call
   #   * `Mutare.Ecto.Host.host/2` — which hosted-target builder weaves the call
   #   * `Mutare.Ecto.Host.Routing.route_macro/4` — how core treats each argument position
-  #     (`:from` short-circuits earlier, in `treatments/3`'s dedicated clause)
+  #     (`:from` short-circuits earlier, in `treatments/2`'s dedicated clause)
   #
   # The catch-alls are correct for today's inert cases (`:raw`-kind macros, and `nil` for a name
   # the plugin doesn't own), but Elixir has no exhaustiveness check: add or rename a kind in
@@ -21,7 +21,7 @@ defmodule Mutare.Ecto.MacroKindParityTest do
   # every kind in
   # `Surface.macro_kinds/0` must carry a probe below, and each probe pins observable evidence
   # that all three loops take a real branch for that kind — or that the kind is *structurally*
-  # excluded from a loop (registered `:raw`, so core never calls `route_arguments/2`; absent
+  # excluded from a loop (registered `:raw`, so core never calls `route_arguments/1`; absent
   # from `hosted_macro_names/0`, so the host is never offered the call), which is stronger than
   # trusting the catch-all.
   #
@@ -36,8 +36,8 @@ defmodule Mutare.Ecto.MacroKindParityTest do
   #     `:deliberately_empty`
   #   * `hosted` — diff pairs only the host's weave delivers (in-condition operator swaps and
   #     bound bumps — no `mutate/2` sub-mutator emits those), or `:never_subscribed`
-  #   * `routing` — `{snippet, expected}` for `Host.Routing.treatments/3` (every probe is a
-  #     direct call, so `:unpiped`), whose
+  #   * `routing` — `{snippet, expected}` for `Host.Routing.treatments/2` (every probe is a
+  #     direct call), whose
   #     position-specific answer (a `:hosted` overlay) proves the kind matched a real routing
   #     branch rather than the `[]` catch-all, or `:registered_raw`
   @probes %{
@@ -232,9 +232,9 @@ defmodule Mutare.Ecto.MacroKindParityTest do
 
             {name, _meta, args} = Sourceror.parse_string!(unquote(snippet))
 
-            assert Host.Routing.treatments(name, args, :unpiped) ==
+            assert Host.Routing.treatments(name, args) ==
                      unquote(Macro.escape(expected)),
-                   "treatments/3 fell through to a catch-all for: #{unquote(snippet)}"
+                   "treatments/2 fell through to a catch-all for: #{unquote(snippet)}"
           end
       end
     end

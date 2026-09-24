@@ -9,7 +9,10 @@ defmodule Mutare.Ecto.NormalizedASTTest do
   describe "QueryCall" do
     test "normalizes a stamped Ecto.Query macro and rebuilds its written form" do
       {head, meta, args} = parse("Ecto.Query.limit(q, 10)")
-      meta = Meta.stamp_routed_call(meta, {Mutare.Calls.module_key(Ecto.Query), :limit, :unpiped})
+
+      meta =
+        Meta.stamp_routed_call(meta, {Mutare.Calls.module_key(Ecto.Query), :limit, length(args)})
+
       call = QueryCall.parse({head, meta, args})
 
       assert %QueryCall{name: :limit, args: [_query, _bound]} = call
@@ -23,7 +26,7 @@ defmodule Mutare.Ecto.NormalizedASTTest do
       assert QueryCall.parse(parse("limit(q, 10)")) == nil
 
       {head, meta, args} = parse("Other.limit(q, 10)")
-      meta = Meta.stamp_routed_call(meta, {[:Other], :limit, :unpiped})
+      meta = Meta.stamp_routed_call(meta, {[:Other], :limit, length(args)})
       assert QueryCall.parse({head, meta, args}) == nil
     end
   end
@@ -142,7 +145,10 @@ defmodule Mutare.Ecto.NormalizedASTTest do
     # A stamped `from`, as the resolve pre-pass leaves it for `QueryCall.parse/1`.
     defp from(code) do
       {head, meta, args} = parse(code)
-      meta = Meta.stamp_routed_call(meta, {Mutare.Calls.module_key(Ecto.Query), :from, :unpiped})
+
+      meta =
+        Meta.stamp_routed_call(meta, {Mutare.Calls.module_key(Ecto.Query), :from, length(args)})
+
       FromCall.parse({head, meta, args})
     end
 
@@ -197,7 +203,10 @@ defmodule Mutare.Ecto.NormalizedASTTest do
       assert FromCall.parse(parse("from(p in Post, where: p.x > 1)")) == nil
 
       {head, meta, args} = parse("limit(q, 10)")
-      meta = Meta.stamp_routed_call(meta, {Mutare.Calls.module_key(Ecto.Query), :limit, :unpiped})
+
+      meta =
+        Meta.stamp_routed_call(meta, {Mutare.Calls.module_key(Ecto.Query), :limit, length(args)})
+
       assert FromCall.parse({head, meta, args}) == nil
     end
 
@@ -219,54 +228,55 @@ defmodule Mutare.Ecto.NormalizedASTTest do
       [source, clauses] = args = parse("from(p in Post, where: p.x > 1)") |> elem(2)
 
       assert {^source, %KeywordList{entries: [%KeywordList.Entry{key: :where}]}} =
-               FromCall.parse_args(args, :unpiped)
+               FromCall.parse_args(args)
 
-      assert {^source, %KeywordList{entries: []}} = FromCall.parse_args([source], :unpiped)
-      assert FromCall.parse_args([source, parse("^clauses")], :unpiped) == nil
-      assert FromCall.parse_args([source, clauses, clauses], :unpiped) == nil
+      assert {^source, %KeywordList{entries: []}} = FromCall.parse_args([source])
+      assert FromCall.parse_args([source, parse("^clauses")]) == nil
+      assert FromCall.parse_args([source, clauses, clauses]) == nil
+      # `from(where: …)` has no source — Ecto rejects it too.
+      assert FromCall.parse_args([]) == nil
     end
 
-    # A stamped **piped** `from` (`Post |> from(…)`): the call node is the `from(…)` right side
-    # alone, its source the hidden `|>` left — exactly what core's resolver leaves behind.
+    # A **piped** `from` (`Post |> from(…)`) as core's resolver leaves it: the direct call
+    # `Kernel.|>/2` would build, its source argument 0, stamped like any other.
     defp piped_from(code) do
       {:|>, _pipe_meta, [source, {head, meta, args}]} = parse(code)
+      args = [source | args]
 
       meta =
-        Meta.stamp_routed_call(
-          meta,
-          {Mutare.Calls.module_key(Ecto.Query), :from, {:piped, source}}
-        )
+        Meta.stamp_routed_call(meta, {Mutare.Calls.module_key(Ecto.Query), :from, length(args)})
 
       FromCall.parse({head, meta, args})
     end
 
-    test "a piped from parses with its written source and rebuilds at its written arity" do
+    test "a piped from parses and rebuilds as the direct call it is sugar for" do
       from = piped_from("Post |> from(as: :post, where: as(:post).x > 1, limit: 10)")
 
-      # The source is readable; reconstruction still takes only the visible arguments.
       assert %FromCall{
                source: {:__aliases__, _, [:Post]},
                clauses: %KeywordList{entries: [_, _, _]}
              } = from
 
-      # Every edit rebuilds the `from(…)` half only — the source is never re-emitted, so the pipe
-      # it sits on is untouched.
+      # Every edit rebuilds the whole call, source included — core renders it back into the
+      # pipe the user wrote.
       assert from |> FromCall.to_ast() |> Sourceror.to_string() ==
-               "from(as: :post, where: as(:post).x > 1, limit: 10)"
+               "from(Post, as: :post, where: as(:post).x > 1, limit: 10)"
 
       assert from
              |> FromCall.replace_clause(2, Mutare.AST.literal(11))
              |> FromCall.to_ast()
-             |> Sourceror.to_string() == "from(as: :post, where: as(:post).x > 1, limit: 11)"
+             |> Sourceror.to_string() ==
+               "from(Post, as: :post, where: as(:post).x > 1, limit: 11)"
 
       assert from |> FromCall.delete_clauses([1]) |> FromCall.to_ast() |> Sourceror.to_string() ==
-               "from(as: :post, limit: 10)"
+               "from(Post, as: :post, limit: 10)"
 
-      # An emptied clause list collapses to the argless `from()` — the piped twin of `from(source)`.
+      # An emptied clause list collapses to the clause-less `from(source)` (requalified: a bare
+      # call rebuilt at another arity is spelled alias-proof).
       assert from
              |> FromCall.delete_clauses([0, 1, 2])
              |> FromCall.to_ast()
-             |> Sourceror.to_string() == "Elixir.Ecto.Query.from()"
+             |> Sourceror.to_string() == "Elixir.Ecto.Query.from(Post)"
 
       # The argless spelling parses too, and a non-keyword clause argument is still rejected.
       assert %FromCall{source: {:__aliases__, _, [:Post]}, clauses: %KeywordList{entries: []}} =
@@ -275,33 +285,19 @@ defmodule Mutare.Ecto.NormalizedASTTest do
       assert piped_from("Post |> from(^clauses)") == nil
     end
 
-    test "a piped source cannot be silently replaced by a visible-call edit" do
+    test "a piped source is replaced like a direct one" do
       from = piped_from("([p, q] in query) |> from(where: p.id == q.id)")
       assert {:in, _, _} = from.source
 
-      assert_raise FunctionClauseError, fn ->
-        FromCall.replace_source(from, parse("[q, p] in query"))
-      end
+      assert from
+             |> FromCall.replace_source(parse("[q, p] in query"))
+             |> FromCall.to_ast()
+             |> Sourceror.to_string() == "from([q, p] in query, where: p.id == q.id)"
     end
 
-    test "a literal nil source is not mistaken for a hidden argument" do
+    test "a literal nil source is not mistaken for a missing argument" do
       assert from("from(nil)") |> FromCall.to_ast() |> Sourceror.to_string() == "from(nil)"
       assert %FromCall{source: {:__block__, _, [nil]}} = piped_from("nil |> from()")
-    end
-
-    test "parse_args reads the source from pipe-left identity" do
-      [source, clauses] = parse("from(p in Post, where: p.x > 1)") |> elem(2)
-
-      # Piped, the one visible argument is the clause list; the source comes from the stamp.
-      assert {^source, %KeywordList{entries: [%KeywordList.Entry{key: :where}]}} =
-               FromCall.parse_args([clauses], {:piped, source})
-
-      assert {^source, %KeywordList{entries: []}} = FromCall.parse_args([], {:piped, source})
-
-      # …so a two-argument piped `from` is malformed, as is a one-argument direct one that is not
-      # a queryable-only call (`from(where: …)` has no source — Ecto rejects it too).
-      assert FromCall.parse_args([source, clauses], {:piped, source}) == nil
-      assert FromCall.parse_args([], :unpiped) == nil
     end
   end
 end

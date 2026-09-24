@@ -1,13 +1,14 @@
 defmodule Mutare.Ecto.Host.Routing do
   @moduledoc """
-  Classifies arguments of registered query macros for `c:Mutare.CallRouting.route_arguments/2`.
+  Classifies arguments of registered query macros for `c:Mutare.CallRouting.route_arguments/1`.
   Core follows these routes; `Mutare.Ecto.Host` supplies the targets at `:hosted` positions.
 
   ## Query sources
 
-  The call's form determines **where** its query source is: the first visible argument when
-  direct, or `Mutare.CallRouting.Call.pipe_left` when piped. The source's shape then determines
-  its treatment, identically for `from` and the composable `where`/`join`/`limit` stages:
+  A query source is the call's first argument, whichever way the call was written: core hands
+  a pipe stage over as the direct call it is sugar for, so `Post |> where(…)` is classified as
+  `where(Post, …)`. The source's shape then determines its treatment, identically for `from`
+  and the composable `where`/`join`/`limit` stages:
 
     * A schema alias, table-name string (including interpolation), or `{"table", Schema}` pair
       stays `:raw`. Replacing a table/schema name makes a broken query.
@@ -20,8 +21,8 @@ defmodule Mutare.Ecto.Host.Routing do
     * Every other source routes `:expression`: a variable, function call, nested `from`, or
       upstream pipeline. Core keeps its mutations reachable through the enclosing query stage.
 
-  No shape guess locates the source, and no call resolution inside a piped source is needed:
-  `pipe_left` contains the source as written, before core resolves its calls.
+  No shape guess locates the source: at classification the arguments are the written syntax,
+  before core resolves the calls inside them, so a source is read by its shape alone.
 
   ## Query data
 
@@ -29,8 +30,8 @@ defmodule Mutare.Ecto.Host.Routing do
       route `:hosted`; keyword-shorthand conditions route their scalar values `:interpolated`.
       Literal `limit:`/`offset:` values route `:hosted` for the pin-only bound bumps. Other
       clause values stay raw for the whole-`from` producers. `Mutare.Ecto.AST.FromCall` places
-      the clauses and reads the source in both spellings. Core preserves a piped binding
-      declaration as syntax in each whole-call mutant branch.
+      the clauses and reads the source. A binding declaration routed `:raw` reaches the macro as
+      the syntax it is in each whole-call mutant branch, piped or not.
     * **Composable conditions** locate their condition through `Mutare.Ecto.Host.Condition`.
       A predicate routes `:hosted`; a keyword shorthand routes per pair, exactly as in `from`.
       Written binding lists stay raw.
@@ -60,53 +61,41 @@ defmodule Mutare.Ecto.Host.Routing do
   alias Mutare.CallRouting.{ArgumentRoutes, Call}
 
   @doc """
-  Route the visible arguments and, when piped, the source carried in `call.pipe_left`.
-  Both source positions use the same shape classifier.
+  Route the call's arguments — the source, wherever the call was written, is argument 0.
   """
-  @spec route_arguments(Call.t(), Mutare.CallRouting.routing_context()) :: ArgumentRoutes.t()
-  def route_arguments(%Call{name: name, arguments: args, pipe_left: pipe_left} = call, _context) do
-    ArgumentRoutes.from_visible(call, treatments(name, args, pipe_left),
-      piped: piped_treatment(pipe_left)
-    )
-  end
-
-  defp piped_treatment(:unpiped), do: nil
-  defp piped_treatment({:piped, source}), do: source_treatment(source)
+  @spec route_arguments(Call.t()) :: ArgumentRoutes.t()
+  def route_arguments(%Call{name: name, arguments: args} = call),
+    do: ArgumentRoutes.new(call, treatments(name, args))
 
   @doc """
-  Per-visible-argument treatments for a registered query macro. `pipe_left` places the source
-  by the call's written form, and supplies its AST when it is outside the visible arguments.
-  Returns `[]` for a name the plugin doesn't route.
+  Per-argument treatments for a registered query macro, over the call's complete argument list
+  (a piped source included, at position 0). Returns `[]` for a name the plugin doesn't route.
   """
-  @spec treatments(atom(), [Macro.t()], Call.pipe_left()) :: [Mutare.CallRouting.treatment()]
-  def treatments(:from, args, pipe_left) do
+  @spec treatments(atom(), [Macro.t()]) :: [Mutare.CallRouting.treatment()]
+  def treatments(:from, args) do
     clause_treatment =
-      case FromCall.parse_args(args, pipe_left) do
+      case FromCall.parse_args(args) do
         {_source, %KeywordList{} = clauses} -> {:keyword, clause_treatments(clauses)}
         nil -> :raw
       end
 
-    case {pipe_left, args} do
-      {:unpiped, [source | rest]} ->
+    case args do
+      [source | rest] ->
         [source_treatment(source) | List.duplicate(clause_treatment, length(rest))]
 
-      {:unpiped, []} ->
+      [] ->
         []
-
-      {{:piped, _source}, visible} ->
-        List.duplicate(clause_treatment, length(visible))
     end
   end
 
-  def treatments(macro, args, pipe_left),
-    do: route_macro(Surface.macro_kind(macro), macro, args, Call.pipe_mode(pipe_left))
+  def treatments(macro, args), do: route_macro(Surface.macro_kind(macro), macro, args)
 
-  defp route_macro(:condition, _name, args, pipe_mode) do
-    # The threaded query (the first arg, when written directly) is an ordinary expression; its own
-    # data positions stay raw. The condition/shorthand overlay then marks what the host/core own.
-    base = query_threading_route(args, pipe_mode)
+  defp route_macro(:condition, _name, args) do
+    # The threaded query (the first argument) is an ordinary expression; its own data positions
+    # stay raw. The condition/shorthand overlay then marks what the host/core own.
+    base = query_threading_route(args)
 
-    case Condition.locate(:condition, args, pipe_mode) do
+    case Condition.locate(:condition, args) do
       # A condition, with its declaration written (`where(q, [u], cond)`) or omitted
       # (`where(q, as(:post).x > 1)`). One whose declaration the plugin cannot interpret routes
       # `:hosted` too and the host declines it — hostability is the host's call, as for a
@@ -118,39 +107,61 @@ defmodule Mutare.Ecto.Host.Routing do
     end
   end
 
-  defp route_macro(:join, _name, args, pipe_mode) do
+  defp route_macro(:join, _name, args) do
     args
-    |> query_threading_route(pipe_mode)
+    |> query_threading_route()
     |> route_join_options(args)
   end
 
-  defp route_macro(:clause, name, args, pipe_mode) do
+  defp route_macro(:clause, name, args) do
     # No hosted fragment, no shorthand: thread the query and leave the data positions raw —
     # except a bound macro's literal-integer value (the trailing argument — `route_last/2`),
-    # which routes `:hosted` for the pin-only bump (`Mutare.Ecto.Bound`). `List.last([])` is
-    # `nil`, never a literal integer, so a degenerate `limit()` keeps the empty route.
-    base = query_threading_route(args, pipe_mode)
+    # which routes `:hosted` for the pin-only bump (`Mutare.Ecto.Bound`), and `with_cte`'s
+    # options, routed per pair below. `List.last([])` is `nil`, never a literal integer, so a
+    # degenerate `limit()` keeps the empty route.
+    base = query_threading_route(args)
 
-    if Surface.bound?(name) and Bound.literal?(List.last(args)) do
-      route_last(base, :hosted)
-    else
-      base
+    cond do
+      Surface.bound?(name) and Bound.literal?(List.last(args)) -> route_last(base, :hosted)
+      name == :with_cte -> route_cte_options(base, args)
+      true -> base
     end
   end
 
-  # Only `:dynamic`/`:raw` (registered `:raw`, so core never calls `route_arguments/2` for
-  # them — reachable here only through a direct `treatments/3` call) and `nil` (a name the
+  # Only `:dynamic`/`:raw` (registered `:raw`, so core never calls `route_arguments/1` for
+  # them — reachable here only through a direct `treatments/2` call) and `nil` (a name the
   # plugin doesn't own) land here. A **new** Surface kind must take a real branch above
   # (`Surface.macro_kinds/0`).
-  defp route_macro(_kind, _name, _args, _pipe_mode), do: []
+  defp route_macro(_kind, _name, _args), do: []
 
-  # Piped, every visible argument is query data; `route_arguments/2` routes the source
-  # separately. Direct, the first argument is the source and the remainder stay raw until
-  # the condition/bound/options overlay. Registered :any arities include the empty form.
-  defp query_threading_route(args, :piped), do: List.duplicate(:raw, length(args))
-  defp query_threading_route([], :unpiped), do: []
+  # `with_cte(query, name, as: ^cte)`'s options route per pair: a **pinned** `as:` value is an
+  # Elixir expression computing the CTE's query — routed `:interpolated`, so Mutare mutates it
+  # where it is written exactly as it does the same query bound to a variable beforehand
+  # (`popular = from(…); … |> with_cte("popular", as: ^popular)`), and reads the calls inside
+  # it, which is what lets the stage's own mutants — its drop — be delivered: Mutare withholds
+  # every mutant of a call whose written regions hold a routed macro it could not read (an
+  # inline `^from(…)` under a raw option). An `as:` written as SQL (`fragment("…")`) and every
+  # other option (`materialized:`, `operation:`) stay raw.
+  defp route_cte_options(routing, args) do
+    case args |> List.last() |> KeywordList.nonempty() do
+      %KeywordList{entries: entries} ->
+        route_last(routing, {:keyword, Enum.map(entries, &cte_option_treatment/1)})
 
-  defp query_threading_route([queryable | rest], :unpiped),
+      nil ->
+        routing
+    end
+  end
+
+  defp cte_option_treatment(%KeywordList.Entry{key: :as, value: {:^, _meta, [_interior]}}),
+    do: :interpolated
+
+  defp cte_option_treatment(_entry), do: :raw
+
+  # The first argument is the source and the remainder stay raw until the
+  # condition/bound/options overlay. Registered :any arities include the empty form.
+  defp query_threading_route([]), do: []
+
+  defp query_threading_route([queryable | rest]),
     do: [source_treatment(queryable) | List.duplicate(:raw, length(rest))]
 
   # A query source: an ordinary expression — a variable, a `from(…)`, a nested
@@ -209,10 +220,8 @@ defmodule Mutare.Ecto.Host.Routing do
   end
 
   # Overlay `treatment` on the trailing argument's slot. Every overlay the classifier places
-  # outside a condition position sits last in the direct and pipe forms alike — the bound
-  # value, the join options, the shorthand pairs (a piped call's visible args exclude the
-  # threaded query, so "last" is the one index that holds in both) — and `routes` carries one
-  # slot per argument, so the last slot is that argument's.
+  # outside a condition position sits last — the bound value, the join options, the shorthand
+  # pairs — and `routes` carries one slot per argument, so the last slot is that argument's.
   defp route_last(routes, treatment), do: List.replace_at(routes, -1, treatment)
 
   # === keyword-shorthand routing =============================================
@@ -227,7 +236,7 @@ defmodule Mutare.Ecto.Host.Routing do
       :pairless_list -> default
       # Reached only by an arity the macro does not have — an argless call (`List.last([])` is
       # `nil`, which is no list), a lone `where(q)`: a trailing predicate at a real arity is what
-      # `Condition.locate/3` would have located.
+      # `Condition.locate/2` would have located.
       {:predicate, _kind} -> default
     end
   end

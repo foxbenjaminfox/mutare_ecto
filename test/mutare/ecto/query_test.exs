@@ -104,9 +104,9 @@ defmodule Mutare.Ecto.QueryTest do
   end
 
   describe "the piped from (`Post |> from(…)`)" do
-    # The source is the `|>` left side, so the whole-`from` rewrites read the call's one visible
-    # argument as the clause list (`Mutare.Ecto.AST.FromCall`, by `pipe_mode`) and rebuild only
-    # the `from(…)` half — the pipe and its source are never re-emitted.
+    # Core hands the stage over as the direct call `from(Post, …)`, so the whole-`from` rewrites
+    # read and rebuild it exactly as they do the direct spelling (`Mutare.Ecto.AST.FromCall`);
+    # the report keeps the pipe the user wrote.
     test "drops each filter and the bound, rebuilding the from(…) half only" do
       src = """
       defmodule Posts do
@@ -219,9 +219,11 @@ defmodule Mutare.Ecto.QueryTest do
       # …with no `dynamic/2` wrap — the branches are bare integers, plain Ecto interpolation
       # (a `^dynamic` in a limit position would be broken Ecto)…
       refute mm =~ "dynamic"
-      # …so the query is not duplicated per bump: `from(` appears exactly twice — the baseline
-      # and the (whole-`from`) drop mutant. The bumps used to add two more full copies.
-      assert length(String.split(mm, "from(")) - 1 == 2
+      # …so the query is not duplicated per bump: `from(` appears exactly three times — the
+      # baseline, the (whole-`from`) drop mutant, and the function's uninstrumented copy, which
+      # Mutare keeps beside the instrumented code for mutants elsewhere. The bumps used to add
+      # two more full copies.
+      assert length(String.split(mm, "from(")) - 1 == 3
 
       assert_compiles(src)
     end

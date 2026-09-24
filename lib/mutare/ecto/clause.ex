@@ -35,10 +35,9 @@ defmodule Mutare.Ecto.Clause do
   hosting").
 
   A value capability's mutated position is always the **last argument** (the ordering / the
-  selector), which is true for both the direct form (`order_by(q, binds, ordering)`) and the
-  pipe form (`q |> order_by(binds, ordering)`, where `q` is the piped left side, not in `args`)
-  — so it needs no pipe-mode bookkeeping. The join qualifier is instead the call's *second*
-  argument, which the call's `pipe_mode` places among the visible ones.
+  selector), and the join qualifier the call's *second* argument. Both hold in the direct form
+  (`order_by(q, binds, ordering)`) and the pipe form (`q |> order_by(binds, ordering)`) alike,
+  since a pipe stage reaches the plugin as the direct call it is sugar for.
   """
 
   alias Mutare.Ecto.{AST, Combination, Context, JoinType, Surface, Tag, ValueCatalog}
@@ -89,9 +88,7 @@ defmodule Mutare.Ecto.Clause do
         do: Tag.map_node(tag, &QueryCall.rebuild(call, init ++ [&1]))
   end
 
-  # `join(query, qualifier, …)`: the qualifier's position counting the threaded query, which
-  # `Mutare.Mutator.visible_index/2` places among the visible arguments — second written
-  # directly, first when the query is piped in.
+  # `join(query, qualifier, …)`: the qualifier's position, counting the threaded query.
   @qualifier_position 1
 
   # Swap a standalone `join`'s kind by rewriting its written qualifier to each target the shared
@@ -99,8 +96,8 @@ defmodule Mutare.Ecto.Clause do
   # `Mutare.Ecto.Query`'s clause-key swap, reported at the qualifier as that one is at the key.
   # `AST.atom_value/1` is `nil` for anything but a literal atom — a computed qualifier, or the
   # missing argument of a degenerate call — and `nil` is no flip source, so this is total.
-  defp qualifier_swaps(%QueryCall{args: args, pipe_mode: pipe_mode} = call, config) do
-    index = Mutare.Mutator.visible_index(@qualifier_position, pipe_mode)
+  defp qualifier_swaps(%QueryCall{args: args} = call, config) do
+    index = @qualifier_position
     written = Enum.at(args, index)
     qualifier = AST.atom_value(written)
 

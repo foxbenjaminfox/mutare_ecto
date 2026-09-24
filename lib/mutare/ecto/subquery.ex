@@ -78,7 +78,6 @@ defmodule Mutare.Ecto.Subquery do
   alias Mutare.Ecto.AST.{FromCall, KeywordList, QueryCall}
   alias Mutare.Ecto.AST.KeywordList.Entry
   alias Mutare.Ecto.Host.{Catalog, Condition}
-  alias Mutare.Transform.Meta
 
   # The `Mutare.Ecto.Query` producers composed into the inner `from`: the ones that change the
   # subquery's **row set** (observable through every wrapper), and — under a value-wrapper only —
@@ -174,24 +173,14 @@ defmodule Mutare.Ecto.Subquery do
 
   # A computed source is ordinary Elixir, just like a pin's interior.
   # Keep its producer attribution and suppression by sending it through the same core seam.
-  # A piped source can only be replaced at the pipe, not through the visible call's rebuild.
+  # The source is argument 0 whichever way the stage was written (core hands a pipe stage over
+  # as the direct call), and it is read through the resolved routes — user overrides included —
+  # rather than by re-running the classifier.
   @doc false
   @spec source_islands(Macro.t()) :: [Fragment.island()]
-  def source_islands({:|>, meta, [source, right]}) do
-    case QueryCall.parse(right) do
-      %QueryCall{} ->
-        if piped_source_expression?(right),
-          do: [{source, :value, &{:|>, meta, [&1, right]}}],
-          else: []
-
-      nil ->
-        []
-    end
-  end
-
   def source_islands(node) do
     case QueryCall.parse(node) do
-      %QueryCall{pipe_left: :unpiped, args: [source | _]} = call ->
+      %QueryCall{args: [source | _]} = call ->
         case Calls.routed_treatments(node) do
           [:expression | _] -> [{source, :value, &QueryCall.replace_arg(call, 0, &1)}]
           _ -> []
@@ -200,13 +189,6 @@ defmodule Mutare.Ecto.Subquery do
       _ ->
         []
     end
-  end
-
-  # Read resolved routes, including user overrides, rather than re-running our classifier.
-  # Core omits the piped stamp for :expression. Calls.routed_treatments/1 only exposes visible
-  # arguments, so the piped position currently needs core's metadata reader.
-  defp piped_source_expression?({_head, meta, _args} = node) do
-    Calls.routed_treatments(node) != :skip and Meta.piped_routing(meta) in [nil, :expression]
   end
 
   # The caller normally reaches value-wrapper `subquery(from …)` interiors by ordinary descent:

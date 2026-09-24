@@ -21,6 +21,12 @@ defmodule Mutare.Ecto.ExoticQueryTest do
 
   defp mutated(diffs), do: Enum.map(diffs, fn {_original, mutated} -> mutated end)
 
+  # A stage drop is diffed over the pipe up to the stage and collapses to the pipe upstream of
+  # it: the stage's text is in the original and gone from the replacement.
+  defp stage_dropped?(diffs, stage),
+    do:
+      Enum.any?(diffs, fn {original, mutated} -> original =~ stage and not (mutated =~ stage) end)
+
   describe "window functions (windows/over)" do
     test "a windows: definition and a named-window over/2 are left untouched" do
       src = """
@@ -83,13 +89,11 @@ defmodule Mutare.Ecto.ExoticQueryTest do
       assert {"p.views > 10", "p.views >= 10"} in diffs
       assert {"p.views > 10", "p.views > 11"} in diffs
 
-      # Pipeline stages drop one at a time: the CTE attachment, the join, and the where.
-      assert {"with_cte(\"popular\", as: ^popular)", "Elixir.Function.identity()"} in diffs
-
-      assert {"join(:inner, [p], c in \"popular\", on: c.id == p.id)",
-              "Elixir.Function.identity()"} in diffs
-
-      assert {"where([p, c], p.views > 5)", "Elixir.Function.identity()"} in diffs
+      # Pipeline stages drop one at a time — the CTE attachment, the join, and the where — each
+      # diffed over the pipe up to it, collapsing to the pipe upstream of it.
+      assert stage_dropped?(diffs, ~s|with_cte("popular", as: ^popular)|)
+      assert stage_dropped?(diffs, ~s|join(:inner, [p], c in "popular", on: c.id == p.id)|)
+      assert stage_dropped?(diffs, "where([p, c], p.views > 5)")
 
       # The join's on: condition and the outer where are mutated as usual; the recursive_ctes
       # toggle is never touched (flipping the flag is a broken query, not a mutant).
@@ -1159,8 +1163,8 @@ defmodule Mutare.Ecto.ExoticQueryTest do
 
       # Standalone with_ties/2 validates at query-build time, not expansion time — so the
       # limit-stage drop compiles (the dangling with_ties mutant dies at runtime instead).
-      assert {"limit(3)", "Elixir.Function.identity()"} in diffs
-      assert {"with_ties(true)", "Elixir.Function.identity()"} in diffs
+      assert stage_dropped?(diffs, "limit(3)")
+      assert stage_dropped?(diffs, "with_ties(true)")
 
       assert_compiles(src, @all)
     end

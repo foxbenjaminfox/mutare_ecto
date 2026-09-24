@@ -231,10 +231,10 @@ defmodule Mutare.Ecto do
   # stage — see `Mutare.Ecto.Changeset.Routing`; every `Ecto.Query` macro — see
   # `Mutare.Ecto.Host.Routing`.
   @impl Mutare.CallRouting
-  def route_arguments(%Mutare.CallRouting.Call{module: Ecto.Changeset} = call, context),
-    do: Changeset.Routing.route_arguments(call, context)
+  def route_arguments(%Mutare.CallRouting.Call{module: Ecto.Changeset} = call),
+    do: Changeset.Routing.route_arguments(call)
 
-  def route_arguments(call, context), do: Host.Routing.route_arguments(call, context)
+  def route_arguments(call), do: Host.Routing.route_arguments(call)
 
   # Exactly the macros the classifier can route a position `:hosted`
   # (`Mutare.Ecto.Surface.hosted_macro_names/0`).

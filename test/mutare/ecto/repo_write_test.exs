@@ -143,7 +143,7 @@ defmodule Mutare.Ecto.RepoWriteTest do
       assert_compiles(src, persistence())
     end
 
-    test "the piped form becomes a right-nested change/apply_action pipe stage" do
+    test "the piped form gets the same nested chain, diffed over the pipe" do
       src = """
       defmodule Accounts do
         alias MyApp.Repo
@@ -151,10 +151,11 @@ defmodule Mutare.Ecto.RepoWriteTest do
       end
       """
 
-      assert [{_o, mutated}] = ecto_diffs(src, persistence())
-      assert mutated =~ "Elixir.Ecto.Changeset.change()"
-      assert mutated =~ "|> Elixir.Map.replace!(:repo, Elixir.MyApp.Repo)"
-      assert mutated =~ "apply_action!(:insert)"
+      assert [{"cs |> Repo.insert!()", mutated}] = ecto_diffs(src, persistence())
+
+      assert mutated ==
+               "Elixir.Ecto.Changeset.apply_action!(Elixir.Map.replace!(Elixir.Ecto.Changeset.change(cs), :repo, Elixir.MyApp.Repo),\n:insert)"
+
       assert_compiles(src, persistence())
     end
 
@@ -346,24 +347,21 @@ defmodule Mutare.Ecto.RepoWriteTest do
   end
 
   describe "totality + gate precision (direct mutations/2)" do
-    defp write_mutations(code, pipe_mode) do
-      Mutare.Ecto.RepoWrite.mutations(
-        Sourceror.parse_string!(code),
-        context(pipe_mode: pipe_mode)
-      )
+    defp write_mutations(code) do
+      Mutare.Ecto.RepoWrite.mutations(Sourceror.parse_string!(code), context())
     end
 
     test "a degenerate zero-arg write yields no mutant, never a crash" do
-      # `Repo.insert()` with no changeset hits the empty-args/unpiped path: apply_action returns
+      # `Repo.insert()` with no changeset hits the empty-args path: apply_action returns
       # nil and wrap(nil) drops it, so the mutator stays total — `[]`, not a nil-node `:persistence`
       # mutant nor a FunctionClauseError — on a write node it is offered but cannot rewrite.
-      assert write_mutations("MyApp.Repo.insert()", :unpiped) == []
+      assert write_mutations("MyApp.Repo.insert()") == []
     end
 
     test "the on_conflict swap keys off the on_conflict option, not any :nothing-valued pair" do
       # A non-on_conflict option that happens to be valued `:nothing` must not be flipped to
       # `:raise` — the gate is the *key*, not merely the value.
-      muts = write_mutations("MyApp.Repo.insert(cs, log: :nothing)", :unpiped)
+      muts = write_mutations("MyApp.Repo.insert(cs, log: :nothing)")
       refute Enum.any?(muts, &(&1.family == :on_conflict))
     end
   end

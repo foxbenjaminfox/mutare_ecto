@@ -18,8 +18,10 @@ defmodule Mutare.Ecto.Changeset do
       compile-safe and changeset-shape-preserving, but the gap it surfaces is "this side effect /
       concurrency guard is never asserted", a different question — so it gets its own family.
 
-  Delivery is the shared pipe-aware stage drop (`Mutare.Ecto.StageDrop`): piped, the stage becomes
-  `Function.identity/1`; written directly, the call collapses to its changeset argument.
+  Delivery is the shared stage drop (`Mutare.Ecto.StageDrop`): the call collapses to its
+  changeset argument, in both spellings — a pipe stage reaches the plugin as the direct call it
+  is sugar for, and the report keeps the pipe the user wrote (`cs |> validate_required(…)` →
+  `cs`).
   """
 
   alias Mutare.Ecto.{Context, StageDrop}
@@ -55,8 +57,8 @@ defmodule Mutare.Ecto.Changeset do
   """
   @spec mutations(Macro.t(), Context.t()) :: [Mutare.Ecto.Tag.t()]
   @impl Mutare.Ecto.SubMutator
-  def mutations(node, %Context{pipe_mode: pipe_mode}),
-    do: StageDrop.mutations(node, Ecto.Changeset, &family/1, pipe_mode)
+  def mutations(node, %Context{}),
+    do: StageDrop.mutations(node, Ecto.Changeset, &family/1)
 
   defp family(fun) when fun in @droppable, do: :validation_drop
   defp family(fun) when fun in @hooks, do: :hook_drop

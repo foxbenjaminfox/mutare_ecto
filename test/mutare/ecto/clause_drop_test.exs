@@ -3,15 +3,16 @@ defmodule Mutare.Ecto.ClauseDropTest do
 
   import Mutare.Ecto.TestSupport
 
-  # Stage removal of a standalone/pipe query clause — `Mutare.Ecto.ClauseDrop`. The pipe form
-  # becomes `Function.identity()` (`q |> where(…)` ≡ `q`), the direct form collapses to the query
-  # argument (`where(q, …)` → `q`). This is the query-side twin of the changeset validator drop,
+  # Stage removal of a standalone/pipe query clause — `Mutare.Ecto.ClauseDrop`. Both spellings
+  # collapse the call to its query argument (`q |> where(…)` → `q`, `where(q, …)` → `q`); a
+  # pipe stage's drop is diffed over the pipe up to it, so a stage in the middle of a chain
+  # reads as the pipe upstream of it. This is the query-side twin of the changeset validator drop,
   # and the primary motivating mutation for a query builder. We also assert the routing change that
   # underlies it: a pipe stage no longer suppresses mutation of the upstream query.
 
   defp mutated(src, opts \\ []), do: Enum.map(ecto_diffs(src, opts), fn {_o, m} -> m end)
 
-  describe "pipe form → Function.identity()" do
+  describe "pipe form → collapses to the query piped in" do
     test "drops a piped where (a filter)" do
       src = """
       defmodule M do
@@ -20,7 +21,7 @@ defmodule Mutare.Ecto.ClauseDropTest do
       end
       """
 
-      assert "Elixir.Function.identity()" in mutated(src)
+      assert "query" in mutated(src)
       assert_compiles(src)
     end
 
@@ -43,8 +44,7 @@ defmodule Mutare.Ecto.ClauseDropTest do
         end
         """
 
-        assert "Elixir.Function.identity()" in mutated(src),
-               "expected a stage drop for: #{stage}"
+        assert "query" in mutated(src), "expected a stage drop for: #{stage}"
 
         assert_compiles(src)
       end
@@ -96,12 +96,13 @@ defmodule Mutare.Ecto.ClauseDropTest do
 
     test ":filter_drop drops the where stage only" do
       m = mutated(@src, mutators: [{Mutare.Ecto, repo: MyApp.Repo, families: [:filter_drop]}])
-      assert m == ["Elixir.Function.identity()"]
+      assert m == ["query"]
     end
 
     test ":bound drops the limit stage (and is where the n±1 bumps live too)" do
       m = mutated(@src, mutators: [{Mutare.Ecto, repo: MyApp.Repo, families: [:bound]}])
-      assert "Elixir.Function.identity()" in m
+      # The drop reads as the pipe upstream of the stage.
+      assert "query\n|> where([u], u.active)" in m
       # The bumps are hosted pin-only (bare-integer diffs), gated by the same `:bound` family.
       assert "11" in m
       assert "9" in m
@@ -110,7 +111,7 @@ defmodule Mutare.Ecto.ClauseDropTest do
     test ":clause_drop drops the group_by stage (not where/limit, which have their own families)" do
       m = mutated(@src, mutators: [{Mutare.Ecto, repo: MyApp.Repo, families: [:clause_drop]}])
       # group_by has no other family here, so its only mutation is the drop.
-      assert m == ["Elixir.Function.identity()"]
+      assert m == ["query\n|> where([u], u.active)\n|> limit(10)"]
     end
   end
 
@@ -157,27 +158,24 @@ defmodule Mutare.Ecto.ClauseDropTest do
   end
 
   describe "family tag + totality (direct mutations/2)" do
-    defp drop_mutations(code, pipe_mode) do
-      Mutare.Ecto.ClauseDrop.mutations(
-        Sourceror.parse_string!(code),
-        context(pipe_mode: pipe_mode)
-      )
+    defp drop_mutations(code) do
+      Mutare.Ecto.ClauseDrop.mutations(Sourceror.parse_string!(code), context())
     end
 
     test "a limit/offset stage drop is tagged :bound (parity with the from-keyword drop)" do
       # The family must key off membership in the bound set; a limit/offset drop is :bound, not the
       # catch-all :clause_drop.
       assert [%Mutare.Ecto.Tag{family: :bound}] =
-               drop_mutations("Ecto.Query.limit(q, 10)", :unpiped)
+               drop_mutations("Ecto.Query.limit(q, 10)")
 
       assert [%Mutare.Ecto.Tag{family: :bound}] =
-               drop_mutations("Ecto.Query.offset(q, 5)", :unpiped)
+               drop_mutations("Ecto.Query.offset(q, 5)")
     end
 
     test "a degenerate zero-arg droppable clause yields no mutant, never a crash" do
-      # `where()` with no query arg hits the `drop(:unpiped, [])` path, which must return [] rather
-      # than raising on the empty arg list.
-      assert drop_mutations("Ecto.Query.where()", :unpiped) == []
+      # `where()` with no query arg hits the `drop([])` path, which must return [] rather than
+      # raising on the empty arg list.
+      assert drop_mutations("Ecto.Query.where()") == []
     end
   end
 end

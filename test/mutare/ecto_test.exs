@@ -35,7 +35,7 @@ defmodule Mutare.EctoTest do
       assert {Ecto.Schema, :embedded_schema, :raw} in macros
 
       # The `from` opener and the where/having family route through the selector host
-      # (`:routing` → `route_arguments/2` → `host/2`).
+      # (`:routing` → `route_arguments/1` → `host/2`).
       assert {Ecto.Query, :from, :any, :routing} in macros
       assert {Ecto.Query, :where, :any, :routing} in macros
       assert {Ecto.Query, :or_where, :any, :routing} in macros

@@ -1,7 +1,11 @@
-defmodule Mutare.Ecto.PipeLeftTest do
+defmodule Mutare.Ecto.PipedSourceTest do
   use ExUnit.Case, async: true
 
   import Mutare.Ecto.TestSupport
+
+  # A query source piped into a stage (`source |> from(…)`, `source |> where(…)`) reaches the
+  # plugin as argument 0 of the direct call — core hands a pipe stage over as the call it is
+  # sugar for — so the piped and direct spellings route, host, rewrite and report alike.
 
   @with_core [:all, {Mutare.Ecto, repo: MyApp.Repo}]
 
@@ -20,9 +24,8 @@ defmodule Mutare.Ecto.PipeLeftTest do
       assert {:arithmetic, "p.views > ^(n + 1)", "p.views > ^(n - 1)"} in mutations
       assert {:ecto, "p.views > ^(n + 1)", "p.views >= ^(n + 1)"} in mutations
 
-      assert Enum.any?(mutations, fn {family, original, mutated} ->
-               family == :ecto and original =~ "where" and mutated =~ "identity"
-             end)
+      # The upstream `where` stage drops, collapsing its pipe to the schema it refines.
+      assert {:ecto, upstream, "MyApp.Post"} in mutations
 
       refute Enum.any?(mutations, fn {family, _, _} -> family == :alias end)
       assert_compiles(source, mutators: @with_core)
@@ -52,23 +55,19 @@ defmodule Mutare.Ecto.PipeLeftTest do
           "where([p], p.views > 1)",
           "limit(5)",
           "join(:inner, [p], u in MyApp.User, on: u.id == p.user_id)"
-        ],
-        piped? <- [false, true] do
+        ] do
+      # A piped stage arrives as the direct call, the source argument 0 — the one shape the
+      # classifier sees for both spellings.
       left = Sourceror.parse_string!(source)
       {name, meta, args} = Sourceror.parse_string!(stage)
-      {args, pipe_left} = if piped?, do: {args, {:piped, left}}, else: {[left | args], :unpiped}
+      args = [left | args]
 
       call =
-        Call.new({name, meta, args}, Ecto.Query, name, pipe_left, fn name, args ->
-          {name, meta, args}
-        end)
+        Call.new({name, meta, args}, Ecto.Query, name, fn name, args -> {name, meta, args} end)
 
-      routes = Routing.route_arguments(call, %{})
+      routes = Routing.route_arguments(call)
 
-      actual =
-        if piped?, do: ArgumentRoutes.piped(routes), else: hd(ArgumentRoutes.visible(routes))
-
-      assert actual == expected, "#{source} through #{stage}, piped: #{piped?}"
+      assert hd(ArgumentRoutes.treatments(routes)) == expected, "#{source} through #{stage}"
     end
   end
 
@@ -117,7 +116,24 @@ defmodule Mutare.Ecto.PipeLeftTest do
     end
   end
 
-  test "subquery producers skip piped binding reorders before family filtering" do
+  test "a piped source binding list is reordered, as a direct one is" do
+    for body <- [
+          "from([a, b] in query, where: a.id > b.id, select: a.id)",
+          "([a, b] in query) |> from(where: a.id > b.id, select: a.id)"
+        ] do
+      source = """
+      defmodule Q do
+        import Ecto.Query
+        def q(query), do: #{body}
+      end
+      """
+
+      assert {"[a, b] in query", "[b, a] in query"} in ecto_diffs(source)
+      assert_compiles(source)
+    end
+  end
+
+  test "subquery producers reorder a piped source binding list under the reorder family only" do
     source = """
     defmodule Q do
       import Ecto.Query
@@ -128,11 +144,11 @@ defmodule Mutare.Ecto.PipeLeftTest do
     end
     """
 
-    for families <- [:all, [:comparison]] do
+    for {families, reordered?} <- [{:all, true}, {[:comparison], false}] do
       opts = [mutators: [{Mutare.Ecto, families: families}]]
       mutations = ecto_diffs(source, opts)
       assert Enum.any?(mutations, fn {_, mutated} -> mutated =~ "a.id >= b.id" end)
-      refute Enum.any?(mutations, fn {_, mutated} -> mutated =~ "[b, a]" end)
+      assert Enum.any?(mutations, fn {_, mutated} -> mutated =~ "[b, a]" end) == reordered?
       assert_compiles(source, opts)
     end
   end
@@ -185,7 +201,7 @@ defmodule Mutare.Ecto.PipeLeftTest do
   end
 end
 
-defmodule Mutare.Ecto.PipeLeftTest.Runtime do
+defmodule Mutare.Ecto.PipedSourceTest.Runtime do
   use ExUnit.Case, async: false
 
   import Mutare.Ecto.TestSupport

@@ -15,6 +15,7 @@ defmodule Mutare.Ecto.Dispatcher do
     QueryTerminal,
     RepoAggregate,
     RepoWrite,
+    Resolved,
     StaticCondition,
     Surface,
     ValidationBoundary
@@ -37,6 +38,7 @@ defmodule Mutare.Ecto.Dispatcher do
         ]
   def mutations(node, context) do
     context = Context.new(context)
+    node = Resolved.call(node, context.core)
 
     case QueryCall.parse(node) do
       %QueryCall{name: name} = call ->

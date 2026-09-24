@@ -156,9 +156,13 @@ way; the differences below mean that respelling some queries changes which mutan
 | The query being refined, when a schema or table name | held back from Mutare's families (a swapped name is a broken query) | held back in both direct and piped calls (`where(Post, …)`, `Post \|> where(…)`) |
 
 A binding declaration piped into `from`, such as `(p in User) |> from(where: p.age > 18)`,
-gets hosted condition and literal-bound mutations as well as whole-call rewrites, including
-clause drops and ordering flips. Source binding reorders remain unavailable in that spelling:
-the pipe's left operand is read-only to the plugin.
+gets every mutant its direct spelling gets: hosted condition and literal-bound mutations,
+whole-call rewrites such as clause drops and ordering flips, and the reorder of a source
+binding list (`([a, b] in q) |> from(…)` → `[b, a] in q`).
+
+A dropped pipe stage is reported as the pipe up to that stage collapsing to what flows into
+it — `q |> where(…) |> limit(10)` with the `where` dropped reads `q |> where(…)` → `q` — and is
+located at the stage's line, so a `# mutare:ignore` over the stage keeps working.
 
 Where an expression is written matters as well:
 

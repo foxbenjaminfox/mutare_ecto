@@ -317,4 +317,13 @@ defmodule Mutare.Ecto.SemanticHarness do
   def observe(repo, sites, pattern, fun) do
     Test.observe_mutant(sites, pattern, fn -> repo.all(fun.()) end)
   end
+
+  @doc """
+  The `{original, mutated}` pattern pair (as `Mutare.Test.site_id/2` takes) of the drop of the
+  pipe stage matching `stage`. A stage drop is diffed over the pipe up to the stage and
+  collapses to the pipe upstream of it, so the stage's text is in the original and gone from
+  the replacement.
+  """
+  @spec stage_drop(Regex.t()) :: {Regex.t(), Regex.t()}
+  def stage_drop(%Regex{source: source} = stage), do: {stage, ~r/\A(?:(?!#{source}).)*\z/s}
 end

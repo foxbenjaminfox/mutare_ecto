@@ -174,10 +174,8 @@ defmodule Mutare.Ecto.Query do
   # Whole-`from` binding-reorder of a source binding list (`from [a, b] in q, …` → `[b, a] in q`),
   # rewriting only the source declaration — the in-place rule and its policy are
   # `Mutare.Ecto.BindingReorder`'s. A scalar source (`u in User`) declares no list, so it never
-  # reorders. A piped source is read-only through FromCall's visible-call rebuild. Guard here,
-  # too: Subquery invokes these producers directly, without going through the Dispatcher.
-  defp binding_reorders(%FromCall{call: %QueryCall{pipe_left: {:piped, _source}}}), do: []
-
+  # reorders. The source is rewritable in both spellings: core hands a piped declaration over as
+  # argument 0 and renders the rewrite back into the pipe the user wrote.
   defp binding_reorders(%FromCall{source: source} = from) do
     with {:in, meta, [lhs, rhs]} <- source,
          {:ok, %BindingList{} = list} <- BindingList.parse(lhs) do

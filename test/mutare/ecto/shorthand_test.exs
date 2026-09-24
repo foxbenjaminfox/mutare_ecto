@@ -20,14 +20,11 @@ defmodule Mutare.Ecto.ShorthandTest do
   # column. The ownership tests below run under this set so nothing hides.
   @every_family [:all, {Mutare.Ecto, repo: MyApp.Repo, families: :all}]
 
-  # A pipe supplies its source separately from the stage's visible arguments, as core does.
+  # A pipe stage is read as the direct call core hands over, the query argument 0.
   defp routing(code) do
     case Sourceror.parse_string!(code) do
-      {:|>, _meta, [query, {name, _, args}]} ->
-        Host.Routing.treatments(name, args, {:piped, query})
-
-      {name, _meta, args} ->
-        Host.Routing.treatments(name, args, :unpiped)
+      {:|>, _meta, [query, {name, _, args}]} -> Host.Routing.treatments(name, [query | args])
+      {name, _meta, args} -> Host.Routing.treatments(name, args)
     end
   end
 
@@ -41,7 +38,10 @@ defmodule Mutare.Ecto.ShorthandTest do
     test "the piped shorthand routes its sole keyword argument" do
       # Piped: the query is the `|>` left side (routed runtime separately), so the only visible
       # argument is the shorthand keyword list.
-      assert routing(~s{q |> where(category: "Foo")}) == [{:keyword, [:interpolated]}]
+      assert routing(~s{q |> where(category: "Foo")}) == [
+               :expression,
+               {:keyword, [:interpolated]}
+             ]
     end
 
     test "a nil-valued pair is skipped (IS NULL, never = nil)" do
@@ -65,7 +65,8 @@ defmodule Mutare.Ecto.ShorthandTest do
         assert routing(~s|#{macro}(q, [p], score: 5, title: "x")|) ==
                  [:expression, :raw, {:keyword, [:interpolated, :interpolated]}]
 
-        assert routing(~s{q |> #{macro}([p], score: 5)}) == [:raw, {:keyword, [:interpolated]}]
+        assert routing(~s{q |> #{macro}([p], score: 5)}) ==
+                 [:expression, :raw, {:keyword, [:interpolated]}]
       end
 
       # The pair-value exclusions are the same ones (`pair_treatment/1`).
@@ -80,9 +81,9 @@ defmodule Mutare.Ecto.ShorthandTest do
       # ordering) poisoning the query position. Pins that the pipe mode, not the argument's
       # shape, is what says so. A literal bound routes `:hosted` (the plugin's own pin-only
       # `:bound` bump — still not core's); an ordering stays raw.
-      assert routing("q |> limit(10)") == [:hosted]
-      assert routing("q |> offset(5)") == [:hosted]
-      assert routing("q |> order_by(asc: :name)") == [:raw]
+      assert routing("q |> limit(10)") == [:expression, :hosted]
+      assert routing("q |> offset(5)") == [:expression, :hosted]
+      assert routing("q |> order_by(asc: :name)") == [:expression, :raw]
     end
 
     test "a bindingless from routes where/having values per-pair, other clauses raw" do
@@ -140,7 +141,7 @@ defmodule Mutare.Ecto.ShorthandTest do
       end
     end
 
-    test "locate/3 reports the kind of the predicate it located, declaration written or omitted" do
+    test "locate/2 reports the kind of the predicate it located, declaration written or omitted" do
       for {code, kind} <- [
             {"where(q, [p], p.score > ^min)", :expression},
             {"where(q, as(:post).score > 5)", :expression},
@@ -149,7 +150,7 @@ defmodule Mutare.Ecto.ShorthandTest do
           ] do
         {:where, _meta, args} = Sourceror.parse_string!(code)
 
-        assert %Host.Condition{kind: ^kind} = Host.Condition.locate(:condition, args, :unpiped),
+        assert %Host.Condition{kind: ^kind} = Host.Condition.locate(:condition, args),
                "expected `#{code}` to locate a #{kind}"
       end
     end
@@ -168,11 +169,11 @@ defmodule Mutare.Ecto.ShorthandTest do
       end
     end
 
-    test "locate/3 declines a keyword filter, declaration written or omitted" do
+    test "locate/2 declines a keyword filter, declaration written or omitted" do
       for code <- ["where(q, score: 5)", "where(q, [p], score: 5)", "where(q, [p], [])"] do
         {:where, _meta, args} = Sourceror.parse_string!(code)
 
-        assert Host.Condition.locate(:condition, args, :unpiped) == nil,
+        assert Host.Condition.locate(:condition, args) == nil,
                "expected no located condition in `#{code}`"
       end
     end

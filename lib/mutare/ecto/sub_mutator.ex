@@ -5,10 +5,10 @@ defmodule Mutare.Ecto.SubMutator do
   # their results through this shared callback shape.
   #
   # `mutations/2` takes a `node` and the plugin's `%Mutare.Ecto.Context{}` — core's callback
-  # context, unpacked once into the parsed `%Config{}` (`Mutare.Ecto.Config`), core's `pipe_mode`,
-  # and the run's enabled specs (`mutators`, for the island sub-contract; `Mutare.Ecto.Context`) —
-  # and returns the `%Mutare.Ecto.Tag{}`s it produces, or `[]`. The struct is total, so a producer
-  # ignores the context or pattern-matches just the keys it wants (`%Context{pipe_mode: mode}`)
+  # context, unpacked once into the parsed `%Config{}` (`Mutare.Ecto.Config`) and the run's
+  # enabled specs (`mutators`, for the island sub-contract; `Mutare.Ecto.Context`) — and returns
+  # the `%Mutare.Ecto.Tag{}`s it produces, or `[]`. The struct is total, so a producer ignores
+  # the context or pattern-matches just the keys it wants (`%Context{config: config}`)
   # and never guards a context *shape*. Production is pure: `Mutare.Ecto.mutate/2` wraps the
   # merged tags via `Mutare.Ecto.Tag.to_mutation/1`, and the `families:` filter + equivalence note
   # are applied by core's `finalize/2` (`Mutare.Ecto.Equivalence`). A sub-mutator that

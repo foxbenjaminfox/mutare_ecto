@@ -29,11 +29,10 @@ defmodule Mutare.Ecto.Changeset.Routing do
       options of every other stage (a constraint's `name:`, a `message:` alone) stay
       `:expression` — the plugin defines no option restrictions for unlisted stages.
 
-  Which slot is the field position follows the call's **form**, as in the query classifier:
-  written directly (`validate_length(cs, :name, …)`) the changeset is the first visible argument
-  and the field the second; piped (`cs |> validate_length(:name, …)`) the changeset is the hidden
-  `|>` left side (routed `:expression` by core's default, so the upstream pipeline stays mutable)
-  and the field is the first visible argument.
+  The field position is the second argument in both spellings: core hands a pipe stage over as
+  the direct call it is sugar for, so `cs |> validate_length(:name, …)` is classified as
+  `validate_length(cs, :name, …)`, with the changeset at position 0 (routed `:expression`, so
+  the upstream pipeline stays mutable).
   """
 
   alias Mutare.CallRouting.{ArgumentRoutes, Call}
@@ -46,44 +45,42 @@ defmodule Mutare.Ecto.Changeset.Routing do
   # `validate_length`'s mode option: a written atom value there routes `:raw`; its keys stay core's.
   @mode_option :count
 
-  @doc """
-  `c:Mutare.CallRouting.route_arguments/2` for a `:routing`-registered `Ecto.Changeset` stage:
-  the per-visible-argument `treatments/3` classification, wrapped as `ArgumentRoutes`.
-  """
-  @spec route_arguments(Call.t(), Mutare.CallRouting.routing_context()) :: ArgumentRoutes.t()
-  def route_arguments(%Call{name: name, arguments: args, pipe_mode: pipe_mode} = call, _context) do
-    ArgumentRoutes.from_visible(call, treatments(name, args, pipe_mode))
-  end
+  # The field slot: the argument after the changeset.
+  @field_index 1
 
   @doc """
-  Per-visible-argument treatment for a changeset stage `name` with visible `args` in
-  `pipe_mode`: every position `:expression`, except a written field atom in the field position
-  (`:raw`), `validate_number`'s trailing keyword list (`{:keyword, …}`, every key raw), and
-  `validate_length`'s when its `count:` value is a written atom (`[:expression, count: :raw]`) —
-  the moduledoc.
+  `c:Mutare.CallRouting.route_arguments/1` for a `:routing`-registered `Ecto.Changeset` stage:
+  the per-argument `treatments/2` classification, wrapped as `ArgumentRoutes`.
   """
-  @spec treatments(atom(), [Macro.t()], Mutare.Mutator.pipe_mode()) ::
-          [Mutare.CallRouting.treatment()]
-  def treatments(name, args, pipe_mode) do
+  @spec route_arguments(Call.t()) :: ArgumentRoutes.t()
+  def route_arguments(%Call{name: name, arguments: args} = call),
+    do: ArgumentRoutes.new(call, treatments(name, args))
+
+  @doc """
+  Per-argument treatment for a changeset stage `name` with arguments `args` (the piped
+  changeset included, at position 0): every position `:expression`, except a written field atom
+  in the field position (`:raw`), `validate_number`'s trailing keyword list (`{:keyword, …}`,
+  every key raw), and `validate_length`'s when its `count:` value is a written atom
+  (`[:expression, count: :raw]`) — the moduledoc.
+  """
+  @spec treatments(atom(), [Macro.t()]) :: [Mutare.CallRouting.treatment()]
+  def treatments(name, args) do
     args
     |> Enum.map(fn _arg -> :expression end)
-    |> route_field(args, pipe_mode)
+    |> route_field(args)
     |> route_options(name, args)
   end
 
-  # The field slot: after the changeset when written directly, first when piped. A written atom
-  # there is a column name, `:raw`; anything else keeps `:expression`.
-  defp route_field(routes, args, pipe_mode) do
-    index = field_index(pipe_mode)
+  # A written atom in the field slot is a column name, `:raw`; anything else keeps `:expression`.
+  defp route_field(routes, args) do
+    case Enum.at(args, @field_index) do
+      nil ->
+        routes
 
-    case Enum.at(args, index) do
-      nil -> routes
-      node -> if AST.atom_value(node), do: List.replace_at(routes, index, :raw), else: routes
+      node ->
+        if AST.atom_value(node), do: List.replace_at(routes, @field_index, :raw), else: routes
     end
   end
-
-  defp field_index(:unpiped), do: 1
-  defp field_index(:piped), do: 0
 
   # A key-rejecting stage's trailing argument, when it is a written keyword list, routes per
   # pair: keys raw (core's per-pair routing), values `:expression`. `validate_length`'s routes by

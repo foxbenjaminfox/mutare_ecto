@@ -4,7 +4,7 @@ defmodule Mutare.Ecto.QualifiedTest do
   import Mutare.Ecto.TestSupport
 
   # The query DSL macros can be written three ways, all of which core's resolver recognizes and
-  # hands to the plugin's `route_arguments/2`/`host/2`/`mutate/2`: **bare/imported** (`where(q, …)`),
+  # hands to the plugin's `route_arguments/1`/`host/2`/`mutate/2`: **bare/imported** (`where(q, …)`),
   # **qualified** (`Ecto.Query.where(q, …)`), and **aliased** (`Q.where(q, …)`). The plugin used to
   # pattern-match only the bare atom head, so the qualified/aliased forms escaped routing entirely —
   # core then descended into the raw query fragment, splicing selector `case`s into binding-list /
@@ -55,13 +55,15 @@ defmodule Mutare.Ecto.QualifiedTest do
 
       diffs = ecto_diffs(src)
 
-      # Positive control: the piped `select` stage *is* dropped (collapsed to identity), so `diffs`
-      # is non-empty — without this the `Enum.all?`/`refute` guarantees below pass vacuously (an
-      # empty list satisfies all three) even if the qualified select had escaped routing entirely.
-      assert Enum.any?(diffs, fn {_o, mutated} -> mutated =~ "Function.identity" end)
+      # Positive control: the piped `select` stage *is* dropped (collapsed to the query piped
+      # into it), so `diffs` is non-empty — without this the `Enum.all?`/`refute` guarantees
+      # below pass vacuously (an empty list satisfies all three) even if the qualified select had
+      # escaped routing entirely.
+      source = ~S/from(s in "samples")/
+      assert Enum.any?(diffs, fn {_o, mutated} -> mutated == source end)
 
       # The whole stage drop is the only ecto mutation; count/:distinct are never rewritten.
-      assert Enum.all?(diffs, fn {_o, mutated} -> mutated =~ "Function.identity" end)
+      assert Enum.all?(diffs, fn {_o, mutated} -> mutated == source end)
       refute Enum.any?(diffs, fn {_o, mutated} -> mutated =~ "avg" or mutated =~ "sum" end)
       refute Enum.any?(diffs, fn {_o, mutated} -> mutated =~ "mutare" end)
     end

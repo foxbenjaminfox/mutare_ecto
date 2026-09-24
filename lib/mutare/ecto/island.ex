@@ -146,12 +146,14 @@ defmodule Mutare.Ecto.Island do
   that path kills.
   """
   @spec subcontracted(Macro.t(), Context.t(), (Macro.t() -> Macro.t())) :: [Mutation.t()]
-  def subcontracted(condition, %Context{mutators: specs}, deliver \\ & &1) do
-    # Core's seam also accepts a callback context, for call-site symmetry with the mutator
-    # callbacks, and reads nothing from it — so only the specs cross back into core; the plugin's
-    # own struct never does.
+  def subcontracted(condition, %Context{mutators: specs, core: core}, deliver \\ & &1) do
+    # Core's seam takes its own callback context back, unchanged: it carries the enclosing
+    # call's lexical environment, in which core resolves the island before analyzing it (a
+    # nested `dynamic` keeps its `:raw` route, an author's `:skip` macro stays opaque). The
+    # plugin's own struct never crosses.
     for {interior, role, rebuild} <- Fragment.islands(condition, :condition),
-        {spec, mutated, note, variant} <- Mutare.Analyze.expression_mutations(interior, specs),
+        {spec, mutated, note, variant} <-
+          Mutare.Analyze.expression_mutations(interior, specs, core),
         structure_kept?(spec, role, interior, mutated) do
       Mutation.new(deliver.(rebuild.(mutated)), producer: spec, note: note, variant: variant)
     end

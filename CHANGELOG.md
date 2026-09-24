@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking: Mutare 0.4.0 or newer is required** (`{:mutare, "~> 0.4.0"}`). Mutare now hands
+  a pipe stage to the plugin as the direct call it is sugar for, so the plugin reads a query
+  source, a changeset, or a `Repo` write's value at argument 0 in both spellings, and the
+  `pipe_left`/`pipe_mode` reading of 0.3.1 is gone.
+- **A dropped pipe stage collapses to what flows into it.** `q |> where([u], u.active)` with
+  the `where` dropped now reads `q |> where([u], u.active)` → `q` in the report, where it read
+  `where([u], u.active)` → `Elixir.Function.identity()`; a stage in the middle of a chain is
+  diffed over the pipe up to it (`q |> where(…) |> limit(10)` → `q |> where(…)`) and is still
+  located at the stage's line. The same holds for a dropped changeset validator or hook and for
+  the `persistence` rewrite of a piped `Repo` write, which now nests its `apply_action` chain
+  around the piped value instead of emitting a pipe stage. The mutants and their kills are
+  unchanged.
+- **A source binding list piped into `from` is reordered too.** `([a, b] in q) |> from(…)` now
+  gets the `binding_reorder` mutant (`[b, a] in q`) its direct spelling always had; through
+  0.2.1 the piped declaration was read-only.
+
+### Added
+
+- **A CTE query pinned inline is mutated where it is written.** `with_cte("name", as:
+  ^from(…))` now gets every mutant the same query gets when bound to a variable beforehand
+  (`popular = from(…); … |> with_cte("popular", as: ^popular)`): the plugin's own SQL mutants
+  inside it and Mutare's families on its Elixir. An `as:` written as SQL (`fragment("…")`) and
+  the other options stay as written.
+
 ## [0.2.1] - 2026-09-19
 
 ### Fixed

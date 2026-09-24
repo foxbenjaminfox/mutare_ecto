@@ -96,14 +96,13 @@ defmodule Mutare.Ecto.TestSupport do
   The plugin's `%Mutare.Ecto.Context{}` for driving a sub-mutator's `mutations/2` (or the host
   catalog) directly — built through `Mutare.Ecto.Context.new/1` from the shape core's callback
   context takes, so a direct test exercises the same unpack the Dispatcher does. `opts`:
-  `:pipe_mode` (default `:unpiped`), `:mutators` (the run's specs, default `[]`), and any
-  `Mutare.Ecto.Config` option (`:repo` defaults to `MyApp.Repo`, as `mutators/1` does).
+  `:mutators` (the run's specs, default `[]`), and any `Mutare.Ecto.Config` option (`:repo`
+  defaults to `MyApp.Repo`, as `mutators/1` does).
   """
   def context(opts \\ []) do
-    {pipe_mode, opts} = Keyword.pop(opts, :pipe_mode, :unpiped)
     {specs, config_opts} = Keyword.pop(opts, :mutators, [])
     config = Mutare.Ecto.Config.parse!(Keyword.put_new(config_opts, :repo, @repo))
-    Mutare.Ecto.Context.new(%{config: config, pipe_mode: pipe_mode, mutators: specs})
+    Mutare.Ecto.Context.new(%{config: config, mutators: specs})
   end
 
   @doc """

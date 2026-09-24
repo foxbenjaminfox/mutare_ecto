@@ -89,8 +89,8 @@ defmodule Mutare.Ecto.ClauseTest do
       assert "order_by([u], asc_nulls_last: u.name)" in orderings
       assert "order_by([u], desc_nulls_first: u.name)" in orderings
       assert length(orderings) == 2
-      # `order_by` is not stage-droppable, so there is no identity/drop mutant to accompany them.
-      refute Enum.any?(mutated, &(&1 =~ "identity"))
+      # `order_by` is not stage-droppable, so no drop (a collapse to the query) accompanies them.
+      refute "query" in mutated
       assert_compiles(src)
     end
   end
@@ -167,9 +167,10 @@ defmodule Mutare.Ecto.ClauseTest do
       """
 
       # `^n` is a runtime value, so there is no `n±1` literal bump — but dropping the whole `limit`
-      # stage is valid regardless, so the only diff is the pipe-form drop (`:bound`).
+      # stage is valid regardless, so the only diff is the stage drop (`:bound`), collapsing the
+      # pipe to its query.
       mutated = Enum.map(ecto_diffs(src), fn {_o, m} -> m end)
-      assert mutated == ["Elixir.Function.identity()"]
+      assert mutated == ["query"]
       assert_compiles(src)
     end
   end
@@ -251,8 +252,8 @@ defmodule Mutare.Ecto.ClauseTest do
       assert "except(^other)" in mutated
       # The swap preserves duplicate-handling — never the `_all` variant…
       refute Enum.any?(mutated, &(&1 =~ "except_all"))
-      # …alongside the orthogonal stage drop (`q |> intersect(…)` → `q`, as identity).
-      assert Enum.any?(mutated, &(&1 =~ "identity"))
+      # …alongside the orthogonal stage drop (`query |> intersect(…)` → `query`).
+      assert "query" in mutated
       assert_compiles(src)
     end
 
@@ -487,7 +488,10 @@ defmodule Mutare.Ecto.ClauseTest do
     test "an empty-args order_by / limit / select returns []" do
       for name <- [:order_by, :limit, :offset, :select, :select_merge, :intersect, :join] do
         {head, meta, args} = Sourceror.parse_string!("#{name}()")
-        meta = Meta.stamp_routed_call(meta, {Mutare.Calls.module_key(Ecto.Query), name, :unpiped})
+
+        meta =
+          Meta.stamp_routed_call(meta, {Mutare.Calls.module_key(Ecto.Query), name, length(args)})
+
         call = QueryCall.parse({head, meta, args})
 
         assert %QueryCall{name: ^name, args: []} = call

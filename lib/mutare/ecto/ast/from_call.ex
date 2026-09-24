@@ -1,17 +1,17 @@
 defmodule Mutare.Ecto.AST.FromCall do
   @moduledoc false
   # A normalized `from` call — `from(source)` or `from(source, clauses)`, and their piped twins
-  # `source |> from()` / `source |> from(clauses)` — read apart into the resolved call
-  # (`Mutare.Ecto.AST.QueryCall`), its source, and its keyword clause list
-  # (`Mutare.Ecto.AST.KeywordList`; empty for the clause-less form). The **one** place the plugin
-  # takes that shape apart and puts it back together: the whole-`from` rewrites
+  # `source |> from()` / `source |> from(clauses)`, which core hands over as the direct call —
+  # read apart into the resolved call (`Mutare.Ecto.AST.QueryCall`), its source, and its keyword
+  # clause list (`Mutare.Ecto.AST.KeywordList`; empty for the clause-less form). The **one** place
+  # the plugin takes that shape apart and puts it back together: the whole-`from` rewrites
   # (`Mutare.Ecto.Query`), the subquery interior walks (`Mutare.Ecto.Subquery`), the selector host
   # and its splice (`Mutare.Ecto.Host`/`Host.Target`), and — through the identity-free
-  # `parse_args/2` — the routing classifier (`Mutare.Ecto.Host.Routing`).
+  # `parse_args/1` — the routing classifier (`Mutare.Ecto.Host.Routing`).
   #
-  # The source is readable in both forms: the first visible argument of a direct call, or
-  # `QueryCall.pipe_left` in a pipe. Reconstruction still edits only the visible call, so a
-  # piped source is read-only. `replace_source/2` accepts only a directly written source.
+  # The source is argument 0 in both spellings, and every edit — the source's replacement
+  # included — rebuilds through the call's own `rebuild`, which core renders in the written
+  # form (a pipe stays a pipe in the report).
   #
   # Every edit (`replace_source/2`, `replace_clause/3`, `rekey_clause/3`, `delete_clauses/2`)
   # returns a new value, so edits compose; `to_ast/1` renders through the call's own `rebuild`,
@@ -40,8 +40,8 @@ defmodule Mutare.Ecto.AST.FromCall do
   argument is not a keyword list (`from(p in Post, ^clauses)`).
   """
   @spec parse(QueryCall.t() | Macro.t()) :: t() | nil
-  def parse(%QueryCall{name: :from, args: args, pipe_left: pipe_left} = call) do
-    case parse_args(args, pipe_left) do
+  def parse(%QueryCall{name: :from, args: args} = call) do
+    case parse_args(args) do
       {source, %KeywordList{} = clauses} ->
         %__MODULE__{call: call, source: source, clauses: clauses}
 
@@ -60,16 +60,14 @@ defmodule Mutare.Ecto.AST.FromCall do
   end
 
   @doc """
-  Read `{source, clauses}` from a `from`'s visible arguments and its pipe-left identity.
-  The source is the actual AST in either form; malformed arities and non-keyword clauses
-  return `nil`. Routing uses this before the visible arguments have been resolved.
+  Read `{source, clauses}` from a `from`'s arguments (the piped source included, at position 0).
+  Malformed arities and non-keyword clauses return `nil`. Routing uses this before the
+  arguments have been resolved.
   """
-  @spec parse_args([Macro.t()], Mutare.CallRouting.Call.pipe_left()) ::
-          {Macro.t(), KeywordList.t()} | nil
-  def parse_args(args, {:piped, source}), do: parse_args([source | args], :unpiped)
-  def parse_args([source], :unpiped), do: {source, KeywordList.empty()}
-  def parse_args([source, clauses], :unpiped), do: with_clauses(source, clauses)
-  def parse_args(_args, :unpiped), do: nil
+  @spec parse_args([Macro.t()]) :: {Macro.t(), KeywordList.t()} | nil
+  def parse_args([source]), do: {source, KeywordList.empty()}
+  def parse_args([source, clauses]), do: with_clauses(source, clauses)
+  def parse_args(_args), do: nil
 
   defp with_clauses(source, clauses) do
     case KeywordList.parse(clauses) do
@@ -98,10 +96,9 @@ defmodule Mutare.Ecto.AST.FromCall do
     not Surface.last_wins?(key) or KeywordList.last_of_key?(clauses, index)
   end
 
-  @doc "Replace a directly written source, keeping its clauses. A piped source is read-only."
+  @doc "Replace the source, keeping its clauses."
   @spec replace_source(t(), Macro.t()) :: t()
-  def replace_source(%__MODULE__{call: %QueryCall{pipe_left: :unpiped}} = from, source),
-    do: %{from | source: source}
+  def replace_source(%__MODULE__{} = from, source), do: %{from | source: source}
 
   @doc "The `from` with `value` as the value of the clause at `index` — its key and every other clause kept."
   @spec replace_clause(t(), non_neg_integer(), Macro.t()) :: t()
@@ -119,17 +116,13 @@ defmodule Mutare.Ecto.AST.FromCall do
     do: %{from | clauses: KeywordList.delete_at(clauses, indices)}
 
   @doc """
-  Render the `from` back to AST through the call's own `rebuild`, keeping the written form — a
-  piped source is simply not re-emitted, so the visible arity is the written one. An
+  Render the `from` back to AST through the call's own `rebuild`, keeping the written form. An
   empty clause list collapses to the clause-less form (see the module comment).
   """
   @spec to_ast(t()) :: Macro.t()
   def to_ast(%__MODULE__{call: call, source: source, clauses: clauses}) do
-    QueryCall.rebuild(call, visible_source(call.pipe_left, source) ++ visible_clauses(clauses))
+    QueryCall.rebuild(call, [source | visible_clauses(clauses)])
   end
-
-  defp visible_source({:piped, _left}, _source), do: []
-  defp visible_source(:unpiped, source), do: [source]
 
   defp visible_clauses(%KeywordList{entries: []}), do: []
   defp visible_clauses(clauses), do: [KeywordList.to_ast(clauses)]

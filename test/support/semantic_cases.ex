@@ -1282,10 +1282,9 @@ defmodule Mutare.Ecto.SemanticCases do
 
       describe "clause-drop — remove a piped `where` stage (standalone/pipe)" do
         # The pipe-form twin of filter-drop (`Mutare.Ecto.ClauseDrop`): `q |> where([u], u.age > 18)`
-        # becomes `q |> Function.identity()`. Proves the stage drop is **live** — the dropped `where`
-        # actually stops filtering at the engine (after `hoist_pipe` lifts the selector out of the pipe),
-        # not just in the recorded Site. The mutant renders as `identity()`, so locate it by that token —
-        # the `Regex` mutated-slot of `site_id/2`.
+        # becomes `q`. Proves the stage drop is **live** — the dropped `where` actually stops
+        # filtering at the engine, not just in the recorded Site. The mutant is the pipe without
+        # the stage, so locate it by the stage's absence (`H.stage_drop/1`).
         test "dropping a piped where stage returns the whole table" do
           {mod, sites} =
             build("""
@@ -1296,7 +1295,7 @@ defmodule Mutare.Ecto.SemanticCases do
             end
             """)
 
-          {baseline, dropped} = observe_ids(mod, sites, {~r/where\(/, ~r/identity/})
+          {baseline, dropped} = observe_ids(mod, sites, H.stage_drop(~r/where\(/))
 
           # Baseline: ages strictly over 18 — Bob(25), Eve(40), Frank(19).
           assert baseline == [2, 5, 6]
@@ -2175,7 +2174,7 @@ defmodule Mutare.Ecto.SemanticCases do
       describe "ValidationDrop — a dropped `validate_required` admits the write it rejected" do
         # The changeset stage drop, observed through the write it gates: with `:name` missing the
         # baseline pipeline returns `{:error, changeset}` and inserts nothing; the mutant (validator
-        # stage dropped to identity) passes the changeset through valid and the insert lands.
+        # stage dropped) passes the changeset through valid and the insert lands.
         @validated_src """
         defmodule W do
           import Ecto.Changeset
@@ -2197,7 +2196,7 @@ defmodule Mutare.Ecto.SemanticCases do
               mutators: [{Mutare.Ecto, repo: @repo, families: [:validation_drop]}]
             )
 
-          drop = site_id(sites, {~r/validate_required/, ~r/identity/})
+          drop = site_id(sites, H.stage_drop(~r/validate_required/))
           attrs = %{"email" => "v@x"}
 
           # Baseline: the validator rejects the nameless changeset — no row.
@@ -3196,7 +3195,7 @@ defmodule Mutare.Ecto.SemanticCases do
 
       describe "HookDrop — a dropped `prepare_changes` no longer rewrites the row" do
         # `prepare_changes` runs its fn at Repo time (inside the insert's transaction); the baseline
-        # hook overwrites `name`, the mutant (hook stage dropped to identity) leaves the cast value.
+        # hook overwrites `name`, the mutant (hook stage dropped) leaves the cast value.
         # Observed on the written `accounts` row — the deferred-hook twin of the validation drop.
         @hooked_src """
         defmodule W do
@@ -3219,7 +3218,7 @@ defmodule Mutare.Ecto.SemanticCases do
               mutators: [{Mutare.Ecto, repo: @repo, families: [:hook_drop]}]
             )
 
-          drop = site_id(sites, {~r/prepare_changes/, ~r/identity/})
+          drop = site_id(sites, H.stage_drop(~r/prepare_changes/))
 
           # Baseline: the hook fires at insert time and rewrites the name to "Hooked".
           reset_accounts!()

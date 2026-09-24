@@ -86,16 +86,14 @@ defmodule Mutare.Ecto.RepoWrite do
       would be a runtime crash (a trivially-killed non-mutant). Non-atom `on_conflict:` values (a
       `{:replace, …}` tuple, a keyword-list update, a query) are left untouched.
 
-  **Pipe-aware.** The `:persistence` rewrite is one **stage chain** over the value the write would
-  have persisted — `change()`, then setting `:repo`, then the `apply_action` call — rendered
-  from a single table (`stages/3`) in the form used in the source. Piped
-  (`cs |> Repo.insert()`) the value is the `|>` left-hand side, so the chain is emitted as a
-  right-nested pipe stage Mutare splices onto it — `cs |> (change() |> Map.replace!(…) |>
-  apply_action(:insert))`, which flattens to the intended pipe. Unpiped the same stages nest as
-  calls around the written argument, *not* as a pipe on it: `|>` binds tighter than most
-  operators, so piping an argument that is itself an operator expression would re-associate it,
-  where a nested call's parentheses cannot. The `:on_conflict` swap rebuilds the call in its
-  written form via `Mutare.Calls`, so it is pipe-position-agnostic.
+  The `:persistence` rewrite is one **stage chain** over the value the write would have
+  persisted — `change()`, then setting `:repo`, then the `apply_action` call — from a single
+  table (`stages/3`), nested as calls around the written argument, *not* as a pipe on it: `|>`
+  binds tighter than most operators, so piping an argument that is itself an operator expression
+  would re-associate it, where a nested call's parentheses cannot. A piped write
+  (`cs |> Repo.insert()`) reaches the plugin as the direct call `Repo.insert(cs)`, so the same
+  chain serves both spellings; core keeps the pipe the user wrote in the report. The
+  `:on_conflict` swap rebuilds the call in its written form via `Mutare.Calls`.
   """
 
   alias Mutare.Ecto.{AST, Context, RepoCall, Tag}
@@ -138,11 +136,11 @@ defmodule Mutare.Ecto.RepoWrite do
   @doc "RepoWrite mutations for `node` as `:persistence`/`:on_conflict` tags, or `[]`."
   @spec mutations(Macro.t(), Context.t()) :: [Tag.t()]
   @impl Mutare.Ecto.SubMutator
-  def mutations(node, %Context{pipe_mode: pipe_mode} = context) do
+  def mutations(node, %Context{} = context) do
     case RepoCall.resolve(node, context) do
       {repo, fun, args, rebuild} ->
         # mutare:ignore[operand_swap] family order is irrelevant — mutations are consumed as a set
-        persistence(fun, args, pipe_mode, repo) ++ on_conflict(fun, args, rebuild)
+        persistence(fun, args, repo) ++ on_conflict(fun, args, rebuild)
 
       nil ->
         []
@@ -150,10 +148,10 @@ defmodule Mutare.Ecto.RepoWrite do
   end
 
   # `:persistence` — replace the write with the non-persisting `apply_action` chain.
-  defp persistence(fun, args, pipe_mode, repo) do
+  defp persistence(fun, args, repo) do
     case @writes[fun] do
       nil -> []
-      {action_fun, action} -> wrap(chain(stages(action_fun, action, repo), args, pipe_mode))
+      {action_fun, action} -> wrap(chain(stages(action_fun, action, repo), args))
     end
   end
 
@@ -164,10 +162,9 @@ defmodule Mutare.Ecto.RepoWrite do
   #
   #     value |> Ecto.Changeset.change() |> Map.replace!(:repo, Repo) |> <apply the action>
   #
-  # Each stage builds itself from its *leading* arguments — `[]` as a pipe stage, `[value]` as a
-  # nested call — so `chain/3` renders this one table into either written form and the piped and
-  # unpiped mutants cannot drift apart. Why `change/1` normalises the value, why the `:repo` stamp
-  # is here at all, and what stays unreproduced: the moduledoc.
+  # Each stage builds itself from its *leading* arguments (`[value]`, the nested call it wraps),
+  # so `chain/2` folds this one table around the written argument. Why `change/1` normalises the
+  # value, why the `:repo` stamp is here at all, and what stays unreproduced: the moduledoc.
   defp stages(action_fun, action, repo) do
     [
       fn lead -> changeset(:change, lead) end,
@@ -194,18 +191,13 @@ defmodule Mutare.Ecto.RepoWrite do
     fn lead -> changeset(action_fun, lead ++ [literal(action)]) end
   end
 
-  # Piped: the value is the pipe's LHS (not in `args`), so fold the stages into a right-nested pipe
-  # that Mutare splices onto it. Unpiped: fold them into calls nested around the written argument
-  # (never a pipe on it — see the moduledoc). Either way the write's opts are dropped; a
-  # non-persisting stub takes none.
-  defp chain([head | rest], _args, :piped),
-    do: Enum.reduce(rest, head.([]), fn stage, acc -> {:|>, [], [acc, stage.([])]} end)
-
-  defp chain(stages, [arg | _opts], :unpiped),
+  # Fold the stages into calls nested around the written argument (never a pipe on it — see the
+  # moduledoc). The write's opts are dropped; a non-persisting stub takes none.
+  defp chain(stages, [arg | _opts]),
     do: Enum.reduce(stages, arg, fn stage, acc -> stage.([acc]) end)
 
-  # A write with no visible argument has no value to restate: no mutant, rather than a broken one.
-  defp chain(_stages, [], :unpiped), do: nil
+  # A write with no argument has no value to restate: no mutant, rather than a broken one.
+  defp chain(_stages, []), do: nil
 
   # `fn changeset -> apply_action(changeset, <the action Ecto would have chosen>) end`. Ecto routes
   # `insert_or_update` on the changeset data's `__meta__` state — `:loaded` is an existing row (an

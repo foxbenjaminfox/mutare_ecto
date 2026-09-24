@@ -35,7 +35,7 @@ defmodule Mutare.Ecto.Host.Condition do
   #
   # ## The argument shapes
   #
-  # `locate/3` finds the predicate a host owns in a condition macro's argument list
+  # `locate/2` finds the predicate a host owns in a condition macro's argument list
   # (`where`/`having`, and the free-standing `dynamic/1,2` that shares their shape), and reads the
   # binding declaration written before it. Consumed by `Mutare.Ecto.Host` (the weave — the
   # declaration goes through `Bindings.declarations/1`, and `kind` picks the delivery),
@@ -45,7 +45,7 @@ defmodule Mutare.Ecto.Host.Condition do
   # It also locates the other two places a host-owned predicate sits — a `from`'s condition
   # clauses (`from_indices/1`) and a standalone join's `on:` (`locate_on/1`) — so that the weave
   # (`Mutare.Ecto.Host`) and the whole-call fallback (`Mutare.Ecto.StaticCondition`) enumerate
-  # the same conditions and split them by delivery alone. Like `locate/3`, each reports a
+  # the same conditions and split them by delivery alone. Like `locate/2`, each reports a
   # predicate only, with its kind.
   #
   # ### Located by position, never searched for
@@ -73,7 +73,7 @@ defmodule Mutare.Ecto.Host.Condition do
   #     free-standing `dynamic` — unless it is a root pin, whose weave re-declares nothing.
   #
   # Under any of the three, only a predicate is located. A keyword filter, **with or without a
-  # binding list before it** (`where(q, col: v)`, `where(q, [p], col: v)`), makes `locate/3`
+  # binding list before it** (`where(q, col: v)`, `where(q, [p], col: v)`), makes `locate/2`
   # report `nil`, and the trailing pairs route `{:keyword, …}` instead
   # (`Mutare.Ecto.Host.Routing`). A top-level `^cond` pin **is** a predicate, of kind
   # `:root_pin`: its own SQL catalog is empty, but its interior is sub-contracted to core
@@ -84,7 +84,6 @@ defmodule Mutare.Ecto.Host.Condition do
   alias Mutare.Ecto.AST.{BindingList, KeywordList}
   alias Mutare.Ecto.AST.KeywordList.Entry
   alias Mutare.Ecto.Host.JoinOn
-  alias Mutare.Mutator
 
   @enforce_keys [:node, :index, :kind, :declaration]
   defstruct [:node, :index, :kind, :declaration]
@@ -131,7 +130,7 @@ defmodule Mutare.Ecto.Host.Condition do
   @type predicate_kind :: :expression | :root_pin
 
   @typedoc """
-  Which macro's argument layout `locate/3` reads: a query-threading condition macro, or
+  Which macro's argument layout `locate/2` reads: a query-threading condition macro, or
   `dynamic` (`Mutare.Ecto.Surface`'s macro kinds of those names).
   """
   @type macro_kind :: :condition | :dynamic
@@ -159,24 +158,22 @@ defmodule Mutare.Ecto.Host.Condition do
   end
 
   @doc """
-  The host-owned predicate in the visible `args` of a `macro_kind` macro called under
-  `pipe_mode`, or `nil` when the call carries none: a keyword filter (`shape/1`), or an arity
+  The host-owned predicate in the `args` of a `macro_kind` macro (a piped query included, at
+  position 0), or `nil` when the call carries none: a keyword filter (`shape/1`), or an arity
   the macro does not have (an argless `q |> where()` — core still routes it, the macro
   registering with `:any` arity — or a lone `where(q)`; `host_test.exs`'s totality cases pin
   both).
   """
-  @spec locate(macro_kind(), [Macro.t()], Mutator.pipe_mode()) :: t() | nil
-  def locate(macro_kind, args, pipe_mode) do
-    with {declaration_position, condition_position} <-
-           layout(macro_kind, Mutator.effective_arity(args, pipe_mode)),
-         index when is_integer(index) <- Mutator.visible_index(condition_position, pipe_mode),
+  @spec locate(macro_kind(), [Macro.t()]) :: t() | nil
+  def locate(macro_kind, args) do
+    with {declaration_position, index} <- layout(macro_kind, length(args)),
          node = Enum.at(args, index),
          {:predicate, kind} <- shape(node) do
       %__MODULE__{
         node: node,
         index: index,
         kind: kind,
-        declaration: declaration(declaration_position, args, pipe_mode)
+        declaration: declaration(declaration_position, args)
       }
     else
       _ -> nil
@@ -228,13 +225,13 @@ defmodule Mutare.Ecto.Host.Condition do
     end
   end
 
-  # The effective positions `{declaration | nil, condition}` of a call of that effective arity.
-  # The declaration slot sits right after the arguments that precede it in the macro's head —
-  # the threaded query for a condition macro, nothing for `dynamic`.
-  defp layout(macro_kind, effective_arity) do
+  # The positions `{declaration | nil, condition}` of a call of that arity. The declaration slot
+  # sits right after the arguments that precede it in the macro's head — the threaded query for
+  # a condition macro, nothing for `dynamic`.
+  defp layout(macro_kind, arity) do
     leading = leading_arguments(macro_kind)
 
-    case effective_arity - leading do
+    case arity - leading do
       1 -> {nil, leading}
       2 -> {leading, leading + 1}
       _ -> nil
@@ -244,13 +241,11 @@ defmodule Mutare.Ecto.Host.Condition do
   defp leading_arguments(:condition), do: 1
   defp leading_arguments(:dynamic), do: 0
 
-  defp declaration(nil, _args, _pipe_mode), do: :omitted
+  defp declaration(nil, _args), do: :omitted
 
-  defp declaration(position, args, pipe_mode) do
-    with index when is_integer(index) <- Mutator.visible_index(position, pipe_mode),
-         {:ok, list} <- args |> Enum.at(index) |> BindingList.parse() do
-      list
-    else
+  defp declaration(position, args) do
+    case args |> Enum.at(position) |> BindingList.parse() do
+      {:ok, list} -> list
       _ -> :uninterpretable
     end
   end

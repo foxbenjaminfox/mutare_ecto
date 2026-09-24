@@ -1039,7 +1039,7 @@ defmodule Mutare.Ecto.HostTest do
   describe "totality — a degenerate zero-arg macro yields no hosted target" do
     # Core routes an argless `q |> limit()` / `q |> where()` like any other call (the macros
     # register with `:any` arity), so `Host.Routing` sees an empty `args` for real. It stays
-    # total: `query_threading_route/2` routes no argument, `Condition.locate/3` reads the lone
+    # total: `query_threading_route/1` routes no argument, `Condition.locate/2` reads the lone
     # threaded query as an arity the macro does not have (the next test), and the
     # trailing-argument readers get `List.last([])`, which is `nil` — no keyword filter, no
     # literal bound. Routing never marks such a call `:hosted` (there is no literal bound, no
@@ -1058,20 +1058,17 @@ defmodule Mutare.Ecto.HostTest do
       end
     end
 
-    # The clause-level pins for `Host.Condition.locate/3`: an arity the macro does not have
+    # The clause-level pins for `Host.Condition.locate/2`: an arity the macro does not have
     # (no argument at all, a lone query) and a binding list with nothing after it
     # (`where(q, [p])`, which Ecto itself rejects) are all "no hosted condition" — never a
     # `%Condition{}` with a `nil` node or an out-of-range index.
-    test "locate/3 is nil for a degenerate arity and for a trailing binding list" do
-      assert Host.Condition.locate(:condition, [], :unpiped) == nil
-      assert Host.Condition.locate(:condition, [], :piped) == nil
-      assert Host.Condition.locate(:dynamic, [], :unpiped) == nil
-      assert Host.Condition.locate(:dynamic, [], :piped) == nil
+    test "locate/2 is nil for a degenerate arity and for a trailing binding list" do
+      assert Host.Condition.locate(:condition, []) == nil
+      assert Host.Condition.locate(:dynamic, []) == nil
 
       [q, binding_list] = Sourceror.parse_string!("f(q, [p])") |> elem(2)
-      assert Host.Condition.locate(:condition, [q], :unpiped) == nil
-      assert Host.Condition.locate(:condition, [q, binding_list], :unpiped) == nil
-      assert Host.Condition.locate(:condition, [binding_list], :piped) == nil
+      assert Host.Condition.locate(:condition, [q]) == nil
+      assert Host.Condition.locate(:condition, [q, binding_list]) == nil
     end
   end
 
@@ -1183,7 +1180,7 @@ defmodule Mutare.Ecto.HostTest do
       end
       """
 
-      # The stage-drop mutants (collapse a stage to `identity()`) still fire; the guard is that the
+      # The stage-drop mutants (collapse a stage to its query) still fire; the guard is that the
       # `on:` weaves no `^dynamic` — were it hosted, a `dynamic(` would appear in the metamutant.
       refute metamutant(src) =~ "dynamic("
       assert_compiles(src)
@@ -1622,51 +1619,54 @@ defmodule Mutare.Ecto.HostTest do
     end
   end
 
-  describe "Host.Condition.locate/3 — the declaration's three outcomes" do
+  describe "Host.Condition.locate/2 — the declaration's three outcomes" do
     alias Mutare.Ecto.AST.BindingList
 
-    defp call_args(code), do: code |> Sourceror.parse_string!() |> elem(2)
+    # A snippet's arguments; a `q |> macro(…)` snippet is read as the direct call core hands
+    # over, the query argument 0.
+    defp call_args(code) do
+      case Sourceror.parse_string!(code) do
+        {:|>, _meta, [query, {_name, _, args}]} -> [query | args]
+        {_name, _meta, args} -> args
+      end
+    end
 
     test "written: the slot before the condition, by position, in the direct and piped forms" do
       assert %Host.Condition{index: 2, declaration: %BindingList{entries: [{:positional, _}]}} =
-               Host.Condition.locate(:condition, call_args("where(q, [p], p.x > 1)"), :unpiped)
+               Host.Condition.locate(:condition, call_args("where(q, [p], p.x > 1)"))
 
-      assert %Host.Condition{index: 1, declaration: %BindingList{entries: [{:named, :post, _}]}} =
-               Host.Condition.locate(:condition, call_args("where([post: p], p.x > 1)"), :piped)
+      assert %Host.Condition{index: 2, declaration: %BindingList{entries: [{:named, :post, _}]}} =
+               Host.Condition.locate(:condition, call_args("q |> where([post: p], p.x > 1)"))
 
       assert %Host.Condition{index: 1, declaration: %BindingList{entries: [{:indexed, _, 0}]}} =
-               Host.Condition.locate(:dynamic, call_args("dynamic([{p, 0}], p.x > 1)"), :unpiped)
+               Host.Condition.locate(:dynamic, call_args("dynamic([{p, 0}], p.x > 1)"))
     end
 
     test "written empty is a declaration of nothing, not an omitted one" do
       assert %Host.Condition{index: 2, declaration: %BindingList{entries: []}} =
-               Host.Condition.locate(
-                 :condition,
-                 call_args("where(q, [], as(:p).x > 1)"),
-                 :unpiped
-               )
+               Host.Condition.locate(:condition, call_args("where(q, [], as(:p).x > 1)"))
     end
 
     test "omitted: the arity says no declaration was written" do
       assert %Host.Condition{index: 1, declaration: :omitted} =
-               Host.Condition.locate(:condition, call_args("where(q, as(:p).x > 1)"), :unpiped)
+               Host.Condition.locate(:condition, call_args("where(q, as(:p).x > 1)"))
+
+      assert %Host.Condition{index: 1, declaration: :omitted} =
+               Host.Condition.locate(:condition, call_args("q |> where(as(:p).x > 1)"))
 
       assert %Host.Condition{index: 0, declaration: :omitted} =
-               Host.Condition.locate(:condition, call_args("where(as(:p).x > 1)"), :piped)
-
-      assert %Host.Condition{index: 0, declaration: :omitted} =
-               Host.Condition.locate(:dynamic, call_args("dynamic(as(:p).x > 1)"), :unpiped)
+               Host.Condition.locate(:dynamic, call_args("dynamic(as(:p).x > 1)"))
     end
 
     test "uninterpretable: written, but unread — and never reported as omitted" do
       for code <- ["where(q, [{p, index}], p.x > 1)", "where(q, bindings, p.x > 1)"] do
         assert %Host.Condition{index: 2, declaration: :uninterpretable} =
-                 Host.Condition.locate(:condition, call_args(code), :unpiped)
+                 Host.Condition.locate(:condition, call_args(code))
       end
 
-      # A piped `dynamic`'s declaration is the pipe's hidden left side: written, but unseen.
-      assert %Host.Condition{index: 0, declaration: :uninterpretable} =
-               Host.Condition.locate(:dynamic, call_args("dynamic(p.x > 1)"), :piped)
+      # A piped `dynamic`'s declaration is the piped value: written, and read like any other.
+      assert %Host.Condition{index: 1, declaration: :uninterpretable} =
+               Host.Condition.locate(:dynamic, call_args("bindings |> dynamic(p.x > 1)"))
     end
 
     test "Bindings.declarations/1 keeps the three apart" do
@@ -1744,31 +1744,25 @@ defmodule Mutare.Ecto.HostTest do
       end
     end
 
-    test "route_arguments/2 uses the same source treatment for from and composable stages" do
+    test "route_arguments/1 uses the same source treatment for from and composable stages" do
       alias Mutare.CallRouting.{ArgumentRoutes, Call}
 
+      # A piped stage reaches the classifier as the direct call, its source argument 0.
       piped_call = fn name, args, left ->
-        Call.new(
-          {name, [], args},
-          Ecto.Query,
-          name,
-          {:piped, Sourceror.parse_string!(left)},
-          fn new_name, new_args -> {new_name, [], new_args} end
-        )
+        args = [Sourceror.parse_string!(left) | args]
+
+        Call.new({name, [], args}, Ecto.Query, name, fn new_name, new_args ->
+          {new_name, [], new_args}
+        end)
       end
 
       [clauses] = Sourceror.parse_string!("from(as: :post, where: as(:post).x > 1)") |> elem(2)
-      from_routes = Host.Routing.route_arguments(piped_call.(:from, [clauses], "Post"), %{})
-      assert ArgumentRoutes.piped(from_routes) == :raw
-      assert ArgumentRoutes.visible(from_routes) == [{:keyword, [:raw, :hosted]}]
+      from_routes = Host.Routing.route_arguments(piped_call.(:from, [clauses], "Post"))
+      assert ArgumentRoutes.treatments(from_routes) == [:raw, {:keyword, [:raw, :hosted]}]
 
       [bindings, cond] = Sourceror.parse_string!("where([p], p.x > 1)") |> elem(2)
-
-      where_routes =
-        Host.Routing.route_arguments(piped_call.(:where, [bindings, cond], "query"), %{})
-
-      assert ArgumentRoutes.piped(where_routes) == :expression
-      assert ArgumentRoutes.visible(where_routes) == [:raw, :hosted]
+      where_routes = Host.Routing.route_arguments(piped_call.(:where, [bindings, cond], "query"))
+      assert ArgumentRoutes.treatments(where_routes) == [:expression, :raw, :hosted]
     end
   end
 
@@ -1776,17 +1770,14 @@ defmodule Mutare.Ecto.HostTest do
   # shape failures easy to diagnose without manufacturing resolver metadata or bypassing the
   # public transform for mutation delivery.
 
-  describe "treatments/3 — per-argument treatment" do
-    # The classifier takes the resolved macro name, visible args, and pipe-left identity (what core reads
-    # off a `Mutare.CallRouting.Call`); a snippet's own head and args stand in for them here, and
-    # a `q |> macro(…)` snippet supplies `{:piped, left}` — its visible args exclude the query, as core's do.
+  describe "treatments/2 — per-argument treatment" do
+    # The classifier takes the resolved macro name and the call's arguments (what core reads off
+    # a `Mutare.CallRouting.Call`); a snippet's own head and args stand in for them here, and a
+    # `q |> macro(…)` snippet is read as the direct call core hands over — the query argument 0.
     defp routing(code) do
       case Sourceror.parse_string!(code) do
-        {:|>, _meta, [query, {name, _, args}]} ->
-          Host.Routing.treatments(name, args, {:piped, query})
-
-        {name, _meta, args} ->
-          Host.Routing.treatments(name, args, :unpiped)
+        {:|>, _meta, [query, {name, _, args}]} -> Host.Routing.treatments(name, [query | args])
+        {name, _meta, args} -> Host.Routing.treatments(name, args)
       end
     end
 
@@ -1821,21 +1812,20 @@ defmodule Mutare.Ecto.HostTest do
                [:raw, {:keyword, [:raw, {:keyword, [:interpolated]}, :raw]}]
     end
 
-    test "a piped from routes its one visible argument — the clause list — per clause" do
-      # `Post |> from(…)`: the source is the `|>` left side (routed `:raw` by `route_arguments/2`,
-      # not here — `treatments/3` covers the visible arguments only), so the clause list is
-      # visible argument zero and routes exactly as the direct form's second argument does: the
-      # named-binding condition `:hosted`, the literal bound `:hosted`, the shorthand per pair,
-      # the data keys raw. Argless, there is nothing to route.
+    test "a piped from routes exactly as the direct form does" do
+      # `Post |> from(…)` is the direct call `from(Post, …)`: the source routes `:raw` by its
+      # shape and the clause list per clause — the named-binding condition `:hosted`, the
+      # literal bound `:hosted`, the shorthand per pair, the data keys raw. Argless, the source
+      # is the one argument.
       assert routing("Post |> from(as: :post, where: as(:post).views > 1, limit: 5)") ==
-               [{:keyword, [:raw, :hosted, :hosted]}]
+               [:raw, {:keyword, [:raw, :hosted, :hosted]}]
 
       assert routing("Post |> from(where: [active: true], select: [:id])") ==
-               [{:keyword, [{:keyword, [:interpolated]}, :raw]}]
+               [:raw, {:keyword, [{:keyword, [:interpolated]}, :raw]}]
 
-      assert routing("Post |> from()") == []
+      assert routing("Post |> from()") == [:raw]
       # A non-keyword clause argument stays raw, as in the direct form.
-      assert routing("Post |> from(^clauses)") == [:raw]
+      assert routing("Post |> from(^clauses)") == [:raw, :raw]
     end
 
     test "from keyword form hosts a top-level interpolation (its interior is sub-contracted)" do
@@ -1865,7 +1855,7 @@ defmodule Mutare.Ecto.HostTest do
       assert routing("where(query, [post: p], p.x == p.y)") == [:expression, :raw, :hosted]
       assert routing("where(query, [u, post: p], p.x == u.y)") == [:expression, :raw, :hosted]
       # piped form — the binding list is the first *argument* (the query is the `|>` LHS).
-      assert routing("q |> where([u], u.x == u.y)") == [:raw, :hosted]
+      assert routing("q |> where([u], u.x == u.y)") == [:expression, :raw, :hosted]
       # a nested pipe as the first arg is the threaded query, like any expression.
       assert routing("where(q |> sub(), [u], u.x == u.y)") == [:expression, :raw, :hosted]
       # a `...`-anchored binding list is recognized too, so its condition routes `:hosted`.
@@ -1899,9 +1889,9 @@ defmodule Mutare.Ecto.HostTest do
     end
 
     test "condition macro with no condition after the binding list hosts nothing" do
-      # By arity, `Host.Condition.locate/3` reads a binding-only call's lone list as the condition,
+      # By arity, `Host.Condition.locate/2` reads a binding-only call's lone list as the condition,
       # not a declaration — and a list is never a hosted condition, so no position is `:hosted`.
-      assert routing("q |> where([u])") == [:raw]
+      assert routing("q |> where([u])") == [:expression, :raw]
       assert routing("where(q, [u])") == [:expression, :raw]
     end
 
@@ -1927,12 +1917,11 @@ defmodule Mutare.Ecto.HostTest do
       assert routing("limit(query, n + 1)") == [:expression, :raw]
     end
 
-    test "a piped clause macro's visible first argument is not the query" do
-      # `q |> limit(10)`: the `10` is a bound — hosted for the pin-only bump, never `:expression`
-      # (the threaded query is the `|>` left side, routed separately); the pipe mode says so, not
-      # the argument's shape.
-      assert routing("q |> limit(10)") == [:hosted]
-      assert routing("q |> order_by(asc: :name)") == [:raw]
+    test "a piped clause macro routes as its direct twin" do
+      # `q |> limit(10)` is `limit(q, 10)`: the query `:expression`, the `10` a bound — hosted
+      # for the pin-only bump.
+      assert routing("q |> limit(10)") == [:expression, :hosted]
+      assert routing("q |> order_by(asc: :name)") == [:expression, :raw]
     end
 
     test "join routes its options per-pair, hosting the on: condition in direct and piped forms" do
@@ -1943,7 +1932,7 @@ defmodule Mutare.Ecto.HostTest do
                [:expression, :raw, :raw, :raw, {:keyword, [:hosted]}]
 
       assert routing("q |> join(:inner, [u], p in Post, on: p.user_id == u.id)") ==
-               [:raw, :raw, :raw, {:keyword, [:hosted]}]
+               [:expression, :raw, :raw, :raw, {:keyword, [:hosted]}]
 
       # An empty binding list is a written declaration too (the on-condition references no prior
       # binding); the trailing `on:` still routes per-pair with its `:hosted` condition, and the
@@ -2072,8 +2061,9 @@ defmodule Mutare.Ecto.HostTest do
       assert mm =~ ~r/where:\s*\^case/
       assert mm =~ ~r/limit:\s*\^case/
       assert mm =~ ~r/offset:\s*\^case/
-      # baseline + 3 drop mutants — no per-bump (or per-swap) copies.
-      assert length(String.split(mm, "from(")) - 1 == 4
+      # baseline + 3 drop mutants + the function's uninstrumented copy (kept beside the
+      # instrumented code for mutants elsewhere) — no per-bump (or per-swap) copies.
+      assert length(String.split(mm, "from(")) - 1 == 5
 
       assert_compiles(src)
     end

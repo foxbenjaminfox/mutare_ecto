@@ -39,7 +39,7 @@ defmodule Mutare.Ecto.Host do
   `delivery/4` decides, for the host and the rebuild alike, which conditions those are.
   """
 
-  alias Mutare.Ecto.{Bound, Context, StaticCondition, Surface}
+  alias Mutare.Ecto.{Bound, Context, Resolved, StaticCondition, Surface}
   alias Mutare.Ecto.AST.{FromCall, KeywordList, QueryCall}
   alias Mutare.Ecto.AST.KeywordList.Entry
   alias Mutare.Ecto.Host.{Bindings, Catalog, Condition, Target}
@@ -55,14 +55,15 @@ defmodule Mutare.Ecto.Host do
   @spec host(Call.t(), Mutare.Mutator.context()) :: [Target.t()]
   def host(%Call{node: node}, context) do
     context = Context.new(context)
+    node = Resolved.call(node, context.core)
 
     case QueryCall.parse(node) do
       %QueryCall{name: :from} = call ->
         from_targets(FromCall.parse(call), context)
 
-      %QueryCall{name: macro, args: args, pipe_mode: pipe_mode} ->
+      %QueryCall{name: macro, args: args} ->
         case Surface.macro_kind(macro) do
-          :condition -> condition_target(macro, args, pipe_mode, context)
+          :condition -> condition_target(macro, args, context)
           :join -> join_target(args, context)
           :clause -> bound_target(macro, args)
           # Defensively dead: `hosted_macro_names/0` subscribes only the kinds above. A new kind
@@ -139,9 +140,9 @@ defmodule Mutare.Ecto.Host do
   # The woven `dynamic/2` re-declares the written binding list — or an empty one when none was
   # written (`Mutare.Ecto.Host.Condition`'s three outcomes; under the third, uninterpretable,
   # only a root pin is woven, and every other condition is rebuilt).
-  defp condition_target(macro, args, pipe_mode, context) do
+  defp condition_target(macro, args, context) do
     with %Condition{node: condition, index: index, kind: kind, declaration: declaration} <-
-           Condition.locate(:condition, args, pipe_mode),
+           Condition.locate(:condition, args),
          {:woven, bindings} <-
            StaticCondition.delivery(macro, condition, kind, Bindings.declarations(declaration)),
          [_ | _] = mutants <- Catalog.mutants(condition, context) do

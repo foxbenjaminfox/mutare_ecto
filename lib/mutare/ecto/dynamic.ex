@@ -44,7 +44,7 @@ defmodule Mutare.Ecto.Dynamic do
   call** rebuilt with one condition position swapped — the plugin's own catalog mutants as
   `Mutare.Ecto.Tag`s, the island mutants returned by core as producer-attributed
   `Mutare.Mutator.Mutation`s — or `[]` when there is nothing to mutate. The condition is located
-  by `Mutare.Ecto.Host.Condition.locate/3`, exactly as for a standalone `where` — but its
+  by `Mutare.Ecto.Host.Condition.locate/2`, exactly as for a standalone `where` — but its
   declaration is never read: the whole-call rebuild re-emits the written list as it stands, so
   even one the plugin cannot interpret (which a woven `dynamic/2` could not re-declare) is
   mutated here.
@@ -57,10 +57,10 @@ defmodule Mutare.Ecto.Dynamic do
   # `:dynamic` macro kind, and `Mutare.Ecto.Surface` registers that kind on exactly the `:dynamic`
   # name — so `call.name` is always `:dynamic` by the time this runs.
   def mutations(
-        %QueryCall{name: :dynamic, args: args, pipe_mode: pipe_mode} = call,
+        %QueryCall{name: :dynamic, args: args} = call,
         %Context{config: config} = context
       ) do
-    case Condition.locate(:dynamic, args, pipe_mode) do
+    case Condition.locate(:dynamic, args) do
       %Condition{node: condition, index: index} ->
         # The shared in-fragment catalog (`Mutare.Ecto.Host.Catalog.own_catalog/2`), each tag
         # rebuilt into the whole call; its anchor survives the rebuild (`Tag.map_node/2`). For a

@@ -9,24 +9,24 @@ defmodule Mutare.Ecto.RepoAggregate do
 
   Matched by resolving the call's module to one of the configured `repo:` modules (so the direct
   `MyApp.Repo.aggregate`, an aliased `Repo.aggregate`, and an imported form all match) and
-  the function to `aggregate`. **Pipe-aware**: `q |> Repo.aggregate(:sum, :col)` carries the
-  queryable as the piped left-hand side, so the aggregate atom sits one position earlier in
-  the visible args — `Mutare.Mutator.visible_index/2` recovers where.
+  the function to `aggregate`. A piped `q |> Repo.aggregate(:sum, :col)` reaches the plugin as
+  the direct call, its queryable at argument 0, so the aggregate atom sits at the same position
+  in both spellings.
   """
 
   alias Mutare.Ecto.{Aggregate, AST, Context, RepoCall, Tag}
 
   @behaviour Mutare.Ecto.SubMutator
 
-  # The aggregate's effective argument position: aggregate(queryable, agg, field) → 1.
+  # The aggregate's argument position: aggregate(queryable, agg, field) → 1.
   @agg_position 1
 
   @doc "Aggregate-swap mutations for a `Repo.aggregate/3` node as labelled `:aggregate` tags, or `[]`."
   @spec mutations(Macro.t(), Context.t()) :: [Tag.t()]
   @impl Mutare.Ecto.SubMutator
-  def mutations(node, %Context{pipe_mode: pipe_mode} = context) do
+  def mutations(node, %Context{} = context) do
     case RepoCall.resolve(node, context) do
-      {_repo, :aggregate, args, rebuild} -> swap(args, rebuild, pipe_mode)
+      {_repo, :aggregate, args, rebuild} -> swap(args, rebuild)
       _ -> []
     end
   end
@@ -34,12 +34,11 @@ defmodule Mutare.Ecto.RepoAggregate do
   # The swap as an `:aggregate` tag labelled with the **source** function name (`"sum"`), so
   # `# mutare:ignore[ecto:sum]` names just this swap — matching the query-side aggregate family's
   # labelling.
-  defp swap(args, rebuild, pipe_mode) do
-    with index when is_integer(index) <- Mutare.Mutator.visible_index(@agg_position, pipe_mode),
-         node when not is_nil(node) <- Enum.at(args, index),
+  defp swap(args, rebuild) do
+    with node when not is_nil(node) <- Enum.at(args, @agg_position),
          source = AST.atom_value(node),
          to when not is_nil(to) <- Aggregate.swap(source) do
-      mutated = rebuild.(:aggregate, List.replace_at(args, index, Mutare.AST.literal(to)))
+      mutated = rebuild.(:aggregate, List.replace_at(args, @agg_position, Mutare.AST.literal(to)))
       [Tag.new(:aggregate, mutated, to_string(source))]
     else
       _ -> []

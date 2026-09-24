@@ -12,8 +12,9 @@ defmodule Mutare.Ecto.ClauseDrop do
   A surviving mutant means **no test exercises** what that clause contributes — the primary
   motivating mutation for a query builder (NOTES "ClauseDrop: the pipe form was the common one").
 
-  Delivery is the shared pipe-aware stage drop (`Mutare.Ecto.StageDrop`): piped, the stage becomes
-  `Function.identity/1`; written directly, the call collapses to its query argument. The call is
+  Delivery is the shared stage drop (`Mutare.Ecto.StageDrop`): the call collapses to its query
+  argument, in both spellings — a pipe stage reaches the plugin as the direct call it is sugar
+  for, and the report keeps the pipe the user wrote (`q |> where(…)` → `q`). The call is
   resolved through `Mutare.Calls`, so it matches the direct, aliased, and (common)
   `import Ecto.Query` forms alike, and never a same-named user function.
 
@@ -67,10 +68,9 @@ defmodule Mutare.Ecto.ClauseDrop do
 
   @doc """
   Stage-drop mutations for an `Ecto.Query` clause macro as tags, or `[]`.
-  Pipe-aware: the `pipe_mode` from `context` determines identity-vs-first-argument delivery.
   """
   @spec mutations(Macro.t(), Context.t()) :: [Mutare.Ecto.Tag.t()]
   @impl Mutare.Ecto.SubMutator
-  def mutations(node, %Context{pipe_mode: pipe_mode}),
-    do: StageDrop.mutations(node, Ecto.Query, &Surface.stage_drop_family/1, pipe_mode)
+  def mutations(node, %Context{}),
+    do: StageDrop.mutations(node, Ecto.Query, &Surface.stage_drop_family/1)
 end

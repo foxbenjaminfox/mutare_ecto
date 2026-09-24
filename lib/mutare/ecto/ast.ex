@@ -10,7 +10,7 @@ defmodule Mutare.Ecto.AST do
   # `{:__block__, meta, [value]}`.
   #
   # Emitted module references are always **`Elixir.`-prefixed** (`absolute_alias/1`/
-  # `absolute_call/3`: `Elixir.Ecto.Changeset.apply_action`, `Elixir.Function.identity`). The
+  # `absolute_call/3`: `Elixir.Ecto.Changeset.apply_action`, `Elixir.Map.replace!`). The
   # metamutant recompiles in the *author's* module, whose aliases the plugin doesn't control — a
   # bare `Ecto.Changeset` there can be retargeted by a nested `defmodule Ecto.Changeset` or a
   # plain `alias Foo, as: Ecto`, silently redirecting the call — and only the absolute name

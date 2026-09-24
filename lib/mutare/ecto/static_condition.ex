@@ -132,10 +132,10 @@ defmodule Mutare.Ecto.StaticCondition do
   end
 
   # `Mutare.Ecto.Dispatcher` calls this for the `:from`, `:condition`, and `:join` kinds only.
-  def mutations(%QueryCall{name: macro, args: args, pipe_mode: pipe_mode} = call, context) do
+  def mutations(%QueryCall{name: macro, args: args} = call, context) do
     case Surface.macro_kind(macro) do
       :condition ->
-        condition_mutations(call, Condition.locate(:condition, args, pipe_mode), context)
+        condition_mutations(call, Condition.locate(:condition, args), context)
 
       :join ->
         join_mutations(call, Condition.locate_on(args), context)
