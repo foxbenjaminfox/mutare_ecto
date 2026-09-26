@@ -88,8 +88,8 @@ defmodule Mutare.Ecto.Dispatcher do
   defp query_macro_mutations(_kind, _node, _context), do: []
 
   # A registered Ecto.Query macro (`:condition`/`:clause`/`:join`/`:dynamic` in `Surface`) always
-  # takes the branch above: `Mutare.Transform.Resolve` stamps macro identity for the whole tree
-  # before `mutate/2` ever runs, reading the same alias/import resolution `Calls.resolved_call/1`
+  # takes the branch above: core stamps the offered call's macro identity before `mutate/2`
+  # runs, reading the same alias/import resolution `Calls.resolved_call/1`
   # reads here — so the two classifications can never disagree for a macro this plugin registers.
   # A call that resolves to `Ecto.Query` and lands here is therefore always a function the plugin
   # doesn't route as a macro (`Ecto.Query.exclude/2`, `subquery/1`, …); `QueryTerminal` owns those.

@@ -9,10 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Breaking: Mutare 0.4.0 or newer is required** (`{:mutare, "~> 0.4.0"}`). Mutare now hands
+- **Breaking: Mutare 0.4.1 or newer is required** (`{:mutare, "~> 0.4.1"}`). Mutare now hands
   a pipe stage to the plugin as the direct call it is sugar for, so the plugin reads a query
   source, a changeset, or a `Repo` write's value at argument 0 in both spellings, and the
   `pipe_left`/`pipe_mode` reading of 0.3.1 is gone.
+- Query regions resolve through the public `Mutare.Analyze.resolve/2` API. Core reroutes
+  rebuilt calls, so clause drops no longer need plugin-side routing-metadata repair.
 - **A dropped pipe stage collapses to what flows into it.** `q |> where([u], u.active)` with
   the `where` dropped now reads `q |> where([u], u.active)` → `q` in the report, where it read
   `where([u], u.active)` → `Elixir.Function.identity()`; a stage in the middle of a chain is
@@ -32,6 +34,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`popular = from(…); … |> with_cte("popular", as: ^popular)`): the plugin's own SQL mutants
   inside it and Mutare's families on its Elixir. An `as:` written as SQL (`fragment("…")`) and
   the other options stay as written.
+
+### Fixed
+
+- Nested query macros no longer suppress the surrounding fallback condition mutants, such
+  as comparison and aggregate swaps in a `having` containing `subquery(from(…))`, through
+  Mutare 0.4.1's fix for macros inside raw/hosted syntax.
 
 ## [0.2.1] - 2026-09-19
 

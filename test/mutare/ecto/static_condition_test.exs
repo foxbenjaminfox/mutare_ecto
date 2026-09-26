@@ -145,6 +145,32 @@ defmodule Mutare.Ecto.StaticConditionTest do
   end
 
   describe "every subquery-bearing having shape builds under every mutant" do
+    test "a nested aliased query preserves the outer comparison and aggregate mutants" do
+      threshold = ~s|subquery(Query.from(t in "thresholds", select: min(t.value)))|
+      condition = "max(p.views) > #{threshold}"
+
+      for query <- [
+            ~s|Query.from(p in "posts", having: #{condition}, select: p.id)|,
+            ~s|Query.having("posts", [p], #{condition})|,
+            ~s'"posts" |> Query.having([p], #{condition})'
+          ] do
+        src = """
+        defmodule Q do
+          import Ecto.Query
+          alias Ecto.Query
+          def q, do: #{query}
+        end
+        """
+
+        sites = assert_builds(src, & &1.q())
+        diffs = Enum.map(sites, &{&1.original_code, &1.mutated_code})
+
+        assert {condition, "max(p.views) >= #{threshold}"} in diffs
+        assert {"max(p.views)", "min(p.views)"} in diffs
+        assert {"min(t.value)", "max(t.value)"} in diffs
+      end
+    end
+
     test "the standalone having/3" do
       src = """
       defmodule Q do

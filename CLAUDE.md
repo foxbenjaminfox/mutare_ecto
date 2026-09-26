@@ -73,8 +73,9 @@ analyzes `lib/`, not the test-only fixtures.
 
 ## The `mutare` dependency and the `../mutare` checkout
 
-`mix.exs` targets `{:mutare, "~> 0.3.1"}`, which adds syntax-preserving pipe-stage delivery
-to `Call.pipe_left`. The lockfile pins the published core package.
+`mix.exs` targets `{:mutare, "~> 0.4.1"}`, with direct-call pipe delivery, public region
+resolution (`Mutare.Analyze.resolve/2`), and core-owned rerouting of rebuilt calls.
+The lockfile pins the published core package.
 The sibling `../mutare` checkout is where to read core callback contracts. To develop against
 unreleased core, temporarily use `{:mutare, path: "../mutare"}` and restore the published
 dependency before committing. When a task seems to need core machinery that doesn't exist yet,
@@ -162,7 +163,8 @@ Each row is role + the rule(s) that module is the **home** for.
 | `dispatcher.ex` | unpacks core's context into `%Context{}`, classifies a node once, and invokes only the relevant sub-mutators |
 | `surface.ex` | the one descriptor table for every owned query macro / `from` key (routing kind, capabilities, drop families, last-wins repetition); home of the macro-kind taxonomy and its dispatch-exhaustiveness rule (`macro_kinds/0`) |
 | `sub_mutator.ex` | the `mutations(node, %Context{})` behaviour every producer implements |
-| `context.ex` | `%Context{config, pipe_mode, mutators}`, the plugin's view of core's callback context; home of the unpack-once boundary rule (`new/1` is the only reader of core's map, and the struct is total, so no producer guards a context shape) |
+| `context.ex` | `%Context{config, core, mutators}`, the plugin's view of core's callback context; home of the unpack-once boundary rule (`new/1` is the only reader of core's map, and the struct is total, so no producer guards a context shape) |
+| `resolved.ex` | resolves the call's raw/hosted regions through `Mutare.Analyze.resolve/2` at the dispatcher and host boundaries so the SQL catalogs can identify nested calls and read their routes |
 | `tag.ex` | `%Tag{family, node, label, attribution}` — the one shape every producer emits; `to_mutation/1`; home of what the `attribution` field means |
 | `host.ex` | selector-host coordinator (bucket 3): a hosted call → `Target`s |
 | `host/routing.ex` | `route_arguments/2`, the per-argument classifier; home of the routing rationale (`:hosted`/`:expression`/`:skip`/`:interpolated`/`{:keyword, …}`) |

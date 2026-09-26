@@ -1,27 +1,23 @@
 defmodule Mutare.Ecto.Resolved do
   @moduledoc false
-  # Core (Mutare 0.4.0) leaves a `:raw`/`:hosted` argument exactly as written: nothing inside it is
+  # Core leaves a `:raw`/`:hosted` argument exactly as written: nothing inside it is
   # resolved or routed — no pipe is desugared, a query macro nested there carries no identity and
   # an author's `:skip` macro no route. The plugin's SQL catalogs read both off the stamps
   # (`Mutare.Ecto.Walk`'s author-macro rule, `Mutare.Ecto.Subquery`'s inline `from`,
   # `Mutare.Ecto.Aggregate`'s ownership rule, `Mutare.Ecto.Fragment`'s nullness), so at its two
   # core boundaries (`Mutare.Ecto.Dispatcher.mutations/2`, `Mutare.Ecto.Host.host/2`) the plugin
-  # resolves those regions itself — in the lexical environment core retained at the call for its
-  # islands (`context.resolution`, the same one `Mutare.Analyze.expression_mutations/3` resolves
-  # an island in), through core's own resolver, so a nested call is stamped exactly as core
-  # stamps one in an expression region. A region core has already resolved (`:expression`, an
-  # `:interpolated` value) is left alone. A context that carries no environment (a producer
-  # driven directly, in a test) leaves the call as it is.
+  # resolves those regions through `Mutare.Analyze.resolve/2`, passing the callback context
+  # unchanged so core uses the enclosing call's lexical environment. A region core has already
+  # resolved (`:expression`, an `:interpolated` value) is left alone. A context that carries no
+  # environment (a producer driven directly, in a test) leaves the call as it is.
 
   alias Mutare.Calls
   alias Mutare.Ecto.AST.KeywordList
-  alias Mutare.Transform.Resolve
 
   @doc """
   The routed call `node` with its written regions resolved in `core`'s environment — through
   every registered macro nested inside them, so an inline `from` under `exists(…)` or
-  `subquery(…)` is a query call to the catalogs, as it was when core stamped those regions
-  itself.
+  `subquery(…)` is a query call to the catalogs.
   """
   @spec call(Macro.t(), Mutare.Mutator.context()) :: Macro.t()
   def call({head, meta, args} = node, core) when is_list(args) do
@@ -37,7 +33,7 @@ defmodule Mutare.Ecto.Resolved do
   def call(node, _core), do: node
 
   defp argument(arg, treatment, core) when treatment in [:raw, :hosted],
-    do: arg |> Resolve.expression(core) |> nested(core)
+    do: arg |> Mutare.Analyze.resolve(core) |> nested(core)
 
   defp argument(arg, {:keyword, treatments}, core) do
     case KeywordList.nonempty(arg) do

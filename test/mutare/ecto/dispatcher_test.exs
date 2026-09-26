@@ -12,7 +12,7 @@ defmodule Mutare.Ecto.DispatcherTest do
   # regardless of import vs. full qualification) — so these tests, despite the shape, do not
   # actually exercise the `call_mutations/3` fallback clause. They still pin real, useful
   # behavior (a fully-qualified macro call is mutated exactly like an imported one), so they stay.
-  # `Mutare.Transform.Resolve` stamps macro identity for the whole tree before any mutator runs, off
+  # Core stamps the offered call's macro identity before any mutator runs, off
   # the same alias/import resolution `Calls.resolved_call/1` reads, so the two classifications can
   # never disagree for a macro this plugin registers — the fallback's `:condition`/`:clause`/
   # `:join`/`:dynamic` branches were confirmed unreachable and deleted (along with the identical

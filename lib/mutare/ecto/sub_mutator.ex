@@ -22,7 +22,7 @@ defmodule Mutare.Ecto.SubMutator do
   # (`Clause`, `Query`, `Dynamic`, `BindingReorder`) instead receive the already-normalized
   # `Mutare.Ecto.AST.QueryCall.t()` Dispatcher builds via `QueryCall.parse/1` before dispatch, since
   # every registered query macro is guaranteed to carry its macro-identity stamp by the time
-  # `mutate/2` runs (`Mutare.Transform.Resolve` stamps the whole tree first) — so those four never
+  # `mutate/2` runs (core resolves the offered call first) — so those four never
   # need to re-parse a raw node themselves.
   #
   # Every sub-mutator declares `@behaviour Mutare.Ecto.SubMutator` directly — there is nothing to
