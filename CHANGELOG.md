@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-26
+
 ### Changed
 
 - **Breaking: Mutare 0.4.1 or newer is required** (`{:mutare, "~> 0.4.1"}`). Mutare now hands
@@ -270,7 +272,8 @@ Initial release.
   templates, interval units, cast types, field/binding names) are never
   mutated, so these positions cannot cause the single metamutant build to fail.
 
-[Unreleased]: https://github.com/foxbenjaminfox/mutare_ecto/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/foxbenjaminfox/mutare_ecto/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/foxbenjaminfox/mutare_ecto/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/foxbenjaminfox/mutare_ecto/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/foxbenjaminfox/mutare_ecto/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/foxbenjaminfox/mutare_ecto/compare/v0.1.0...v0.1.1

@@ -37,7 +37,7 @@ Add both Mutare and this plugin to the app you want to test, in `:dev`/`:test`:
 defp deps do
   [
     {:mutare, "~> 0.4.1"},
-    {:mutare_ecto, "~> 0.2"}
+    {:mutare_ecto, "~> 0.3"}
   ]
 end
 ```
