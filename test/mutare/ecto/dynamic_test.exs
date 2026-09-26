@@ -252,8 +252,8 @@ defmodule Mutare.Ecto.DynamicTest do
       end
       """
 
-      %Mutare.Transform.Result{mutants: sites} =
-        Mutare.transform_string(src,
+      sites =
+        sites(src,
           mutators: [{Mutare.Ecto, repo: MyApp.Repo, families: [:comparison]}],
           expand_uses: true
         )

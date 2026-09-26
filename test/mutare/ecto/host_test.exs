@@ -2090,9 +2090,7 @@ defmodule Mutare.Ecto.HostTest do
 end
 
 defmodule Mutare.Ecto.HostTest.Runtime do
-  # Sync: this module runs a metamutant, and the selector that picks its branch is global
-  # (`Mutare.Ecto.SelectorSyncTest`).
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
   import Mutare.Ecto.TestSupport
 
@@ -2155,8 +2153,7 @@ defmodule Mutare.Ecto.HostTest.Runtime do
 
     {[woven], sites} = Mutare.Test.compile_metamutant(source_for.("Q"), mutators([]))
 
-    # The baseline is pinned, not assumed: the ambient selection is a global another test may
-    # have left at a mutant, and an unpinned `woven.q()` would then build that mutant's query.
+    # Select the baseline explicitly for the comparison with the untouched source.
     baseline = Mutare.Test.with_active_mutant(0, fn -> woven.q() end)
     assert inspect(baseline) == inspect(original.q())
 

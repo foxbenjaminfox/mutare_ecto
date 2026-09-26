@@ -1,6 +1,5 @@
 defmodule Mutare.Ecto.StaticConditionTest do
-  # `async: false`: `assert_builds/3` flips the VM-wide selector (`Mutare.Test.with_active_mutant/2`).
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
   import Ecto.Query
   import Mutare.Ecto.TestSupport

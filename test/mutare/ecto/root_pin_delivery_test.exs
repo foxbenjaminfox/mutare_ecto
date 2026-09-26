@@ -1,7 +1,5 @@
 defmodule Mutare.Ecto.RootPinDeliveryTest do
-  # Sync, though DB-free: the parity test below reads the global active-mutant selector at
-  # baseline, which core's flip helpers require `async: false` for (`Mutare.Test`).
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
   import Mutare.Ecto.TestSupport
 

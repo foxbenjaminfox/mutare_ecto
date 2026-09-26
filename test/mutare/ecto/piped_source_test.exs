@@ -202,7 +202,7 @@ defmodule Mutare.Ecto.PipedSourceTest do
 end
 
 defmodule Mutare.Ecto.PipedSourceTest.Runtime do
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
   import Mutare.Ecto.TestSupport
 

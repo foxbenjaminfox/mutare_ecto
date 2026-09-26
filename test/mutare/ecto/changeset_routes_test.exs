@@ -147,10 +147,8 @@ defmodule Mutare.Ecto.ChangesetRoutesTest do
 end
 
 defmodule Mutare.Ecto.ChangesetRoutesTest.Runtime do
-  # Sync: this module runs a metamutant, and the selector it flips is global
-  # (`Mutare.Ecto.SelectorSyncTest`). These are the routes observed live: what the positions
-  # core keeps do at runtime.
-  use ExUnit.Case, async: false
+  # The routes observed live: what the positions core keeps do at runtime.
+  use ExUnit.Case, async: true
 
   @atom Mutare.Mutators.AtomLiteral
   @plugin {Mutare.Ecto, repo: MyApp.Repo}

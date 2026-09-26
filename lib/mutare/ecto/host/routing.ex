@@ -137,11 +137,9 @@ defmodule Mutare.Ecto.Host.Routing do
   # `with_cte(query, name, as: ^cte)`'s options route per pair: a **pinned** `as:` value is an
   # Elixir expression computing the CTE's query — routed `:interpolated`, so Mutare mutates it
   # where it is written exactly as it does the same query bound to a variable beforehand
-  # (`popular = from(…); … |> with_cte("popular", as: ^popular)`), and reads the calls inside
-  # it, which is what lets the stage's own mutants — its drop — be delivered: Mutare withholds
-  # every mutant of a call whose written regions hold a routed macro it could not read (an
-  # inline `^from(…)` under a raw option). An `as:` written as SQL (`fragment("…")`) and every
-  # other option (`materialized:`, `operation:`) stay raw.
+  # (`popular = from(…); … |> with_cte("popular", as: ^popular)`).
+  # An `as:` written as SQL (`fragment("…")`) and every other option (`materialized:`,
+  # `operation:`) stay raw.
   defp route_cte_options(routing, args) do
     case args |> List.last() |> KeywordList.nonempty() do
       %KeywordList{entries: entries} ->

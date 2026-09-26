@@ -309,7 +309,8 @@ Each is the conclusion; the canonical statement is in the named module.
   boundary/NULL rows chosen so each family is distinguishable).
 - Because `Code.compile_string` is global, Mutare's public test helpers compile fixtures inside
   uniquely named wrapper modules so async tests defining the same module name do not race.
-- The active-mutant selector is global too, and nothing wraps *that*: a test that **runs** a
-  metamutant (`compile_metamutant`, `observe_mutant`, `with_active_mutant`, `assert_builds`, the
-  semantic harness) lives in an `async: false` module — a `…Test.Runtime` sibling in the same file — and pins the
-  baseline it reads. `selector_sync_test.exs` enforces it and states why.
+- Mutare's test helpers isolate the active-mutant selector per test-module execution, so
+  DB-free runtime tests may be async. A direct transform must first call
+  `Mutare.Test.isolate_selector/0` (`TestSupport.sites/2` does); see
+  `selector_isolation_test.exs`. The semantic and spelling suites remain serial because they
+  share registered Repos and seeded databases.

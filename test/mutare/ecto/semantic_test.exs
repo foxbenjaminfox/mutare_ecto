@@ -7,8 +7,8 @@
 # once per enabled engine. SQLite is always on (self-contained, the default). Postgres is added when
 # `MUTARE_TEST_POSTGRES` is set, as a second module running the identical fixtures against
 # `MyApp.PgRepo` and a live server — so a single `mix test` covers one engine or two. Each module is
-# `async: false`: they share the process-global `:mutare_active` selection switch, so their tests
-# must not interleave.
+# `async: false`: the semantic and spelling suites share each engine's registered Repo and seeded
+# database, so their Repo setup, queries, writes and teardown must not interleave.
 defmodule Mutare.Ecto.SemanticTest.SQLite do
   use ExUnit.Case, async: false
   use Mutare.Ecto.SemanticCases, repo: MyApp.Repo

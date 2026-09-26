@@ -1298,9 +1298,7 @@ defmodule Mutare.Ecto.SubcontractTest do
 end
 
 defmodule Mutare.Ecto.SubcontractTest.Runtime do
-  # Sync: this module runs a metamutant, and the selector it flips is global
-  # (`Mutare.Ecto.SelectorSyncTest`).
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
   import Mutare.Ecto.TestSupport
 

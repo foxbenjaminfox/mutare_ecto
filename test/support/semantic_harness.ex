@@ -13,13 +13,10 @@ defmodule Mutare.Ecto.SemanticHarness do
   # The engine follows the repo (`repo.__adapter__()`); nothing here reads a global "which DB" flag
   # beyond `postgres_enabled?/0`, which only gates *whether* the Postgres module is defined.
   #
-  # The flow mirrors a real `mix mutare` run end to end:
+  # Core's test helpers compile the metamutant and select on a key private to the test module:
   #
-  #   1. `Mutare.transform_string/2` rewrites the source into the metamutant (every mutant behind the
-  #      `case :persistent_term.get(:mutare_active, 0)` selector), returning the `Mutare.Site`s.
-  #   2. `Code.compile_string/1` compiles that metamutant into a live module (the single build).
-  #   3. `under/3` sets `:mutare_active` to a chosen mutant id and builds + runs the query — exactly
-  #      what Mutare's runner does per mutant, minus the suite.
+  #   1. `compile/2` transforms and compiles the source, returning the fixture module and Sites.
+  #   2. `under/3` selects a mutant on that same key, then builds and runs the query.
   #
   # Baseline is id `0` (the selector's default), so `under(repo, 0, …)` runs the *original* query and
   # `under(repo, id, …)` the mutant; a semantic test asserts the two result sets differ in the
@@ -48,9 +45,8 @@ defmodule Mutare.Ecto.SemanticHarness do
   runtime cost — out of it. `start_supervised!/1` ties the Repo to ExUnit's supervisor, so it lives
   exactly as long as the module's tests and stops cleanly afterward; `on_exit/1` then restores the
   `Application` env this set (and, on SQLite, removes the temp files), leaving no VM state behind.
-  The process-global selection switch needs no cleanup of its own: `under/3` runs every activation
-  through `Mutare.Test.with_active_mutant/2`, which restores the prior active id in an `after` block,
-  so no test leaks one (and the at-most residual value is baseline `0`, i.e. unset).
+  `under/3` runs every activation through `Mutare.Test.with_active_mutant/2`, which restores the
+  prior active id in an `after` block.
 
   The **engine follows `repo.__adapter__()`**: a SQLite repo stands up a fresh temp file, a Postgres
   repo connects to a running server. Either way seeding is `MyApp.Seed.populate!/1`, which reads the

@@ -30,6 +30,8 @@ defmodule Mutare.Ecto.TestSupport do
   are threaded as in `diffs/2`.
   """
   def sites(source, opts \\ []) do
+    Mutare.Test.isolate_selector()
+
     %Mutare.Transform.Result{mutants: sites} =
       Mutare.transform_string(
         source,
@@ -62,8 +64,7 @@ defmodule Mutare.Ecto.TestSupport do
   and returns the queryable (`& &1.q()` — a stage-drop mutant may hand back the bare source, so
   any `Ecto.Queryable` passes); no Repo is involved, so this stays DB-free.
 
-  Flips the VM-wide selector (`Mutare.Test.with_active_mutant/2`), so the calling test module
-  must be `async: false`.
+  Uses core's test-module selector isolation; DB-free callers may run asynchronously.
   """
   def assert_builds(source, build, opts \\ []) when is_function(build, 1) do
     {modules, sites} =
