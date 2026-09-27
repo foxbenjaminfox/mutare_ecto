@@ -73,8 +73,8 @@ defmodule Mutare.Ecto.Clause do
   defp capability_mutations(:join_type, call, _position, config),
     do: qualifier_swaps(call, config)
 
-  defp capability_mutations(capability, call, position, _config),
-    do: mutate_last(call, &ValueCatalog.mutants(capability, &1, position))
+  defp capability_mutations(capability, %QueryCall{name: macro} = call, position, _config),
+    do: mutate_last(call, &ValueCatalog.mutants(capability, &1, position, macro))
 
   # The shape the last-argument clause-macro mutators share: split the mutated **last argument**
   # off (the ordering / selector — `init` keeps the binding list when one is written), map it to

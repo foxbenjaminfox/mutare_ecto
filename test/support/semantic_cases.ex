@@ -168,6 +168,22 @@ defmodule Mutare.Ecto.SemanticCases do
         end
       end
 
+      # No post has id 99, so the inner query's input is empty. Ungrouped, `coalesce(0, sum(…))`
+      # still aggregates it into one row; the drop, `select: 0`, projects no rows.
+      test "audit: EXISTS observes a projection mutant that removes the only aggregate" do
+        source =
+          audit_source("""
+          from u in User, where: exists(from p in Post, where: p.id == 99,
+            select: coalesce(0, sum(p.views))), select: u.id, order_by: u.id
+          """)
+
+        {baseline, mutant} =
+          H.assert_delivery(@repo, source, {"coalesce(0, sum(p.views))", "0"}, [:coalesce])
+
+        assert baseline == [1, 2, 3, 4, 5, 6]
+        assert mutant == []
+      end
+
       # Dropping the effective `limit: 5` uncovers the overridden `limit: 0`; dropping a pinned
       # limit lifts a runtime zero. Both change existence.
       test "audit: an EXISTS limit drop is observed when what it uncovers is zero" do

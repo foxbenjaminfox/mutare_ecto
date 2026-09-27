@@ -288,4 +288,97 @@ defmodule Mutare.Ecto.DslAuditRegressionTest do
     assert drops.(~s|from r in "audit_rows", limit: 3, limit: 5, select: r.id|) == []
     assert drops.(~s|from r in "audit_rows", limit: 5, select: r.id|) == []
   end
+
+  test "a keyword-filter value in an inline subquery fills a comparison operand" do
+    for predicate <- ["exists(inner)", "p.id in subquery(inner)"],
+        {pair, kept} <- [
+          # Ecto builds `r.value == nil` from the drop and rejects it at expansion.
+          {"value: coalesce(nil, r.value)", nil},
+          {"value: coalesce(r.value, 0)", {"coalesce(r.value, 0)", "r.value"}}
+        ] do
+      source =
+        fixture("""
+        from p in "outer_rows",
+          where: #{String.replace(predicate, "inner", ~s|from(r in "audit_rows", where: [#{pair}], select: r.id)|)},
+          select: p.id
+        """)
+
+      assert_native_builds(source)
+      assert_builds(source, & &1.q(), only([:coalesce]))
+
+      case kept do
+        nil -> assert ecto_diffs(source, only([:coalesce])) == []
+        {before, after_code} -> assert_rewrite(source, [:coalesce], before, after_code)
+      end
+    end
+  end
+
+  test "EXISTS keeps a projection mutant that removes the query's only aggregate" do
+    # Over an empty table the ungrouped aggregate is one row; its drop is none.
+    for {expression, coalesce, dropped} <- [
+          {"coalesce(nil, sum(r.value))", "coalesce(nil, sum(r.value))", "nil"},
+          {"coalesce(0, sum(r.value))", "coalesce(0, sum(r.value))", "0"},
+          # A pin names fields at the `select` root, so this one sits in a map.
+          {"%{n: coalesce(^override, count(r.id))}", "coalesce(^override, count(r.id))",
+           "^override"}
+        ] do
+      source =
+        fixture("""
+        override = 1
+        from p in "outer_rows",
+          where: exists(from r in "audit_rows", select: #{expression}),
+          select: p.id
+        """)
+
+      assert_native_builds(source)
+      assert_rewrite(source, [:coalesce], coalesce, dropped)
+      assert_builds(source, & &1.q(), only([:coalesce]))
+    end
+  end
+
+  test "EXISTS still prunes a projection mutant that keeps the query's aggregation" do
+    for inner <- [
+          # The kept operand is itself the aggregate.
+          ~s|from r in "audit_rows", select: coalesce(sum(r.value), 0)|,
+          # Another aggregate keeps the projection aggregating.
+          ~s|from r in "audit_rows", select: {sum(r.a), coalesce(0, sum(r.value))}|,
+          # The grouping fixes the row count.
+          ~s|from r in "audit_rows", group_by: r.a, select: coalesce(0, sum(r.value))|,
+          # A window's `sum` aggregates the window, not the query.
+          ~s|from r in "audit_rows", select: coalesce(0, over(sum(r.value)))|
+        ] do
+      source =
+        fixture(~s|from p in "outer_rows", where: exists(#{inner}), select: p.id|)
+
+      assert_native_builds(source)
+      assert ecto_diffs(source, only([:coalesce])) == []
+    end
+
+    # A same-arity swap keeps the aggregate.
+    source =
+      fixture(
+        ~s|from p in "outer_rows", where: exists(from r in "audit_rows", select: sum(r.value)), select: p.id|
+      )
+
+    assert ecto_diffs(source, only([:aggregate])) == []
+  end
+
+  test "a coalesce drop never leaves a pin where Ecto reads a pin as fields" do
+    for query <- [
+          ~s|from p in "audit_rows", select: coalesce(^x, p.value)|,
+          ~s|from p in "audit_rows", order_by: [asc: coalesce(^x, p.value)], select: p.id|,
+          ~s|"audit_rows" \|> order_by([p], coalesce(^x, p.value)) \|> select([p], p.id)|,
+          ~s|"audit_rows" \|> select([p], coalesce(^x, p.value))|,
+          ~s|from p in "audit_rows", select: over(sum(p.value), partition_by: coalesce(^x, p.a))|
+        ] do
+      source = fixture("x = :value\n#{query}")
+      assert ecto_diffs(source, only([:coalesce])) == []
+      assert_builds(source, & &1.q(), only([:coalesce]))
+    end
+
+    # Inside a map or an operator, the pin is a value again.
+    source = fixture(~s|x = 1\nfrom p in "audit_rows", select: %{v: coalesce(^x, p.value) + 1}|)
+    assert_rewrite(source, [:coalesce], "coalesce(^x, p.value)", "^x")
+    assert_builds(source, & &1.q(), only([:coalesce]))
+  end
 end

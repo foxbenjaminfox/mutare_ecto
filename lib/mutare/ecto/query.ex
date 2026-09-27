@@ -298,7 +298,8 @@ defmodule Mutare.Ecto.Query do
     KeywordList.flat_map(clauses, admit?, fn entry, index ->
       position = entry.key |> Surface.from_capabilities() |> ValueCatalog.position()
 
-      for %Tag{node: mutated} = tag <- ValueCatalog.mutants(capability, entry.value, position) do
+      for %Tag{node: mutated} = tag <-
+            ValueCatalog.mutants(capability, entry.value, position, entry.key) do
         %{
           tag
           | node: from |> FromCall.replace_clause(index, mutated) |> FromCall.to_ast(),

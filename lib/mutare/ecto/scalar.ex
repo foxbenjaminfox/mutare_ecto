@@ -44,8 +44,9 @@ defmodule Mutare.Ecto.Scalar do
   root position (`:ordering` for an `order_by` value — `Mutare.Ecto.ExpressionWalk.position/0`);
   a coalesce drop there is labelled `"coalesce_in_ordering"`.
   """
-  @spec swaps(Macro.t(), ExpressionWalk.position()) :: [Tag.t()]
-  def swaps(expr, position \\ :value), do: ExpressionWalk.walk(expr, &local/2, position)
+  @spec swaps(Macro.t(), ExpressionWalk.position(), Mutare.Ecto.Walk.slot()) :: [Tag.t()]
+  def swaps(expr, position \\ :value, root_slot \\ nil),
+    do: ExpressionWalk.walk(expr, &local/2, position, root_slot)
 
   @doc """
   The scalar mutants of one node — **no descent** — at its `t:Mutare.Ecto.ExpressionWalk.ctx/0`:
@@ -76,25 +77,37 @@ defmodule Mutare.Ecto.Scalar do
   # ## The drop must fit its parent's grammar
   #
   # A `coalesce` call is a valid operand wherever Ecto accepts an expression, but the drop
-  # replaces it with `x`, which is a different kind of expression. Two parents restrict what
-  # they accept, and Ecto rejects a violation when it expands the macro. That fails the whole
-  # metamutant build, not just one mutant:
+  # replaces it with `x`, which is a different kind of expression. Some slots restrict what they
+  # accept:
   #
   #   * a comparison operand may not be a literal `nil` ("comparison with nil is forbidden"), so
-  #     `coalesce(nil, p.v) > 0` has no `nil > 0` drop;
+  #     `coalesce(nil, p.v) > 0` has no `nil > 0` drop. A keyword-filter pair value is such an
+  #     operand too, because Ecto builds `field == value` from the pair, and its caller says so
+  #     (`Mutare.Ecto.Subquery`);
   #   * `type/2`'s first argument must be one of the forms its builder lists (`typable?/1`), so
-  #     `type(coalesce(p.v > 0, false), :boolean)` has no `type(p.v > 0, :boolean)` drop.
+  #     `type(coalesce(p.v > 0, false), :boolean)` has no `type(p.v > 0, :boolean)` drop;
+  #   * a pin standing as a whole clause expression (`select: ^fields`), as an `order_by`
+  #     entry (`[asc: ^field]`), or as a window option entry (`partition_by: ^fields`) names
+  #     fields or dynamics rather than a value. So `select: coalesce(^override, count(r.id))`
+  #     has no `select: ^override` drop.
   #
-  # The drop is withheld in those two slots: no written form there says "NULL where the
-  # fallback was". Ecto's other operand slots (probed on 3.14) accept whatever a `coalesce`
-  # argument can be. The slot reads through tuples, so an element of a compared tuple is
-  # treated as the comparison's operand. That withholds a `{coalesce(nil, a), b} > t` drop Ecto
-  # would accept, which is a conservative loss.
+  # Ecto rejects a violation when it expands the macro (which fails the whole metamutant build)
+  # or when it builds the query. The drop is withheld in those slots, because no written form
+  # there says "NULL where the fallback was". Ecto's other operand slots (probed on 3.14) accept
+  # whatever a `coalesce` argument can be. The slot reads through tuples and lists, so an
+  # element of a compared tuple counts as the comparison's operand, and an element of a `select`
+  # tuple counts as the `select` root. That withholds drops Ecto would accept
+  # (`{coalesce(nil, a), b} > t`, `select: {coalesce(^x, 0), p.id}`), a conservative loss.
   @comparisons [:==, :!=, :<, :>, :<=, :>=]
+  @pin_naming_clauses [:select, :select_merge, :order_by, :prepend_order_by]
 
   defp fits?(x, {comparison, 2, _index}) when comparison in @comparisons, do: not nil_literal?(x)
   defp fits?(x, {:type, 2, 0}), do: typable?(x)
+  defp fits?(x, {clause, 3, 2}) when clause in @pin_naming_clauses, do: not pin?(x)
+  defp fits?(x, {:over, 2, 1}), do: not pin?(x)
   defp fits?(_x, _slot), do: true
+
+  defp pin?(node), do: match?({:^, _meta, [_interior]}, node)
 
   defp nil_literal?({:__block__, _meta, [nil]}), do: true
   defp nil_literal?(node), do: is_nil(node)

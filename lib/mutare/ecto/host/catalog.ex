@@ -39,10 +39,12 @@ defmodule Mutare.Ecto.Host.Catalog do
   mutates in a hosted condition", shared by the host (`own/2`), `Mutare.Ecto.Dynamic` (whole-call
   rebuilds), and `Mutare.Ecto.Subquery` (recursed into a subquery's own `where`/`having` — a
   predicate, or one pair *value* of a keyword filter).
-  `config` threads to `Fragment` only for its `dialects:` gate.
+  `config` threads to `Fragment` only for its `dialects:` gate, and `root_slot` is the slot the
+  walked root fills (`Mutare.Ecto.Fragment.mutants/3`).
   """
-  @spec own_catalog(Macro.t(), Config.t()) :: [Tag.t()]
-  def own_catalog(condition, config), do: Fragment.mutants(condition, config)
+  @spec own_catalog(Macro.t(), Config.t(), Mutare.Ecto.Walk.slot()) :: [Tag.t()]
+  def own_catalog(condition, config, root_slot \\ nil),
+    do: Fragment.mutants(condition, config, root_slot)
 
   # Pure production: each catalog tag becomes `Mutation.tagged(node, [family | finer])`.
   defp own(condition, config), do: Enum.map(own_catalog(condition, config), &Tag.to_mutation/1)

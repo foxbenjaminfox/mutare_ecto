@@ -55,6 +55,20 @@ defmodule Mutare.Ecto.Aggregate do
   def swap(name), do: Map.get(@agg_swaps, name)
 
   @doc """
+  Whether `node` calls one of Ecto's aggregate functions: a rung of the ladder, or
+  `count/0,1,2`. The swap excludes `count`, but it still makes a query aggregate. An author macro
+  with one of these names does not count (the ownership rule below). `Mutare.Ecto.Subquery`
+  reads this to tell whether a projection mutant changes the query's aggregation.
+  """
+  @spec ecto_aggregate?(Macro.t()) :: boolean()
+  def ecto_aggregate?({f, _meta, [_arg]} = node) when f in @agg_funcs, do: not author_macro?(node)
+
+  def ecto_aggregate?({:count, _meta, args} = node) when is_list(args) and length(args) <= 2,
+    do: not author_macro?(node)
+
+  def ecto_aggregate?(_node), do: false
+
+  @doc """
   The aggregate swap of one node — **no descent** — the per-node hook `Mutare.Ecto.Fragment`
   applies as it walks a condition (its own traversal already handles descent; a condition is a
   `:value` position by construction).

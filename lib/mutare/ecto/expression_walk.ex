@@ -40,11 +40,12 @@ defmodule Mutare.Ecto.ExpressionWalk do
   Every single-point mutant of `expr` under the `local` per-node catalog, each anchored at the
   node it replaces (`Mutare.Ecto.Walk.mutants/4`). `position` is the root's position
   (`:ordering` for an `order_by` value); the walk refines it for the `order_by:` option of a
-  nested `over/2` window.
+  nested `over/2` window. `root_slot` is the slot the root fills (`nil` when the caller knows
+  none).
   """
-  @spec walk(Macro.t(), local(), position()) :: [Tag.t()]
-  def walk(expr, local, position \\ :value),
-    do: Walk.mutants(expr, {position, nil}, &children/2, local)
+  @spec walk(Macro.t(), local(), position(), Walk.slot()) :: [Tag.t()]
+  def walk(expr, local, position \\ :value, root_slot \\ nil),
+    do: Walk.mutants(expr, {position, root_slot}, &children/2, local)
 
   # An `over/2` window with written options — the idiomatic trailing keyword list, or the same
   # list written in brackets (`over(x, [order_by: …])`, which Sourceror wraps in a `__block__`;
@@ -59,12 +60,12 @@ defmodule Mutare.Ecto.ExpressionWalk do
   # Everything else descends structurally, each child inheriting the surrounding position.
   defp children(node, ctx), do: Walk.structural(node, ctx, &child_ctx/3)
 
-  # A window option's value is no call argument Ecto restricts, so it fills no slot.
+  # A window option's entries fill `over/2`'s option argument, where a pin names a field.
   defp over_children(node, ctx) do
     if Mutare.Calls.routed_treatments(node) == nil do
       Window.children(node, ctx, fn
-        :ordering, _ctx -> {:ordering, nil}
-        _role, {position, _slot} -> {position, nil}
+        :ordering, _ctx -> {:ordering, {:over, 2, 1}}
+        _role, {position, _slot} -> {position, {:over, 2, 1}}
       end)
     else
       Walk.structural(node, ctx, &child_ctx/3)

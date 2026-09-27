@@ -37,10 +37,15 @@ defmodule Mutare.Ecto.ValueCatalog do
   The tagged mutants of one clause `value` under a value `capability`, at `position`
   (`position/1`), as self-tagging `Mutare.Ecto.Tag`s — the caller rebuilds its own surrounding
   form around each. Only `:scalar` reads the position; an ordering flip or aggregate swap means
-  the same thing everywhere.
+  the same thing everywhere. `clause` names the clause the value belongs to (`:select`,
+  `:order_by`, …), whichever way it is written. The value is the expression argument of that
+  clause's macro, `{clause, 3, 2}`, the root slot `Mutare.Ecto.Scalar`'s grammar guard reads.
   """
-  @spec mutants(capability(), Macro.t(), ExpressionWalk.position()) :: [Tag.t()]
-  def mutants(:ordering, value, _position), do: Ordering.flips(value)
-  def mutants(:aggregate, value, _position), do: Aggregate.swaps(value)
-  def mutants(:scalar, value, position), do: Scalar.swaps(value, position)
+  @spec mutants(capability(), Macro.t(), ExpressionWalk.position(), atom() | nil) :: [Tag.t()]
+  def mutants(capability, value, position, clause \\ nil)
+  def mutants(:ordering, value, _position, _clause), do: Ordering.flips(value)
+  def mutants(:aggregate, value, _position, _clause), do: Aggregate.swaps(value)
+
+  def mutants(:scalar, value, position, clause),
+    do: Scalar.swaps(value, position, clause && {clause, 3, 2})
 end

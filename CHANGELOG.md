@@ -30,6 +30,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Withhold the `coalesce` drop where Ecto refuses the wrapped expression (a literal `nil`
   compared with `>`/`==`/…, a bare comparison as `type/2`'s first argument), which failed the
   whole metamutant build.
+- Withhold the `coalesce` drop where it would leave a literal `nil` as an inline subquery's
+  keyword-filter value (`where: [value: nil]`), or a pin where Ecto reads it as fields: a
+  `select`/`select_merge`/`order_by` expression, an `order_by` entry, or a window option
+  entry.
+- Keep an `EXISTS` projection mutant that removes the query's only aggregate:
+  `select: coalesce(0, sum(r.value))` is one row even over no input, while `select: 0` is none.
 - Beneath `is_nil`, mutate a window's partition and ordering keys: their values decide which
   rows the window function reads, even when their NULL-ness is unchanged.
 - Include terminal composed subquery stages, inline subquery bounds, and windowed value-query

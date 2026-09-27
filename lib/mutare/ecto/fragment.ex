@@ -211,10 +211,21 @@ defmodule Mutare.Ecto.Fragment do
   position — applied at every position the shared walk (`Mutare.Ecto.Walk`) traverses under this
   catalog's own descent rule (`children/2`), and narrowed beneath an `is_nil` to the mutants not
   known to keep the node's NULL-ness (`observable/3`).
+
+  `root_slot` is the call argument the walked root fills in the Ecto expression. It is `nil` for
+  a whole condition. A caller that walks part of a larger expression passes the slot that part
+  fills (`Mutare.Ecto.Subquery` does this for a keyword-filter pair value). A root of this walk
+  is not necessarily the root of the Ecto expression.
   """
-  @spec mutants(Macro.t(), Config.t()) :: [Tag.t()]
-  def mutants(condition, %Config{} = config),
-    do: Walk.mutants(condition, @root, &children/2, &observable(&1, &2, config))
+  @spec mutants(Macro.t(), Config.t(), Walk.slot()) :: [Tag.t()]
+  def mutants(condition, %Config{} = config, root_slot \\ nil),
+    do:
+      Walk.mutants(
+        condition,
+        {root_slot, :value},
+        &children/2,
+        &observable(&1, &2, config)
+      )
 
   @doc """
   Every Elixir **island** in `root`, as `t:island/0` triples — `interior` is
@@ -318,13 +329,13 @@ defmodule Mutare.Ecto.Fragment do
   defp children(node, ctx), do: Walk.structural(node, ctx, &child_ctx/3)
 
   # A window's function keeps the window's own context (`Mutare.Ecto.Window`); its options are
-  # observed by value whatever is observed of the window (see "What `is_nil` observes").
+  # observed by value whatever is observed of the window (see "What `is_nil` observes"). Every
+  # option entry fills `over/2`'s option argument, a structural position, so a literal or pin
+  # standing as a whole entry is structure. The operands of an entry's expression get their own
+  # slots from the walk.
   defp window_children(node, ctx) do
     if Mutare.Calls.routed_treatments(node) == nil do
-      Mutare.Ecto.Window.children(node, ctx, fn
-        :structural, _ctx -> {{:over, 2, 1}, :value}
-        _role, _ctx -> {nil, :value}
-      end)
+      Mutare.Ecto.Window.children(node, ctx, fn _role, _ctx -> {{:over, 2, 1}, :value} end)
     else
       Walk.structural(node, ctx, &child_ctx/3)
     end

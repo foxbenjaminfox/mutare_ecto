@@ -9,8 +9,9 @@ defmodule Mutare.Ecto.Subquery do
   # Observation policy for inline from:
   # * Filters, join kinds, combinations and binding reorders can change the row set in any mode.
   # * Projection swaps are observed in value mode. Under EXISTS they are pruned only where no
-  #   projected value can decide whether a row survives (`projection_observed?/1`). A
-  #   set-returning projection fragment remains a known limitation of this optimization.
+  #   projected value can decide whether a row survives (`projection_observed?/1`) and the
+  #   mutant keeps the query's aggregation (`changes_aggregation?/2`). A set-returning
+  #   projection fragment remains a known limitation of this optimization.
   # * Offsets can change existence. A literal limit's bump does when it crosses zero, and its
   #   drop does unless the limit it uncovers is known to match it in zero-ness
   #   (`limit_drop_observed?/1`). Value wrappers receive all bound drops and nonnegative bumps.
@@ -25,7 +26,7 @@ defmodule Mutare.Ecto.Subquery do
   # the inline-from equivalence pruning is not applied across that Elixir boundary.
 
   alias Mutare.Calls
-  alias Mutare.Ecto.{AST, Bound, Config, Fragment, Query, Surface, Tag}
+  alias Mutare.Ecto.{Aggregate, AST, Bound, Config, Fragment, Query, Surface, Tag, Walk}
   alias Mutare.Ecto.AST.{FromCall, KeywordList, QueryCall}
   alias Mutare.Ecto.AST.KeywordList.Entry
   alias Mutare.Ecto.Host.{Catalog, Condition}
@@ -216,7 +217,7 @@ defmodule Mutare.Ecto.Subquery do
   # of dynamics — structure the builder writes out, never a parameter.
   defp island_roots(%Entry{key: key, value: value}) do
     if Surface.from_clause?(key, :hosted),
-      do: catalog_roots(value),
+      do: for({root, role, _slot, rebuild} <- catalog_roots(value), do: {root, role, rebuild}),
       else: [{value, :structural, & &1}]
   end
 
@@ -233,8 +234,8 @@ defmodule Mutare.Ecto.Subquery do
   # nothing here.
   defp conditions(%FromCall{clauses: clauses} = from, config) do
     KeywordList.flat_map(clauses, &condition_clause?/1, fn entry, index ->
-      for {root, _pin_role, rebuild_value} <- catalog_roots(entry.value),
-          tag <- Catalog.own_catalog(root, config),
+      for {root, _pin_role, slot, rebuild_value} <- catalog_roots(entry.value),
+          tag <- Catalog.own_catalog(root, config, slot),
           do: Tag.map_node(tag, &rebuild_clause(from, index, rebuild_value.(&1)))
     end)
   end
@@ -320,14 +321,22 @@ defmodule Mutare.Ecto.Subquery do
   # Each root also says what a pin standing *as* it is to the query (`island_roots/1`): a pinned
   # predicate is a whole `:condition`; a pinned pair value (`where: [score: ^min]`) is the
   # `:value` its column is compared with.
+  #
+  # And each root says which call argument it fills (`t:Mutare.Ecto.Walk.slot/0`), because the
+  # catalog's grammar guards read the parent. A predicate fills none. A pair value fills the
+  # right operand of the `==` Ecto builds from the pair, and Ecto rejects a literal `nil` there
+  # just as it does in a written comparison. So `[value: coalesce(nil, r.value)]` gets no
+  # `[value: nil]` drop.
+  @pair_value_slot {:==, 2, 1}
+
   defp catalog_roots(value) do
     case Condition.shape(value) do
       {:predicate, _kind} ->
-        [{value, :condition, & &1}]
+        [{value, :condition, nil, & &1}]
 
       {:keyword_filter, pairs} ->
         for {%Entry{value: pair_value}, index} <- Enum.with_index(pairs.entries) do
-          {pair_value, :value,
+          {pair_value, :value, @pair_value_slot,
            &(pairs |> KeywordList.put_value(index, &1) |> KeywordList.to_ast())}
         end
 
@@ -343,10 +352,66 @@ defmodule Mutare.Ecto.Subquery do
     do: Query.mutations_for(from, config, @projection_producers, &(&1 in @projection_keys))
 
   defp projection(from, config, :existence) do
+    tags = projection(from, config, :value)
+
     if projection_mode(from, :existence) == :value,
-      do: projection(from, config, :value),
-      else: []
+      do: tags,
+      else: Enum.filter(tags, &changes_aggregation?(from, &1))
   end
+
+  # A projection mutant can change the row count without changing any projected value: it can
+  # change whether the query aggregates. Ungrouped, `select: coalesce(0, sum(r.value))` is one
+  # row even over an empty table, while its drop, `select: 0`, is a row per input row, so none.
+  # A same-arity swap (`sum` → `avg`, `+` → `-`) keeps the aggregates, and so does any mutant of
+  # a query whose `group_by` or `having` fixes its grouping.
+  #
+  # The mutant is kept unless it is known to keep the aggregation. The replaced node and its
+  # replacement (the tag's attribution) are compared by the aggregates each holds at query
+  # scope, counting a node that may hide one (`scoped_aggregates/1`). If they differ, the mutant
+  # is kept unless a written aggregate outside the replaced node keeps the projection
+  # aggregating either way.
+  defp changes_aggregation?(%FromCall{clauses: %{entries: entries}}, %Tag{
+         attribution: %{original: original, mutated: mutated}
+       }) do
+    grouped? = Enum.any?(entries, &(&1.key in [:group_by, :having, :or_having]))
+    removed = scoped_aggregates(original)
+    added = scoped_aggregates(mutated)
+
+    projected =
+      for %Entry{key: key, value: value} <- entries, key in @projection_keys, reduce: 0 do
+        count -> count + elem(scoped_aggregates(value), 0)
+      end
+
+    not grouped? and removed != added and projected - elem(removed, 0) == 0
+  end
+
+  defp changes_aggregation?(_from, _unattributed), do: true
+
+  # `{written, hidden}`: the Ecto aggregates in `node` that aggregate *this* query, and the
+  # nodes that may hide one (a pin, a `fragment`, an author macro). A window's function
+  # (`over/1,2`) aggregates the window, and a nested query aggregates itself, so neither is
+  # entered. An author macro's arguments are entered only under the walk's own rule.
+  defp scoped_aggregates(node) do
+    for {position, _ctx, _rebuild} <- Walk.positions(node, nil, &query_scope/2),
+        reduce: {0, 0} do
+      {written, hidden} ->
+        cond do
+          Aggregate.ecto_aggregate?(position) -> {written + 1, hidden}
+          hides_aggregate?(position) -> {written, hidden + 1}
+          true -> {written, hidden}
+        end
+    end
+  end
+
+  defp query_scope({:over, _meta, [_ | _]}, _ctx), do: []
+  defp query_scope({{:., _, [_, :over]}, _meta, _args}, _ctx), do: []
+  defp query_scope({head, _meta, [_arg]}, _ctx) when head in @wrappers, do: []
+  defp query_scope(node, ctx), do: Walk.structural(node, ctx)
+
+  defp hides_aggregate?({head, _meta, [_arg]}) when head in @wrappers, do: false
+  defp hides_aggregate?({:^, _meta, _args}), do: true
+  defp hides_aggregate?({:fragment, _meta, args}) when is_list(args), do: true
+  defp hides_aggregate?(node), do: Calls.routed_treatments(node) != nil
 
   defp projection_mode(from, :existence),
     do: if(projection_observed?(from), do: :value, else: :existence)

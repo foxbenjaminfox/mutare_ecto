@@ -159,6 +159,23 @@ While checking these cases, we found that SQLite ignores `DISTINCT` inside `EXIS
 `OFFSET` follows it, so the DISTINCT case is live only on Postgres. The rule stays, because
 standard SQL counts those rows.
 
+### Third audit: a walk's root is not the expression's root `[done]`
+
+The next audit found two more places where a shortcut dropped information:
+
+* A keyword-filter pair value walked as a separate root lost the `==` Ecto builds around
+  it, so the coalesce guard never saw a comparison. `Fragment.mutants/3` now takes the root's
+  slot from its caller. The same gap existed at clause roots: a coalesce drop to a bare pin at
+  a `select` or `order_by` root, or as a window option entry, reads as fields. Clause values
+  now start at the slot of their macro's expression argument, and window option entries at
+  `over/2`'s option argument.
+* "Projection mutation" does not imply "row-count preserving". A drop that removes the query's
+  only aggregate turns one row into a row per input row. Under EXISTS, a projection mutant is
+  now also kept when it may change the query's aggregation.
+
+The coalesce family's equivalence note ("differ only where x is NULL") still describes
+scalar evaluation only; an aggregate-removing drop is killed by an empty input instead.
+
 ### Spelling gaps: what the README table declares, and what closing each takes
 
 The README used to say "both query syntaxes are covered", which was true of the families and
