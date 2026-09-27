@@ -300,11 +300,27 @@ defmodule Mutare.Ecto.Fragment do
   defp children({:{}, _meta, _elements} = tuple, ctx), do: tuple_children(tuple, ctx)
   defp children({_left, _right} = tuple, ctx), do: tuple_children(tuple, ctx)
 
+  defp children({:over, _meta, [_, _]} = node, ctx), do: window_children(node, ctx)
+
+  defp children({{:., _, [_, :over]}, _, [_, _]} = node, ctx),
+    do: window_children(node, ctx)
+
   # Everything else — an operator/call (its arguments under the author-macro rule), a written
   # list, a Sourceror block — descends structurally; a `^` pin is a leaf (`Mutare.Ecto.Walk`).
   # That includes `is_nil`: its argument is ordinary syntax, entered like any other, under the
   # narrower observation `child_observed/3` hands it.
   defp children(node, ctx), do: Walk.structural(node, ctx, &child_ctx/3)
+
+  defp window_children(node, ctx) do
+    if Mutare.Calls.routed_treatments(node) == nil do
+      Mutare.Ecto.Window.children(node, ctx, fn
+        :structural, {_position, observed} -> {{:over, 2, 1}, observed}
+        _role, {_position, observed} -> {nil, observed}
+      end)
+    else
+      Walk.structural(node, ctx, &child_ctx/3)
+    end
+  end
 
   # The tuple rule's one decision (above): a cast spec is a leaf, a value tuple descends.
   defp tuple_children(tuple, {position, _observed} = ctx) do
@@ -550,7 +566,7 @@ defmodule Mutare.Ecto.Fragment do
   end
 
   defp local_islands({:|>, _meta, _args} = node, _position),
-    do: Subquery.source_islands(node)
+    do: Subquery.interior_islands(node, :value)
 
   # A bare inline subquery `from(...)` (a value-wrapper's argument, reached by the operand descent)
   # surfaces its interior condition pins through `Subquery`; other query stages relay their
@@ -678,6 +694,7 @@ defmodule Mutare.Ecto.Fragment do
   # positions — `count/2`'s modifier, and a template beside data arguments — so there the entry
   # only ever meets a written literal; a lone pinned `fragment(^keywords)` is Ecto's keyword
   # fragment, whose keys name fields.
+  defp structural_position?({:over, 2, 1}), do: true
   defp structural_position?({:fragment, _arity, 0}), do: true
   defp structural_position?({:datetime_add, 3, 2}), do: true
   defp structural_position?({:date_add, 3, 2}), do: true

@@ -128,10 +128,10 @@ defmodule Mutare.Ecto.Walk do
 
   def structural({:^, _meta, _args}, _ctx, _child_ctx), do: []
 
-  def structural({:|>, meta, [left, right]} = node, ctx, child_ctx) do
+  def structural({:|>, _meta, [_left, right]} = node, ctx, child_ctx) do
     if QueryCall.parse(right) do
       # The left side computes the query or declares its bindings, never a SQL operand.
-      [{right, child_ctx.(node, 1, ctx), &{:|>, meta, [left, &1]}}]
+      []
     else
       arguments(node, ctx, child_ctx)
     end

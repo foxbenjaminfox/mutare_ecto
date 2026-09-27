@@ -16,7 +16,7 @@ defmodule Mutare.Ecto.Config do
   # its report note, and the `finalize/2` funnel that applies this selection — is
   # `Mutare.Ecto.Equivalence`'s.
 
-  @valid_options ~w(repo families dialects)a
+  @valid_options ~w(repo families dialects condition_delivery)a
   @valid_dialects ~w(postgres mysql sqlite)a
 
   # Every SQL family the plugin can emit, the source of truth for `families: :all` and for
@@ -82,10 +82,11 @@ defmodule Mutare.Ecto.Config do
     ],
     opt_in: [:string_literal, :atom_literal, :boolean_literal]
 
-  @enforce_keys [:families, :dialects, :repo_keys]
-  defstruct [:families, :dialects, :repo_keys]
+  @enforce_keys [:families, :dialects, :repo_keys, :condition_delivery]
+  defstruct [:families, :dialects, :repo_keys, :condition_delivery]
 
   @type t :: %__MODULE__{
+          condition_delivery: :auto | :static,
           families: MapSet.t(atom()),
           dialects: MapSet.t(atom()),
           repo_keys: [Mutare.Calls.module_key()]
@@ -102,6 +103,7 @@ defmodule Mutare.Ecto.Config do
     validate_option_keys!(opts)
 
     %__MODULE__{
+      condition_delivery: opts |> Keyword.get(:condition_delivery, :auto) |> parse_delivery!(),
       families: opts |> Keyword.get(:families, :default) |> parse_families!(),
       dialects: opts |> Keyword.get(:dialects, []) |> parse_dialects!(),
       repo_keys: opts |> Keyword.get(:repo, []) |> parse_repo!()
@@ -161,6 +163,15 @@ defmodule Mutare.Ecto.Config do
                 inspect(@valid_options)
     end
   end
+
+  defp parse_delivery!(mode) when mode in [:auto, :static], do: mode
+
+  defp parse_delivery!(other),
+    do:
+      raise(
+        ArgumentError,
+        "Mutare.Ecto :condition_delivery must be :auto or :static, got: #{inspect(other)}"
+      )
 
   defp parse_dialects!(dialects) when is_list(dialects) do
     case dialects -- @valid_dialects do

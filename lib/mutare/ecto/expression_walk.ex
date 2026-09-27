@@ -21,7 +21,7 @@ defmodule Mutare.Ecto.ExpressionWalk do
   # author-macro rule, a 2-tuple's sides (a `{a, b}` select, a keyword/map pair), a list's
   # elements; a `^` pin is a leaf (its interior is ordinary Elixir, left to core).
 
-  alias Mutare.Ecto.{AST, Tag, Walk}
+  alias Mutare.Ecto.{Tag, Walk, Window}
 
   @typedoc "Where the walked expression sits: an ordinary value, or an ordering (sort-key) value."
   @type position :: :value | :ordering
@@ -42,7 +42,7 @@ defmodule Mutare.Ecto.ExpressionWalk do
   # An `over/2` window with written options — the idiomatic trailing keyword list, or the same
   # list written in brackets (`over(x, [order_by: …])`, which Sourceror wraps in a `__block__`;
   # `AST.unwrap_list/1` reads through either spelling): its `order_by:` option value is an
-  # ordering position — the window's sort key — refined by `window_option/1`.
+  # ordering position — the window's sort key — refined by `Mutare.Ecto.Window`.
   defp children({:over, _meta, [_window_expr, _options]} = node, position),
     do: over_children(node, position)
 
@@ -52,36 +52,14 @@ defmodule Mutare.Ecto.ExpressionWalk do
   # Everything else descends structurally, each child inheriting the surrounding position.
   defp children(node, position), do: Walk.structural(node, position)
 
-  # An `over/2` window's children: the window expression inherits the surrounding position (an
-  # `over` can itself sit in an ordering value); each option's *value* is a child in the position
-  # its key declares (the key names the option, and is never a position), spliced back under
-  # the list's written wrapper (`AST.rewrap_list/2`). `over` itself is a position too, like any
-  # node (no catalog matches it today; the walk stays uniform). A named window (`over(x, :w)`)
-  # has no option list and descends structurally.
-  defp over_children({form, meta, [window_expr, options]} = node, position) do
-    case AST.unwrap_list(options) do
-      nil ->
-        Walk.structural(node, position)
-
-      list ->
-        option_children =
-          for {option, index} <- Enum.with_index(list) do
-            {value, value_position, rewrap} = window_option(option)
-            splice = &AST.rewrap_list(options, List.replace_at(list, index, rewrap.(&1)))
-            {value, value_position, &{form, meta, [window_expr, splice.(&1)]}}
-          end
-
-        [{window_expr, position, &{form, meta, [&1, options]}} | option_children]
+  defp over_children(node, position) do
+    if Mutare.Calls.routed_treatments(node) == nil do
+      Window.children(node, position, fn
+        :ordering, _ -> :ordering
+        _role, inherited -> inherited
+      end)
+    else
+      Walk.structural(node, position)
     end
   end
-
-  # One window option pair: the `order_by:` value is the window's sort key — an ordering
-  # position — while `partition_by:`/`frame:` values are ordinary. A non-pair element (not
-  # writable in Ecto's window grammar, but the rule stays total) is walked as a value.
-  defp window_option({key, value}) do
-    position = if AST.atom_value(key) == :order_by, do: :ordering, else: :value
-    {value, position, &{key, &1}}
-  end
-
-  defp window_option(other), do: {other, :value, & &1}
 end

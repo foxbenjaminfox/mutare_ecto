@@ -29,6 +29,94 @@ defmodule Mutare.Ecto.SemanticCases do
 
       alias Mutare.Ecto.SemanticHarness, as: H
 
+      defp audit_source(body) do
+        """
+        defmodule Q do
+          import Ecto.Query
+          alias MyApp.{Post, User}
+          def q do
+            #{body}
+          end
+        end
+        """
+      end
+
+      test "audit: repeated and association join delivery matches native SQL and rows" do
+        for query <- [
+              "from u in User, join: p in Post, on: p.user_id == u.id, on: p.views > 10, select: {u.id, p.id}, order_by: [u.id, p.id]",
+              "User |> join(:inner, [u], p in Post, on: p.user_id == u.id, on: p.views > 10) |> select([u, p], {u.id, p.id}) |> order_by([u, p], [u.id, p.id])",
+              "from u in User, join: p in assoc(u, :posts), on: p.views > 10, select: {u.id, p.id}, order_by: [u.id, p.id]",
+              "from u in User, join: p in assoc(u, :linked_posts), on: p.views > 10, select: {u.id, p.id}, order_by: [u.id, p.id]",
+              "from u in User, join: p in assoc(u, :posts_again), on: p.views > 10, select: {u.id, p.id}, order_by: [u.id, p.id]"
+            ] do
+          {baseline, mutant} =
+            H.assert_delivery(@repo, audit_source(query), {"p.views > 10", "p.views >= 10"}, [
+              :comparison
+            ])
+
+          assert baseline != mutant
+        end
+      end
+
+      test "audit: value dynamics preserve native window and list semantics" do
+        for body <- ["[p.views + 1]", "over(sum(p.views + 1), partition_by: p.user_id)"] do
+          source =
+            audit_source("""
+            value = dynamic([p], #{body})
+            from p in Post, select: ^value, order_by: p.id
+            """)
+
+          {baseline, mutant} =
+            H.assert_delivery(@repo, source, {"p.views + 1", "p.views - 1"}, [:arithmetic])
+
+          assert baseline != mutant
+        end
+      end
+
+      test "audit: EXISTS observes arithmetic through set comparisons" do
+        for combination <- [:except, :intersect] do
+          source =
+            audit_source("""
+            right = from p in Post, where: p.id == 1, select: 2
+            from u in User, where: exists(from p in Post, where: p.id == 1,
+              select: 1 + 1, #{combination}: ^right), select: u.id, order_by: u.id
+            """)
+
+          {baseline, mutant} = H.assert_delivery(@repo, source, {"1 + 1", "1 - 1"}, [:arithmetic])
+          assert baseline != mutant
+        end
+      end
+
+      test "audit: a scalar top-one ordering picks a different value" do
+        source =
+          audit_source("""
+          from u in User, where: u.age > subquery(from p in Post,
+            order_by: [desc: p.views, desc: p.id], limit: 1, select: p.views),
+            select: u.id, order_by: u.id
+          """)
+
+        {baseline, mutant} =
+          H.assert_delivery(@repo, source, {"desc: p.views", "asc: p.views"}, [:ordering])
+
+        assert baseline != mutant
+      end
+
+      test "audit: EXISTS offset and limit mutations change row existence" do
+        for {clause, replacement} <- [
+              {"limit: 2, offset: 1", "limit: 2, offset: ^0"},
+              {"limit: 1", "limit: ^0"}
+            ] do
+          source =
+            audit_source("""
+            from u in User, where: exists(from p in Post, where: p.id == 1,
+              #{clause}, select: p.id), select: u.id, order_by: u.id
+            """)
+
+          {baseline, mutant} = H.assert_delivery(@repo, source, {clause, replacement}, [:bound])
+          assert baseline != mutant
+        end
+      end
+
       # Mutant lookup comes straight from core — the harness owns no lookup helper. Most tests are the
       # standard flip-and-compare pair, resolved and observed in one step by core's `observe_mutant/3`
       # (through `H.observe/3` / the `observe_*` helpers below): the mutant named by its

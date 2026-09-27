@@ -3,8 +3,8 @@ defmodule Mutare.Ecto.StaticCondition do
   The condition the host cannot weave, and its whole-call delivery.
 
   The host delivers a hosted condition's mutants by weaving: the condition becomes a
-  `^`-pinned `dynamic/2` that re-declares the condition's bindings (`Mutare.Ecto.Host`). Two
-  kinds of condition cannot take that form, though each is valid as written.
+  `^`-pinned `dynamic/2` that re-declares the condition's bindings (`Mutare.Ecto.Host`). Some
+  conditions cannot take that form, though each is valid as written.
 
   **A subquery in a `having`.** Weaving changes how Ecto builds the clause — from the
   compile-time filter builder to the runtime dynamic path — and the two do not accept the same
@@ -27,15 +27,24 @@ defmodule Mutare.Ecto.StaticCondition do
   `dynamic/2` and so no bindings (`Mutare.Ecto.Host.Target`'s root-pin rule), whatever the
   declaration.
 
+  **Repeated explicit `on:` predicates.** Ecto combines these before escaping the join's
+  condition, so each written predicate must be rebuilt statically. A sole explicit predicate
+  on an association join can weave: Ecto attaches association constraints later, in planning.
+
+  **Opaque macro expansions.** With `condition_delivery: :static`, every condition uses this
+  rebuild path, including a macro that introduces a subquery invisible in written source.
+  Registering that macro's arguments as raw does not prevent its enclosing condition from
+  weaving. An ignore directive also leaves delivery intact; it is not a baseline-safety switch.
+
   ## The rule
 
-  `delivery/4` decides, for one condition, from the clause receiving it, the expression, its
-  predicate kind, and the declaration it is read under. A condition is **rebuilt** when the
+  `delivery/5` applies the configured policy, then `delivery/4` decides from the receiving
+  clause, the expression, its predicate kind, and the declaration it is read under. A condition is **rebuilt** when the
   expression carries a subquery (`Mutare.Ecto.Subquery.present?/1`) that the clause rejects in a
   dynamic (`Mutare.Ecto.Surface.dynamic_subqueries?/1` — everything but `where`/`or_where`), or when
   it is not a `:root_pin` and its declaration does not read (`t:Mutare.Ecto.Host.Bindings.result/0`
   is `:error`); every other condition is **woven**. Both the host and `mutations/2` enumerate the
-  same conditions (`Mutare.Ecto.Host.Condition`) and ask `delivery/4` of each, so each condition is
+  same conditions (`Mutare.Ecto.Host.Condition`) and ask `delivery/5` of each, so each condition is
   delivered once: woven, or rebuilt here.
 
   Only a **predicate** is either's, and `Mutare.Ecto.Host.Condition` locates nothing else
@@ -64,7 +73,7 @@ defmodule Mutare.Ecto.StaticCondition do
   alias Mutare.Ecto.{Context, Island, Subquery, Surface, Tag}
   alias Mutare.Ecto.AST.{FromCall, KeywordList, QueryCall}
   alias Mutare.Ecto.AST.KeywordList.Entry
-  alias Mutare.Ecto.Host.{Bindings, Catalog, Condition}
+  alias Mutare.Ecto.Host.{Bindings, Catalog, Condition, JoinOn}
 
   @behaviour Mutare.Ecto.SubMutator
 
@@ -78,10 +87,27 @@ defmodule Mutare.Ecto.StaticCondition do
   `dynamic/2` re-declares (none for a `:root_pin`, which is woven without one), or `:rebuilt`, by
   `mutations/2` — see "The rule" in the moduledoc.
   """
-  @spec delivery(atom(), Macro.t(), Condition.predicate_kind(), Bindings.result()) :: delivery()
+  @spec delivery(JoinOn.receiver(), Macro.t(), Condition.predicate_kind(), Bindings.result()) ::
+          delivery()
+  def delivery({:on, :combined}, _condition, _kind, _bindings), do: :rebuilt
+
   def delivery(clause, condition, kind, bindings) do
     if weavable?(clause, condition), do: woven(kind, bindings), else: :rebuilt
   end
+
+  @doc "Apply the configured delivery policy before considering automatic hosting."
+  @spec delivery(
+          JoinOn.receiver(),
+          Macro.t(),
+          Condition.predicate_kind(),
+          Bindings.result(),
+          Mutare.Ecto.Config.t()
+        ) :: delivery()
+  def delivery(_clause, _condition, _kind, _bindings, %{condition_delivery: :static}),
+    do: :rebuilt
+
+  def delivery(clause, condition, kind, bindings, %{condition_delivery: :auto}),
+    do: delivery(clause, condition, kind, bindings)
 
   # A root pin's weave re-declares nothing, so its declaration is never read.
   defp woven(:root_pin, _bindings), do: {:woven, []}
@@ -117,9 +143,16 @@ defmodule Mutare.Ecto.StaticCondition do
             {:ok, kind} ->
               bindings = Bindings.from(source, Bindings.visible_to(clauses, index))
 
-              rebuilt(key, condition, kind, bindings, context, fn mutated ->
-                from |> FromCall.replace_clause(index, mutated) |> FromCall.to_ast()
-              end)
+              rebuilt(
+                JoinOn.from_receiver(key, clauses, index),
+                condition,
+                kind,
+                bindings,
+                context,
+                fn mutated ->
+                  from |> FromCall.replace_clause(index, mutated) |> FromCall.to_ast()
+                end
+              )
 
             :error ->
               []
@@ -138,7 +171,7 @@ defmodule Mutare.Ecto.StaticCondition do
         condition_mutations(call, Condition.locate(:condition, args), context)
 
       :join ->
-        join_mutations(call, Condition.locate_on(args), context)
+        Enum.flat_map(Condition.locate_on(args), &join_mutations(call, &1, context))
     end
   end
 
@@ -157,19 +190,24 @@ defmodule Mutare.Ecto.StaticCondition do
        ) do
     options = args |> Enum.at(arg_index) |> KeywordList.parse()
 
-    rebuilt(:on, condition, kind, Bindings.join(args), context, fn mutated ->
-      options = KeywordList.put_value(options, pair_index, mutated)
-      QueryCall.replace_arg(call, arg_index, KeywordList.to_ast(options))
-    end)
+    rebuilt(
+      JoinOn.standalone_receiver(args),
+      condition,
+      kind,
+      Bindings.join(args),
+      context,
+      fn mutated ->
+        options = KeywordList.put_value(options, pair_index, mutated)
+        QueryCall.replace_arg(call, arg_index, KeywordList.to_ast(options))
+      end
+    )
   end
-
-  defp join_mutations(_call, nil, _context), do: []
 
   # The weave's own mutant set (`Mutare.Ecto.Host.Catalog.mutants/2`'s two halves), each
   # delivered through `rebuild` instead — for a predicate the host leaves to this module, and
   # only for one.
   defp rebuilt(clause, condition, kind, bindings, %Context{config: config} = context, rebuild) do
-    case delivery(clause, condition, kind, bindings) do
+    case delivery(clause, condition, kind, bindings, config) do
       {:woven, _bindings} ->
         []
 

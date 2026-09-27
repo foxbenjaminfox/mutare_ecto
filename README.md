@@ -166,12 +166,12 @@ located at the stage's line, so a `# mutare:ignore` over the stage keeps working
 
 Where an expression is written matters as well:
 
-- **A subquery's interior** is mutated when it is an inline `from` inside a condition
-  (`p.id in subquery(from c in …)`, `exists(from …)`). Composed stages retain upstream
-  mutations: `subquery(Comment |> where(…) |> select(…))` mutates the `where`. The final
-  stage's own clauses (`where` in `subquery(Comment |> where(…))`) and a subquery inside a
-  `from` binding (`from s in subquery(…)`) are not entered. Built first and passed by
-  variable, the subquery is an ordinary query and gets every family.
+- **A subquery's interior** is mutated inside conditions, both as inline `from` and as
+  composed query stages, including the terminal stage. Inline `from` coverage includes bounds
+  and windowed value-query ordering; `EXISTS` retains projection mutations across `EXCEPT` and
+  `INTERSECT`. General clause drops and unwindowed scalar ordering are not composed there.
+  A subquery inside a `from` binding (`from s in subquery(…)`) remains raw. Built first and
+  passed by variable, the subquery gets ordinary query coverage.
 - **A `^` pin's interior** is ordinary Elixir, which Mutare's own families mutate when the pin
   sits in a condition (`where: p.views > ^(min + 1)`). In any other clause — `limit:
   ^(page_size + 1)`, `order_by: ^[asc: dynamic(…)]`, a `select` — the interior is left alone. An
@@ -215,6 +215,11 @@ Each `{Mutare.Ecto, …}` entry takes:
 
   `Mutare.Ecto.families/0` returns the full set and `Mutare.Ecto.default_families/0` the default
   subset.
+- **`condition_delivery:`** — `:auto` (default) chooses between weaving and static rebuilds.
+  Use `:static` when a custom macro introduces a subquery or other syntax that the receiving
+  clause rejects in a dynamic. This preserves the written builder path for all conditions in
+  that plugin instance while retaining their mutations. Making the macro's arguments raw, or
+  marking mutation sites ignored, does not by itself prevent the enclosing clause from weaving.
 - **`dialects:`** — enable mutations that aren't portable across all adapters. The default `[]` is
   the portable core (safe on SQLite, Postgres, MySQL alike). `:postgres` adds `like`↔`ilike`;
   `:postgres`/`:mysql` add the `LEFT`↔`RIGHT` join swap (SQLite has no `RIGHT JOIN`).

@@ -544,10 +544,7 @@ defmodule Mutare.Ecto.SubcontractTest do
       assert_compiles(opaque, helper)
     end
 
-    test "a non-hostable join on: (assoc join) is never hosted, so its pin never sub-contracts" do
-      # An `assoc(...)` join's implicit condition folds the `on:` under an `and`, where a
-      # `^dynamic` operand is illegal — `Host.JoinOn` gates it out, and with no host there is
-      # no sub-contract (nor any in-fragment `:ecto` mutant on that condition).
+    test "an association join's explicit on: relays its interpolation islands" do
       src = """
       defmodule M do
         import Ecto.Query
@@ -555,13 +552,12 @@ defmodule Mutare.Ecto.SubcontractTest do
       end
       """
 
-      assert island_diffs(src, @with_core) == []
+      assert {:arithmetic, "min + 1", "min - 1"} in island_diffs(
+               src,
+               @with_core
+             )
 
-      # No in-fragment `:ecto` mutant on the condition either — the whole-call families (the
-      # join's stage drop, whose original is the full `join(...)` call) still apply.
-      refute Enum.any?(ecto_diffs(src, @with_core), fn {original, _} ->
-               original == "p.views > ^(min + 1)"
-             end)
+      assert {"p.views > ^(min + 1)", "p.views >= ^(min + 1)"} in ecto_diffs(src, @with_core)
 
       assert_compiles(src, @with_core)
     end

@@ -15,6 +15,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   expression, and line-specific ignores can distinguish changes inside the same condition.
   This requires Mutare 0.4.2 or newer.
 
+### Fixed
+
+- Protect inline window grammar in free-standing dynamics, including opt-in atom mutations.
+- Mutate list-valued dynamics and repeated explicit join predicates; permit hosting a sole
+  explicit predicate on an association join.
+- Retain projection mutations under `EXISTS` with `EXCEPT` or `INTERSECT`.
+- Include terminal composed subquery stages, inline subquery bounds, and windowed value-query
+  ordering in mutation coverage.
+
+### Added
+
+- `condition_delivery: :static` preserves static condition building for opaque custom macros
+  whose expansions cannot use Ecto's dynamic path.
+- Native baseline and statically mutated query comparisons for delivery regressions.
+
 ## [0.3.0] - 2026-09-26
 
 ### Changed

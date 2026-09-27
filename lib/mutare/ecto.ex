@@ -55,6 +55,11 @@ defmodule Mutare.Ecto do
       variant: `# mutare:ignore[ecto:comparison]` suppresses just the comparison mutants on that
       line, the rest still running (see `variants/0`).
 
+    * `condition_delivery:` — `:auto` (default) weaves conditions where supported and rebuilds
+      the rest statically. `:static` forces whole-call condition rebuilds, retaining mutations
+      when an opaque author macro introduces syntax the dynamic builder rejects, such as a
+      subquery in `having`. It does not change free-standing dynamics or bound delivery.
+
     * `dialects:` — gate dialect-specific mutations (default `[]`, the portable core). `:postgres`
       enables `like`↔`ilike`; `:postgres`/`:mysql` enable the `LEFT`↔`RIGHT` join swap (SQLite
       lacks `RIGHT JOIN`).

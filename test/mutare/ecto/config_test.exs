@@ -1,6 +1,15 @@
 defmodule Mutare.Ecto.ConfigTest do
   use ExUnit.Case, async: true
 
+  test "condition delivery is parsed once with an automatic default" do
+    assert Mutare.Ecto.Config.parse!([]).condition_delivery == :auto
+    assert Mutare.Ecto.Config.parse!(condition_delivery: :static).condition_delivery == :static
+
+    assert_raise ArgumentError, ~r/condition_delivery/, fn ->
+      Mutare.Ecto.Config.parse!(condition_delivery: :unknown)
+    end
+  end
+
   import Mutare.Ecto.TestSupport
 
   # Milestone 4 configuration: narrowing the catalog with `families:`, gating dialect-specific
@@ -376,7 +385,7 @@ defmodule Mutare.Ecto.ConfigTest do
 
     test "unknown option names fail loudly" do
       assert_raise ArgumentError,
-                   ~r/\Aunknown Mutare.Ecto options: \[:familes\].*valid options are \[:repo, :families, :dialects\]/,
+                   ~r/\Aunknown Mutare.Ecto options: \[:familes\].*valid options are \[:repo, :families, :dialects, :condition_delivery\]/,
                    fn ->
                      Mutare.Ecto.Config.parse!(familes: [:comparison])
                    end

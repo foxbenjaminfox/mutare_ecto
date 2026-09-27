@@ -1,12 +1,13 @@
 defmodule Mutare.Ecto.Dynamic do
   @moduledoc """
-  In-fragment SQL mutations for a **free-standing** `dynamic/1,2` call — the condition a user
+  In-fragment SQL mutations for a **free-standing** `dynamic/1,2` call — the expression a user
   builds ahead of time and splices later:
 
       d = dynamic([p], p.views > 100)
       Repo.all(where(query, ^d))
 
-  The condition body is the same SQL fragment a hosted `where`/`having` contains, so the same catalog
+  The body is a general SQL expression, including lists, maps, aliases, and windows.
+  It shares SQL value semantics with a hosted `where`/`having`, so the same catalog
   walks it (`Mutare.Ecto.Fragment`, scalar and aggregate swaps folded in — `sum`↔`avg` for a
   dynamic used in a `having`). At the `where(q, ^d)` splice site, a top-level `^d` is hosted
   like any other condition, but the catalog stops at the pin. Its interior contains only a bare
@@ -35,7 +36,7 @@ defmodule Mutare.Ecto.Dynamic do
 
   alias Mutare.Ecto.{Context, Island, Tag}
   alias Mutare.Ecto.AST.QueryCall
-  alias Mutare.Ecto.Host.{Catalog, Condition}
+  alias Mutare.Ecto.Host.Catalog
 
   @behaviour Mutare.Ecto.SubMutator
 
@@ -43,9 +44,8 @@ defmodule Mutare.Ecto.Dynamic do
   Every single-point in-fragment mutant of a free-standing `dynamic/1,2` call, each the **whole
   call** rebuilt with one condition position swapped — the plugin's own catalog mutants as
   `Mutare.Ecto.Tag`s, the island mutants returned by core as producer-attributed
-  `Mutare.Mutator.Mutation`s — or `[]` when there is nothing to mutate. The condition is located
-  by `Mutare.Ecto.Host.Condition.locate/2`, exactly as for a standalone `where` — but its
-  declaration is never read: the whole-call rebuild re-emits the written list as it stands, so
+  `Mutare.Mutator.Mutation`s — or `[]` when there is nothing to mutate. The last argument is a general SQL expression, including a list or map;
+  it is not classified as a filter. Its declaration is never read: the whole-call rebuild re-emits the written list as it stands, so
   even one the plugin cannot interpret (which a woven `dynamic/2` could not re-declare) is
   mutated here.
   """
@@ -60,8 +60,8 @@ defmodule Mutare.Ecto.Dynamic do
         %QueryCall{name: :dynamic, args: args} = call,
         %Context{config: config} = context
       ) do
-    case Condition.locate(:dynamic, args) do
-      %Condition{node: condition, index: index} ->
+    case body(args) do
+      {condition, index} ->
         # The shared in-fragment catalog (`Mutare.Ecto.Host.Catalog.own_catalog/2`), each tag
         # rebuilt into the whole call; its anchor survives the rebuild (`Tag.map_node/2`). For a
         # top-level-pin body the catalog is empty — the sub-contract below carries its interior.
@@ -76,6 +76,12 @@ defmodule Mutare.Ecto.Dynamic do
         []
     end
   end
+
+  # Dynamic's body uses Ecto's general expression grammar (lists and maps included),
+  # independent of the filter builder's predicate-versus-keyword-list classification.
+  defp body([expression]), do: {expression, 0}
+  defp body([_bindings, expression]), do: {expression, 1}
+  defp body(_args), do: nil
 
   # The island sub-contract (`Mutare.Ecto.Island.subcontracted/3`), delivered as the whole call.
   defp subcontracted(condition, call, index, context),

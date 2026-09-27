@@ -94,6 +94,25 @@ defmodule Mutare.Ecto.TestSupport do
     sites
   end
 
+  @doc "Compile an independent, uninstrumented fixture inside a unique namespace."
+  def compile_native(source) do
+    wrapper = Module.concat(__MODULE__, "Native#{System.unique_integer([:positive])}")
+
+    {compiled, _warnings} =
+      ExUnit.CaptureIO.with_io(:stderr, fn ->
+        Code.compile_string("defmodule #{inspect(wrapper)} do\n#{source}\nend")
+      end)
+
+    ExUnit.Callbacks.on_exit(fn ->
+      for {module, _binary} <- compiled do
+        :code.purge(module)
+        :code.delete(module)
+      end
+    end)
+
+    compiled |> Enum.reject(fn {module, _} -> module == wrapper end) |> List.last() |> elem(0)
+  end
+
   defp mutant_label(site),
     do: "mutant #{site.id} (#{site.original_code} → #{site.mutated_code})"
 

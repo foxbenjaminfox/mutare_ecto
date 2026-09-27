@@ -29,5 +29,14 @@ defmodule MyApp.User do
     field(:status, Ecto.Enum, values: [:active, :inactive])
 
     has_many(:posts, MyApp.Post)
+    has_many(:post_authors, through: [:posts, :user])
+    has_many(:posts_again, through: [:post_authors, :posts])
+
+    # Reuse the seeded posts as a link table to exercise the many-to-many planner's
+    # extra binding without a second dataset: user_id links the owner, id the target.
+    many_to_many(:linked_posts, MyApp.Post,
+      join_through: "posts",
+      join_keys: [user_id: :id, id: :id]
+    )
   end
 end

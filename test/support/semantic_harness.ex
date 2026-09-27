@@ -25,6 +25,35 @@ defmodule Mutare.Ecto.SemanticHarness do
   alias Mutare.Ecto.TestSupport
   alias Mutare.{Site, Test}
 
+  @doc "Compare baseline and selected delivery with independently compiled native sources."
+  def assert_delivery(repo, source, {before, after_code}, families) do
+    import ExUnit.Assertions
+    native = TestSupport.compile_native(source)
+    expected = TestSupport.compile_native(String.replace(source, before, after_code))
+
+    {instrumented, sites} =
+      compile(source,
+        mutators: [{Mutare.Ecto, repo: repo, families: families}]
+      )
+
+    id =
+      Test.site_id(
+        sites,
+        {Regex.compile!(Regex.escape(before)), Regex.compile!(Regex.escape(after_code))}
+      )
+
+    assert {:runs, _, _} = native_outcome = outcome(repo, 0, &native.q/0)
+    assert outcome(repo, 0, &instrumented.q/0) == native_outcome
+    assert {:runs, _, _} = expected_outcome = outcome(repo, 0, &expected.q/0)
+    assert outcome(repo, id, &instrumented.q/0) == expected_outcome
+
+    baseline = repo.all(native.q())
+    mutated = repo.all(expected.q())
+    assert activate(0, fn -> repo.all(instrumented.q()) end) == baseline
+    assert activate(id, fn -> repo.all(instrumented.q()) end) == mutated
+    {baseline, mutated}
+  end
+
   @doc """
   Whether the Postgres engine is enabled for this run (`MUTARE_TEST_POSTGRES` truthy).
 

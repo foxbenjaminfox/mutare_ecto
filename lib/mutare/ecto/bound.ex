@@ -35,14 +35,18 @@ defmodule Mutare.Ecto.Bound do
   pin-only weave.
   """
   @spec bumps(Macro.t()) :: [Mutare.Mutator.mutation()]
-  def bumps(value) do
+  def bumps(value), do: Enum.map(tags(value), &Tag.to_mutation/1)
+
+  @doc "The same bound alternatives as tags, for static subquery reconstruction."
+  @spec tags(Macro.t()) :: [Tag.t()]
+  def tags(value) do
     case AST.int_value(value) do
       nil ->
         []
 
       n ->
         for bumped <- off_by_one(n),
-            do: Tag.to_mutation(Tag.new(:bound, Mutare.AST.literal(bumped)))
+            do: Tag.new(:bound, Mutare.AST.literal(bumped))
     end
   end
 

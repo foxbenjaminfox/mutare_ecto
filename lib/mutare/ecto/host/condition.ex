@@ -36,11 +36,10 @@ defmodule Mutare.Ecto.Host.Condition do
   # ## The argument shapes
   #
   # `locate/2` finds the predicate a host owns in a condition macro's argument list
-  # (`where`/`having`, and the free-standing `dynamic/1,2` that shares their shape), and reads the
-  # binding declaration written before it. Consumed by `Mutare.Ecto.Host` (the weave — the
+  # (`where`/`having`), and reads the binding declaration written before it. Consumed by `Mutare.Ecto.Host` (the weave — the
   # declaration goes through `Bindings.declarations/1`, and `kind` picks the delivery),
-  # `Mutare.Ecto.Host.Routing` (marks `index` `:hosted`), and `Mutare.Ecto.Dynamic` (rebuilds the
-  # whole call around `index`).
+  # `Mutare.Ecto.Host.Routing` (marks `index` `:hosted`). Free-standing dynamics use general
+  # expression grammar and locate their own body, without this filter classification.
   #
   # It also locates the other two places a host-owned predicate sits — a `from`'s condition
   # clauses (`from_indices/1`) and a standalone join's `on:` (`locate_on/1`) — so that the weave
@@ -53,9 +52,8 @@ defmodule Mutare.Ecto.Host.Condition do
   # Both macros end `(…, binding \\ [], expr)`, so the call's **effective arity** says whether a
   # declaration was written, and where: `where(query, binding, expr)` /
   # `query |> where(binding, expr)` carry one in the slot before the condition;
-  # `where(query, expr)` / `query |> where(expr)` omit it. (`dynamic` is the same without the
-  # threaded query.) The slot is never *searched for* among the arguments — a search can only
-  # find a list it already understands, so a declaration it cannot read looks exactly like no
+  # `where(query, expr)` / `query |> where(expr)` omit it. The slot is never *searched for*
+  # among the arguments — a search can only find a list it already understands, so a declaration it cannot read looks exactly like no
   # declaration at all, and the condition gets hosted behind a `dynamic([], …)` that declares
   # none of the variables it uses. Position keeps the three outcomes apart:
   #
@@ -67,8 +65,7 @@ defmodule Mutare.Ecto.Host.Condition do
   #     Ecto's own `where(q, ^dynamic)` form does — which is what lets a binding-less
   #     `where`/`having` still have its SQL operators/literals mutated;
   #   * an **uninterpretable** one — written, by position, but outside
-  #     `Mutare.Ecto.Binding`'s grammar (or hidden on a pipe's left, `[p] |> dynamic(…)`). No
-  #     `dynamic/2` can re-declare it, so the condition is rebuilt whole-call under the written
+  #     `Mutare.Ecto.Binding`'s grammar. No `dynamic/2` can re-declare it, so the condition is rebuilt whole-call under the written
   #     list instead (`Mutare.Ecto.StaticCondition`), as `Mutare.Ecto.Dynamic` rebuilds every
   #     free-standing `dynamic` — unless it is a root pin, whose weave re-declares nothing.
   #
@@ -83,7 +80,6 @@ defmodule Mutare.Ecto.Host.Condition do
   alias Mutare.Ecto.Surface
   alias Mutare.Ecto.AST.{BindingList, KeywordList}
   alias Mutare.Ecto.AST.KeywordList.Entry
-  alias Mutare.Ecto.Host.JoinOn
 
   @enforce_keys [:node, :index, :kind, :declaration]
   defstruct [:node, :index, :kind, :declaration]
@@ -130,10 +126,9 @@ defmodule Mutare.Ecto.Host.Condition do
   @type predicate_kind :: :expression | :root_pin
 
   @typedoc """
-  Which macro's argument layout `locate/2` reads: a query-threading condition macro, or
-  `dynamic` (`Mutare.Ecto.Surface`'s macro kinds of those names).
+  The query-threading condition layout that `locate/2` reads.
   """
-  @type macro_kind :: :condition | :dynamic
+  @type macro_kind :: :condition
 
   @doc """
   Classify a value written at a condition position (the module header's first section) — the
@@ -183,53 +178,42 @@ defmodule Mutare.Ecto.Host.Condition do
   @doc """
   The `from` clauses that hold a host-owned predicate, as a map from each one's index to its
   kind (`shape/1`). A clause qualifies by its key — a `where`/`having`-kind key, or an `on:`
-  where `Mutare.Ecto.Host.JoinOn` admits it — and by its value, which must be a predicate: a
+  regardless of whether it can be hosted — and by its value, which must be a predicate: a
   keyword filter under such a key is core's, per pair. A bound (`limit:`/`offset:`) is a
   `:hosted` key too, but it holds a value, not a condition (`Mutare.Ecto.Bound`).
   """
   @spec from_indices(KeywordList.t()) :: %{non_neg_integer() => predicate_kind()}
   def from_indices(%KeywordList{entries: entries}) do
-    hostable_on = JoinOn.hostable_from_indices(entries)
-
     for {%Entry{key: key, value: value}, index} <- Enum.with_index(entries),
-        condition_clause?(key, index, hostable_on),
+        Surface.from_clause?(key, :hosted) and not Surface.bound?(key),
         {:predicate, kind} <- [shape(value)],
         into: %{},
         do: {index, kind}
   end
 
-  defp condition_clause?(:on, index, hostable_on), do: MapSet.member?(hostable_on, index)
-
-  defp condition_clause?(key, _index, _hostable_on),
-    do: Surface.from_clause?(key, :hosted) and not Surface.bound?(key)
-
   @doc """
-  The host-owned `on:` predicate of a standalone `join/4,5`, from its visible `args`, as
-  `{condition, kind, arg_index, pair_index}` — the predicate and its kind (`shape/1`), where the
-  trailing options list sits among the arguments, and where the `on:` pair sits within it — or
-  `nil` when the call has no `on:` `Mutare.Ecto.Host.JoinOn` admits, or its `on:` is a keyword
-  filter. The options list is the last argument in the direct and piped forms alike.
+  All explicit predicate-valued `on:` options, independently of delivery, as
+  `{condition, kind, arg_index, pair_index}`. Keyword filters remain core's per-pair grammar.
   """
   @spec locate_on([Macro.t()]) ::
-          {Macro.t(), predicate_kind(), non_neg_integer(), non_neg_integer()} | nil
+          [{Macro.t(), predicate_kind(), non_neg_integer(), non_neg_integer()}]
   def locate_on(args) do
-    with %KeywordList{entries: entries} <- args |> List.last() |> KeywordList.nonempty(),
-         true <- JoinOn.hostable_standalone?(args, entries),
-         # `hostable_standalone?/2` admits exactly one `on:`, so the index is found.
-         pair_index = Enum.find_index(entries, &(&1.key == :on)),
-         %Entry{value: condition} = Enum.at(entries, pair_index),
-         {:predicate, kind} <- shape(condition) do
-      {condition, kind, length(args) - 1, pair_index}
-    else
-      _ -> nil
+    case args |> List.last() |> KeywordList.nonempty() do
+      %KeywordList{entries: entries} ->
+        for {%Entry{key: :on, value: condition}, pair_index} <- Enum.with_index(entries),
+            {:predicate, kind} <- [shape(condition)],
+            do: {condition, kind, length(args) - 1, pair_index}
+
+      nil ->
+        []
     end
   end
 
   # The positions `{declaration | nil, condition}` of a call of that arity. The declaration slot
   # sits right after the arguments that precede it in the macro's head — the threaded query for
-  # a condition macro, nothing for `dynamic`.
-  defp layout(macro_kind, arity) do
-    leading = leading_arguments(macro_kind)
+  # a condition macro.
+  defp layout(:condition, arity) do
+    leading = 1
 
     case arity - leading do
       1 -> {nil, leading}
@@ -237,9 +221,6 @@ defmodule Mutare.Ecto.Host.Condition do
       _ -> nil
     end
   end
-
-  defp leading_arguments(:condition), do: 1
-  defp leading_arguments(:dynamic), do: 0
 
   defp declaration(nil, _args), do: :omitted
 

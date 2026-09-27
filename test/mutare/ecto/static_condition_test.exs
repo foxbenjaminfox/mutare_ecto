@@ -359,6 +359,15 @@ defmodule Mutare.Ecto.StaticConditionTest do
       assert_builds(src, & &1.q())
     end
 
+    test "static delivery handles an opaque subquery in a larger condition" do
+      src = with_macro("having: over_threshold(p) and count(p.id) > 1")
+      opts = [mutators: [{Mutare.Ecto, condition_delivery: :static}]]
+      refute metamutant(src, opts) =~ "Query.dynamic("
+      assert_rewrite = {"count(p.id) > 1", "count(p.id) >= 1"}
+      assert assert_rewrite in ecto_diffs(src, opts)
+      assert_builds(src, & &1.q(), opts)
+    end
+
     test "given a clause of its own, only the clause beside it weaves — and the query builds" do
       src = with_macro("having: over_threshold(p), having: count(p.id) > 1")
 
@@ -498,9 +507,7 @@ defmodule Mutare.Ecto.StaticConditionTest do
       end
     end
 
-    test "an on: the host would not weave under any declaration stays unmutated in place" do
-      # `Mutare.Ecto.Host.JoinOn` keeps an `assoc` join's `on:` out of the weave for a reason of
-      # its own; an unread declaration does not make that `on:` the fallback's.
+    test "an association on: under an unread declaration is rebuilt" do
       for stage <- [
             "from([{p, index}] in query, join: c in assoc(p, :comments), on: c.score > 2)",
             "join(query, :inner, [{p, index}], c in assoc(p, :comments), on: c.score > 2)"
@@ -512,7 +519,7 @@ defmodule Mutare.Ecto.StaticConditionTest do
         end
         """
 
-        refute {"c.score > 2", "c.score >= 2"} in ecto_diffs(src), stage
+        assert {"c.score > 2", "c.score >= 2"} in ecto_diffs(src), stage
         assert_compiles(src)
       end
     end

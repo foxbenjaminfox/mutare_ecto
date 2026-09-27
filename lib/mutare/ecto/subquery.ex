@@ -1,89 +1,35 @@
 defmodule Mutare.Ecto.Subquery do
   @moduledoc false
-  # Recurses the plugin's **own** SQL catalogs into the interior of a subquery that appears inside a
-  # `where`/`having` condition — `exists(from …)`, `p.x >= all(from …)`, `p.x > subquery(from …)`,
-  # `p.id in subquery(from …)`. `Mutare.Ecto.Fragment` recognizes the wrapper as it walks the
-  # condition and delegates the inline `from(...)` argument here; each interior mutant is the whole
-  # inner `from` rebuilt with one single-point change, which the caller wraps back into the wrapper
-  # (so it becomes another whole-condition branch of the host's existing `^`/`dynamic` weave — no
-  # new delivery machinery).
+  # Inline query traversal, separated from the outer condition's delivery.
+  # An inline from is rebuilt statically around one catalog mutation; composed stages are
+  # query-building Elixir and use the island seam over the entire stage, terminal clause
+  # included. Core lowers their hosted targets to whole-call rewrites. A query inside a raw
+  # source binding remains outside this traversal.
   #
-  # **What is mutated is gated by what the wrapper can observe** (`mode`):
+  # Observation policy for inline from:
+  # * Filters, join kinds, combinations and binding reorders can change the row set in any mode.
+  # * Projection swaps are observed in value mode. EXISTS also observes them when EXCEPT or
+  #   INTERSECT (including ALL) compares projected values to decide which rows survive.
+  #   Without those operations they are pruned. A set-returning projection fragment remains
+  #   a known limitation of this optimization.
+  # * Offsets can change existence; literal limits do so when crossing zero. Value wrappers
+  #   receive all bound drops and nonnegative bumps. An overridden bound never mutates.
+  # * Ordering and its value expressions mutate in windowed value queries (limit or offset).
+  #   Unwindowed scalar ordering is still not composed, even on SQLite where it can be live.
+  # * General clause drops (including group_by/distinct) remain unimplemented here.
   #
-  #   * **row-set-changing families — every wrapper (`mode`-agnostic):** the inner
-  #     `where`/`having` condition catalog — exactly what the host and `Mutare.Ecto.Dynamic`
-  #     compose (`Mutare.Ecto.Host.Catalog.own_catalog/2`: `Fragment`'s operator/literal swaps,
-  #     the aggregate swap folded in per node) — and the whole-`from` structural rewrites that
-  #     change which rows the subquery returns: filter-clause drops, join-type swaps,
-  #     combination-key swaps, and the source binding-reorder, composed from
-  #     `Mutare.Ecto.Query`'s producers (`@structural_producers`). A changed row set is observable
-  #     through existence, a value set, a scalar, or membership alike.
-  #   * **`select` projection — `mode: :value` only** (`all`/`any`/`subquery`/`in`): `Query`'s
-  #     `:aggregate`/`:scalar` producers narrowed to the `select`/`select_merge` keys
-  #     (`@projection_producers` over `@projection_keys`), where the projected column *is* the
-  #     observed value. **Pruned under `mode: :existence`** (`exists`), as equivalent: `EXISTS`
-  #     observes only whether the subquery returns a row, and these families rewrite a projected
-  #     value without changing how many rows there are — an aggregate swaps for an aggregate
-  #     (one row per group either way), an arithmetic swap and a coalesce drop recompute a
-  #     column in place. The premise has one known hole, left open: a set-returning function
-  #     reached through a `fragment` (Postgres' `generate_series`) makes the row count depend on
-  #     the select list, and a swap among its arguments is a live mutant this pruning loses.
-  #
-  # **Not composed — unimplemented, not equivalent.** Which of these mutants is live turns on the
-  # wrapper, on whether the subquery is windowed, and in one case on the engine; no gating for
-  # that exists yet, so none is offered (NOTES "Subquery interiors: bounds and ordering are not
-  # composed"):
-  #
-  #   * `limit`/`offset` (`:bound` — the drop is `Query`'s; the ±1 bump is hosted pin-only by
-  #     `Mutare.Ecto.Bound` and has no whole-`from` form to compose). Under `exists`,
-  #     `offset: k` asks for more than `k` rows, so its drop and both bumps are live; a `limit`
-  #     is unobservable only while it stays ≥ 1 — `limit: 1` → `0` makes the predicate
-  #     constantly false. Under a value-wrapper a window decides the value set or the scalar —
-  #     deterministically given a total `order_by` — and a scalar `subquery` widened past one
-  #     row raises on Postgres where SQLite reads the first row.
-  #   * `order_by` (`:ordering`, and the `:aggregate`/`:scalar` swaps of its sort keys). Row
-  #     order cannot change whether a row exists, nor an unwindowed value set, so it is
-  #     unobservable through `exists` and through an unwindowed `all`/`any`/`in`. It is
-  #     observable wherever it picks rows: through any windowed value-wrapper (a top-N `in`),
-  #     and through a scalar `subquery`, which reads one row — the latest-row idiom
-  #     `order_by: [desc: c.at], limit: 1`, and on SQLite (which reads a multi-row scalar's
-  #     first row rather than raising) without the `limit` too.
-  #   * `distinct`/`group_by` (and the rest of `Query`'s `:clause_drop` producer). A `distinct`
-  #     drop is unobservable through `exists`, `in` and the quantifiers — duplicates change
-  #     neither existence, membership, nor a comparison against `all`/`any` — and observable
-  #     only through a scalar `subquery`, where it can turn one row into several. A `group_by`
-  #     drop changes how many rows there are and what an aggregate ranges over. Beside an
-  #     aggregate (in the projection, or a `having`) that shows even through `exists` — the
-  #     grouped rows of an empty set are no rows, the ungrouped aggregate always one — and
-  #     without one it does not; it also tends to leave a projection Postgres rejects.
-  #
-  # A pinned `^expr` inside a mutated clause is sub-contracted to core like a top-level pin (see
-  # `Mutare.Ecto.Island`): `interior_islands/2` surfaces it from exactly the clauses each `mode`
-  # mutates — the `where`/`having` conditions under every mode, the `select` projection under a
-  # value-wrapper only. (An EXISTS select's pin binds a projected value `EXISTS` never reads, so
-  # a core mutant there could change only whether evaluating the interior raises.)
-  # Computed sources are also Elixir islands, with the unrestricted `:value` role. The SQL
-  # walk stops at query sources; `source_islands/1` relays their mutations through core instead,
-  # preserving the source classifier's raw forms (bindings, names, fragments).
-  #
-  # Only an inline `from(source, clauses)` is recursed by the SQL catalogs. In `exists` position,
-  # the equivalent `exists(subquery(from …))` spelling is normalized too, with the `subquery/1`
-  # wrapper preserved around each rebuilt mutant. Composed query stages relay their upstream
-  # source through the island seam; the stage's own clauses are not recursed here. A
-  # `subquery(var)`, a scalar `from(Post)`, and a *from-source* subquery
-  # (`from s in subquery(…)`, routed `:raw` and never walked) all yield nothing.
+  # Pins are collected from conditions and observable projections, with structural roots for
+  # projection descriptions. Computed query sources go to core as Elixir, never to SQL catalogs.
+  # Composed queries use their ordinary stage coverage, as if constructed in a prior assignment;
+  # the inline-from equivalence pruning is not applied across that Elixir boundary.
 
   alias Mutare.Calls
-  alias Mutare.Ecto.{Config, Fragment, Query, Surface, Tag}
+  alias Mutare.Ecto.{AST, Bound, Config, Fragment, Query, Surface, Tag}
   alias Mutare.Ecto.AST.{FromCall, KeywordList, QueryCall}
   alias Mutare.Ecto.AST.KeywordList.Entry
   alias Mutare.Ecto.Host.{Catalog, Condition}
 
-  # The `Mutare.Ecto.Query` producers composed into the inner `from`: the ones that change the
-  # subquery's **row set** (observable through every wrapper), and — under a value-wrapper only —
-  # its `:aggregate`/`:scalar` value swaps narrowed to the projection keys. `Query`'s remaining
-  # producers (`:ordering`, `:bound`, and those two over `order_by`) are not composed yet (see
-  # the module comment).
+  # Query producers that can change the row set independently of projected values.
   @structural_producers [:filter_drop, :join_type, :combination, :binding_reorder]
   @projection_producers [:aggregate, :scalar]
   @projection_keys [:select, :select_merge]
@@ -134,10 +80,12 @@ defmodule Mutare.Ecto.Subquery do
   def interior_mutants(node, %Config{} = config, mode) do
     case inline_from(node, mode) do
       {%FromCall{} = from, wrap} ->
-        # mutare:ignore[operand_swap] equivalent — three independent mutant lists, consumed as a set
+        # mutare:ignore[operand_swap] equivalent — independent mutant lists, consumed as a set
         for tag <-
               structural(from, config) ++
-                conditions(from, config) ++ projection(from, config, mode),
+                conditions(from, config) ++
+                projection(from, config, mode) ++
+                bounds(from, config, mode) ++ ordering(from, config, mode),
             do: Tag.map_node(tag, wrap)
 
       nil ->
@@ -150,7 +98,7 @@ defmodule Mutare.Ecto.Subquery do
   `t:Mutare.Ecto.Fragment.island/0` triples whose `rebuild` reconstructs the whole inner query —
   composed outward by the caller. An inline `from(source, clauses)` (or, in `:existence` mode,
   `subquery(from(source, clauses))`) also surfaces its clauses' pins, tracking exactly what
-  each `mode` mutates (see the module comment). Other query stages relay only their source.
+  each `mode` mutates (see the module comment). Other query stages relay their whole call.
   """
   @spec interior_islands(Macro.t(), mode()) :: [Fragment.island()]
   def interior_islands(node, mode) do
@@ -159,15 +107,41 @@ defmodule Mutare.Ecto.Subquery do
         Enum.map(source_islands(from.call.node), fn {source, role, rebuild} ->
           {source, role, &wrap.(rebuild.(&1))}
         end) ++
-          KeywordList.flat_map(clauses, &island_clause?(&1, mode), fn entry, index ->
-            for {root, root_role, rebuild_value} <- island_roots(entry),
-                {interior, role, rebuild} <- Fragment.islands(root, root_role) do
-              {interior, role, &wrap.(rebuild_clause(from, index, rebuild_value.(rebuild.(&1))))}
+          KeywordList.flat_map(
+            clauses,
+            &island_clause?(&1, projection_mode(from, mode)),
+            fn entry, index ->
+              for {root, root_role, rebuild_value} <- island_roots(entry),
+                  {interior, role, rebuild} <- Fragment.islands(root, root_role) do
+                {interior, role,
+                 &wrap.(rebuild_clause(from, index, rebuild_value.(rebuild.(&1))))}
+              end
             end
-          end)
+          )
 
       nil ->
-        source_islands(node)
+        query_islands(node, mode)
+    end
+  end
+
+  # A composed query is ordinary query-building Elixir. Delegate the complete stage,
+  # including its terminal clause, to core; its nested host targets are lowered to whole-call
+  # rewrites by the same seam used for queries inside pins. Never recurse SQL as Elixir.
+  defp query_islands(node, :existence) do
+    case Calls.resolved_call_to(node, Ecto.Query, :subquery) do
+      {:ok, :subquery, [inner | rest], rebuild} ->
+        for {root, role, splice} <- query_islands(inner, :existence),
+            do: {root, role, &rebuild.(:subquery, [splice.(&1) | rest])}
+
+      _ ->
+        query_islands(node, :value)
+    end
+  end
+
+  defp query_islands(node, :value) do
+    case QueryCall.parse(node) do
+      %QueryCall{name: name} when name != :from -> [{node, :value, & &1}]
+      _ -> source_islands(node)
     end
   end
 
@@ -254,12 +228,55 @@ defmodule Mutare.Ecto.Subquery do
   # wrapper. A clause-less source (`from(Post)` — its reorder rode `structural/2`) contributes
   # nothing here.
   defp conditions(%FromCall{clauses: clauses} = from, config) do
-    KeywordList.flat_map(clauses, &Surface.from_clause?(&1, :hosted), fn entry, index ->
+    KeywordList.flat_map(clauses, &condition_clause?/1, fn entry, index ->
       for {root, _pin_role, rebuild_value} <- catalog_roots(entry.value),
           tag <- Catalog.own_catalog(root, config),
           do: Tag.map_node(tag, &rebuild_clause(from, index, rebuild_value.(&1)))
     end)
   end
+
+  defp condition_clause?(key),
+    do: Surface.from_clause?(key, :hosted) and not Surface.bound?(key)
+
+  # Bounds are row-count operations, not fragment literals. Reuse the bound catalog and
+  # preserve last-wins occurrences; the static mutant pins its changed value like the host.
+  defp bounds(%FromCall{clauses: clauses} = from, config, mode) do
+    drops =
+      Query.mutations_for(from, config, [:bound], fn key ->
+        mode == :value or key == :offset or zero_limit?(clauses)
+      end)
+
+    bumps =
+      KeywordList.flat_map(clauses, &Surface.bound?/1, fn entry, index ->
+        if FromCall.effective_clause?(from, index) do
+          for tag <- Bound.tags(entry.value),
+              mode == :value or entry.key == :offset or
+                AST.int_value(entry.value) == 0 or AST.int_value(tag.node) == 0 do
+            Tag.map_node(tag, &rebuild_clause(from, index, {:^, [], [&1]}))
+          end
+        else
+          []
+        end
+      end)
+
+    drops ++ bumps
+  end
+
+  defp zero_limit?(%KeywordList{entries: entries}) do
+    case Enum.find(Enum.reverse(entries), &(&1.key == :limit)) do
+      %Entry{value: value} -> AST.int_value(value) == 0
+      nil -> false
+    end
+  end
+
+  # A windowed value query observes which rows the ordering picks. EXISTS does not.
+  defp ordering(%FromCall{clauses: %{entries: entries}} = from, config, :value) do
+    if Enum.any?(entries, &Surface.bound?(&1.key)),
+      do: Query.mutations_for(from, config, [:ordering, :aggregate, :scalar], &(&1 == :order_by)),
+      else: []
+  end
+
+  defp ordering(_from, _config, :existence), do: []
 
   # What the predicate catalog may walk in one hosted-clause value, by the classification routing
   # and hosting share (`Mutare.Ecto.Host.Condition.shape/1`), each root with the rebuild of the
@@ -292,13 +309,25 @@ defmodule Mutare.Ecto.Subquery do
   end
 
   # The `select`/`select_merge` projection's aggregate/scalar swaps — `Query`'s own
-  # `:aggregate`/`:scalar` producers narrowed to the projection keys — only under a value-wrapper,
-  # where the projected column is the observed value. `order_by` (the other key those producers
-  # walk) is left out with the rest of the ordering mutants (the module comment's "not composed").
+  # `:aggregate`/`:scalar` producers narrowed to the projection keys — when the wrapper or the query
+  # observes projected values. Ordering is composed separately for windowed value queries.
   defp projection(from, config, :value),
     do: Query.mutations_for(from, config, @projection_producers, &(&1 in @projection_keys))
 
-  defp projection(_from, _config, :existence), do: []
+  defp projection(from, config, :existence) do
+    if projection_mode(from, :existence) == :value,
+      do: projection(from, config, :value),
+      else: []
+  end
+
+  # Set comparisons can remove every row based on projected values, even under EXISTS.
+  defp projection_mode(%FromCall{clauses: %{entries: entries}}, :existence) do
+    if Enum.any?(entries, &(&1.key in [:except, :except_all, :intersect, :intersect_all])),
+      do: :value,
+      else: :existence
+  end
+
+  defp projection_mode(_from, :value), do: :value
 
   # The whole inner `from` with the clause at `index` carrying `value` — `FromCall` keeps the
   # source's written form and the clause list's Sourceror wrapper.

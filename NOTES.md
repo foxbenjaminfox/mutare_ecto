@@ -98,20 +98,10 @@ That condition is woven, and the function then raises "subqueries are not allowe
 expressions" on every call, baseline included. It takes both halves: a condition that is the
 macro call *alone* has no catalog mutants, so it is never woven and builds as written.
 
-No directive rescues it. `# mutare:ignore` marks the sites ignored but leaves the clause
-woven — core drops a target whose mutants `finalize/2` all *skip*, not one whose sites are all
-ignored. What does work is giving the macro a clause of its own, since repeated `having:`
-clauses AND together: `having: over_threshold(p), having: count(p.id) > 1` weaves only the
-second.
-
-Closable plugin-side, and deferred as a delivery change rather than a fix. Reading source
-cannot name the macro — core reports an unregistered macro as indistinguishable from an ordinary
-call (`Mutare.Calls.routed_treatments/1`) — but it need not: inside a query expression every
-call outside Ecto's own API (`Ecto.Query.API`/`WindowAPI`'s exports) is something Ecto must
-macro-expand, so `weavable?/2` could refuse any such `having`. The recognized set cannot go
-stale in the dangerous direction: a form it fails to recognize only downgrades that clause to
-the whole-call delivery, which is valid either way. The cost is that every innocent macro in a
-`having` (a `fragment` helper, say) gives up the weave too.
+`condition_delivery: :static` now provides an explicit plugin-side escape hatch. It preserves
+static Ecto expansion for the enclosing condition, independent of how the macro's arguments
+route. Ignore directives still do not control delivery. Splitting the opaque macro into its
+own `having:` remains another option when that clause has no catalog mutants.
 
 ### A binding pattern on a pipe's left: syntax-preserving delivery `[done]`
 
@@ -130,26 +120,24 @@ pair with a local path dependency until that release is available.
 `FromCall.replace_source/2` accepts only a directly written source. Changing delivery does not
 let the plugin edit the left operand; the `Query.binding_reorders/1` guard remains.
 
-### Subquery interiors: bounds and ordering are not composed
+### Subquery interiors: bounds and windowed ordering `[done]`
 
-`Mutare.Ecto.Subquery` composes the row-set producers and (under a value-wrapper) the projection
-swaps into an inline subquery, and leaves `limit`/`offset` and `order_by` alone. That used to be
-recorded as a rejection on equivalence grounds ("inert under `exists`"), which is not true:
-`exists(… offset: k)` asks for more than `k` rows, `limit: 1` → `0` empties the subquery, and
-an ordering picks the row of a windowed or scalar subquery (`order_by: [desc: c.at], limit: 1`).
-They are unimplemented. What composing them takes:
+These were initially omitted, sometimes described as equivalent under EXISTS. The audit's
+zero-limit and offset examples showed why that blanket claim fails. The catalog now composes
+bound tags into static inner-query rebuilds and enables ordering for windowed value queries.
+The remaining gaps are unwindowed scalar ordering and general clause drops; their observation
+rules need finer wrapper information than the current existence/value distinction.
 
-  * **per-shape gating** — the live set depends on the wrapper *and* the subquery: under
-    `exists`, every `offset` mutant but of a `limit` only the bump to `0`; under a value-wrapper,
-    ordering flips only when the subquery is windowed or scalar; a scalar `subquery`'s `limit`
-    widened past `1` raises on Postgres and is equivalent on SQLite. `mode` alone
-    (`:existence`/`:value`) does not carry that.
-  * **a whole-`from` form of the bump** — `Mutare.Ecto.Bound`'s ±1 is hosted pin-only, which an
-    interior (a whole inner `from` rebuilt as one branch of the outer weave) cannot use; only
-    the bound *drop* (`Mutare.Ecto.Query`) composes as is.
+### Grammar and delivery audit `[done]`
 
-The most valuable single case is probably the ordering flip of the latest-row scalar — "does
-any test pin which row the subquery picks?".
+The source audit exposed three decisions that had been coupled: filter classification with
+`dynamic` argument layout, join-condition discovery with hostability, and window grammar with
+the delivery path. Window grammar is now shared; dynamics accept general value bodies; every
+explicit join predicate reaches the delivery decision. Repeated explicit `on:` predicates
+rebuild statically, while a sole association `on:` can weave because association predicates
+attach during planning, after dynamic expansion. EXISTS projection pruning now considers set
+comparisons. Complete composed query stages use core's existing island lowering, closing the
+terminal-stage gap without implementing another query-stage catalog.
 
 ### Spelling gaps: what the README table declares, and what closing each takes
 
@@ -177,10 +165,6 @@ each is unimplemented.
   * **A computed `from` source** (`from p in recent(2)`). The source argument is an `in`
     pattern, and core's treatments are per argument: nothing routes "the right side of this
     `in`" `:expression` while the left stays raw. A nested treatment is a core seam.
-  * **The final stage of an inline piped subquery** (`subquery(Comment |> where(…))` inside
-    a condition). Upstream stages now reach the island seam, but the final stage's own
-    clauses still have no subquery catalog. Its condition would have to be located
-    (`Mutare.Ecto.Host.Condition`) and rebuilt into the chain.
 
 ### Stage drops: a dependency break is not told from a weakened query
 
@@ -723,10 +707,7 @@ condition delivered exactly once, the host and the fallback now enumerate the sa
 `StaticCondition.delivery/4` — which is also what brought a standalone `join`'s `on:` into the
 fallback. A condition that is itself a `^` pin stays woven under any declaration: its weave is
 pin-only and re-declares nothing (`Host.Target`'s root-pin rule), and it keeps reporting its
-pin-interior mutants at the condition rather than at the whole call. An `on:` that
-`Host.JoinOn` keeps out of the weave stays out of the fallback under any declaration: Ecto's
-objection there is to a dynamic, not to the condition, so a rebuild would be valid — but
-offering one is a coverage change for every such `on:`, not a consequence of this one.
+pin-interior mutants at the condition rather than at the whole call. The later grammar/delivery audit extended this fallback to repeated explicit join predicates.
 
 The same rewrite surfaced a placement bug that corrupted the **baseline**, not just the mutants:
 the contiguity rule counted a literal source's joins from the *number of declared entries*, where

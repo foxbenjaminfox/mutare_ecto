@@ -36,13 +36,13 @@ defmodule Mutare.Ecto.Host do
   A condition the host cannot weave — a subquery in a `having`, which Ecto accepts only
   statically built, or a condition under a binding declaration the plugin cannot re-declare — is
   delivered as a whole-call rebuild instead, by `Mutare.Ecto.StaticCondition` — whose
-  `delivery/4` decides, for the host and the rebuild alike, which conditions those are.
+  `delivery/5` decides, for the host and the rebuild alike, which conditions those are.
   """
 
   alias Mutare.Ecto.{Bound, Context, Resolved, StaticCondition, Surface}
   alias Mutare.Ecto.AST.{FromCall, KeywordList, QueryCall}
   alias Mutare.Ecto.AST.KeywordList.Entry
-  alias Mutare.Ecto.Host.{Bindings, Catalog, Condition, Target}
+  alias Mutare.Ecto.Host.{Bindings, Catalog, Condition, JoinOn, Target}
   alias Mutare.CallRouting.Call
 
   @doc """
@@ -95,7 +95,15 @@ defmodule Mutare.Ecto.Host do
         # entry itself); each clause sees only the join bindings introduced up to it.
         Map.has_key?(conditions, index) ->
           bindings = Bindings.from(source, Bindings.visible_to(clauses, index))
-          from_target(key, value, Map.fetch!(conditions, index), bindings, index, context)
+
+          from_target(
+            JoinOn.from_receiver(key, clauses, index),
+            value,
+            Map.fetch!(conditions, index),
+            bindings,
+            index,
+            context
+          )
 
         true ->
           []
@@ -116,7 +124,7 @@ defmodule Mutare.Ecto.Host do
     end
   end
 
-  # Every condition target weaves only what `StaticCondition.delivery/4` assigns it; a
+  # Every condition target weaves only what `StaticCondition.delivery/5` assigns it; a
   # `:rebuilt` condition — one the clause cannot take as a dynamic, or one whose declaration
   # `Bindings` cannot re-declare — is `Mutare.Ecto.StaticCondition`'s, delivered whole-call.
   #
@@ -129,7 +137,8 @@ defmodule Mutare.Ecto.Host do
   # (`Mutare.Ecto.Island`); its weave is pin-only and carries no bindings, so it hosts under any
   # declaration (`Mutare.Ecto.Host.Target`).
   defp from_target(key, condition, kind, bindings, index, context) do
-    with {:woven, bindings} <- StaticCondition.delivery(key, condition, kind, bindings),
+    with {:woven, bindings} <-
+           StaticCondition.delivery(key, condition, kind, bindings, context.config),
          [_ | _] = mutants <- Catalog.mutants(condition, context) do
       [Target.from_clause(condition, kind, mutants, bindings, index)]
     else
@@ -144,7 +153,13 @@ defmodule Mutare.Ecto.Host do
     with %Condition{node: condition, index: index, kind: kind, declaration: declaration} <-
            Condition.locate(:condition, args),
          {:woven, bindings} <-
-           StaticCondition.delivery(macro, condition, kind, Bindings.declarations(declaration)),
+           StaticCondition.delivery(
+             macro,
+             condition,
+             kind,
+             Bindings.declarations(declaration),
+             context.config
+           ),
          [_ | _] = mutants <- Catalog.mutants(condition, context) do
       [Target.condition(condition, kind, mutants, bindings, index)]
     else
@@ -172,12 +187,18 @@ defmodule Mutare.Ecto.Host do
   end
 
   defp join_target(args, context) do
-    with {condition, kind, arg_index, pair_index} <- Condition.locate_on(args),
-         {:woven, bindings} <- StaticCondition.delivery(:on, condition, kind, Bindings.join(args)),
-         [_ | _] = mutants <- Catalog.mutants(condition, context) do
-      [Target.keyword_condition(condition, kind, mutants, bindings, arg_index, pair_index)]
-    else
-      _ -> []
+    for {condition, kind, arg_index, pair_index} <- Condition.locate_on(args),
+        {:woven, bindings} <- [
+          StaticCondition.delivery(
+            JoinOn.standalone_receiver(args),
+            condition,
+            kind,
+            Bindings.join(args),
+            context.config
+          )
+        ],
+        [_ | _] = mutants <- [Catalog.mutants(condition, context)] do
+      Target.keyword_condition(condition, kind, mutants, bindings, arg_index, pair_index)
     end
   end
 

@@ -498,7 +498,7 @@ defmodule Mutare.Ecto.SpellingCases do
       describe "Placement — inline subquery catalogs and upstream sources" do
         @outer ~S|from(p in "posts", where: p.id in subquery(INNER), select: p.id)|
 
-        test "upstream pipeline conditions mutate, but final stages and binding sources do not" do
+        test "inline from and composed conditions mutate; binding sources remain raw" do
           inline_from =
             fixture(
               String.replace(
@@ -543,7 +543,7 @@ defmodule Mutare.Ecto.SpellingCases do
 
           assert reached(inline_from, :comparison) == expected
           assert reached(inline_pipe, :comparison) == expected
-          assert reached(final_stage, :comparison) == MapSet.new()
+          assert reached(final_stage, :comparison) == reached(inline_from, :comparison)
           assert reached(from_source, :comparison) == MapSet.new()
         end
 

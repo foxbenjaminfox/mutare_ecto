@@ -1064,7 +1064,6 @@ defmodule Mutare.Ecto.HostTest do
     # `%Condition{}` with a `nil` node or an out-of-range index.
     test "locate/2 is nil for a degenerate arity and for a trailing binding list" do
       assert Host.Condition.locate(:condition, []) == nil
-      assert Host.Condition.locate(:dynamic, []) == nil
 
       [q, binding_list] = Sourceror.parse_string!("f(q, [p])") |> elem(2)
       assert Host.Condition.locate(:condition, [q]) == nil
@@ -1105,10 +1104,10 @@ defmodule Mutare.Ecto.HostTest do
 
   describe "multi-condition join `on:` is not hosted (BUG-multi-condition-join-on)" do
     # A `^dynamic(...)` is legal only as a join's *entire, top-level* on-expression. Ecto folds a
-    # join's multiple/implicit on-conditions into one `and`, where a `^dynamic` operand is rejected
+    # join's multiple explicit on-conditions into one `and`, where a `^dynamic` operand is rejected
     # ("dynamic expressions can only be interpolated at the top level…"). Because the host wraps even
     # the *baseline* branch, hosting such an `on:` corrupts mutant id 0 — the whole `mix mutare` run
-    # aborts on a non-green baseline. So the host must leave these `on:` conditions raw. `where`/
+    # aborts on a non-green baseline. So the host must rebuild these `on:` conditions statically. `where`/
     # `having`, each its own independent clause, are unaffected and keep hosting.
 
     test "a join with two `on:` keys hosts neither — no dynamic woven" do
@@ -1125,7 +1124,6 @@ defmodule Mutare.Ecto.HostTest do
       end
       """
 
-      assert hosted(src) == []
       refute metamutant(src) =~ "dynamic("
       assert_compiles(src)
     end
@@ -1146,11 +1144,10 @@ defmodule Mutare.Ecto.HostTest do
       end
       """
 
-      assert hosted(src) == []
       refute metamutant(src) =~ "dynamic("
     end
 
-    test "an `assoc` join (implicit on) with an explicit `on:` is not hosted" do
+    test "an `assoc` join (implicit on) with an explicit `on:` is hosted" do
       src = """
       defmodule M do
         import Ecto.Query
@@ -1163,12 +1160,11 @@ defmodule Mutare.Ecto.HostTest do
       end
       """
 
-      assert hosted(src) == []
-      refute metamutant(src) =~ "dynamic("
+      assert metamutant(src) =~ "dynamic("
       assert_compiles(src)
     end
 
-    test "a standalone `assoc` join with an `on:` is not hosted" do
+    test "a standalone `assoc` join with an `on:` is hosted" do
       src = """
       defmodule M do
         import Ecto.Query
@@ -1180,17 +1176,11 @@ defmodule Mutare.Ecto.HostTest do
       end
       """
 
-      # The stage-drop mutants (collapse a stage to its query) still fire; the guard is that the
-      # `on:` weaves no `^dynamic` — were it hosted, a `dynamic(` would appear in the metamutant.
-      refute metamutant(src) =~ "dynamic("
+      assert metamutant(src) =~ "dynamic("
       assert_compiles(src)
     end
 
-    test "an unnamed `assoc` join is an `assoc` join: its `on:` is not hosted either" do
-      # `assoc(u, :posts)` carries its implicit condition whether or not the join names a variable,
-      # so the exclusion is read off the join's *source*, not off an `x in` around it. The unnamed
-      # spelling used to slip past the rule in the `from` form (its `on:` was hosted); in the
-      # standalone form it must not start to, now that unnamed joins host at all.
+    test "an unnamed `assoc` join is an `assoc` join: its sole explicit `on:` is hosted" do
       for src <- [
             """
             defmodule M do
@@ -1211,14 +1201,14 @@ defmodule Mutare.Ecto.HostTest do
             end
             """
           ] do
-        refute metamutant(src) =~ "dynamic("
+        assert metamutant(src) =~ "dynamic("
         assert_compiles(src)
       end
     end
 
     test "a standalone join with two `on:` keys is not hosted" do
       # The standalone/pipe twin of the from-keyword "two on: keys" case above
-      # (`JoinOn.hostable_standalone?/2`'s own `Enum.count(..., :on) == 1` guard).
+      # (`JoinOn.standalone_receiver/1` counts explicit `on:` options).
       src = """
       defmodule M do
         import Ecto.Query
@@ -1636,9 +1626,6 @@ defmodule Mutare.Ecto.HostTest do
 
       assert %Host.Condition{index: 2, declaration: %BindingList{entries: [{:named, :post, _}]}} =
                Host.Condition.locate(:condition, call_args("q |> where([post: p], p.x > 1)"))
-
-      assert %Host.Condition{index: 1, declaration: %BindingList{entries: [{:indexed, _, 0}]}} =
-               Host.Condition.locate(:dynamic, call_args("dynamic([{p, 0}], p.x > 1)"))
     end
 
     test "written empty is a declaration of nothing, not an omitted one" do
@@ -1652,9 +1639,6 @@ defmodule Mutare.Ecto.HostTest do
 
       assert %Host.Condition{index: 1, declaration: :omitted} =
                Host.Condition.locate(:condition, call_args("q |> where(as(:p).x > 1)"))
-
-      assert %Host.Condition{index: 0, declaration: :omitted} =
-               Host.Condition.locate(:dynamic, call_args("dynamic(as(:p).x > 1)"))
     end
 
     test "uninterpretable: written, but unread — and never reported as omitted" do
@@ -1662,10 +1646,6 @@ defmodule Mutare.Ecto.HostTest do
         assert %Host.Condition{index: 2, declaration: :uninterpretable} =
                  Host.Condition.locate(:condition, call_args(code))
       end
-
-      # A piped `dynamic`'s declaration is the piped value: written, and read like any other.
-      assert %Host.Condition{index: 1, declaration: :uninterpretable} =
-               Host.Condition.locate(:dynamic, call_args("bindings |> dynamic(p.x > 1)"))
     end
 
     test "Bindings.declarations/1 keeps the three apart" do
