@@ -17,8 +17,8 @@ defmodule Mutare.Ecto.Tag do
   #     the mutant changed — the clause a whole-`from` rewrite changed (`Mutare.Ecto.Query`), or
   #     the expression a walk mutant swapped (`Mutare.Ecto.Walk` anchors every one) — so core
   #     reports the Site there rather than at the whole rebuilt form, while `node` still splices
-  #     the whole rewrite; `nil` for a producer that rewrites exactly the node it reports (a
-  #     hosted relay discards it structurally).
+  #     the whole rewrite; `nil` for a producer that rewrites exactly the node it reports.
+  #     Core preserves this attribution through hosted delivery too.
 
   alias Mutare.Mutator.Mutation
 

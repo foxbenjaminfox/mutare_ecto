@@ -8,6 +8,19 @@ read like logbooks. Referenced from code and docs as `NOTES "title"`.
 
 ## Deferred / known limitations
 
+### Clause-drop attribution does not yet describe a standalone source patch
+
+`Query.drops/3` attributes a removed `from` clause to its value with
+`Mutation.at_drop(entry.value)`. The delivered mutant removes the complete clause, but
+applying the recorded deletion range directly to source leaves its keyword key and separator
+behind (`where: condition` becomes `where: `). This predates origin-preserving collection;
+hosted delivery now preserves the same deletion attribution as in-place delivery.
+
+The origin regression suite proves source-patch parity for replacements. Clause drops need
+an attribution that covers the complete removable syntax, including the appropriate separator,
+while retaining the clause's selection line. Until that is implemented, their report ranges
+must not be treated as standalone executable source patches.
+
 ### Inner `from` inside a pin interior: whole-call rewrites only, no condition swaps — RESOLVED (in core) `[done]`
 
 The full-set island sub-contract closed the inner-`dynamic` gap, but the analogous **inner

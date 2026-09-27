@@ -21,7 +21,7 @@ defmodule Mutare.Ecto.PipedSourceTest do
       """
 
       mutations = diffs(source, mutators: @with_core)
-      assert {:arithmetic, "p.views > ^(n + 1)", "p.views > ^(n - 1)"} in mutations
+      assert {:arithmetic, "n + 1", "n - 1"} in mutations
       assert {:ecto, "p.views > ^(n + 1)", "p.views >= ^(n + 1)"} in mutations
 
       # The upstream `where` stage drops, collapsing its pipe to the schema it refines.
@@ -181,7 +181,7 @@ defmodule Mutare.Ecto.PipedSourceTest do
       end
 
       assert Enum.any?(diffs(source, mutators: @with_core), fn {family, _, mutated} ->
-               family == :integer and mutated =~ "build(3)"
+               family == :integer and mutated == "3"
              end)
 
       suppressed =
@@ -192,7 +192,7 @@ defmodule Mutare.Ecto.PipedSourceTest do
         )
 
       recorded = sites(suppressed, mutators: @with_core)
-      integers = Enum.filter(recorded, &(&1.mutator == :integer and &1.mutated_code =~ "build("))
+      integers = Enum.filter(recorded, &(&1.mutator == :integer and &1.original_code == "2"))
       assert integers != []
       assert Enum.all?(integers, & &1.ignored)
 
@@ -219,8 +219,8 @@ defmodule Mutare.Ecto.PipedSourceTest.Runtime do
 
       sites = assert_builds(source, & &1.q())
 
-      for predicate <- ["as(:q).views >= 2", "as(:q).views > 3", "as(:q).views > 1"] do
-        assert Enum.count(sites, &(&1.mutator == :ecto and &1.mutated_code =~ predicate)) == 1
+      for predicate <- ["as(:q).views >= 2", "3", "1"] do
+        assert Enum.count(sites, &(&1.mutator == :ecto and &1.mutated_code == predicate)) == 1
       end
     end
   end
@@ -270,14 +270,22 @@ defmodule Mutare.Ecto.PipedSourceTest.Runtime do
 
       sites = assert_builds(source, & &1.q(), opts)
 
-      for predicate <- ["q.views >= 5", "q.views > 6", "q.views > 4", "q.views > 0"] do
-        assert Enum.count(sites, &(&1.mutator == :ecto and &1.mutated_code =~ predicate)) == 1
+      for {original, mutated} <- [
+            {"q.views > 5", "q.views >= 5"},
+            {"5", "6"},
+            {"5", "4"},
+            {"5", "0"}
+          ] do
+        assert Enum.count(
+                 sites,
+                 &(&1.mutator == :ecto and &1.original_code == original and
+                     &1.mutated_code == mutated)
+               ) == 1
       end
 
       assert Enum.count(sites, fn site ->
-               site.mutator == :ecto and site.original_code =~ "q.views > 5" and
-                 site.mutated_code =~ "select: q.id" and
-                 not String.contains?(site.mutated_code, "q.views")
+               site.mutator == :ecto and site.original_code == "q.views > 5" and
+                 site.operation == :delete
              end) == 1
 
       refute Enum.any?(sites, &(&1.mutator != :ecto and &1.mutated_code =~ "q.views"))
@@ -300,7 +308,7 @@ defmodule Mutare.Ecto.PipedSourceTest.Runtime do
       """
 
       sites = assert_builds(source, & &1.q(), mutators: [:integer, {Mutare.Ecto, families: :all}])
-      assert Enum.any?(sites, &(&1.mutator == :integer and &1.mutated_code =~ "build(3)"))
+      assert Enum.any?(sites, &(&1.mutator == :integer and &1.mutated_code == "3"))
     end
   end
 

@@ -6,7 +6,7 @@ defmodule Mutare.Ecto.SubcontractTest do
   # The **island sub-contract** end to end: a hosted `where`/`having` condition may contain
   # interpolation islands (`^expr`) — ordinary Elixir evaluated at runtime, analyzed exactly
   # like top-level Elixir. The host hands each interior to generation over the run's **full**
-  # spec set (`Mutare.Analyze.expression_mutations/3` over `context.mutators`) and relays the
+  # spec set (`Mutare.Analyze.collect_expression/3` over `context.mutators`) and relays the
   # rebuilds through its own weave with `producer:` attribution (`Mutare.Ecto.Island`),
   # so:
   #
@@ -25,19 +25,26 @@ defmodule Mutare.Ecto.SubcontractTest do
   # The plugin plus core's builtins — the sub-contract needs core families to contract *to*.
   @with_core [mutators: [:all, {Mutare.Ecto, repo: MyApp.Repo}]]
 
-  # The core-attributed `{mutator, original, mutated}` triples recorded against a hosted
-  # condition carrying a pin — the sub-contracted island mutants (always a *core* family's,
-  # never `:ecto`'s; the whole-`from`/def-body sites core also records are filtered out by
-  # their originals, and `:return_value` — which mutates def bodies whole, never expressions,
-  # so it can't produce an island mutant — by name, since a single-expression body's site is
-  # the pin-carrying call itself).
+  # Identify islands by their source spans: their reports now name the actual inner
+  # mutation, with no pin or enclosing query in the diff.
   defp island_diffs(src, opts) do
-    for {mutator, original, mutated} <- diffs(src, opts),
-        mutator not in [:ecto, :return_value],
-        String.contains?(original, "^("),
-        not String.starts_with?(original, "from("),
-        not String.starts_with?(original, "def "),
-        do: {mutator, original, mutated}
+    {_, ranges} =
+      src
+      |> Sourceror.parse_string!()
+      |> Macro.prewalk([], fn
+        {:^, _, [inner]} = node, ranges -> {node, [Sourceror.get_range(inner) | ranges]}
+        node, ranges -> {node, ranges}
+      end)
+
+    position = fn point -> {point[:line], point[:column]} end
+
+    for site <- sites(src, opts),
+        site.mutator not in [:ecto, :return_value],
+        Enum.any?(ranges, fn range ->
+          position.(site.range.start) >= position.(range.start) and
+            position.(site.range.end) <= position.(range.end)
+        end),
+        do: {site.mutator, site.original_code, site.mutated_code}
   end
 
   describe "attribution — island mutants record under the producing core family" do
@@ -52,9 +59,9 @@ defmodule Mutare.Ecto.SubcontractTest do
       islands = island_diffs(src, @with_core)
 
       # Core's arithmetic and integer families reason about the interior — with core's Elixir
-      # conventions — while the recorded diff is the logical hosted condition.
-      assert {:arithmetic, "u.age > ^(min * 2)", "u.age > ^(min / 2)"} in islands
-      assert {:integer, "u.age > ^(min * 2)", "u.age > ^(min * 3)"} in islands
+      # conventions — while the recorded diff identifies the changed interior.
+      assert {:arithmetic, "min * 2", "min / 2"} in islands
+      assert {:integer, "2", "3"} in islands
 
       # No island mutant is ever the host's: the plugin's `:ecto` sites on that condition are
       # exactly its own SQL catalog (the comparison swap and the clause-level filter drop),
@@ -79,7 +86,7 @@ defmodule Mutare.Ecto.SubcontractTest do
       end
       """
 
-      assert {:arithmetic, "u.age > ^(min + 1)", "u.age > ^(min - 1)"} in island_diffs(
+      assert {:arithmetic, "min + 1", "min - 1"} in island_diffs(
                src,
                @with_core
              )
@@ -95,7 +102,7 @@ defmodule Mutare.Ecto.SubcontractTest do
       end
       """
 
-      assert {:arithmetic, "p.views > ^(min + 1)", "p.views > ^(min - 1)"} in island_diffs(
+      assert {:arithmetic, "min + 1", "min - 1"} in island_diffs(
                src,
                @with_core
              )
@@ -113,7 +120,7 @@ defmodule Mutare.Ecto.SubcontractTest do
       end
       """
 
-      assert {:arithmetic, "p.views > ^(min + 1)", "p.views > ^(min - 1)"} in island_diffs(
+      assert {:arithmetic, "min + 1", "min - 1"} in island_diffs(
                src,
                @with_core
              )
@@ -129,7 +136,7 @@ defmodule Mutare.Ecto.SubcontractTest do
       end
       """
 
-      assert {:arithmetic, "sum(p.views) > ^(n * 2)", "sum(p.views) > ^(n / 2)"} in island_diffs(
+      assert {:arithmetic, "n * 2", "n / 2"} in island_diffs(
                src,
                @with_core
              )
@@ -137,7 +144,7 @@ defmodule Mutare.Ecto.SubcontractTest do
       # The host's own catalog still owns the SQL side of the same condition — the aggregate
       # swap and the comparison swap ride the same weave as the relayed island mutant.
       ecto = ecto_diffs(src, @with_core)
-      assert {"sum(p.views) > ^(n * 2)", "avg(p.views) > ^(n * 2)"} in ecto
+      assert {"sum(p.views)", "avg(p.views)"} in ecto
       assert {"sum(p.views) > ^(n * 2)", "sum(p.views) >= ^(n * 2)"} in ecto
 
       assert_compiles(src, @with_core)
@@ -151,7 +158,7 @@ defmodule Mutare.Ecto.SubcontractTest do
       end
       """
 
-      assert {:arithmetic, "sum(p.views) > ^(n + 1)", "sum(p.views) > ^(n - 1)"} in island_diffs(
+      assert {:arithmetic, "n + 1", "n - 1"} in island_diffs(
                src,
                @with_core
              )
@@ -172,7 +179,7 @@ defmodule Mutare.Ecto.SubcontractTest do
       end
       """
 
-      assert {:arithmetic, "as(:user).age > ^(min + 1)", "as(:user).age > ^(min - 1)"} in island_diffs(
+      assert {:arithmetic, "min + 1", "min - 1"} in island_diffs(
                src,
                @with_core
              )
@@ -234,7 +241,7 @@ defmodule Mutare.Ecto.SubcontractTest do
 
       islands = island_diffs(src, mutators: [:arithmetic, {Mutare.Ecto, repo: MyApp.Repo}])
 
-      assert [{:arithmetic, _, "u.age > ^(min / 2)"}] = islands
+      assert [{:arithmetic, _, "min / 2"}] = islands
     end
 
     test "the plugin's families: filter never touches the sub-contract" do
@@ -253,7 +260,7 @@ defmodule Mutare.Ecto.SubcontractTest do
         mutators: [:arithmetic, {Mutare.Ecto, repo: MyApp.Repo, families: [:null_predicate]}]
       ]
 
-      assert [{:arithmetic, _, "u.age > ^(min / 2)"}] = island_diffs(src, opts)
+      assert [{:arithmetic, _, "min / 2"}] = island_diffs(src, opts)
 
       # No `:ecto` mutant on the condition (the comparison swap is filtered out)…
       refute Enum.any?(ecto_diffs(src, opts), fn {original, _} ->
@@ -280,7 +287,7 @@ defmodule Mutare.Ecto.SubcontractTest do
           mutators: [{Mutare.Mutators.Arithmetic, as: :math}, {Mutare.Ecto, repo: MyApp.Repo}]
         )
 
-      assert [{:math, "u.age > ^(min * 2)", "u.age > ^(min / 2)"}] = islands
+      assert [{:math, "min * 2", "min / 2"}] = islands
     end
   end
 
@@ -303,13 +310,13 @@ defmodule Mutare.Ecto.SubcontractTest do
 
       sites = sites(src, @with_core)
 
-      assert site(sites, :arithmetic, "u.age > ^(min / 2)").ignored,
+      assert site(sites, :arithmetic, "min / 2").ignored,
              "the island's arithmetic mutant answers to core's family name"
 
       refute site(sites, :ecto, "u.age >= ^(min * 2)").ignored,
              "the host's own comparison swap is not [arithmetic]'s to suppress"
 
-      refute site(sites, :integer, "u.age > ^(min * 3)").ignored,
+      refute site(sites, :integer, "3").ignored,
              "a sibling island producer keeps running"
     end
 
@@ -327,7 +334,7 @@ defmodule Mutare.Ecto.SubcontractTest do
 
       assert site(sites, :ecto, "u.age >= ^(min * 2)").ignored
 
-      refute site(sites, :arithmetic, "u.age > ^(min / 2)").ignored,
+      refute site(sites, :arithmetic, "min / 2").ignored,
              "the island mutant belongs to core's family, not [ecto]'s vocabulary"
     end
 
@@ -346,9 +353,9 @@ defmodule Mutare.Ecto.SubcontractTest do
 
       sites = sites(arithmetic_src, @with_core)
 
-      assert site(sites, :arithmetic, "p.views > ^(min / 2)").ignored
+      assert site(sites, :arithmetic, "min / 2").ignored
       refute site(sites, :ecto, "p.views >= ^(min * 2)").ignored
-      refute site(sites, :integer, "p.views > ^(min * 3)").ignored
+      refute site(sites, :integer, "3").ignored
 
       ecto_src = """
       defmodule M do
@@ -362,7 +369,7 @@ defmodule Mutare.Ecto.SubcontractTest do
       sites = sites(ecto_src, @with_core)
 
       assert site(sites, :ecto, "p.views >= ^(min * 2)").ignored
-      refute site(sites, :arithmetic, "p.views > ^(min / 2)").ignored
+      refute site(sites, :arithmetic, "min / 2").ignored
     end
   end
 
@@ -375,7 +382,7 @@ defmodule Mutare.Ecto.SubcontractTest do
       end
       """
 
-      assert {:arithmetic, "u.age in [18, ^(base + 1)]", "u.age in [18, ^(base - 1)]"} in island_diffs(
+      assert {:arithmetic, "base + 1", "base - 1"} in island_diffs(
                src,
                @with_core
              )
@@ -397,12 +404,11 @@ defmodule Mutare.Ecto.SubcontractTest do
       end
       """
 
-      assert {:logical, "is_nil(coalesce(u.age, ^(opts[:floor] || d)))",
-              "is_nil(coalesce(u.age, ^(opts[:floor] && d)))"} in island_diffs(src, @with_core)
+      assert {:logical, "opts[:floor] || d", "opts[:floor] && d"} in island_diffs(src, @with_core)
 
       # …alongside the coalesce drop beneath the predicate — the plugin's own SQL mutant, which
       # removes the pin rather than mutating it.
-      assert {"is_nil(coalesce(u.age, ^(opts[:floor] || d)))", "is_nil(u.age)"} in ecto_diffs(
+      assert {"coalesce(u.age, ^(opts[:floor] || d))", "u.age"} in ecto_diffs(
                src,
                @with_core
              )
@@ -436,7 +442,7 @@ defmodule Mutare.Ecto.SubcontractTest do
       end
       """
 
-      assert {:arithmetic, "u.age not in [18, ^(base + 1)]", "u.age not in [18, ^(base - 1)]"} in island_diffs(
+      assert {:arithmetic, "base + 1", "base - 1"} in island_diffs(
                src,
                @with_core
              )
@@ -454,8 +460,7 @@ defmodule Mutare.Ecto.SubcontractTest do
       end
       """
 
-      assert {:arithmetic, ~s|fragment("? > ?", u.age, ^(min * 2))|,
-              ~s|fragment("? > ?", u.age, ^(min / 2))|} in island_diffs(src, @with_core)
+      assert {:arithmetic, "min * 2", "min / 2"} in island_diffs(src, @with_core)
 
       assert_compiles(src, @with_core)
     end
@@ -470,7 +475,7 @@ defmodule Mutare.Ecto.SubcontractTest do
       end
       """
 
-      assert {:arithmetic, "coalesce(u.score, ^(d + 1)) > 10", "coalesce(u.score, ^(d - 1)) > 10"} in island_diffs(
+      assert {:arithmetic, "d + 1", "d - 1"} in island_diffs(
                src,
                @with_core
              )
@@ -487,16 +492,16 @@ defmodule Mutare.Ecto.SubcontractTest do
       """
 
       islands = island_diffs(src, @with_core)
-      original = "u.age > ^(lo + 1) and u.age < ^(hi - 1)"
 
       # Each island mutates alone — the sibling pin rides along verbatim in both rebuilds.
-      assert {:arithmetic, original, "u.age > ^(lo - 1) and u.age < ^(hi - 1)"} in islands
-      assert {:arithmetic, original, "u.age > ^(lo + 1) and u.age < ^(hi + 1)"} in islands
+      assert {:arithmetic, "lo + 1", "lo - 1"} in islands
+      assert {:arithmetic, "hi - 1", "hi + 1"} in islands
 
       # And no relayed rebuild ever touches both pins at once.
-      refute Enum.any?(islands, fn {_m, _o, mutated} ->
-               mutated =~ "lo - 1" and mutated =~ "hi + 1"
-             end)
+      for {site, patched} <- patched_sources(src, @with_core), site.mutator == :arithmetic do
+        assert (patched =~ "lo - 1" and patched =~ "hi - 1") or
+                 (patched =~ "lo + 1" and patched =~ "hi + 1")
+      end
 
       assert_compiles(src, @with_core)
     end
@@ -517,8 +522,7 @@ defmodule Mutare.Ecto.SubcontractTest do
       end
       """
 
-      assert {:arithmetic, "tagged(u.age > ^(n + 1), :urgent)",
-              "tagged(u.age > ^(n - 1), :urgent)"} in island_diffs(tagged, helper)
+      assert {:arithmetic, "n + 1", "n - 1"} in island_diffs(tagged, helper)
 
       opaque = """
       defmodule M do
@@ -531,7 +535,7 @@ defmodule Mutare.Ecto.SubcontractTest do
       assert island_diffs(opaque, helper) == []
 
       # Unregistered, the same call has `nil` routing — plainly standard syntax, descended.
-      assert {:arithmetic, "opaque(u.age > ^(n + 1))", "opaque(u.age > ^(n - 1))"} in island_diffs(
+      assert {:arithmetic, "n + 1", "n - 1"} in island_diffs(
                opaque,
                @with_core
              )
@@ -598,10 +602,9 @@ defmodule Mutare.Ecto.SubcontractTest do
       """
 
       islands = island_diffs(src, @with_core)
-      original = "dynamic([p], p.views > ^(min * 2))"
 
-      assert {:arithmetic, original, "dynamic([p], p.views > ^(min / 2))"} in islands
-      assert {:integer, original, "dynamic([p], p.views > ^(min * 3))"} in islands
+      assert {:arithmetic, "min * 2", "min / 2"} in islands
+      assert {:integer, "2", "3"} in islands
 
       # The island mutant is never `:ecto`'s: the plugin's own sites on the call are exactly its
       # SQL catalog (the comparison swap, reported at the comparison), nothing inside the pin.
@@ -621,8 +624,7 @@ defmodule Mutare.Ecto.SubcontractTest do
       end
       """
 
-      assert {:arithmetic, "dynamic(as(:post).views > ^(min + 1))",
-              "dynamic(as(:post).views > ^(min - 1))"} in island_diffs(src, @with_core)
+      assert {:arithmetic, "min + 1", "min - 1"} in island_diffs(src, @with_core)
 
       assert_compiles(src, @with_core)
     end
@@ -638,15 +640,15 @@ defmodule Mutare.Ecto.SubcontractTest do
       """
 
       islands = island_diffs(src, @with_core)
-      original = "dynamic([p], p.views > ^(lo + 1) and p.views < ^(hi - 1))"
 
-      assert {:arithmetic, original, "dynamic([p], p.views > ^(lo - 1) and p.views < ^(hi - 1))"} in islands
+      assert {:arithmetic, "lo + 1", "lo - 1"} in islands
 
-      assert {:arithmetic, original, "dynamic([p], p.views > ^(lo + 1) and p.views < ^(hi + 1))"} in islands
+      assert {:arithmetic, "hi - 1", "hi + 1"} in islands
 
-      refute Enum.any?(islands, fn {_m, _o, mutated} ->
-               mutated =~ "lo - 1" and mutated =~ "hi + 1"
-             end)
+      for {site, patched} <- patched_sources(src, @with_core), site.mutator == :arithmetic do
+        assert (patched =~ "lo - 1" and patched =~ "hi - 1") or
+                 (patched =~ "lo + 1" and patched =~ "hi + 1")
+      end
 
       assert_compiles(src, @with_core)
     end
@@ -662,8 +664,7 @@ defmodule Mutare.Ecto.SubcontractTest do
       end
       """
 
-      assert {:logical, "dynamic([p], is_nil(coalesce(p.views, ^(opts[:floor] || v))))",
-              "dynamic([p], is_nil(coalesce(p.views, ^(opts[:floor] && v))))"} in island_diffs(
+      assert {:logical, "opts[:floor] || v", "opts[:floor] && v"} in island_diffs(
                src,
                @with_core
              )
@@ -689,8 +690,7 @@ defmodule Mutare.Ecto.SubcontractTest do
 
       assert island_diffs(src, helper) == []
 
-      assert {:arithmetic, "dynamic([u], opaque(u.age > ^(n + 1)))",
-              "dynamic([u], opaque(u.age > ^(n - 1)))"} in island_diffs(src, @with_core)
+      assert {:arithmetic, "n + 1", "n - 1"} in island_diffs(src, @with_core)
 
       assert_compiles(src, helper)
     end
@@ -711,7 +711,7 @@ defmodule Mutare.Ecto.SubcontractTest do
         mutators: [:arithmetic, {Mutare.Ecto, repo: MyApp.Repo, families: [:null_predicate]}]
       ]
 
-      assert [{:arithmetic, _, "dynamic([p], p.views > ^(min / 2))"}] = island_diffs(src, opts)
+      assert [{:arithmetic, _, "min / 2"}] = island_diffs(src, opts)
       assert ecto_diffs(src, opts) == []
       assert_compiles(src, opts)
     end
@@ -729,7 +729,7 @@ defmodule Mutare.Ecto.SubcontractTest do
           mutators: [{Mutare.Mutators.Arithmetic, as: :math}, {Mutare.Ecto, repo: MyApp.Repo}]
         )
 
-      assert [{:math, _, "dynamic([p], p.views > ^(min / 2))"}] = islands
+      assert [{:math, _, "min / 2"}] = islands
     end
 
     test "parity — the same interior yields the same core mutants in a where and a dynamic" do
@@ -829,7 +829,7 @@ defmodule Mutare.Ecto.SubcontractTest do
         refute Enum.any?(pairs, &(&1 =~ "mutare")),
                "a pinned keyword filter's field key must not be renamed in `#{body}`"
 
-        assert Enum.any?(pairs, &(&1 =~ ~r/views: [046]\b/)),
+        assert Enum.any?(pairs, &(&1 in ["0", "4", "6"])),
                "expected the pinned keyword *value* to still mutate in `#{body}`"
 
         assert_compiles(src, @with_core)
@@ -860,10 +860,15 @@ defmodule Mutare.Ecto.SubcontractTest do
       """
     end
 
-    # Every recorded mutant's rendering (`:return_value` rewrites the def body whole, never an
-    # expression).
+    # Structural-role assertions inspect the patched program, so they can still check
+    # that surrounding field names survive when the report names only the changed leaf.
     defp mutateds(src, opts \\ @all_arms),
-      do: for({m, _o, mutated} <- diffs(src, opts), m != :return_value, do: mutated)
+      do:
+        for(
+          {site, patched} <- patched_sources(src, opts),
+          site.mutator != :return_value,
+          do: patched |> Sourceror.parse_string!() |> Sourceror.to_string()
+        )
 
     test "a structural literal behind a pin mutates exactly as the written one: not at all" do
       # The same condition twice — the structural literal written, then pinned. With the pin
@@ -908,7 +913,10 @@ defmodule Mutare.Ecto.SubcontractTest do
             {~s|p.unit == ^"day"|, ~s|^"mutare"|},
             {"p.mod == ^Ecto.UUID", "^Mutare.Mutant"}
           ] do
-        assert sentinel in (condition |> condition_src() |> mutateds() |> Enum.map(&pin_of/1)),
+        assert String.trim_leading(sentinel, "^") in Enum.map(
+                 diffs(condition_src(condition), @all_arms),
+                 &elem(&1, 2)
+               ),
                "expected core to swap the pinned value in: #{condition}"
       end
     end
@@ -1071,9 +1079,6 @@ defmodule Mutare.Ecto.SubcontractTest do
       assert Enum.any?(static, &(&1 =~ "n - 1"))
       refute Enum.any?(static, &(&1 =~ "mutare"))
     end
-
-    # The pinned operand of a rendered `left == ^value` condition.
-    defp pin_of(mutated), do: mutated |> String.split(" == ", parts: 2) |> List.last()
   end
 
   describe "full set — an inner dynamic inside a pin mutates under SQL semantics, once" do
@@ -1106,11 +1111,12 @@ defmodule Mutare.Ecto.SubcontractTest do
       assert Enum.count(swaps, fn {_o, m} -> m =~ "p.x >= 1" end) == 1
       assert Enum.count(swaps, fn {_o, m} -> m =~ "p.y <= 2" end) == 1
 
-      # Both are single-point: the sibling branch rides along verbatim.
-      assert Enum.all?(swaps, fn
-               {_o, m} ->
-                 (m =~ "p.x >= 1" and m =~ "p.y < 2") or (m =~ "p.y <= 2" and m =~ "p.x > 1")
-             end)
+      # Applying each precise source change keeps the sibling branch verbatim.
+      for {site, patched} <- patched_sources(@inner_dynamic, @with_core),
+          {site.original_code, site.mutated_code} in swaps do
+        assert (patched =~ "p.x >= 1" and patched =~ "p.y < 2") or
+                 (patched =~ "p.y <= 2" and patched =~ "p.x > 1")
+      end
 
       assert_compiles(@inner_dynamic, @with_core)
     end
@@ -1129,8 +1135,8 @@ defmodule Mutare.Ecto.SubcontractTest do
       end
       """
 
-      original = "^dynamic([u], exists(from(p in Post, where: p.id > 0, select: p.id)))"
-      mutated = "^dynamic([u], exists(from(p in Post, select: p.id)))"
+      original = "p.id > 0"
+      mutated = ""
 
       assert {original, mutated} in ecto_diffs(src, @with_core)
       assert_compiles(src, @with_core)
@@ -1143,7 +1149,7 @@ defmodule Mutare.Ecto.SubcontractTest do
       assert Enum.any?(
                diffs(@inner_dynamic, @with_core),
                fn {mutator, original, mutated} ->
-                 mutator == :relational and original =~ "^if c > 0" and mutated =~ "c >= 0"
+                 mutator == :relational and original == "c > 0" and mutated =~ "c >= 0"
                end
              )
 
@@ -1210,8 +1216,8 @@ defmodule Mutare.Ecto.SubcontractTest do
 
       inner_swaps = Enum.filter(ecto, fn {_o, m} -> m =~ "q.x >= 1" end)
       assert [{original, mutated}] = inner_swaps
-      assert original =~ "dynamic([p], ^if(c > 0"
-      assert mutated =~ "dynamic([q], q.x >= 1)"
+      assert original == "q.x > 1"
+      assert mutated == "q.x >= 1"
 
       assert_compiles(src, @with_core)
     end
@@ -1246,16 +1252,14 @@ defmodule Mutare.Ecto.SubcontractTest do
       # The rebuild is the lowered form: the mutated condition spliced back `^dynamic`-pinned —
       # by construction the value the top-level weave takes when this branch is active.
       assert original =~ "p.views > 10"
-      assert mutated =~ "where: ^"
-      assert mutated =~ "dynamic([p], p.views >= 10)"
+      assert mutated == "p.views >= 10"
+      assert metamutant(@inner_from, @with_core) =~ "dynamic([p], p.views >= 10)"
 
       # The literal-bound bumps of the inner condition ride the same lowering.
-      assert Enum.any?(ecto, fn {_o, m} -> m =~ "p.views > 11" end)
+      assert {"10", "11"} in ecto
 
       # The inner from's whole-call rewrites (the clause drop) still relay alongside.
-      assert Enum.any?(ecto, fn {_o, m} ->
-               m =~ "u.id in ^repo.all(from(p in Post, select: p.id))"
-             end)
+      assert {"p.views > 10", ""} in ecto
 
       assert_compiles(@inner_from, @with_core)
     end
@@ -1289,7 +1293,7 @@ defmodule Mutare.Ecto.SubcontractTest do
     # carries no `:mutators` key at all, which `Mutare.Ecto.Context.new/1` reads as `[]` (core
     # descends such a node itself, so there is no island left to relay). Drive the seam with that
     # empty spec set directly: it degrades to no sub-contracted mutants rather than raising inside
-    # the `for` comprehension's `Mutare.Analyze.expression_mutations/2` call.
+    # the `for` comprehension's `Mutare.Analyze.collect_expression/2` call.
     test "an empty spec set yields no sub-contracted mutants, never crashes" do
       condition = Sourceror.parse_string!("u.age > ^(min * 2)")
       assert Mutare.Ecto.Island.subcontracted(condition, context()) == []
@@ -1330,7 +1334,7 @@ defmodule Mutare.Ecto.SubcontractTest.Runtime do
       sites =
         assert_builds(src, & &1.q(1, true), mutators: core ++ [{Mutare.Ecto, repo: MyApp.Repo}])
 
-      assert Enum.any?(sites, &(&1.mutated_code =~ ~s|ago(^(n - 1), ^"day")|))
+      assert Enum.any?(sites, &(&1.mutated_code == "n - 1"))
       assert Enum.any?(sites, &(&1.mutated_code =~ "asc or n > 0"))
       refute Enum.any?(sites, &(&1.mutated_code =~ "mutare"))
     end

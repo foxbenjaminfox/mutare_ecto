@@ -15,7 +15,7 @@ defmodule Mutare.Ecto.Context do
   #     (`Mutare.Ecto.Island.subcontracted/3`) then relays nothing, correctly — there is no
   #     island core hasn't already reached.
   #   * `core` — core's map itself, kept for the two places the plugin hands code back to core:
-  #     the island sub-contract (`Mutare.Analyze.expression_mutations/3` wants the callback
+  #     the island sub-contract (`Mutare.Analyze.collect_expression/3` wants the callback
   #     context unchanged — it carries the enclosing call's lexical environment, in which core
   #     resolves the island) and the plugin's own resolution of the regions core left as written
   #     (`Mutare.Ecto.Resolved`). The plugin reads nothing else off it.

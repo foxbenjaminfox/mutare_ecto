@@ -760,7 +760,7 @@ defmodule Mutare.Ecto.HostTest do
       """
 
       assert {"p.views > 1", "p.views >= 1"} in hosted(src)
-      assert {"p.views > 1", "p.views > 2"} in hosted(src)
+      assert {"1", "2"} in hosted(src)
       assert metamutant(src) =~ "dynamic([..., p]"
       assert_compiles(src)
     end
@@ -796,7 +796,7 @@ defmodule Mutare.Ecto.HostTest do
       """
 
       assert {"p.id > 1", "p.id >= 1"} in hosted(src)
-      assert {"p.id > 1", "p.id > 2"} in hosted(src)
+      assert {"1", "2"} in hosted(src)
       assert metamutant(src) =~ "dynamic([p, ..., _]"
       assert_compiles(src)
     end
@@ -882,7 +882,7 @@ defmodule Mutare.Ecto.HostTest do
       """
 
       assert {"as(:post).views > 100", "as(:post).views >= 100"} in hosted(src)
-      assert {"as(:post).views > 100", "as(:post).views > 101"} in hosted(src)
+      assert {"100", "101"} in hosted(src)
       assert metamutant(src) =~ "dynamic([], as(:post).views"
       assert_compiles(src)
     end
@@ -980,7 +980,7 @@ defmodule Mutare.Ecto.HostTest do
       """
 
       assert {"as(:post).views > 100", "as(:post).views >= 100"} in hosted(src)
-      assert {"as(:post).views > 100", "as(:post).views > 101"} in hosted(src)
+      assert {"100", "101"} in hosted(src)
       assert metamutant(src) =~ "dynamic([], as(:post).views"
       assert_compiles(src)
     end
@@ -1315,8 +1315,8 @@ defmodule Mutare.Ecto.HostTest do
       """
 
       mutated = Enum.map(hosted(src), fn {_o, m} -> m end)
-      assert "u.age > 19" in mutated
-      assert "u.age > 17" in mutated
+      assert "19" in mutated
+      assert "17" in mutated
       assert "u.age >= 18" in mutated
       assert_compiles(src)
     end
@@ -1339,7 +1339,7 @@ defmodule Mutare.Ecto.HostTest do
       """
 
       assert Enum.any?(hosted(src), fn {original, mutated} ->
-               original == "sum(u.age) > 100" and mutated == "avg(u.age) > 100"
+               original == "sum(u.age)" and mutated == "avg(u.age)"
              end)
 
       assert metamutant(src) =~ "dynamic([u]"
@@ -1355,7 +1355,7 @@ defmodule Mutare.Ecto.HostTest do
       """
 
       assert Enum.any?(hosted(src), fn {original, mutated} ->
-               original == "max(u.age) > 30" and mutated == "min(u.age) > 30"
+               original == "max(u.age)" and mutated == "min(u.age)"
              end)
 
       assert_compiles(src)
@@ -1456,8 +1456,7 @@ defmodule Mutare.Ecto.HostTest do
       """
 
       assert Enum.any?(hosted(src), fn {original, mutated} ->
-               original == "u.age > p.views and c.flag > u.score" and
-                 mutated == "u.age >= p.views and c.flag > u.score"
+               original == "u.age > p.views" and mutated == "u.age >= p.views"
              end)
 
       assert metamutant(src) =~ "[u, p, comments: c]"
@@ -2076,8 +2075,8 @@ defmodule Mutare.Ecto.HostTest do
       end
       """
 
-      # The pin-only weave (`limit: ^(case …)`) reports only the logical pair; the drop is the
-      # sole whole-`from` diff.
+      # The pin-only weave (`limit: ^(case …)`) reports only the logical pair;
+      # hosted/1 excludes the separately reported clause drop.
       bumps = hosted(src)
       assert Enum.sort(bumps) == [{"10", "11"}, {"10", "9"}]
 

@@ -35,7 +35,7 @@ defmodule Mutare.Ecto.MultiInstanceTest do
 
       # …while the complementary instance keeps everything else under the default name: the
       # in-fragment literal bump, the hosted bound bump, and the whole-`from` drops.
-      assert [literal] = Enum.filter(sites, &(&1.mutated_code =~ "u.age > 19"))
+      assert [literal] = Enum.filter(sites, &(&1.mutated_code =~ "19"))
       assert literal.mutator == :ecto
 
       assert [bump] = Enum.filter(sites, &(&1.mutated_code == "11"))

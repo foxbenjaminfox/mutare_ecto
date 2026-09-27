@@ -24,7 +24,7 @@ defmodule Mutare.Ecto.SourceIslandsRoutingTest do
 
         actual =
           Enum.any?(diffs(source, opts), fn {family, _, mutated} ->
-            family == :integer and mutated =~ "build(3)"
+            family == :integer and mutated == "3"
           end)
 
         assert actual == source_mutated?, "#{condition} with route #{inspect(route)}"

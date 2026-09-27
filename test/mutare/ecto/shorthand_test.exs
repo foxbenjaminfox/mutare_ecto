@@ -651,9 +651,9 @@ defmodule Mutare.Ecto.ShorthandTest do
       mutateds =
         for {:ecto, _original, mutated} <- diffs(src, mutators: @every_family), do: mutated
 
-      assert Enum.any?(mutateds, &(&1 =~ "where: [score: 6, kind: :spam]"))
+      assert Enum.any?(mutateds, &(&1 == "6"))
       # The atom arm (opt-in, on here) still reaches the atom *value*…
-      assert Enum.any?(mutateds, &(&1 =~ "where: [score: 5, kind: :mutare]"))
+      assert Enum.any?(mutateds, &(&1 == ":mutare"))
       # …but no key: `[mutare: 5, …]` / `[:mutare => 5, …]` is an unknown-column query.
       refute Enum.any?(mutateds, &(&1 =~ ~r/mutare:|:mutare =>/))
 
@@ -673,7 +673,7 @@ defmodule Mutare.Ecto.ShorthandTest do
 
       mutateds = for {_m, _original, mutated} <- diffs(src, mutators: @every_family), do: mutated
 
-      assert Enum.any?(mutateds, &(&1 =~ "where: [score: ^(min + 2)]"))
+      assert Enum.any?(mutateds, &(&1 == "2"))
       assert_compiles(src, mutators: @every_family)
     end
   end

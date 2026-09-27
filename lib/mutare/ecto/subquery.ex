@@ -127,8 +127,8 @@ defmodule Mutare.Ecto.Subquery do
   `from(source, clauses)` (or, in `:existence` mode, `subquery(from(source, clauses))`).
   Returned as `Mutare.Ecto.Tag`s carrying each family's **normal** tag (`:comparison`,
   `:filter_drop`, `:join_type`, …) and the attribution its producer stamped, so an in-place
-  delivery (`Mutare.Ecto.Dynamic`) reports at the inner clause it changed while the host's weave
-  discards the stamp (see `Mutare.Ecto.Walk`).
+  delivery (`Mutare.Ecto.Dynamic`) and the host's weave both report at the inner clause it
+  changed (see `Mutare.Ecto.Walk`).
   """
   @spec interior_mutants(Macro.t(), Config.t(), mode()) :: [Tag.t()]
   def interior_mutants(node, %Config{} = config, mode) do

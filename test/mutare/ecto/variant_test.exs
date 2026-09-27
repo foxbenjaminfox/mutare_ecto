@@ -100,7 +100,7 @@ defmodule Mutare.Ecto.VariantTest do
       assert site(sites, "u.age >= 18").variant == ["comparison", ">"]
 
       # `18` → `19`: an integer-literal bump (`succ`) of the *same* hosted condition.
-      assert site(sites, "u.age > 19").variant == ["integer_literal", "succ"]
+      assert site(sites, "19").variant == ["integer_literal", "succ"]
     end
 
     test "a hosted bound bump is tagged family-only (no finer kind)" do
@@ -162,7 +162,7 @@ defmodule Mutare.Ecto.VariantTest do
 
       assert site(sites, "u.age <= 40").ignored, "the < swap is suppressed"
       refute site(sites, "u.age >= 18").ignored, "the > swap keeps running"
-      refute site(sites, "u.age < 41").ignored, "the literal bump keeps running"
+      refute site(sites, "41").ignored, "the literal bump keeps running"
       refute site(sites, "40 or u.age").ignored, "the connective swap keeps running"
     end
 
@@ -181,7 +181,7 @@ defmodule Mutare.Ecto.VariantTest do
 
       assert site(sites, "u.age <= 40").ignored, "the < swap is suppressed"
       assert site(sites, "u.age >= 18").ignored, "the > swap is suppressed too"
-      refute site(sites, "u.age < 41").ignored, "a non-comparison sibling keeps running"
+      refute site(sites, "41").ignored, "a non-comparison sibling keeps running"
     end
   end
 
@@ -198,7 +198,7 @@ defmodule Mutare.Ecto.VariantTest do
 
       sites = sites(src)
 
-      assert site(sites, "u.age > 19").ignored, "the literal bump is suppressed"
+      assert site(sites, "19").ignored, "the literal bump is suppressed"
       refute site(sites, "u.age >= 18").ignored, "the comparison swap keeps running"
     end
 
@@ -231,7 +231,7 @@ defmodule Mutare.Ecto.VariantTest do
       sites = sites(src)
 
       assert site(sites, "u.age >= 18").ignored, "the comparison swap is suppressed"
-      assert site(sites, "u.age > 19").ignored, "the literal sibling is suppressed too"
+      assert site(sites, "19").ignored, "the literal sibling is suppressed too"
     end
   end
 

@@ -117,7 +117,7 @@ defmodule Mutare.Ecto.RootPinDeliveryTest do
     {[instrumented], sites} = Mutare.Test.compile_metamutant(source, mutators(@with_core))
 
     {baseline, mutant} =
-      Mutare.Test.observe_mutant(sites, {"^[views: 5]", "^[views: 6]"}, fn ->
+      Mutare.Test.observe_mutant(sites, {"5", "6"}, fn ->
         inspect(instrumented.run(from(c in "c"), true))
       end)
 
@@ -125,7 +125,7 @@ defmodule Mutare.Ecto.RootPinDeliveryTest do
     assert mutant =~ "where: c0.views == ^6"
   end
 
-  test "the weave is pin-only: bare interiors as branches, and the recorded diff keeps its pin" do
+  test "the weave is pin-only while the report identifies the changed interior" do
     source = module_source(~s|where(q, ^[views: 5])|)
     woven = metamutant(source, @with_core)
 
@@ -133,7 +133,7 @@ defmodule Mutare.Ecto.RootPinDeliveryTest do
     refute woven =~ "dynamic", "a root pin must not be wrapped in `dynamic/2`:\n#{woven}"
 
     # The logical fragment is still the written condition, `^` included — only delivery unpins.
-    assert {:integer, "^[views: 5]", "^[views: 6]"} in diffs(source, @with_core)
+    assert {:integer, "5", "6"} in diffs(source, @with_core)
   end
 
   test "under a declaration the plugin cannot re-declare, a root pin is still woven, not rebuilt" do
@@ -150,7 +150,7 @@ defmodule Mutare.Ecto.RootPinDeliveryTest do
     assert woven =~ "[{p, 0 + 0}], ^case mutare_active do"
     assert woven =~ "where(q, [{p, 0 + 0}], p.views >= 1)"
     refute woven =~ "dynamic"
-    assert {:integer, "^[views: 5]", "^[views: 6]"} in diffs(source, @with_core)
+    assert {:integer, "5", "6"} in diffs(source, @with_core)
     assert {:ecto, "p.views > 1", "p.views >= 1"} in diffs(source, @with_core)
   end
 
@@ -166,9 +166,7 @@ defmodule Mutare.Ecto.RootPinDeliveryTest do
     source =
       module_source(~s|join(q, :inner, [p], subquery(q), on: ^dynamic([p, s], s.id > p.id))|)
 
-    assert {"^dynamic([p, s], s.id > p.id)", "^dynamic([p, s], s.id >= p.id)"} in ecto_diffs(
-             source
-           )
+    assert {"s.id > p.id", "s.id >= p.id"} in ecto_diffs(source)
 
     woven = metamutant(source)
     assert woven =~ "^case"
@@ -185,11 +183,11 @@ defmodule Mutare.Ecto.RootPinDeliveryTest do
         ~s|where(q, [u], u.id in ^f.all(from(p in "posts", where: ^[views: 5], select: p.id)))|
       )
 
-    lowered = for {:integer, _original, mutated} <- diffs(source, @with_core), do: mutated
+    assert {:integer, "5", "6"} in diffs(source, @with_core)
+    lowered = metamutant(source, @with_core)
 
-    assert Enum.any?(lowered, &(&1 =~ ~s|from(p in "posts", where: ^[views: 6], select: p.id)|)),
-           "expected a natively rebuilt inner filter among:\n#{Enum.join(lowered, "\n")}"
+    assert lowered =~ ~s|from(p in "posts", where: ^[views: 6], select: p.id)|
 
-    refute Enum.any?(lowered, &(&1 =~ ~r/dynamic\([^)]*\^\[views/))
+    refute lowered =~ ~r/where: \^.*dynamic\([^)]*\^\[views/
   end
 end

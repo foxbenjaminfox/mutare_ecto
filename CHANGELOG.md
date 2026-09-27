@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Island mutations use core's `collect_expression/3` and `Mutation.map_node/2` to preserve
+  their source attribution, producer, note and variants through nested query delivery.
+  Hosted SQL mutations also retain their attribution: reports show the specific changed
+  expression, and line-specific ignores can distinguish changes inside the same condition.
+  This requires Mutare 0.4.2 or newer.
+
 ## [0.3.0] - 2026-09-26
 
 ### Changed

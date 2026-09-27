@@ -41,6 +41,14 @@ defmodule Mutare.Ecto.TestSupport do
     sites
   end
 
+  @doc "The original source with each replacement applied at its report range."
+  def patched_sources(source, opts \\ []) do
+    for site <- sites(source, opts), site.operation == :replace do
+      patch = %{range: site.range, change: site.mutated_code}
+      {site, Sourceror.patch_string(source, [patch])}
+    end
+  end
+
   @doc """
   Assert the metamutant embedding every mutant of `source` compiles (the single-build net).
 

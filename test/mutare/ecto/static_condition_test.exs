@@ -131,7 +131,7 @@ defmodule Mutare.Ecto.StaticConditionTest do
       assert rendered =~ "Elixir.Ecto.Query.dynamic([p], p.views >= 5 )"
       # …and no `having` was pinned: every occurrence is a statically built clause.
       refute rendered =~ "having: ^"
-      assert rendered =~ "having: count(p.id) >= subquery("
+      assert rendered =~ "count(p.id) >= subquery("
     end
 
     test "the query builds at baseline and under every mutant" do
@@ -255,11 +255,11 @@ defmodule Mutare.Ecto.StaticConditionTest do
       opts = [mutators: [Mutare.Mutators.Arithmetic, {Mutare.Ecto, repo: MyApp.Repo}]]
 
       # Core's arithmetic family mutated the pin's interior (`Mutare.Ecto.Island`), relayed as a
-      # rebuild of the whole `from` — and reported there, as from `Mutare.Ecto.Dynamic`.
-      assert [{:arithmetic, "from(" <> _, relayed}] =
+      # rebuild of the whole `from`, while the report retains the arithmetic origin.
+      assert [{:arithmetic, "floor + 1", relayed}] =
                Enum.filter(diffs(src, opts), &match?({:arithmetic, _, _}, &1))
 
-      assert relayed =~ "max(p.views) > ^(floor - 1)"
+      assert relayed == "floor - 1"
       # It rides the same static delivery as the plugin's own mutants.
       refute rendered(src, opts) =~ "having: ^"
       assert_builds(src, & &1.q(3), opts)
@@ -295,7 +295,7 @@ defmodule Mutare.Ecto.StaticConditionTest do
       """
 
       sites = assert_builds(src, & &1.q([1]))
-      assert Enum.any?(sites, &(&1.mutated_code =~ "having: count(p.id) >= subquery("))
+      assert Enum.any?(sites, &(&1.mutated_code =~ "count(p.id) >= subquery("))
     end
   end
 

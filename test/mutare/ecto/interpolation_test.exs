@@ -122,7 +122,7 @@ defmodule Mutare.Ecto.InterpolationTest do
       # island — with the opaque source untouched around them.
       assert {"u.age > ^(min + 1)", "u.age >= ^(min + 1)"} in ecto_diffs(src, @with_core)
 
-      assert {:arithmetic, "u.age > ^(min + 1)", "u.age > ^(min - 1)"} in diffs_touching(
+      assert {:arithmetic, "min + 1", "min - 1"} in diffs_touching(
                src,
                "min - 1"
              )
@@ -152,7 +152,7 @@ defmodule Mutare.Ecto.InterpolationTest do
 
       assert {"f.x > ^(min + 1)", "f.x >= ^(min + 1)"} in ecto_diffs(src, @with_core)
 
-      assert {:arithmetic, "f.x > ^(min + 1)", "f.x > ^(min - 1)"} in diffs_touching(
+      assert {:arithmetic, "min + 1", "min - 1"} in diffs_touching(
                src,
                "min - 1"
              )
@@ -178,7 +178,7 @@ defmodule Mutare.Ecto.InterpolationTest do
       # The on-condition hosts (its own swap + the relayed island)…
       assert {"p.views > ^(min + 1)", "p.views >= ^(min + 1)"} in ecto
 
-      assert {:arithmetic, "p.views > ^(min + 1)", "p.views > ^(min - 1)"} in diffs_touching(
+      assert {:arithmetic, "min + 1", "min - 1"} in diffs_touching(
                src,
                "min - 1"
              )
@@ -207,9 +207,9 @@ defmodule Mutare.Ecto.InterpolationTest do
       ecto = ecto_diffs(src, @with_core)
 
       assert {original, "u.age > ^(n + 1) and ^flag"} in ecto
-      assert {original, "u.age >= ^(n + 1) or ^flag"} in ecto
+      assert {"u.age > ^(n + 1)", "u.age >= ^(n + 1)"} in ecto
 
-      assert {:arithmetic, original, "u.age > ^(n - 1) or ^flag"} in diffs_touching(
+      assert {:arithmetic, "n + 1", "n - 1"} in diffs_touching(
                src,
                "n - 1"
              )
@@ -244,22 +244,15 @@ defmodule Mutare.Ecto.InterpolationTest do
       end
       """
 
-      original = "u.age > ^(lo + 1) and p.views < ^(hi - 1)"
       islands = diffs_touching(src, "lo") ++ diffs_touching(src, "hi")
 
-      assert Enum.any?(islands, fn {m, o, mutated} ->
-               m == :arithmetic and o == original and
-                 mutated == "u.age > ^(lo - 1) and p.views < ^(hi - 1)"
-             end)
+      assert {:arithmetic, "lo + 1", "lo - 1"} in islands
+      assert {:arithmetic, "hi - 1", "hi + 1"} in islands
 
-      assert Enum.any?(islands, fn {m, o, mutated} ->
-               m == :arithmetic and o == original and
-                 mutated == "u.age > ^(lo + 1) and p.views < ^(hi + 1)"
-             end)
-
-      refute Enum.any?(islands, fn {_m, _o, mutated} ->
-               mutated =~ "lo - 1" and mutated =~ "hi + 1"
-             end)
+      for {site, patched} <- patched_sources(src, @with_core), site.mutator == :arithmetic do
+        assert (patched =~ "lo - 1" and patched =~ "hi - 1") or
+                 (patched =~ "lo + 1" and patched =~ "hi + 1")
+      end
 
       # The weave re-declares the accumulated bindings for the where's dynamic.
       assert metamutant(src, @with_core) =~ "dynamic([u, p]"

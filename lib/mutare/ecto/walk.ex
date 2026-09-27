@@ -34,9 +34,8 @@ defmodule Mutare.Ecto.Walk do
   # `select`, or the two comparisons of a multi-line `dynamic`, are indistinguishable by
   # vocabulary — position is the only discriminator. A tag a catalog already attributed (a
   # subquery interior mutant, anchored where the interior catalog produced it) keeps its own. On
-  # the hosted relay paths (`Mutare.Ecto.Island`, `Mutare.Ecto.Subquery`) the stamp is
-  # structurally discarded — a hosted mutant is normalized to a `{node, note, variant, producer}`
-  # quad with no attribution slot — so the weave's own Site mechanics are untouched.
+  # the hosted relay paths (`Mutare.Ecto.Island`, `Mutare.Ecto.Subquery`) core preserves the
+  # same stamp, so both delivery paths report the logical change at its original location.
   #
   # ## The author-macro rule
   #

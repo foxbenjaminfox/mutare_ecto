@@ -13,7 +13,7 @@ defmodule Mutare.Ecto.Island do
   #
   # `subcontracted/3` runs each pin interior (`Mutare.Ecto.Fragment.islands/2` — collected under
   # the catalog's own descent rules, so no island is reached that the catalog would not have
-  # walked past) through `Mutare.Analyze.expression_mutations/3` over the `mutators` of the
+  # walked past) through `Mutare.Analyze.collect_expression/3` over the `mutators` of the
   # plugin's `%Mutare.Ecto.Context{}`: the run's **full** enabled spec set, which core threads
   # into both seams this is called from
   # (`host/2` and the whole-call `mutate/2` offer of a registered macro). The full set is what
@@ -32,7 +32,9 @@ defmodule Mutare.Ecto.Island do
   #     optimization, not a semantic category (NOTES "Inner `from` inside a pin interior:
   #     whole-call rewrites only, no condition swaps — RESOLVED (in core)").
   #
-  # Each rebuild is relayed as a `Mutare.Mutator.Mutation` with `producer:` set: the Site and its
+  # `Mutation.map_node/2` rebuilds only the delivered node: the original attribution, range,
+  # position, note and variant remain intact through both paths. Each mutation carries its
+  # producing spec: the Site and its
   # `# mutare:ignore` vocabulary belong to the producing family — core's, or this plugin's —
   # whose own `finalize/2` funnel already ran at generation, so core skips the *relaying*
   # plugin's `finalize/2` for it on both paths (`Mutare.Ecto.Equivalence`), and
@@ -152,10 +154,9 @@ defmodule Mutare.Ecto.Island do
     # nested `dynamic` keeps its `:raw` route, an author's `:skip` macro stays opaque). The
     # plugin's own struct never crosses.
     for {interior, role, rebuild} <- Fragment.islands(condition, :condition),
-        {spec, mutated, note, variant} <-
-          Mutare.Analyze.expression_mutations(interior, specs, core),
-        structure_kept?(spec, role, interior, mutated) do
-      Mutation.new(deliver.(rebuild.(mutated)), producer: spec, note: note, variant: variant)
+        mutation <- Mutare.Analyze.collect_expression(interior, specs, core),
+        structure_kept?(mutation.producer, role, interior, mutation.node) do
+      Mutation.map_node(mutation, &deliver.(rebuild.(&1)))
     end
   end
 

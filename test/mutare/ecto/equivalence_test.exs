@@ -183,7 +183,7 @@ defmodule Mutare.Ecto.EquivalenceTest do
 
       sites = sites(src)
 
-      hosted = Enum.find(sites, &(&1.mutated_code == "u.score > 10" and &1.mutator == :ecto))
+      hosted = Enum.find(sites, &(&1.mutated_code == "u.score" and &1.mutator == :ecto))
       assert hosted.note =~ "NULL rows in the wrapped expression"
 
       # The in-place `select` rewrite now reports at the clause value: coalesce(u.rank, ^d) → u.rank.

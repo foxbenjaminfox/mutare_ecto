@@ -755,7 +755,7 @@ defmodule Mutare.Ecto.QueryTest do
                Enum.sort([
                  {"max(p.b)", "min(p.b)"},
                  {"avg(p.c)", "sum(p.c)"},
-                 {"sum(p.a) > 5", "avg(p.a) > 5"}
+                 {"sum(p.a)", "avg(p.a)"}
                ])
     end
 
@@ -772,7 +772,7 @@ defmodule Mutare.Ecto.QueryTest do
       assert Enum.sort(diffs) ==
                Enum.sort([
                  {"p.c * p.d", "p.c / p.d"},
-                 {"p.a + p.b > 5", "p.a - p.b > 5"}
+                 {"p.a + p.b", "p.a - p.b"}
                ])
     end
 

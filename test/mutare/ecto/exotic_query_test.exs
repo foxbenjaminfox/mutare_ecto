@@ -87,7 +87,7 @@ defmodule Mutare.Ecto.ExoticQueryTest do
 
       # The CTE interior is an ordinary query expression — full comparison/literal treatment.
       assert {"p.views > 10", "p.views >= 10"} in diffs
-      assert {"p.views > 10", "p.views > 11"} in diffs
+      assert {"10", "11"} in diffs
 
       # Pipeline stages drop one at a time — the CTE attachment, the join, and the where — each
       # diffed over the pipe up to it, collapsing to the pipe upstream of it.
@@ -126,11 +126,9 @@ defmodule Mutare.Ecto.ExoticQueryTest do
       refute Enum.any?(mutated(diffs), &(&1 =~ ":mutare"))
 
       # Both comparisons still swap around the field accesses, static and pinned alike.
-      assert {"field(p, :views) > 10 and field(p, ^col) < 100",
-              "field(p, :views) >= 10 and field(p, ^col) < 100"} in diffs
+      assert {"field(p, :views) > 10", "field(p, :views) >= 10"} in diffs
 
-      assert {"field(p, :views) > 10 and field(p, ^col) < 100",
-              "field(p, :views) > 10 and field(p, ^col) <= 100"} in diffs
+      assert {"field(p, ^col) < 100", "field(p, ^col) <= 100"} in diffs
 
       assert {"field(p, :views) > 10 and field(p, ^col) < 100",
               "field(p, :views) > 10 or field(p, ^col) < 100"} in diffs
@@ -161,7 +159,7 @@ defmodule Mutare.Ecto.ExoticQueryTest do
 
       # The hosted having condition swaps around the alias reference…
       assert {"selected_as(:total) > 2", "selected_as(:total) >= 2"} in diffs
-      assert {"selected_as(:total) > 2", "selected_as(:total) > 3"} in diffs
+      assert {"2", "3"} in diffs
 
       # …and the select-side aggregate swaps inside the alias definition (reported at the swapped
       # call's own node — the walk stamps node-level attribution).
@@ -191,11 +189,10 @@ defmodule Mutare.Ecto.ExoticQueryTest do
       # `as(:mutare)`/`parent_as(:mutare)` are unknown-binding errors, not mutants.
       refute Enum.any?(mutated(diffs), &(&1 =~ ":mutare"))
 
-      assert {"as(:u).age > 21 and\n  exists(from(p in MyApp.Post, where: p.user_id == parent_as(:u).id))",
-              "as(:u).age >= 21 and\n  exists(from(p in MyApp.Post, where: p.user_id == parent_as(:u).id))"} in diffs
+      assert {"as(:u).age > 21", "as(:u).age >= 21"} in diffs
 
-      assert {"as(:u).age > 21 and\n  exists(from(p in MyApp.Post, where: p.user_id == parent_as(:u).id))",
-              "as(:u).age > 21 and\n  not exists(from(p in MyApp.Post, where: p.user_id == parent_as(:u).id))"} in diffs
+      assert {"exists(from(p in MyApp.Post, where: p.user_id == parent_as(:u).id))",
+              "not exists(from(p in MyApp.Post, where: p.user_id == parent_as(:u).id))"} in diffs
 
       assert_compiles(src, @all)
     end
@@ -228,9 +225,9 @@ defmodule Mutare.Ecto.ExoticQueryTest do
       # original key (killable, though noisy — why the arm is opt-in).
       all_diffs = ecto_diffs(@json_src, @all)
 
-      assert {~s|p.title["meta"]["kind"] == "news"|, ~s|p.title["mutare"]["kind"] == "news"|} in all_diffs
+      assert {"\"meta\"", "\"mutare\""} in all_diffs
 
-      assert {~s|p.title["meta"]["kind"] == "news"|, ~s|p.title["meta"]["kind"] == "mutare"|} in all_diffs
+      assert {"\"news\"", "\"mutare\""} in all_diffs
 
       assert_compiles(@json_src, @all)
     end
@@ -267,11 +264,11 @@ defmodule Mutare.Ecto.ExoticQueryTest do
 
       diffs = ecto_diffs(src)
 
-      assert {"filter(count(p.id), p.views > 10) > 5", "filter(count(p.id), p.views >= 10) > 5"} in diffs
+      assert {"p.views > 10", "p.views >= 10"} in diffs
 
       assert {"filter(count(p.id), p.views > 10) > 5", "filter(count(p.id), p.views > 10) >= 5"} in diffs
 
-      assert {"filter(count(p.id), p.views > 10) > 5", "filter(count(p.id), p.views > 10) > 6"} in diffs
+      assert {"5", "6"} in diffs
 
       assert_compiles(src, @all)
     end
@@ -293,7 +290,7 @@ defmodule Mutare.Ecto.ExoticQueryTest do
     test "the entries and types stay raw; the query around them mutates as usual" do
       diffs = ecto_diffs(@values_src, @all)
 
-      assert {"v.views > 5", "v.views > 6"} in diffs
+      assert {"5", "6"} in diffs
       assert {"v.views > 5", "v.views >= 5"} in diffs
 
       # The VALUES data is the skipped source position: no recorded mutation is sourced from inside
@@ -578,14 +575,14 @@ defmodule Mutare.Ecto.ExoticQueryTest do
 
       # The inner `where` condition mutates — a row-set change EXISTS observes…
       assert Enum.any?(mutated, &(&1 =~ "p.views >= 10"))
-      assert Enum.any?(mutated, &(&1 =~ "p.views > 11"))
-      assert Enum.any?(mutated, &(&1 =~ "subquery(" and &1 =~ "p2.views >= 7"))
+      assert Enum.any?(mutated, &(&1 == "11"))
+      assert Enum.any?(mutated, &(&1 == "p2.views >= 7"))
 
       # …including through a `not exists` wrapper: the interior still mutates, each mutant
       # re-wrapped in the whole `not exists(subquery(…))` predicate.
       assert Enum.any?(
                mutated,
-               &(&1 =~ "not exists" and &1 =~ "subquery(" and &1 =~ "p3.views <= 4")
+               &(&1 == "p3.views <= 4")
              )
 
       # …and each is produced **exactly once**: the `:existence` unwrap of `subquery(from …)` must
@@ -596,9 +593,9 @@ defmodule Mutare.Ecto.ExoticQueryTest do
 
       # …and an inner `having` condition uses the full hosted condition catalog, including
       # aggregate swaps, not just `Fragment`'s operator/literal swaps.
-      assert Enum.any?(mutated, &(&1 =~ "avg(p.views) > 10"))
+      assert Enum.any?(mutated, &(&1 == "avg(p.views)"))
       # …as does dropping the inner filter entirely (the `where` gone, the rest kept).
-      assert Enum.any?(mutated, &(&1 =~ ~r/exists\(from\(p in MyApp\.Post, select: max/))
+      assert {"p.views > 10", ""} in ecto_diffs(src, @all)
 
       # But EXISTS observes only whether a row comes back, and an aggregate swapped for an
       # aggregate returns the same number of rows — equivalent, so pruned. No `min`.
@@ -685,7 +682,7 @@ defmodule Mutare.Ecto.ExoticQueryTest do
       all_mutated = for {_mutator, _original, m} <- diffs(src, opts), do: m
 
       assert Enum.any?(all_mutated, &(&1 =~ "threshold - 1"))
-      assert Enum.any?(all_mutated, &(&1 =~ "subquery(" and &1 =~ "wrapped - 1"))
+      assert Enum.any?(all_mutated, &(&1 == "wrapped - 1"))
 
       # The wrapped pin's island is sub-contracted exactly once — the `:existence` unwrap does not
       # also re-surface it through the value-wrapper descent path.
@@ -957,11 +954,10 @@ defmodule Mutare.Ecto.ExoticQueryTest do
 
       diffs = ecto_diffs(src, @all)
 
-      assert {"p.id in type(^ids, {:array, :integer}) and p.views > type(^min, :integer)",
-              "p.id not in type(^ids, {:array, :integer}) and p.views > type(^min, :integer)"} in diffs
+      assert {"p.id in type(^ids, {:array, :integer})",
+              "p.id not in type(^ids, {:array, :integer})"} in diffs
 
-      assert {"p.id in type(^ids, {:array, :integer}) and p.views > type(^min, :integer)",
-              "p.id in type(^ids, {:array, :integer}) and p.views >= type(^min, :integer)"} in diffs
+      assert {"p.views > type(^min, :integer)", "p.views >= type(^min, :integer)"} in diffs
 
       refute Enum.any?(mutated(diffs), &(&1 =~ ":mutare"))
 
@@ -988,8 +984,8 @@ defmodule Mutare.Ecto.ExoticQueryTest do
       diffs = ecto_diffs(src, @all)
 
       assert {"{p.views, p.id} > {^min, 1}", "{p.views, p.id} >= {^min, 1}"} in diffs
-      assert {"{p.views, p.id} > {^min, 1}", "{p.views, p.id} > {^min, 2}"} in diffs
-      assert {"{p.views, p.id} > {^min, 1}", "{p.views, p.id} > {^min, 0}"} in diffs
+      assert {"1", "2"} in diffs
+      assert {"1", "0"} in diffs
 
       assert_compiles(src, @all)
     end
@@ -1184,8 +1180,8 @@ defmodule Mutare.Ecto.ExoticQueryTest do
 
       diffs = ecto_diffs(src)
 
-      assert {"not (p.views > 10)", "not (p.views >= 10)"} in diffs
-      assert {"not (p.views > 10)", "not (p.views > 11)"} in diffs
+      assert {"p.views > 10", "p.views >= 10"} in diffs
+      assert {"10", "11"} in diffs
       refute Enum.any?(mutated(diffs), &(&1 =~ "not not"))
 
       assert_compiles(src, @all)

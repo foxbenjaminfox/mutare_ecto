@@ -204,14 +204,14 @@ defmodule Mutare.Ecto.AttributionTest do
       refute one(sites, &(&1.mutated_code == "p.views >= 1")).ignored,
              "the comparison swap survives"
 
-      refute one(sites, &(&1.mutated_code == "p.views > 2")).ignored, "the literal bump survives"
+      refute one(sites, &(&1.mutated_code == "2")).ignored, "the literal bump survives"
     end
   end
 
-  describe "a subquery interior's whole-`from` attribution follows the delivery path" do
+  describe "a subquery interior keeps its attribution on either delivery path" do
     # `Mutare.Ecto.Subquery` composes `Query`'s producers into an inline subquery's `from`, and each
-    # tag keeps the inner-clause attribution `Query` stamps. What happens to it depends on who
-    # delivers: a free-standing `dynamic` is rewritten whole-call **in place**
+    # tag keeps the inner-clause attribution `Query` stamps on both delivery paths.
+    # A free-standing `dynamic` is rewritten whole-call **in place**
     # (`Mutare.Ecto.Dynamic`), so the attribution is honoured and the drop lands on the inner
     # `where:` line (5), not the `dynamic` opener (4) — exactly as a top-level `from`'s would.
     @dynamic_src """
@@ -225,10 +225,8 @@ defmodule Mutare.Ecto.AttributionTest do
     end
     """
 
-    # Through the host's weave the same tag's attribution is discarded structurally: a hosted Site
-    # reports at the woven condition — here the outer `where:` line (5), not the inner one (6) —
-    # as a `:replace` of that condition (the outer clause's own top-level drop is the `:delete`
-    # sharing the line).
+    # The host's weave preserves the same attribution: the inner drop reports as a deletion
+    # on its own `where:` line (6), independently of the outer clause's drop on line 5.
     @hosted_src """
     defmodule M do
       import Ecto.Query
@@ -246,13 +244,13 @@ defmodule Mutare.Ecto.AttributionTest do
       assert {drop.line, drop.operation} == {5, :delete}
     end
 
-    test "hosted (a from's where:), the inner filter drop reports at the woven condition" do
+    test "hosted (a from's where:), the inner filter drop reports at its own clause" do
       drop =
         @hosted_src
         |> sites(mutators: @mutators)
-        |> one(&(&1.variant == ["filter_drop"] and &1.operation == :replace))
+        |> one(&(&1.variant == ["filter_drop"] and &1.original_code == "c.likes > 1"))
 
-      assert drop.line == 5
+      assert {drop.line, drop.operation} == {6, :delete}
     end
   end
 end

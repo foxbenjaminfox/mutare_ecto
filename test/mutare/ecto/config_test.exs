@@ -25,7 +25,7 @@ defmodule Mutare.Ecto.ConfigTest do
 
       # :integer_literal → just the literal bumps.
       lit = mutated(ecto_diffs(@src, ecto(families: [:integer_literal])))
-      assert Enum.sort(lit) == Enum.sort(["u.age > 19", "u.age > 17", "u.age > 0"])
+      assert Enum.sort(lit) == Enum.sort(["19", "17", "0"])
     end
 
     test "a single whole-from family keeps only its mutants" do
@@ -38,7 +38,7 @@ defmodule Mutare.Ecto.ConfigTest do
     test "the default selection yields every default-on family" do
       all = mutated(ecto_diffs(@src))
       assert "u.age >= 18" in all
-      assert "u.age > 19" in all
+      assert "19" in all
       # the whole-`from` filter_drop, now a clause-level DELETE (empty mutated text)
       assert "" in all
     end
@@ -62,35 +62,35 @@ defmodule Mutare.Ecto.ConfigTest do
 
       # The default-on arms still fire (the comparison swap and the integer boundary bumps)…
       assert Enum.any?(all, &(&1 =~ "u.age >= 18"))
-      assert Enum.any?(all, &(&1 =~ "u.age > 19"))
+      assert Enum.any?(all, &(&1 =~ "19"))
 
       # …but the string sentinels, the atom sentinel, and the boolean flip are all withheld.
-      refute Enum.any?(all, &(&1 =~ ~s|== ""| or &1 =~ ~s|== "mutare"|))
-      refute Enum.any?(all, &(&1 =~ "== :mutare"))
-      refute Enum.any?(all, &(&1 =~ "u.active == false"))
+      refute Enum.any?(all, &(&1 =~ ~s|""| or &1 =~ ~s|"mutare"|))
+      refute Enum.any?(all, &(&1 =~ ":mutare"))
+      refute Enum.any?(all, &(&1 =~ "false"))
     end
 
     test "families: :all re-enables the string, atom, and boolean literal arms" do
       all = mutated(ecto_diffs(@src, ecto(families: :all)))
 
-      assert Enum.any?(all, &(&1 =~ ~s|u.name == ""|))
-      assert Enum.any?(all, &(&1 =~ ~s|u.name == "mutare"|))
-      assert Enum.any?(all, &(&1 =~ "u.role == :mutare"))
-      assert Enum.any?(all, &(&1 =~ "u.active == false"))
+      assert Enum.any?(all, &(&1 =~ ~s|""|))
+      assert Enum.any?(all, &(&1 =~ ~s|"mutare"|))
+      assert Enum.any?(all, &(&1 =~ ":mutare"))
+      assert Enum.any?(all, &(&1 =~ "false"))
     end
 
     test "they can also be enabled by naming them in an explicit list" do
       strings = mutated(ecto_diffs(@src, ecto(families: [:string_literal])))
-      assert Enum.any?(strings, &(&1 =~ ~s|u.name == ""|))
-      refute Enum.any?(strings, &(&1 =~ "u.role == :mutare"))
+      assert Enum.any?(strings, &(&1 =~ ~s|""|))
+      refute Enum.any?(strings, &(&1 =~ ":mutare"))
 
       atoms = mutated(ecto_diffs(@src, ecto(families: [:atom_literal])))
-      assert Enum.any?(atoms, &(&1 =~ "u.role == :mutare"))
-      refute Enum.any?(atoms, &(&1 =~ ~s|u.name == ""|))
+      assert Enum.any?(atoms, &(&1 =~ ":mutare"))
+      refute Enum.any?(atoms, &(&1 =~ ~s|""|))
 
       booleans = mutated(ecto_diffs(@src, ecto(families: [:boolean_literal])))
-      assert Enum.any?(booleans, &(&1 =~ "u.active == false"))
-      refute Enum.any?(booleans, &(&1 =~ "u.role == :mutare"))
+      assert Enum.any?(booleans, &(&1 =~ "false"))
+      refute Enum.any?(booleans, &(&1 =~ ":mutare"))
     end
 
     test "even when enabled, the structural-position guard still suppresses them" do
@@ -110,8 +110,7 @@ defmodule Mutare.Ecto.ConfigTest do
       """
 
       all = mutated(ecto_diffs(src, ecto(families: [:atom_literal])))
-      assert Enum.any?(all, &(&1 =~ "u.role == :mutare"))
-      refute Enum.any?(all, &(&1 =~ "type(u.age, :mutare)"))
+      assert all == [":mutare"]
     end
   end
 
@@ -128,7 +127,7 @@ defmodule Mutare.Ecto.ConfigTest do
 
       # The comparison swap survives; the integer boundary bumps are gone.
       assert "u.age >= 18" in kept
-      refute Enum.any?(kept, &(&1 =~ "u.age > 19"))
+      refute Enum.any?(kept, &(&1 =~ "19"))
     end
 
     test "{:all, except: [...]} subtracts from the full set (opt-in arms included)" do
@@ -142,8 +141,8 @@ defmodule Mutare.Ecto.ConfigTest do
       kept = mutated(ecto_diffs(src, ecto(families: {:all, except: [:integer_literal]})))
 
       # `:all` re-adds the string arm; `except:` removes only the integer one.
-      assert Enum.any?(kept, &(&1 =~ ~s|u.name == ""|))
-      refute Enum.any?(kept, &(&1 =~ "u.age > 19"))
+      assert Enum.any?(kept, &(&1 =~ ~s|""|))
+      refute Enum.any?(kept, &(&1 =~ "19"))
     end
   end
 
