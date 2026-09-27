@@ -139,6 +139,26 @@ attach during planning, after dynamic expansion. EXISTS projection pruning now c
 comparisons. Complete composed query stages use core's existing island lowering, closing the
 terminal-stage gap without implementing another query-stage catalog.
 
+### Follow-up audit: the parent decides legality and observability `[done]`
+
+The follow-up audit found one shared mistake in four places. A property of an expression by
+itself had been used where the expression's context decides the question:
+
+* The coalesce drop keeps the SQL type, but not the syntactic kind that the parent requires.
+  Both walks now thread the call-argument slot (`Walk.child_slot/3`), and `Scalar` withholds
+  the drop in the two slots Ecto restricts.
+* A window's options inherited `is_nil`'s NULL-ness-only observation. Their values select the
+  rows the function reads, so they are now always observed by value.
+* EXISTS projection pruning recognized only the set comparisons. It now prunes only when no
+  projected value can change whether a row survives (a dedup followed by an offset, an alias
+  read-back, or an opaque source all keep the projection).
+* An EXISTS limit drop was judged by the current limit alone. It is now judged by the current
+  limit and the limit the drop uncovers.
+
+While checking these cases, we found that SQLite ignores `DISTINCT` inside `EXISTS` even when an
+`OFFSET` follows it, so the DISTINCT case is live only on Postgres. The rule stays, because
+standard SQL counts those rows.
+
 ### Spelling gaps: what the README table declares, and what closing each takes
 
 The README used to say "both query syntaxes are covered", which was true of the families and

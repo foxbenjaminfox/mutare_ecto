@@ -168,8 +168,10 @@ Where an expression is written matters as well:
 
 - **A subquery's interior** is mutated inside conditions, both as inline `from` and as
   composed query stages, including the terminal stage. Inline `from` coverage includes bounds
-  and windowed value-query ordering; `EXISTS` retains projection mutations across `EXCEPT` and
-  `INTERSECT`. General clause drops and unwindowed scalar ordering are not composed there.
+  and windowed value-query ordering. `EXISTS` retains projection mutations wherever a projected
+  value can decide whether a row survives: across `EXCEPT` and `INTERSECT`, or a `UNION` or
+  `DISTINCT` followed by an offset. General clause drops and unwindowed scalar ordering are not
+  composed there.
   A subquery inside a `from` binding (`from s in subquery(…)`) remains raw. Built first and
   passed by variable, the subquery gets ordinary query coverage.
 - **A `^` pin's interior** is ordinary Elixir, which Mutare's own families mutate when the pin

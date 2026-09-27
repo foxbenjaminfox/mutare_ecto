@@ -60,14 +60,14 @@ defmodule Mutare.Ecto.Aggregate do
   `:value` position by construction).
   """
   @spec local(Macro.t()) :: [Tag.t()]
-  def local(node), do: local(node, :value)
+  def local(node), do: local(node, {:value, nil})
 
   # An aggregate call's own swap — a same-arity rename, so it always compiles. The function name is
   # the call form atom (not a wrapped literal), so the rename keeps the call's meta and renders
   # cleanly. Each mutant is tagged with the **source** function name (`"sum"`), the
   # `# mutare:ignore` label naming the swap; descent (a nested `max(sum(...))` — degenerate but
-  # harmless) is the shared walker's job. The walk's position is ignored: an aggregate swap means
-  # the same thing in a `select` value and an ordering.
+  # harmless) is the shared walker's job. The walk's context is ignored: an aggregate swap means
+  # the same thing in a `select` value and an ordering, and a rename keeps the call's kind.
   #
   # ## Only Ecto's own aggregate is on the ladder
   #
@@ -88,13 +88,13 @@ defmodule Mutare.Ecto.Aggregate do
   #     This is the node-level twin of `Mutare.Ecto.Walk`'s author-macro rule, which governs only
   #     descent *into* such a call's arguments — the call node itself is still a position, so the
   #     name collision has to be refused here.
-  defp local({f, meta, [_arg] = args} = node, _position) when f in @agg_funcs do
+  defp local({f, meta, [_arg] = args} = node, _ctx) when f in @agg_funcs do
     if author_macro?(node),
       do: [],
       else: [Tag.new(:aggregate, {@agg_swaps[f], meta, args}, to_string(f))]
   end
 
-  defp local(_node, _position), do: []
+  defp local(_node, _ctx), do: []
 
   # Stamped by the resolve pass as a registered macro call ⇒ an author's macro, not Ecto's
   # aggregate. `routed_treatments/1` is `nil` for every unregistered node, which is what a genuine

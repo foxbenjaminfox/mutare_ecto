@@ -25,8 +25,14 @@ defmodule Mutare.Ecto.SemanticHarness do
   alias Mutare.Ecto.TestSupport
   alias Mutare.{Site, Test}
 
-  @doc "Compare baseline and selected delivery with independently compiled native sources."
-  def assert_delivery(repo, source, {before, after_code}, families) do
+  @doc """
+  Compare baseline and selected delivery with independently compiled native sources.
+
+  The mutant is the Site whose codes contain `before` and `after_code`, unless `site` names it
+  as a `Mutare.Test.site_id/2` pair — needed where the recorded codes are not the rewrite's (a
+  deletion records the dropped value and an empty replacement).
+  """
+  def assert_delivery(repo, source, {before, after_code}, families, site \\ nil) do
     import ExUnit.Assertions
     native = TestSupport.compile_native(source)
     expected = TestSupport.compile_native(String.replace(source, before, after_code))
@@ -39,7 +45,8 @@ defmodule Mutare.Ecto.SemanticHarness do
     id =
       Test.site_id(
         sites,
-        {Regex.compile!(Regex.escape(before)), Regex.compile!(Regex.escape(after_code))}
+        site ||
+          {Regex.compile!(Regex.escape(before)), Regex.compile!(Regex.escape(after_code))}
       )
 
     assert {:runs, _, _} = native_outcome = outcome(repo, 0, &native.q/0)
@@ -202,6 +209,13 @@ defmodule Mutare.Ecto.SemanticHarness do
         ]
     end
   end
+
+  @doc """
+  Whether `EXISTS` counts the rows a `DISTINCT` subquery leaves before its `OFFSET`. Postgres
+  does; SQLite (checked on 3.51 and 3.53) drops the `DISTINCT` inside `EXISTS`, so there
+  `EXISTS (SELECT DISTINCT 0 FROM posts OFFSET 1)` is true over three posts.
+  """
+  def exists_counts_distinct_rows?(repo), do: repo.__adapter__() == Ecto.Adapters.Postgres
 
   @doc """
   Whether `repo`'s engine can execute a `FULL JOIN` — for gating the full-join liveness fixture.

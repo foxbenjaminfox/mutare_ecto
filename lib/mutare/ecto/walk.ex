@@ -79,6 +79,13 @@ defmodule Mutare.Ecto.Walk do
   @typedoc "The per-node catalog: the tagged alternatives of one node at its context, no descent."
   @type local(ctx) :: (Macro.t(), ctx -> [Tag.t()])
 
+  @typedoc """
+  The call argument a node fills, as `{parent_form, arity, index}` — or `nil` for the walked
+  root. The key both catalogs read a parent's grammar by (`Mutare.Ecto.Fragment`'s
+  structural-position registry, `Mutare.Ecto.Scalar`'s coalesce-drop guard).
+  """
+  @type slot :: {term(), non_neg_integer(), non_neg_integer()} | nil
+
   @doc """
   Every node of `root` the `children` rule admits, in pre-order (a node before its subtree), as
   `{node, ctx, rebuild}` — `rebuild.(replacement)` is the whole `root` with exactly that node
@@ -164,6 +171,22 @@ defmodule Mutare.Ecto.Walk do
         descend_arg?(routing, index),
         do: {arg, child_ctx.(node, index, ctx), &{form, meta, List.replace_at(args, index, &1)}}
   end
+
+  @doc """
+  A child's `t:slot/0`, from its parent and the parent's own slot. A Sourceror block, a written
+  list and a tuple (either AST form) are transparent syntax: their elements keep the enclosing
+  *call's* slot, because Ecto's constraints are on call arguments (a `json_extract_path` path
+  element is constrained as the path argument is; a tuple compared with `>` is that comparison's
+  operand).
+  """
+  @spec child_slot(Macro.t(), non_neg_integer(), slot()) :: slot()
+  def child_slot({:__block__, _meta, _args}, _index, slot), do: slot
+  def child_slot({:{}, _meta, _elements}, _index, slot), do: slot
+
+  def child_slot({form, _meta, args}, index, _slot) when is_list(args),
+    do: {form, length(args), index}
+
+  def child_slot(_list_or_pair, _index, slot), do: slot
 
   defp inherit(_parent, _index, ctx), do: ctx
 

@@ -20,7 +20,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Protect inline window grammar in free-standing dynamics, including opt-in atom mutations.
 - Mutate list-valued dynamics and repeated explicit join predicates; permit hosting a sole
   explicit predicate on an association join.
-- Retain projection mutations under `EXISTS` with `EXCEPT` or `INTERSECT`.
+- Retain projection mutations under `EXISTS` with `EXCEPT` or `INTERSECT`, and wherever else
+  a projected value can decide whether a row survives: a `UNION` or projection `DISTINCT`
+  followed by an offset, a `selected_as/1` read outside the projection, or a source query
+  whose own clauses are out of view.
+- Keep an `EXISTS` limit drop unless the limit it uncovers is known to match it in zero-ness:
+  dropping `limit: 5` from `limit: 0, limit: 5` uncovers the zero, and a pinned limit may be
+  zero at runtime.
+- Withhold the `coalesce` drop where Ecto refuses the wrapped expression (a literal `nil`
+  compared with `>`/`==`/…, a bare comparison as `type/2`'s first argument), which failed the
+  whole metamutant build.
+- Beneath `is_nil`, mutate a window's partition and ordering keys: their values decide which
+  rows the window function reads, even when their NULL-ness is unchanged.
 - Include terminal composed subquery stages, inline subquery bounds, and windowed value-query
   ordering in mutation coverage.
 

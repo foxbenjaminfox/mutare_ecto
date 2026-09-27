@@ -117,6 +117,77 @@ defmodule Mutare.Ecto.SemanticCases do
         end
       end
 
+      # Scores: Bob (2) and Dave (4) are NULL. `u.id - u.id` puts every user in one partition,
+      # whose sum is never NULL; `u.id + u.id` gives each user their own, so Bob's and Dave's
+      # sums are NULL. Ordered by `u.age + u.id` (tie-broken by id), the row after Carol and
+      # Frank is Dave or Bob, so their one-row frames are NULL. Ordered by `u.age - u.id`, it is
+      # Carol and Alice. The key's NULL-ness is the same in both, only its value differs.
+      test "audit: beneath is_nil, a window's partition and ordering keys are observed by value" do
+        for {window, rewrite} <- [
+              {"partition_by: u.id - u.id", {"u.id - u.id", "u.id + u.id"}},
+              {~s|order_by: [u.age + u.id, u.id], frame: fragment("ROWS BETWEEN 1 FOLLOWING AND 1 FOLLOWING")|,
+               {"u.age + u.id", "u.age - u.id"}}
+            ] do
+          source =
+            audit_source("""
+            value = dynamic([u], is_nil(over(sum(u.score), #{window})))
+            from u in User, select: ^value, order_by: u.id
+            """)
+
+          {baseline, mutant} = H.assert_delivery(@repo, source, rewrite, [:arithmetic])
+          assert baseline != mutant
+        end
+      end
+
+      # P1's projection `1 + 1` deduplicates with the right side's `2` into one row, which
+      # `offset: 1` skips; `1 - 1` leaves `{0, 2}`, one row past the offset. With DISTINCT,
+      # `p.id - p.id` is one row over all three posts, `p.id + p.id` three — an equivalent
+      # mutant on an engine that drops DISTINCT inside EXISTS (`H.exists_counts_distinct_rows?/1`).
+      test "audit: EXISTS observes a deduplicated projection through an offset" do
+        distinct =
+          if H.exists_counts_distinct_rows?(@repo),
+            do: ["from p in Post, distinct: true, select: p.id - p.id, limit: 5, offset: 1"],
+            else: []
+
+        for inner <- [
+              "from p in Post, where: p.id == 1, select: 1 + 1, union: ^right, limit: 5, offset: 1"
+              | distinct
+            ] do
+          rewrite =
+            if inner =~ "union", do: {"1 + 1", "1 - 1"}, else: {"p.id - p.id", "p.id + p.id"}
+
+          source =
+            audit_source("""
+            right = from p in Post, where: p.id == 1, select: 2
+            from u in User, where: exists(#{inner}), select: u.id, order_by: u.id
+            """)
+
+          {baseline, mutant} = H.assert_delivery(@repo, source, rewrite, [:arithmetic])
+          assert baseline == []
+          assert mutant != []
+        end
+      end
+
+      # Dropping the effective `limit: 5` uncovers the overridden `limit: 0`; dropping a pinned
+      # limit lifts a runtime zero. Both change existence.
+      test "audit: an EXISTS limit drop is observed when what it uncovers is zero" do
+        for {inner, removed, dropped} <- [
+              {"from p in Post, limit: 0, limit: 5, select: p.id", " limit: 5,", "5"},
+              {"from p in Post, limit: ^n, select: p.id", " limit: ^n,", "^n"}
+            ] do
+          source =
+            audit_source("""
+            n = 0
+            from u in User, where: exists(#{inner}), select: u.id, order_by: u.id
+            """)
+
+          {baseline, mutant} =
+            H.assert_delivery(@repo, source, {removed, ""}, [:bound], {dropped, ""})
+
+          assert baseline != mutant
+        end
+      end
+
       # Mutant lookup comes straight from core — the harness owns no lookup helper. Most tests are the
       # standard flip-and-compare pair, resolved and observed in one step by core's `observe_mutant/3`
       # (through `H.observe/3` / the `observe_*` helpers below): the mutant named by its

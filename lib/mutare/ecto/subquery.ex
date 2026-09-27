@@ -8,12 +8,13 @@ defmodule Mutare.Ecto.Subquery do
   #
   # Observation policy for inline from:
   # * Filters, join kinds, combinations and binding reorders can change the row set in any mode.
-  # * Projection swaps are observed in value mode. EXISTS also observes them when EXCEPT or
-  #   INTERSECT (including ALL) compares projected values to decide which rows survive.
-  #   Without those operations they are pruned. A set-returning projection fragment remains
-  #   a known limitation of this optimization.
-  # * Offsets can change existence; literal limits do so when crossing zero. Value wrappers
-  #   receive all bound drops and nonnegative bumps. An overridden bound never mutates.
+  # * Projection swaps are observed in value mode. Under EXISTS they are pruned only where no
+  #   projected value can decide whether a row survives (`projection_observed?/1`). A
+  #   set-returning projection fragment remains a known limitation of this optimization.
+  # * Offsets can change existence. A literal limit's bump does when it crosses zero, and its
+  #   drop does unless the limit it uncovers is known to match it in zero-ness
+  #   (`limit_drop_observed?/1`). Value wrappers receive all bound drops and nonnegative bumps.
+  #   An overridden bound never mutates.
   # * Ordering and its value expressions mutate in windowed value queries (limit or offset).
   #   Unwindowed scalar ordering is still not composed, even on SQLite where it can be live.
   # * General clause drops (including group_by/distinct) remain unimplemented here.
@@ -33,6 +34,9 @@ defmodule Mutare.Ecto.Subquery do
   @structural_producers [:filter_drop, :join_type, :combination, :binding_reorder]
   @projection_producers [:aggregate, :scalar]
   @projection_keys [:select, :select_merge]
+
+  # The set operations that keep or remove a row by comparing projected values.
+  @value_comparisons [:except, :except_all, :intersect, :intersect_all]
 
   @typedoc "The wrapper's observation mode — whether its projected `select` is visible."
   @type mode :: :existence | :value
@@ -243,7 +247,7 @@ defmodule Mutare.Ecto.Subquery do
   defp bounds(%FromCall{clauses: clauses} = from, config, mode) do
     drops =
       Query.mutations_for(from, config, [:bound], fn key ->
-        mode == :value or key == :offset or zero_limit?(clauses)
+        mode == :value or key == :offset or limit_drop_observed?(from)
       end)
 
     bumps =
@@ -262,10 +266,34 @@ defmodule Mutare.Ecto.Subquery do
     drops ++ bumps
   end
 
-  defp zero_limit?(%KeywordList{entries: entries}) do
-    case Enum.find(Enum.reverse(entries), &(&1.key == :limit)) do
-      %Entry{value: value} -> AST.int_value(value) == 0
-      nil -> false
+  # Under EXISTS a limit decides only whether it is zero. Only the effective limit drops
+  # (`Mutare.Ecto.AST.FromCall.effective_clause?/2`), and the drop uncovers the one before it,
+  # or, with none written, whatever limit the source brings. The drop is pruned only when both
+  # limits are known and agree in zero-ness. A pinned limit, an opaque source's limit, and a
+  # zero limit that the drop would lift all keep it.
+  defp limit_drop_observed?(%FromCall{clauses: %{entries: entries}} = from) do
+    case entries |> Enum.filter(&(&1.key == :limit)) |> Enum.reverse() do
+      [effective | earlier] ->
+        uncovered =
+          case earlier do
+            [previous | _] -> zero_ness(previous.value)
+            [] -> if plain_source?(from), do: :nonzero, else: :unknown
+          end
+
+        before = zero_ness(effective.value)
+        before == :unknown or before != uncovered
+
+      [] ->
+        false
+    end
+  end
+
+  # What EXISTS can observe of a limit: whether it is zero. No limit at all is `:nonzero`.
+  defp zero_ness(value) do
+    case AST.int_value(value) do
+      0 -> :zero
+      n when is_integer(n) and n > 0 -> :nonzero
+      _unknown -> :unknown
     end
   end
 
@@ -320,14 +348,90 @@ defmodule Mutare.Ecto.Subquery do
       else: []
   end
 
-  # Set comparisons can remove every row based on projected values, even under EXISTS.
-  defp projection_mode(%FromCall{clauses: %{entries: entries}}, :existence) do
-    if Enum.any?(entries, &(&1.key in [:except, :except_all, :intersect, :intersect_all])),
-      do: :value,
-      else: :existence
-  end
+  defp projection_mode(from, :existence),
+    do: if(projection_observed?(from), do: :value, else: :existence)
 
   defp projection_mode(_from, :value), do: :value
+
+  # EXISTS observes only whether a row survives, and a projected value can decide that in
+  # these cases:
+  #
+  #   * EXCEPT/INTERSECT (ALL included) keep or remove rows by comparing projected values;
+  #   * a deduplication (UNION, or DISTINCT on the projection) merges rows by projected value, so
+  #     the number it leaves depends on them, and an OFFSET that may be positive turns that
+  #     number into existence: `{2, 2} ∪ {2}` leaves one row and `OFFSET 1` none, while the
+  #     `{0, 2} ∪ {2}` of an arithmetic mutant leaves two and `OFFSET 1` one;
+  #   * a clause other than the projection or the ordering reads a projected value back
+  #     through `selected_as/1` (`having: selected_as(:total) > 10`);
+  #   * the source is a query whose own clauses are out of view (`plain_source?/1`), and any of
+  #     the above may hide in them.
+  #
+  # Only when none of these holds is the projection pruned.
+  defp projection_observed?(%FromCall{clauses: %{entries: entries}} = from) do
+    not plain_source?(from) or
+      Enum.any?(entries, &(&1.key in @value_comparisons)) or
+      (Enum.any?(entries, &deduplicates?/1) and offset_may_skip?(entries)) or
+      Enum.any?(entries, &reads_selected_alias?/1)
+  end
+
+  # UNION deduplicates the combined projection. `distinct: true` deduplicates the projection,
+  # while `distinct: false` does not, and any other written value is DISTINCT ON its own
+  # expressions. A pinned value may be `true`.
+  defp deduplicates?(%Entry{key: :union}), do: true
+
+  defp deduplicates?(%Entry{key: :distinct, value: value}) do
+    case value do
+      {:^, _meta, _args} -> true
+      _written -> AST.atom_value(value) == true
+    end
+  end
+
+  defp deduplicates?(_entry), do: false
+
+  # The effective offset, unless it is a literal zero.
+  defp offset_may_skip?(entries) do
+    case entries |> Enum.filter(&(&1.key == :offset)) |> List.last() do
+      %Entry{value: value} -> AST.int_value(value) != 0
+      nil -> false
+    end
+  end
+
+  defp reads_selected_alias?(%Entry{key: key, value: value}) do
+    key not in [:order_by | @projection_keys] and
+      elem(
+        Macro.prewalk(value, false, fn
+          {:selected_as, _meta, [_name]} = node, _found? -> {node, true}
+          node, found? -> {node, found?}
+        end),
+        1
+      )
+  end
+
+  # Whether the source brings no query clauses of its own: a table name, a schema module, both
+  # as a tuple, or a `subquery/1` (whose clauses stay inside it). Any other source (a variable,
+  # a function call, a nested `from`) is a query whose limit, offset, distinct and combinations
+  # the outer clauses extend or override and this traversal cannot see.
+  defp plain_source?(%FromCall{source: source}) do
+    case source do
+      {:in, _meta, [_binding, queryable]} -> plain_queryable?(queryable)
+      queryable -> plain_queryable?(queryable)
+    end
+  end
+
+  defp plain_queryable?({:__block__, _meta, [value]}), do: plain_queryable?(value)
+  defp plain_queryable?(table) when is_binary(table), do: true
+  defp plain_queryable?({:__aliases__, _meta, _segments}), do: true
+  defp plain_queryable?({:__MODULE__, _meta, context}) when is_atom(context), do: true
+
+  defp plain_queryable?({table, schema}),
+    do: plain_queryable?(table) and plain_queryable?(schema)
+
+  defp plain_queryable?(node),
+    do:
+      match?(
+        {:ok, :subquery, _args, _rebuild},
+        Calls.resolved_call_to(node, Ecto.Query, :subquery)
+      )
 
   # The whole inner `from` with the clause at `index` carrying `value` — `FromCall` keeps the
   # source's written form and the clause list's Sourceror wrapper.

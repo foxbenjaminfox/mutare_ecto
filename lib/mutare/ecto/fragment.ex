@@ -108,6 +108,12 @@ defmodule Mutare.Ecto.Fragment do
   never of their values. Beneath any other form an operand's *value* may decide whether the
   whole is NULL, so the full catalog applies there again.
 
+  A window, `over(function, options)`, is split. Its function is evaluated over the rows the
+  options select, so the function takes the window's own observation. The options' values
+  *select* those rows. Beneath `is_nil`, a partition key `p.a + p.b` → `p.a - p.b` keeps every
+  key's NULL-ness but can regroup the rows and leave one partition with only NULL inputs. That
+  makes its `sum` NULL, so the options are always observed by value.
+
   Every other form is **unknown**, and an unknown is never pruned:
 
     * `a / b` — a zero divisor yields NULL on SQLite and MySQL and raises on Postgres, so
@@ -161,7 +167,7 @@ defmodule Mutare.Ecto.Fragment do
   # key the literal arms consult) and what the enclosing predicate observes of it — its `:value`,
   # or beneath an `is_nil` only its `:nullness` (`child_observed/3`). The condition itself has no
   # parent, and its value is what the clause filters by.
-  @typep position :: {term(), non_neg_integer(), non_neg_integer()} | nil
+  @typep position :: Walk.slot()
   @typep observed :: :value | :nullness
   @typep ctx :: {position(), observed()}
   @root {nil, :value}
@@ -294,9 +300,9 @@ defmodule Mutare.Ecto.Fragment do
   # comparison, `{p.views, p.id} > {1, 2}` (SQL's row-value comparison, `(views, id) > (1, 2)`),
   # the one value role Ecto grants a tuple (it is refused outside a comparison against a tuple
   # of the same size). That tuple is transparent syntax like a written list — its elements keep
-  # the enclosing comparison's position (`child_position/3`) — so a literal element is data and
-  # mutated, a field/arithmetic element is walked, and a pinned element is an island. There is
-  # no element drop (unlike an in-list, the two sides must keep one size).
+  # the enclosing comparison's position (`Mutare.Ecto.Walk.child_slot/3`) — so a literal element
+  # is data and mutated, a field/arithmetic element is walked, and a pinned element is an island.
+  # There is no element drop (unlike an in-list, the two sides must keep one size).
   defp children({:{}, _meta, _elements} = tuple, ctx), do: tuple_children(tuple, ctx)
   defp children({_left, _right} = tuple, ctx), do: tuple_children(tuple, ctx)
 
@@ -311,11 +317,13 @@ defmodule Mutare.Ecto.Fragment do
   # narrower observation `child_observed/3` hands it.
   defp children(node, ctx), do: Walk.structural(node, ctx, &child_ctx/3)
 
+  # A window's function keeps the window's own context (`Mutare.Ecto.Window`); its options are
+  # observed by value whatever is observed of the window (see "What `is_nil` observes").
   defp window_children(node, ctx) do
     if Mutare.Calls.routed_treatments(node) == nil do
       Mutare.Ecto.Window.children(node, ctx, fn
-        :structural, {_position, observed} -> {{:over, 2, 1}, observed}
-        _role, {_position, observed} -> {nil, observed}
+        :structural, _ctx -> {{:over, 2, 1}, :value}
+        _role, _ctx -> {nil, :value}
       end)
     else
       Walk.structural(node, ctx, &child_ctx/3)
@@ -329,20 +337,11 @@ defmodule Mutare.Ecto.Fragment do
       else: Walk.structural(tuple, ctx, &child_ctx/3)
   end
 
-  # A child's context, from its parent: where it sits, and what is observed of it.
+  # A child's context, from its parent: where it sits (`Mutare.Ecto.Walk.child_slot/3` — the key
+  # the literal arms consult, `structural_position?/1` and `json_path_position?/1`), and what is
+  # observed of it. The top-level condition has no parent (`nil`) and is never structural.
   defp child_ctx(parent, index, {position, observed}),
-    do: {child_position(parent, index, position), child_observed(parent, index, observed)}
-
-  # A child's `{parent_form, arity, index}` — the key the literal arms consult
-  # (`structural_position?/1`, `json_path_position?/1`). A Sourceror block, a written list and a
-  # value tuple (either AST form) are transparent syntax: their elements keep the enclosing
-  # *call's* position (the registry is keyed by call-argument positions, and a
-  # `json_extract_path` path element's constraints are the path argument's). The top-level
-  # condition has no parent (`nil`) and is never structural.
-  defp child_position({:__block__, _meta, _args}, _index, position), do: position
-  defp child_position({:{}, _meta, _elements}, _index, position), do: position
-  defp child_position({form, _meta, args}, index, _position), do: {form, length(args), index}
-  defp child_position(_list_or_pair, _index, position), do: position
+    do: {Walk.child_slot(parent, index, position), child_observed(parent, index, observed)}
 
   # The unit predicates — the ones a written `not` claims as a single position.
   defp unit?({:is_nil, _meta, [_arg]}), do: true
@@ -488,8 +487,9 @@ defmodule Mutare.Ecto.Fragment do
 
   # A literal (int/float/string/bool/atom) written directly into the fragment (Sourceror-wrapped):
   # skipped at a *structural* position (`structural_position?/1`, off the position
-  # `child_position/3` threads down), constrained at a JSON path position, and otherwise mutated
-  # by type via `literal_mutants/1`. A *pinned* `^value` is not this shape and never reaches here.
+  # `Mutare.Ecto.Walk.child_slot/3` threads down), constrained at a JSON path position, and
+  # otherwise mutated by type via `literal_mutants/1`. A *pinned* `^value` is not this shape and
+  # never reaches here.
   defp local({:__block__, _meta, [lit]} = node, position, _config)
        when is_integer(lit) or is_float(lit) or is_binary(lit) or is_atom(lit) do
     cond do
@@ -501,7 +501,8 @@ defmodule Mutare.Ecto.Fragment do
 
   # Any other Sourceror block — the wrapper around a written list or a tuple — is transparent
   # syntax with no swap of its own; the walk threads its position through to the payload
-  # (`child_position/3`), so a written in-list's literals are fragment SQL exactly like a bare one.
+  # (`Mutare.Ecto.Walk.child_slot/3`), so a written in-list's literals are fragment SQL exactly
+  # like a bare one.
   defp local({:__block__, _meta, _args}, _position, _config), do: []
 
   # A tuple in its `{:{}, …}` form has no swap of its own: a value tuple's elements are the
@@ -513,9 +514,9 @@ defmodule Mutare.Ecto.Fragment do
   # (the argument of a value-wrapper — `all`/`any`/`subquery`/`in` — reached by the operand descent)
   # has no swap of its own, but `Subquery` recurses its interior in `:value` mode; every other
   # node's `interior_mutants` is `[]`.
-  defp local({form, meta, args} = node, _position, config) when is_atom(form) and is_list(args) do
+  defp local({form, meta, args} = node, position, config) when is_atom(form) and is_list(args) do
     # mutare:ignore[operand_swap] swap/subquery order is irrelevant — mutants are consumed as a set
-    swap(form, meta, args, config) ++ Subquery.interior_mutants(node, config, :value)
+    swap(form, meta, args, position, config) ++ Subquery.interior_mutants(node, config, :value)
   end
 
   # A non-atom-form node (e.g. a `u.age` field access, whose form is the `{:., …}` dot tuple, or a
@@ -663,8 +664,8 @@ defmodule Mutare.Ecto.Fragment do
 
   # The registry of known Ecto DSL forms and the argument positions whose literal is *structural*
   # — part of the SQL the query builder emits, not data (see the moduledoc) — keyed off the
-  # `{parent_form, arity, index}` the walk threads down (`child_position/3`). The top-level
-  # condition has no parent (`nil`) and is never structural.
+  # `{parent_form, arity, index}` the walk threads down (`Mutare.Ecto.Walk.child_slot/3`). The
+  # top-level condition has no parent (`nil`) and is never structural.
   #
   #   * `fragment(template, …)`        — arg 0 is the SQL template (any arity)
   #   * `datetime_add(_, _, interval)` — arg 2 is the interval unit
@@ -714,7 +715,7 @@ defmodule Mutare.Ecto.Fragment do
   # The atom-form node's own single swap, tagged by family **and** by the operator it swaps (the
   # source `form`, e.g. `<`) — so `# mutare:ignore[ecto:<]` names just this swap. `like`↔`ilike` is
   # dialect-gated (Postgres); comparison/connective are portable.
-  defp swap(form, meta, args, config) do
+  defp swap(form, meta, args, position, config) do
     cond do
       Map.has_key?(@comparison_swaps, form) ->
         [Tag.new(:comparison, {@comparison_swaps[form], meta, args}, to_string(form))]
@@ -731,13 +732,15 @@ defmodule Mutare.Ecto.Fragment do
         [Tag.new(:temporal, {@temporal_swaps[form], meta, args}, to_string(form))]
 
       # Anything else may still be a value-expression form owned by a shared per-node catalog —
-      # the arithmetic swaps and the coalesce drop (`Mutare.Ecto.Scalar.local/1`, which carries
-      # its own arity guards) or an aggregate's ladder swap (`Mutare.Ecto.Aggregate.local/1`, for
-      # a `having: sum(p.x) > n`). A node matches at most one of the two, so at most one list is
-      # ever non-empty. Inner literals are still reached by the walk as usual.
+      # the arithmetic swaps and the coalesce drop (`Mutare.Ecto.Scalar.local/2`, which carries
+      # its own arity guards and reads the node's position for the drop's grammar guard) or an
+      # aggregate's ladder swap (`Mutare.Ecto.Aggregate.local/1`, for a `having: sum(p.x) > n`).
+      # A node matches at most one of the two, so at most one list is ever non-empty. Inner
+      # literals are still reached by the walk as usual.
       true ->
         # mutare:ignore[operand_swap] equivalent — a node matches at most one of the two catalogs, so at most one list is non-empty and concatenation order is unobservable
-        Scalar.local({form, meta, args}) ++ Aggregate.local({form, meta, args})
+        Scalar.local({form, meta, args}, {:value, position}) ++
+          Aggregate.local({form, meta, args})
     end
   end
 
