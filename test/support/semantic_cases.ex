@@ -184,6 +184,27 @@ defmodule Mutare.Ecto.SemanticCases do
         assert mutant == []
       end
 
+      # The same aggregate hidden in a window's operand, and beside a pinned `having` that Ecto
+      # discards at runtime: each original aggregates the empty input into one row.
+      test "audit: EXISTS observes the only aggregate removed from a window or beside a having" do
+        for {inner, expression} <- [
+              {"from p in Post, where: p.id == 99, select: coalesce(0, over(sum(sum(p.views))))",
+               "coalesce(0, over(sum(sum(p.views))))"},
+              {"from p in Post, where: p.id == 99, having: ^truth, select: coalesce(0, sum(p.views))",
+               "coalesce(0, sum(p.views))"}
+            ] do
+          source =
+            audit_source("""
+            truth = true
+            from u in User, where: exists(#{inner}), select: u.id, order_by: u.id
+            """)
+
+          {baseline, mutant} = H.assert_delivery(@repo, source, {expression, "0"}, [:coalesce])
+          assert baseline == [1, 2, 3, 4, 5, 6]
+          assert mutant == []
+        end
+      end
+
       # Dropping the effective `limit: 5` uncovers the overridden `limit: 0`; dropping a pinned
       # limit lifts a runtime zero. Both change existence.
       test "audit: an EXISTS limit drop is observed when what it uncovers is zero" do

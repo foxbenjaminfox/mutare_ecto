@@ -36,6 +36,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   entry.
 - Keep an `EXISTS` projection mutant that removes the query's only aggregate:
   `select: coalesce(0, sum(r.value))` is one row even over no input, while `select: 0` is none.
+  An ordinary aggregate inside a window's operands or options counts, and a `having` does not
+  fix the aggregation (Ecto drops a runtime-true one; SQLite rejects `HAVING` on a query that
+  does not aggregate). A drop that keeps an aggregate in its retained operand is still pruned.
 - Beneath `is_nil`, mutate a window's partition and ordering keys: their values decide which
   rows the window function reads, even when their NULL-ness is unchanged.
 - Include terminal composed subquery stages, inline subquery bounds, and windowed value-query

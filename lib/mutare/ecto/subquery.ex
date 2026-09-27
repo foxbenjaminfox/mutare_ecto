@@ -362,35 +362,79 @@ defmodule Mutare.Ecto.Subquery do
   # A projection mutant can change the row count without changing any projected value: it can
   # change whether the query aggregates. Ungrouped, `select: coalesce(0, sum(r.value))` is one
   # row even over an empty table, while its drop, `select: 0`, is a row per input row, so none.
-  # A same-arity swap (`sum` → `avg`, `+` → `-`) keeps the aggregates, and so does any mutant of
-  # a query whose `group_by` or `having` fixes its grouping.
   #
-  # The mutant is kept unless it is known to keep the aggregation. The replaced node and its
-  # replacement (the tag's attribution) are compared by the aggregates each holds at query
-  # scope, counting a node that may hide one (`scoped_aggregates/1`). If they differ, the mutant
-  # is kept unless a written aggregate outside the replaced node keeps the projection
-  # aggregating either way.
+  # Two facts decide aggregation on every engine: a `group_by`, and an aggregate in the
+  # projection. `having` and `order_by` do not. Postgres treats an aggregate or a `HAVING` there
+  # as making the query aggregate. SQLite reads only the select list, and it rejects a `HAVING`
+  # on a query that does not aggregate. So when the drop removes the projection's only aggregate
+  # beside a `having`, the result is one row on Postgres and an error on SQLite. The mutant is
+  # not equivalent, so it is kept.
+  #
+  # The mutant is pruned when its replacement holds the same aggregates as the node it replaces,
+  # including the ones a pin or fragment may hide (an arithmetic swap beside `^bump`), or when
+  # the query's aggregation is known and the same before and after (`aggregation/2`). The projection after the mutant is the projection before it, minus
+  # the replaced node's aggregates plus its replacement's (the tag's attribution). A drop that
+  # keeps an aggregate in its retained operand (`coalesce(min(r.a), max(r.b))` → `min(r.a)`)
+  # still aggregates, even though it holds fewer aggregates.
   defp changes_aggregation?(%FromCall{clauses: %{entries: entries}}, %Tag{
          attribution: %{original: original, mutated: mutated}
        }) do
-    grouped? = Enum.any?(entries, &(&1.key in [:group_by, :having, :or_having]))
-    removed = scoped_aggregates(original)
-    added = scoped_aggregates(mutated)
+    grouping = grouping(entries)
+    {removed_written, removed_hidden} = scoped_aggregates(original)
+    {added_written, added_hidden} = scoped_aggregates(mutated)
 
-    projected =
-      for %Entry{key: key, value: value} <- entries, key in @projection_keys, reduce: 0 do
-        count -> count + elem(scoped_aggregates(value), 0)
+    {written, hidden} =
+      for %Entry{key: key, value: value} <- entries, key in @projection_keys, reduce: {0, 0} do
+        {w, h} ->
+          {vw, vh} = scoped_aggregates(value)
+          {w + vw, h + vh}
       end
 
-    not grouped? and removed != added and projected - elem(removed, 0) == 0
+    before = aggregation({written, hidden}, grouping)
+
+    after_mutant =
+      aggregation(
+        {written - removed_written + added_written, hidden - removed_hidden + added_hidden},
+        grouping
+      )
+
+    {removed_written, removed_hidden} != {added_written, added_hidden} and
+      (before == :unknown or before != after_mutant)
   end
 
   defp changes_aggregation?(_from, _unattributed), do: true
 
+  # Whether a `group_by` groups the query. A pinned one may be `[]` at runtime, and a written
+  # `[]` renders no grouping columns, so neither one proves grouping.
+  defp grouping(entries) do
+    group_bys = for %Entry{key: :group_by, value: value} <- entries, do: value
+
+    cond do
+      Enum.any?(group_bys, &(not match?({:^, _, _}, &1) and AST.unwrap_list(&1) != [])) ->
+        :grouped
+
+      group_bys != [] ->
+        :unknown
+
+      true ->
+        :ungrouped
+    end
+  end
+
+  # `:yes`, `:no` or `:unknown`: whether a query with this grouping and a projection holding
+  # `{written, hidden}` aggregates aggregates.
+  defp aggregation(_counts, :grouped), do: :yes
+  defp aggregation({written, _hidden}, _grouping) when written > 0, do: :yes
+  defp aggregation({0, 0}, :ungrouped), do: :no
+  defp aggregation(_counts, _grouping), do: :unknown
+
   # `{written, hidden}`: the Ecto aggregates in `node` that aggregate *this* query, and the
-  # nodes that may hide one (a pin, a `fragment`, an author macro). A window's function
-  # (`over/1,2`) aggregates the window, and a nested query aggregates itself, so neither is
-  # entered. An author macro's arguments are entered only under the walk's own rule.
+  # nodes that may hide one (a pin, a `fragment`, an author macro). A nested query aggregates
+  # itself, so it is not entered. A window's function call (`over/1,2`) aggregates the window,
+  # so it is skipped. But its operands and the window's options are evaluated in the query's
+  # own scope: `over(sum(sum(r.value)))` and `over(row_number(), order_by: sum(r.value))`
+  # each hold one ordinary `sum`. An author macro's arguments are entered only under the walk's
+  # own rule.
   defp scoped_aggregates(node) do
     for {position, _ctx, _rebuild} <- Walk.positions(node, nil, &query_scope/2),
         reduce: {0, 0} do
@@ -403,10 +447,26 @@ defmodule Mutare.Ecto.Subquery do
     end
   end
 
-  defp query_scope({:over, _meta, [_ | _]}, _ctx), do: []
-  defp query_scope({{:., _, [_, :over]}, _meta, _args}, _ctx), do: []
+  # Only positions are read here, never rebuilt, so a child's splice returns its parent.
+  defp query_scope({:over, _meta, [function | options]} = node, ctx),
+    do: window_scope(node, function, options, ctx)
+
+  defp query_scope({{:., _, [_, :over]}, _meta, [function | options]} = node, ctx),
+    do: window_scope(node, function, options, ctx)
+
   defp query_scope({head, _meta, [_arg]}, _ctx) when head in @wrappers, do: []
   defp query_scope(node, ctx), do: Walk.structural(node, ctx)
+
+  defp window_scope(node, function, options, ctx),
+    do: for(operand <- window_operands(function) ++ options, do: {operand, ctx, fn _ -> node end})
+
+  # The windowed call's operands: a `filter/2`'s aggregate operands and its condition, or a
+  # function's arguments. Anything else (a pin) is kept whole to be counted.
+  defp window_operands({:filter, _meta, [function, condition]}),
+    do: window_operands(function) ++ [condition]
+
+  defp window_operands({name, _meta, args}) when is_atom(name) and is_list(args), do: args
+  defp window_operands(function), do: [function]
 
   defp hides_aggregate?({head, _meta, [_arg]}) when head in @wrappers, do: false
   defp hides_aggregate?({:^, _meta, _args}), do: true

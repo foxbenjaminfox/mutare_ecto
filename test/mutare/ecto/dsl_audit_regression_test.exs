@@ -381,4 +381,75 @@ defmodule Mutare.Ecto.DslAuditRegressionTest do
     assert_rewrite(source, [:coalesce], "coalesce(^x, p.value)", "^x")
     assert_builds(source, & &1.q(), only([:coalesce]))
   end
+
+  describe "EXISTS judges a projection mutant by the query's aggregation" do
+    defp exists_source(inner, prelude \\ "") do
+      fixture("""
+      #{prelude}
+      from p in "outer_rows", where: exists(#{inner}), select: p.id
+      """)
+    end
+
+    test "a drop whose retained operand aggregates keeps the aggregation" do
+      for expression <- [
+            "coalesce(min(r.a), max(r.b))",
+            "coalesce(sum(r.value), count(r.id))"
+          ] do
+        source = exists_source(~s|from r in "audit_rows", select: #{expression}|)
+        assert_native_builds(source)
+        assert ecto_diffs(source, only([:coalesce])) == []
+      end
+    end
+
+    test "an ordinary aggregate inside a window's operands or options aggregates the query" do
+      for expression <- [
+            "coalesce(0, over(sum(sum(r.value))))",
+            "coalesce(0, over(lag(sum(r.value))))",
+            "coalesce(0, over(row_number(), order_by: sum(r.value)))",
+            "coalesce(0, over(filter(sum(r.value), count(r.id) > 0)))"
+          ] do
+        source = exists_source(~s|from r in "audit_rows", select: #{expression}|)
+        assert_native_builds(source)
+        assert_rewrite(source, [:coalesce], expression, "0")
+        assert_builds(source, & &1.q(), only([:coalesce]))
+      end
+
+      # The windowed call alone aggregates the window, not the query.
+      source =
+        exists_source(~s|from r in "audit_rows", select: coalesce(0, over(sum(r.value)))|)
+
+      assert ecto_diffs(source, only([:coalesce])) == []
+    end
+
+    test "a having clause does not fix the aggregation" do
+      # Ecto keeps a written `having: true` or `having: []` (SQLite then rejects HAVING on the
+      # mutant's non-aggregate query) and discards a pinned one at runtime (the mutant
+      # projects no rows over an empty input). Either way the drop is not equivalent.
+      import Ecto.Query
+      truth = true
+
+      for {clause, retained} <- [
+            {"having: true", 1},
+            {"or_having: []", 1},
+            {"having: ^truth", 0},
+            {"or_having: ^truth", 0}
+          ] do
+        inner = ~s|from r in "audit_rows", #{clause}, select: coalesce(0, sum(r.value))|
+        {native, _binding} = Code.eval_string(inner, [truth: truth], __ENV__)
+        assert length(Ecto.Queryable.to_query(native).havings) == retained
+
+        source = exists_source(inner, "truth = true")
+        assert_rewrite(source, [:coalesce], "coalesce(0, sum(r.value))", "0")
+        assert_builds(source, & &1.q(), only([:coalesce]))
+      end
+
+      # A group_by does fix it: the query is a row per group either way.
+      source =
+        exists_source(
+          ~s|from r in "audit_rows", group_by: r.a, having: true, select: coalesce(0, sum(r.value))|
+        )
+
+      assert ecto_diffs(source, only([:coalesce])) == []
+    end
+  end
 end

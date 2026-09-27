@@ -173,6 +173,16 @@ The next audit found two more places where a shortcut dropped information:
   only aggregate turns one row into a row per input row. Under EXISTS, a projection mutant is
   now also kept when it may change the query's aggregation.
 
+The follow-up review of that check found it compared aggregate *counts*, where the question
+is whether the query aggregates. `coalesce(min(a), max(b))` → `min(a)` holds fewer aggregates
+and still aggregates. The check also stopped at `over/1,2`, which hid the ordinary `sum` in
+`over(sum(sum(v)))`. Only the windowed call aggregates the window; its operands and options
+belong to the query. The review also proposed that Ecto discards a `having: true`. That holds
+only for a runtime value: a literal is applied to the quoted expression at compile time and
+stays in `havings`. It turned out not to matter. SQLite decides aggregation from the select
+list alone and rejects `HAVING` on a query that does not aggregate, while Postgres counts
+`HAVING`. So a `group_by` and projection aggregates are the only facts both engines agree on.
+
 The coalesce family's equivalence note ("differ only where x is NULL") still describes
 scalar evaluation only; an aggregate-removing drop is killed by an empty input instead.
 
