@@ -421,6 +421,68 @@ defmodule Mutare.Ecto.DslAuditRegressionTest do
       assert ecto_diffs(source, only([:coalesce])) == []
     end
 
+    test "the projection is judged after select_merge replaces earlier fields" do
+      import Ecto.Query
+
+      # Ecto's merge replaces the earlier `n`, so `sum(r.a)` never reaches the projection.
+      merged =
+        from(r in "audit_rows",
+          select: %{n: sum(r.a)},
+          select_merge: %{n: coalesce(0, sum(r.value))}
+        )
+
+      assert %{select: %{expr: {:%{}, _, [n: {:coalesce, _, _}]}}} = merged
+
+      for {inner, kept?} <- [
+            {~s|select: %{n: sum(r.a)}, select_merge: %{n: coalesce(0, sum(r.value))}|, true},
+            # A merge whose keys cannot be read may replace `n`, so it proves nothing.
+            {~s|select: %{n: sum(r.a), m: coalesce(0, sum(r.value))}, select_merge: ^extra|,
+             true},
+            # Under a different key the aggregate survives the merge.
+            {~s|select: %{kept: sum(r.a)}, select_merge: %{n: coalesce(0, sum(r.value))}|, false},
+            # A drop in a replaced field changes nothing.
+            {~s|select: %{n: coalesce(0, sum(r.value))}, select_merge: %{n: sum(r.a)}|, false}
+          ] do
+        source = exists_source(~s|from r in "audit_rows", #{inner}|, "extra = %{}")
+        assert_native_builds(source)
+        assert_builds(source, & &1.q(), only([:coalesce]))
+
+        if kept?,
+          do: assert_rewrite(source, [:coalesce], "coalesce(0, sum(r.value))", "0"),
+          else: assert(ecto_diffs(source, only([:coalesce])) == [])
+      end
+    end
+
+    test "a projection dynamic reaches core under EXISTS" do
+      for {wrapper, projection} <- [
+            {"exists", "^dynamic([r], coalesce(0, sum(r.value)))"},
+            {"exists", "^%{n: dynamic([r], coalesce(0, sum(r.value)))}"},
+            {"subquery", "^dynamic([r], coalesce(0, sum(r.value)))"}
+          ] do
+        inner = ~s|from(r in "audit_rows", select: #{projection})|
+
+        predicate =
+          if wrapper == "exists", do: "exists(#{inner})", else: "p.id in subquery(#{inner})"
+
+        source = fixture(~s|from p in "outer_rows", where: #{predicate}, select: p.id|)
+        assert_native_builds(source)
+        assert_rewrite(source, [:coalesce], "coalesce(0, sum(r.value))", "0")
+        assert_builds(source, & &1.q(), only([:coalesce]))
+      end
+    end
+
+    test "a windowed fragment may hide an ordinary aggregate" do
+      for expression <- [
+            ~s|coalesce(0, over(fragment("sum(sum(?))", r.value)))|,
+            ~s|coalesce(0, fragment("sum(?)", r.value))|
+          ] do
+        source = exists_source(~s|from r in "audit_rows", select: #{expression}|)
+        assert_native_builds(source)
+        assert_rewrite(source, [:coalesce], expression, "0")
+        assert_builds(source, & &1.q(), only([:coalesce]))
+      end
+    end
+
     test "a having clause does not fix the aggregation" do
       # Ecto keeps a written `having: true` or `having: []` (SQLite then rejects HAVING on the
       # mutant's non-aggregate query) and discards a pinned one at runtime (the mutant

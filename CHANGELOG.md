@@ -39,6 +39,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   An ordinary aggregate inside a window's operands or options counts, and a `having` does not
   fix the aggregation (Ecto drops a runtime-true one; SQLite rejects `HAVING` on a query that
   does not aggregate). A drop that keeps an aggregate in its retained operand is still pruned.
+  The aggregation is read from the effective projection, after `select_merge` replaces earlier
+  fields. A projection pin that builds a `dynamic` now reaches core under `EXISTS`. A windowed
+  `fragment` counts as possibly hiding an aggregate.
 - Beneath `is_nil`, mutate a window's partition and ordering keys: their values decide which
   rows the window function reads, even when their NULL-ness is unchanged.
 - Include terminal composed subquery stages, inline subquery bounds, and windowed value-query

@@ -183,6 +183,17 @@ stays in `havings`. It turned out not to matter. SQLite decides aggregation from
 list alone and rejects `HAVING` on a query that does not aggregate, while Postgres counts
 `HAVING`. So a `group_by` and projection aggregates are the only facts both engines agree on.
 
+A further review found three gaps in the same check. It summed aggregates over every written
+projection clause, but a later `select_merge` key replaces an earlier field. The check now
+folds the clauses the way Ecto merges them, and judges the original and the mutant (the rebuilt
+`from`, parsed again) on what survives. Its window traversal skipped every windowed call,
+including a `fragment` or author macro that may hide an ordinary aggregate. And under EXISTS
+no projection pin reached core at all, so a pinned `dynamic` that holds the only aggregate went
+unmutated. Those pins now reach core, and all their mutants are kept. A per-mutant filter was
+considered and rejected. Core attributes a mutant at the Elixir node it changed, and a control
+flow change (negating the `if` that picks between two dynamics) is attributed at a node with no
+aggregate, while it still switches which projection runs.
+
 The coalesce family's equivalence note ("differ only where x is NULL") still describes
 scalar evaluation only; an aggregate-removing drop is killed by an empty input instead.
 

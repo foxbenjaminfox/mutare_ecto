@@ -21,7 +21,8 @@ defmodule Mutare.Ecto.Subquery do
   # * General clause drops (including group_by/distinct) remain unimplemented here.
   #
   # Pins are collected from conditions and observable projections, with structural roots for
-  # projection descriptions. Computed query sources go to core as Elixir, never to SQL catalogs.
+  # projection descriptions. Under EXISTS, a projection pin is collected only when it builds a
+  # `dynamic` (`island_observed?/3`). Computed query sources go to core as Elixir, never to SQL catalogs.
   # Composed queries use their ordinary stage coverage, as if constructed in a prior assignment;
   # the inline-from equivalence pruning is not applied across that Elixir boundary.
 
@@ -114,10 +115,11 @@ defmodule Mutare.Ecto.Subquery do
         end) ++
           KeywordList.flat_map(
             clauses,
-            &island_clause?(&1, projection_mode(from, mode)),
+            &island_clause?/1,
             fn entry, index ->
               for {root, root_role, rebuild_value} <- island_roots(entry),
-                  {interior, role, rebuild} <- Fragment.islands(root, root_role) do
+                  {interior, role, rebuild} <- Fragment.islands(root, root_role),
+                  island_observed?(entry.key, interior, projection_mode(from, mode)) do
                 {interior, role,
                  &wrap.(rebuild_clause(from, index, rebuild_value.(rebuild.(&1))))}
               end
@@ -204,10 +206,34 @@ defmodule Mutare.Ecto.Subquery do
     end
   end
 
-  # A clause whose pins we sub-contract: the hosted conditions (every mode), plus a value-wrapper's
-  # observed `select` projection. Mirrors exactly the clauses `interior_mutants/3` mutates.
-  defp island_clause?(key, mode),
-    do: Surface.from_clause?(key, :hosted) or (mode == :value and key in @projection_keys)
+  # A clause whose pins we sub-contract: the hosted conditions and the projection
+  # (`island_observed?/3` decides which projection pins).
+  defp island_clause?(key), do: Surface.from_clause?(key, :hosted) or key in @projection_keys
+
+  # A condition's pins are observed in every mode, and so are a projection's where its values
+  # are observed. Under EXISTS a projection pin is observed only through whether the query
+  # aggregates, and inline query syntax reaches a projection through a pin only as a `dynamic`
+  # (`select: ^dynamic([r], coalesce(0, sum(r.value)))`). So only a pin whose interior builds one
+  # is passed to core. Its mutants are all kept: a core mutant is attributed at the Elixir node it
+  # changed, and negating the `flag` of `^if(flag, do: dynamic(..sum..), else: …)` changes a node
+  # with no aggregate while switching which dynamic is projected. So nothing about the changed
+  # node shows whether the aggregation survives. Some of the kept mutants are equivalent, such
+  # as an arithmetic swap inside the dynamic. That cost falls only on pinned projections that
+  # build a dynamic.
+  defp island_observed?(key, interior, projection_mode) do
+    key not in @projection_keys or projection_mode == :value or builds_dynamic?(interior)
+  end
+
+  defp builds_dynamic?(interior) do
+    {_interior, found?} =
+      Macro.prewalk(interior, false, fn node, found? ->
+        {node,
+         found? or
+           match?({:ok, :dynamic, _, _}, Calls.resolved_call_to(node, Ecto.Query, :dynamic))}
+      end)
+
+    found?
+  end
 
   # The roots whose pins are surfaced in one such clause: a condition's are the very roots its
   # catalog walks (`catalog_roots/1`), so the two readers keep agreeing about which nodes exist;
@@ -372,37 +398,91 @@ defmodule Mutare.Ecto.Subquery do
   #
   # The mutant is pruned when its replacement holds the same aggregates as the node it replaces,
   # including the ones a pin or fragment may hide (an arithmetic swap beside `^bump`), or when
-  # the query's aggregation is known and the same before and after (`aggregation/2`). The projection after the mutant is the projection before it, minus
-  # the replaced node's aggregates plus its replacement's (the tag's attribution). A drop that
-  # keeps an aggregate in its retained operand (`coalesce(min(r.a), max(r.b))` → `min(r.a)`)
-  # still aggregates, even though it holds fewer aggregates.
-  defp changes_aggregation?(%FromCall{clauses: %{entries: entries}}, %Tag{
+  # the query's aggregation is known and the same before and after (`aggregation/2`). Each side
+  # is judged on its effective projection (`projected_aggregates/1`), because a later
+  # `select_merge` key replaces an earlier field. A drop that keeps an aggregate in its retained
+  # operand (`coalesce(min(r.a), max(r.b))` → `min(r.a)`) still aggregates, even though it
+  # holds fewer aggregates.
+  defp changes_aggregation?(%FromCall{clauses: %{entries: entries}} = from, %Tag{
+         node: node,
          attribution: %{original: original, mutated: mutated}
        }) do
-    grouping = grouping(entries)
-    {removed_written, removed_hidden} = scoped_aggregates(original)
-    {added_written, added_hidden} = scoped_aggregates(mutated)
+    case FromCall.parse(node) do
+      %FromCall{} = mutant ->
+        grouping = grouping(entries)
+        before = aggregation(projected_aggregates(from), grouping)
+        after_mutant = aggregation(projected_aggregates(mutant), grouping)
 
-    {written, hidden} =
-      for %Entry{key: key, value: value} <- entries, key in @projection_keys, reduce: {0, 0} do
-        {w, h} ->
-          {vw, vh} = scoped_aggregates(value)
-          {w + vw, h + vh}
-      end
+        scoped_aggregates(original) != scoped_aggregates(mutated) and
+          (before == :unknown or before != after_mutant)
 
-    before = aggregation({written, hidden}, grouping)
-
-    after_mutant =
-      aggregation(
-        {written - removed_written + added_written, hidden - removed_hidden + added_hidden},
-        grouping
-      )
-
-    {removed_written, removed_hidden} != {added_written, added_hidden} and
-      (before == :unknown or before != after_mutant)
+      nil ->
+        true
+    end
   end
 
   defp changes_aggregation?(_from, _unattributed), do: true
+
+  # `{written, hidden}` over the fields that survive the projection clauses, folded in written
+  # order the way Ecto merges them. A literal map's key replaces an earlier field with that key.
+  # A projection that is not a literal map (a source, a tuple, a pin, a map with a computed key)
+  # contributes whole. After a merge that could replace any key (anything but a literal map),
+  # every earlier contribution may or may not survive, so its aggregates count only as hidden.
+  # A whole contribution followed by any merge is in the same position.
+  defp projected_aggregates(%FromCall{clauses: %{entries: entries}}) do
+    entries
+    |> Enum.filter(&(&1.key in @projection_keys))
+    |> Enum.reduce([], fn %Entry{value: value}, contributions ->
+      case literal_map_fields(value) do
+        {:ok, fields} ->
+          keys = MapSet.new(fields, &elem(&1, 0))
+
+          kept =
+            for contribution <- contributions,
+                not replaced?(contribution, keys),
+                do: maybe_whole(contribution)
+
+          kept ++ for({key, field} <- fields, do: {{:field, key}, field, :certain})
+
+        :error ->
+          Enum.map(contributions, fn {kind, part, _} -> {kind, part, :maybe} end) ++
+            [{:whole, value, :certain}]
+      end
+    end)
+    |> Enum.reduce({0, 0}, fn {_kind, part, certainty}, {written, hidden} ->
+      {w, h} = scoped_aggregates(part)
+
+      case certainty do
+        :certain -> {written + w, hidden + h}
+        :maybe -> {written, hidden + w + h}
+      end
+    end)
+  end
+
+  defp replaced?({{:field, key}, _part, _certainty}, keys), do: MapSet.member?(keys, key)
+  defp replaced?({:whole, _part, _certainty}, _keys), do: false
+
+  defp maybe_whole({:whole, part, _certainty}), do: {:whole, part, :maybe}
+  defp maybe_whole(field), do: field
+
+  # A map written with literal keys, as `{key, value}` fields in written order.
+  defp literal_map_fields({:%{}, _meta, pairs}) do
+    fields = for {key, value} <- pairs, do: {literal_key(key), value}
+    if Enum.any?(fields, &(elem(&1, 0) == :error)), do: :error, else: {:ok, fields}
+  end
+
+  defp literal_map_fields(_projection), do: :error
+
+  defp literal_key({:__block__, _meta, [key]}) when is_atom(key) or is_binary(key), do: key
+  defp literal_key(key) when is_atom(key) or is_binary(key), do: key
+  defp literal_key(_computed), do: :error
+
+  # `:yes`, `:no` or `:unknown`: whether a query with this grouping and a projection holding
+  # `{written, hidden}` aggregates aggregates.
+  defp aggregation(_counts, :grouped), do: :yes
+  defp aggregation({written, _hidden}, _grouping) when written > 0, do: :yes
+  defp aggregation({0, 0}, :ungrouped), do: :no
+  defp aggregation(_counts, _grouping), do: :unknown
 
   # Whether a `group_by` groups the query. A pinned one may be `[]` at runtime, and a written
   # `[]` renders no grouping columns, so neither one proves grouping.
@@ -420,13 +500,6 @@ defmodule Mutare.Ecto.Subquery do
         :ungrouped
     end
   end
-
-  # `:yes`, `:no` or `:unknown`: whether a query with this grouping and a projection holding
-  # `{written, hidden}` aggregates aggregates.
-  defp aggregation(_counts, :grouped), do: :yes
-  defp aggregation({written, _hidden}, _grouping) when written > 0, do: :yes
-  defp aggregation({0, 0}, :ungrouped), do: :no
-  defp aggregation(_counts, _grouping), do: :unknown
 
   # `{written, hidden}`: the Ecto aggregates in `node` that aggregate *this* query, and the
   # nodes that may hide one (a pin, a `fragment`, an author macro). A nested query aggregates
@@ -461,12 +534,21 @@ defmodule Mutare.Ecto.Subquery do
     do: for(operand <- window_operands(function) ++ options, do: {operand, ctx, fn _ -> node end})
 
   # The windowed call's operands: a `filter/2`'s aggregate operands and its condition, or a
-  # function's arguments. Anything else (a pin) is kept whole to be counted.
+  # function's arguments. A `fragment` or an author macro may hide an ordinary aggregate
+  # (`over(fragment("sum(sum(?))", r.value))`), and a pin is opaque, so each is kept whole to
+  # be counted as possibly hiding one.
   defp window_operands({:filter, _meta, [function, condition]}),
     do: window_operands(function) ++ [condition]
 
-  defp window_operands({name, _meta, args}) when is_atom(name) and is_list(args), do: args
-  defp window_operands(function), do: [function]
+  defp window_operands(function) do
+    case function do
+      {name, _meta, args} when is_atom(name) and is_list(args) ->
+        if hides_aggregate?(function), do: [function], else: args
+
+      _opaque ->
+        [function]
+    end
+  end
 
   defp hides_aggregate?({head, _meta, [_arg]}) when head in @wrappers, do: false
   defp hides_aggregate?({:^, _meta, _args}), do: true

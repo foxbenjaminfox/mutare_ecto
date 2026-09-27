@@ -184,14 +184,22 @@ defmodule Mutare.Ecto.SemanticCases do
         assert mutant == []
       end
 
-      # The same aggregate hidden in a window's operand, and beside a pinned `having` that Ecto
-      # discards at runtime: each original aggregates the empty input into one row.
-      test "audit: EXISTS observes the only aggregate removed from a window or beside a having" do
+      # The same aggregate hidden in a window's operand, beside a pinned `having` that Ecto
+      # discards at runtime, in a merged field, in a projection dynamic, and in a windowed
+      # fragment: each original aggregates the empty input into one row.
+      test "audit: EXISTS observes the only aggregate removed wherever it is written" do
         for {inner, expression} <- [
               {"from p in Post, where: p.id == 99, select: coalesce(0, over(sum(sum(p.views))))",
                "coalesce(0, over(sum(sum(p.views))))"},
               {"from p in Post, where: p.id == 99, having: ^truth, select: coalesce(0, sum(p.views))",
-               "coalesce(0, sum(p.views))"}
+               "coalesce(0, sum(p.views))"},
+              # The earlier `n` is replaced by the merge, so `sum(p.id)` never aggregates.
+              {"from p in Post, where: p.id == 99, select: %{n: sum(p.id)}, select_merge: %{n: coalesce(0, sum(p.views))}",
+               "coalesce(0, sum(p.views))"},
+              {"from p in Post, where: p.id == 99, select: ^dynamic([p], coalesce(0, sum(p.views)))",
+               "coalesce(0, sum(p.views))"},
+              {~s|from p in Post, where: p.id == 99, select: coalesce(0, over(fragment("sum(sum(?))", p.views)))|,
+               ~s|coalesce(0, over(fragment("sum(sum(?))", p.views)))|}
             ] do
           source =
             audit_source("""
