@@ -857,6 +857,84 @@ defmodule Mutare.Ecto.DslAuditRegressionTest do
     end
   end
 
+  describe "a keyword filter pair's value" do
+    # Interpolating a pair value sends it through its column type's `cast/1`, where the written
+    # literal is only `dump/1`ed; a custom type's `cast/1` may change it.
+    defp label_source(query) do
+      """
+      defmodule LabelQuery do
+        import Ecto.Query
+        alias MyApp.Label, as: L
+        def q do
+          #{query}
+        end
+      end
+      """
+    end
+
+    defp string_only, do: [mutators: [Mutare.Mutators.StringLiteral, {Mutare.Ecto, families: []}]]
+
+    defp mutated_values(source) do
+      for {_producer, original, _mutated} <- diffs(source, string_only()),
+          into: MapSet.new(),
+          do: original
+    end
+
+    test "is mutated only where the column's type keeps the literal it is cast from" do
+      for query <- [
+            ~s|from l in L, where: [plain: "UP", folded: "DOWN"]|,
+            ~s|from l in "labels", join: m in L, on: [plain: "UP", folded: "DOWN"]|,
+            ~s|where(L, plain: "UP", folded: "DOWN")|,
+            ~s{L |> where([l], plain: "UP", folded: "DOWN")},
+            ~s|join("labels", :inner, [x], m in L, on: [plain: "UP", folded: "DOWN"])|
+          ] do
+        source = label_source(query)
+        assert mutated_values(source) == MapSet.new([~s|"UP"|]), query
+        assert_builds(source, & &1.q(), string_only())
+      end
+    end
+
+    test "keeps its written value at baseline" do
+      source = label_source(~s|from l in L, where: [plain: "UP", folded: "UP"]|)
+      {[module], _sites} = Mutare.Test.compile_metamutant(source, mutators(string_only()))
+      baseline = Mutare.Test.with_active_mutant(0, fn -> module.q() end)
+      native = compile_native(source).q()
+
+      plan = &Ecto.Adapter.Queryable.plan_query(:all, Ecto.Adapters.SQLite3, &1)
+      {_planned, native_params, _key} = plan.(native)
+      {_planned, baseline_params, _key} = plan.(baseline)
+      assert native_params == []
+      # `plain` is pinned for its mutants, `folded` stays the written literal.
+      assert baseline_params == ["UP"]
+    end
+
+    test "is left alone for a parameterized or binary_id column" do
+      for {pair, value} <- [{"status: :active", ":active"}, {~s|uid: "ABC"|, ~s|"ABC"|}] do
+        source = label_source(~s|from l in L, where: [#{pair}]|)
+
+        opts = [
+          mutators: [
+            Mutare.Mutators.StringLiteral,
+            Mutare.Mutators.AtomLiteral,
+            {Mutare.Ecto, families: []}
+          ]
+        ]
+
+        refute Enum.any?(diffs(source, opts), &(elem(&1, 1) == value))
+      end
+    end
+
+    test "is still mutated on a schemaless source or one the plugin cannot read" do
+      for query <- [
+            ~s|from l in "labels", where: [folded: "UP"]|,
+            ~s|where(q, folded: "UP")|
+          ] do
+        source = label_source("q = from(l in L)\n#{query}")
+        assert Enum.any?(diffs(source, string_only()), &(elem(&1, 1) == ~s|"UP"|))
+      end
+    end
+  end
+
   test "a binary literal's segments are never mutated" do
     for clauses <- [
           "where: r.value == <<0>>",

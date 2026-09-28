@@ -34,6 +34,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   not the macro's routes are registered. The vocabulary is keyed by name and arity, as Ecto
   dispatches (an author's `coalesce/1` or `sum/2` is a macro), and a macro in the projection may
   define an alias.
+- Leave a keyword filter's value unmutated where its column's type may `cast/1` it to another
+  value (a custom type, `Ecto.Enum`, `:binary_id`): interpolated for its mutants, the value was
+  cast where the written literal is only dumped, so the baseline bound a different value. The
+  schema is read through the call site's aliases with `Mutare.CallRouting.Call.resolved_module/2`,
+  which requires the Mutare release that adds it. A source the plugin cannot read keeps the
+  previous behaviour.
 - Swap comparison, connective and `like`/`ilike` forms only at Ecto's arity 2: an author's
   `like/1` macro was swapped to a nonexistent `ilike/1`, failing the whole metamutant build.
   Read a remote `over/2` as an author macro, never a window: it crashed the transform.

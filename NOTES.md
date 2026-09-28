@@ -262,8 +262,15 @@ negative number, which Ecto's binary escape rejects; a binary literal is now a l
 The fourth round also found that a keyword filter's scalar value, routed `:interpolated`, reaches Ecto
 as a parameter, which the planner `cast/1`s before `dump/1`ing, where a written literal is only
 `dump/1`ed. For a custom type whose `cast/1` is not the identity on the literal (one that
-downcases, say), the baseline binds a different value. Not yet fixed; see the open question
-this was raised under.
+downcases, say), the baseline binds a different value. Three options were weighed: leave such
+a pair value unmutated, rebuild the whole call per mutant (a new core delivery), or document the
+limitation. The first was chosen. It needs the column's type, so the source's schema module,
+and a source is almost always written through an alias (`from p in Post`), while a classifier
+sees its arguments before core resolves them. Core now hands the classifier the call site's
+aliases (`Mutare.CallRouting.Call.resolved_module/2`), and a pair on a column of any type but
+the primitives whose `cast/1` keeps a dumpable literal stays raw. A source the plugin cannot
+read (a variable, a composed query, an `assoc/2` join) is still interpolated: leaving every such
+pair unmutated would lose `active: true → false` in nearly every piped query.
 
 The coalesce family's equivalence note ("differ only where x is NULL") still describes
 scalar evaluation only; an aggregate-removing drop is killed by an empty input instead.

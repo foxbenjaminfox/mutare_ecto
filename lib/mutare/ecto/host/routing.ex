@@ -65,18 +65,26 @@ defmodule Mutare.Ecto.Host.Routing do
   """
   @spec route_arguments(Call.t()) :: ArgumentRoutes.t()
   def route_arguments(%Call{name: name, arguments: args} = call),
-    do: ArgumentRoutes.new(call, treatments(name, args))
+    do: ArgumentRoutes.new(call, treatments(name, args, &Call.resolved_module(call, &1)))
 
   @doc """
   Per-argument treatments for a registered query macro, over the call's complete argument list
   (a piped source included, at position 0). Returns `[]` for a name the plugin doesn't route.
+
+  `resolve` reads a module name in the arguments through the call site's aliases
+  (`Mutare.CallRouting.Call.resolved_module/2`); the default knows none.
   """
-  @spec treatments(atom(), [Macro.t()]) :: [Mutare.CallRouting.treatment()]
-  def treatments(:from, args) do
+  @spec treatments(atom(), [Macro.t()], resolver()) :: [Mutare.CallRouting.treatment()]
+  def treatments(name, args, resolve \\ fn _name -> :error end)
+
+  def treatments(:from, args, resolve) do
     clause_treatment =
       case FromCall.parse_args(args) do
-        {_source, %KeywordList{} = clauses} -> {:keyword, clause_treatments(clauses)}
-        nil -> :raw
+        {source, %KeywordList{} = clauses} ->
+          {:keyword, clause_treatments(clauses, source_types(source, resolve), resolve)}
+
+        nil ->
+          :raw
       end
 
     case args do
@@ -88,9 +96,13 @@ defmodule Mutare.Ecto.Host.Routing do
     end
   end
 
-  def treatments(macro, args), do: route_macro(Surface.macro_kind(macro), macro, args)
+  def treatments(macro, args, resolve),
+    do: route_macro(Surface.macro_kind(macro), macro, args, resolve)
 
-  defp route_macro(:condition, _name, args) do
+  @typedoc "Reads a module name through the call site's aliases."
+  @type resolver :: (Macro.t() -> {:ok, module()} | :error)
+
+  defp route_macro(:condition, _name, args, resolve) do
     # The threaded query (the first argument) is an ordinary expression; its own data positions
     # stay raw. The condition/shorthand overlay then marks what the host/core own.
     base = query_threading_route(args)
@@ -103,17 +115,17 @@ defmodule Mutare.Ecto.Host.Routing do
       %Condition{index: index} -> List.replace_at(base, index, :hosted)
       # keyword-shorthand form (`where(q, col: v)` / `where(q, [p], col: v)`) — route the trailing
       # keyword list per-pair.
-      nil -> shorthand_route(args, base)
+      nil -> shorthand_route(args, base, source_types(List.first(args), resolve))
     end
   end
 
-  defp route_macro(:join, _name, args) do
+  defp route_macro(:join, _name, args, resolve) do
     args
     |> query_threading_route()
-    |> route_join_options(args)
+    |> route_join_options(args, resolve)
   end
 
-  defp route_macro(:clause, name, args) do
+  defp route_macro(:clause, name, args, _resolve) do
     # No hosted fragment, no shorthand: thread the query and leave the data positions raw —
     # except a bound macro's literal-integer value (the trailing argument — `route_last/2`),
     # which routes `:hosted` for the pin-only bump (`Mutare.Ecto.Bound`), and `with_cte`'s
@@ -132,7 +144,7 @@ defmodule Mutare.Ecto.Host.Routing do
   # them — reachable here only through a direct `treatments/2` call) and `nil` (a name the
   # plugin doesn't own) land here. A **new** Surface kind must take a real branch above
   # (`Surface.macro_kinds/0`).
-  defp route_macro(_kind, _name, _args), do: []
+  defp route_macro(_kind, _name, _args, _resolve), do: []
 
   # `with_cte(query, name, as: ^cte)`'s options route per pair: a **pinned** `as:` value is an
   # Elixir expression computing the CTE's query — routed `:interpolated`, so Mutare mutates it
@@ -201,10 +213,13 @@ defmodule Mutare.Ecto.Host.Routing do
   # `Mutare.Ecto.Host.JoinOn`) still routes `:hosted` and the host declines it, as in the `from`
   # form. A trailing argument that is no keyword list (`join(q, :inner, [u], p in Post)`) keeps the
   # base routing.
-  defp route_join_options(routing, args) do
+  defp route_join_options(routing, args, resolve) do
+    # The joined queryable precedes the options: `join(q, :inner, [p], c in Comment, on: …)`.
+    types = source_types(Enum.at(args, -2), resolve)
+
     case args |> List.last() |> KeywordList.nonempty() do
       %KeywordList{entries: entries} ->
-        route_last(routing, {:keyword, Enum.map(entries, &join_option_treatment/1)})
+        route_last(routing, {:keyword, Enum.map(entries, &join_option_treatment(&1, types))})
 
       nil ->
         routing
@@ -213,8 +228,8 @@ defmodule Mutare.Ecto.Host.Routing do
 
   # One join option's treatment: `on:` is the condition (routed by shape); every other option names
   # DSL data (`as: :post`, `prefix: "x"`, `hints:`) and stays raw.
-  defp join_option_treatment(entry) do
-    if entry.key == :on, do: condition_treatment(entry.value), else: :raw
+  defp join_option_treatment(entry, types) do
+    if entry.key == :on, do: condition_treatment(entry.value, types), else: :raw
   end
 
   # Overlay `treatment` on the trailing argument's slot. Every overlay the classifier places
@@ -228,9 +243,9 @@ defmodule Mutare.Ecto.Host.Routing do
   # it (`where(q, col: v)` / `where(q, [p], col: v)`). Route the trailing argument
   # `{:keyword, value_treatments}` so core mutates each scalar value `^`-pinned, leaving keys and
   # nil/compound values alone. Anything else trailing (a lone binding list, `[]`) → default.
-  defp shorthand_route(args, default) do
+  defp shorthand_route(args, default, types) do
     case args |> List.last() |> Condition.shape() do
-      {:keyword_filter, pairs} -> route_last(default, {:keyword, pair_treatments(pairs)})
+      {:keyword_filter, pairs} -> route_last(default, {:keyword, pair_treatments(pairs, types)})
       :pairless_list -> default
       # Reached only by an arity the macro does not have — an argless call (`List.last([])` is
       # `nil`, which is no list), a lone `where(q)`: a trailing predicate at a real arity is what
@@ -243,21 +258,35 @@ defmodule Mutare.Ecto.Host.Routing do
   # condition value (below); a bound clause (`limit:`/`offset:`) routes `:hosted` iff its value
   # is a literal integer (the pin-only bound bump — an interpolated/expression bound stays raw);
   # every other clause (select/order_by — whole-`from`'s job, or a field-name carrier) is left raw.
-  defp clause_treatments(%KeywordList{entries: entries}) do
-    Enum.map(entries, fn entry ->
-      cond do
-        Surface.from_clause?(entry.key, :hosted) -> condition_treatment(entry.value)
-        # Even a wrongly-`:hosted` entry weaves nothing: `Bound.literal?/1` is `Bound.bumps/1`
-        # non-emptiness, so a pin/expression bound that slipped through yields an empty target
-        # list, and a hostable non-bound key is re-gated by `Surface` on the host side. An
-        # *overridden* bound (`limit: 5, limit: 10`'s `5`) likewise routes `:hosted` by shape and
-        # is declined by the host (`FromCall.effective_clause?/2`) — like a non-hostable `on:`,
-        # hostability is not re-decided here.
-        # mutare:ignore[logical] equivalent — see above
-        Surface.bound?(entry.key) and Bound.literal?(entry.value) -> :hosted
-        true -> :raw
-      end
+  #
+  # A keyword filter's columns belong to the source (`where:`/`having:`), or to the join the
+  # `on:` follows, and are typed by it (`source_types/2`).
+  defp clause_treatments(%KeywordList{entries: entries}, source_types, resolve) do
+    entries
+    |> Enum.map_reduce(source_types, fn entry, types ->
+      types =
+        if Surface.from_clause?(entry.key, :join_binding),
+          do: source_types(entry.value, resolve),
+          else: types
+
+      {clause_treatment(entry, if(entry.key == :on, do: types, else: source_types)), types}
     end)
+    |> elem(0)
+  end
+
+  defp clause_treatment(entry, types) do
+    cond do
+      Surface.from_clause?(entry.key, :hosted) -> condition_treatment(entry.value, types)
+      # Even a wrongly-`:hosted` entry weaves nothing: `Bound.literal?/1` is `Bound.bumps/1`
+      # non-emptiness, so a pin/expression bound that slipped through yields an empty target
+      # list, and a hostable non-bound key is re-gated by `Surface` on the host side. An
+      # *overridden* bound (`limit: 5, limit: 10`'s `5`) likewise routes `:hosted` by shape and
+      # is declined by the host (`FromCall.effective_clause?/2`) — like a non-hostable `on:`,
+      # hostability is not re-decided here.
+      # mutare:ignore[logical] equivalent — see above
+      Surface.bound?(entry.key) and Bound.literal?(entry.value) -> :hosted
+      true -> :raw
+    end
   end
 
   # The treatment for one condition value, wherever a condition is written as a keyword value — a
@@ -267,10 +296,10 @@ defmodule Mutare.Ecto.Host.Routing do
   # `where: ^cond` included, whose interior the host sub-contracts to core (`Mutare.Ecto.Island`)
   # — is `:hosted`; a keyword filter (`where: [active: true]`, `on: [views: 5]`) routes its pairs
   # individually; a list with no pair to route (`where: []`) is left raw.
-  defp condition_treatment(value) do
+  defp condition_treatment(value, types) do
     case Condition.shape(value) do
       {:predicate, _kind} -> :hosted
-      {:keyword_filter, pairs} -> {:keyword, pair_treatments(pairs)}
+      {:keyword_filter, pairs} -> {:keyword, pair_treatments(pairs, types)}
       :pairless_list -> :raw
     end
   end
@@ -279,8 +308,8 @@ defmodule Mutare.Ecto.Host.Routing do
   # names a column** (left raw by the per-pair routing itself), only its value routes. The same
   # rule's *pin-side* application — a keyword filter interior a pin computes, where no call
   # shape exists to route — lives in `Mutare.Ecto.Island.subcontracted/3`'s key-set guard.
-  defp pair_treatments(%KeywordList{entries: entries}) do
-    Enum.map(entries, &pair_treatment(&1.value))
+  defp pair_treatments(%KeywordList{entries: entries}, types) do
+    Enum.map(entries, &pair_treatment(&1.key, &1.value, types))
   end
 
   # The treatment for one shorthand pair's *value*: a scalar literal (string, number, boolean — but
@@ -288,9 +317,49 @@ defmodule Mutare.Ecto.Host.Routing do
   # interpolation (the query position needs the pin). A `nil` (an `IS NULL` predicate, never
   # `= nil`) and any compound/interpolated value are left raw (`:raw`) — interpolation routing is
   # scalar-only, since a compound value would mutate nested nodes where an inner `^` still poisons.
-  defp pair_treatment(value) do
-    if scalar_literal?(value), do: :interpolated, else: :raw
+  #
+  # Interpolation changes how Ecto converts the value, though. The planner only `dump/1`s a
+  # written literal through the column's type, but `cast/1`s a parameter first, and a custom
+  # type's `cast/1` may change a value its `dump/1` accepts (a type that downcases), so the
+  # baseline would bind another value than the one written. So a pair whose column's type is
+  # known not to be one of the primitive types below stays raw, and its value unmutated. For
+  # those types, `cast/1` leaves every literal `dump/1` accepts unchanged; `:binary_id` is not
+  # among them (`Ecto.UUID.cast/1` downcases). A column whose type cannot be read (an opaque
+  # source: a variable, a composed query, an `assoc/2` join) is still interpolated, a known
+  # limitation.
+  @literal_types [:any, :id, :integer, :float, :boolean, :string, :binary, :decimal]
+
+  defp pair_treatment(key, value, types) do
+    if scalar_literal?(value) and literal_typed?(types, key), do: :interpolated, else: :raw
   end
+
+  defp literal_typed?({:schema, schema}, key),
+    do: schema.__schema__(:type, key) in [nil | @literal_types]
+
+  defp literal_typed?(_schemaless_or_unknown, _key), do: true
+
+  # How a queryable types its columns, as far as its written name tells: `{:schema, module}`
+  # (a schema module, resolved through the call site's aliases), `:schemaless` (a table name,
+  # whose keyword values Ecto types `:any`), or `:unknown`.
+  defp source_types({:in, _meta, [_binding, queryable]}, resolve),
+    do: source_types(queryable, resolve)
+
+  defp source_types(queryable, resolve) do
+    case Mutare.AST.unwrap_literal(queryable) do
+      {_table, schema} -> source_types(schema, resolve)
+      {:__aliases__, _meta, _segments} = name -> schema_types(resolve.(name))
+      table when is_binary(table) -> :schemaless
+      _computed -> :unknown
+    end
+  end
+
+  defp schema_types({:ok, module}) do
+    if Code.ensure_loaded?(module) and function_exported?(module, :__schema__, 2),
+      do: {:schema, module},
+      else: :unknown
+  end
+
+  defp schema_types(:error), do: :unknown
 
   # A scalar literal, excluding `nil` — an atom, but an `IS NULL`, not core's to pin. `true`/`false`
   # are atoms too and *are* pinnable. `literal_value/1` reads the value through Sourceror's wrapper

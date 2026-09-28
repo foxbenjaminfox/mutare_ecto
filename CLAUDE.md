@@ -93,7 +93,9 @@ Core seams that have gone that route after such a decision:
 - `c:Mutare.Mutator.finalize/2`, run by core on both delivery paths;
 - `c:Mutare.Mutator.required_modules/0`, the environment guard;
 - the shared `:structural` argument-mark label (`Mutare.Mutator.structural_label/0`/`pinned?/1`);
-- `Mutare.AST.numeric_alternatives/3`, the off-by-one/zero table the literal arms share with core.
+- `Mutare.AST.numeric_alternatives/3`, the off-by-one/zero table the literal arms share with core;
+- `Mutare.CallRouting.Call.resolved_module/2`, a classifier's read of a module name in the
+  call's arguments through the call site's aliases (the keyword-pair column types).
 
 Core's public test surface for plugins is `Mutare.Test`, wrapped here by
 `Mutare.Ecto.TestSupport` (threads the plugin's default mutators, forwards every other option).
@@ -167,7 +169,7 @@ Each row is role + the rule(s) that module is the **home** for.
 | `resolved.ex` | resolves the call's raw/hosted regions through `Mutare.Analyze.resolve/2` at the dispatcher and host boundaries so the SQL catalogs can identify nested calls and read their routes |
 | `tag.ex` | `%Tag{family, node, label, attribution}` — the one shape every producer emits; `to_mutation/1`; home of what the `attribution` field means |
 | `host.ex` | selector-host coordinator (bucket 3): a hosted call → `Target`s |
-| `host/routing.ex` | `route_arguments/2`, the per-argument classifier; home of the routing rationale (`:hosted`/`:expression`/`:skip`/`:interpolated`/`{:keyword, …}`) |
+| `host/routing.ex` | `route_arguments/2`, the per-argument classifier; home of the routing rationale (`:hosted`/`:expression`/`:skip`/`:interpolated`/`{:keyword, …}`) and of which keyword-pair values interpolate (a column typed so that `cast/1` keeps the literal) |
 | `host/condition.ex` | `shape/1`, the one predicate-versus-keyword-filter classification routing, hosting (the weave and its `StaticCondition` fallback) and the subquery recursion share, reporting a predicate's kind (`:expression` / `:root_pin`) for `Target` to deliver by; `locate/2`, `from_indices/1`, `locate_on/1` — where a host-owned predicate sits, shared by the weave and its fallback; home of the hosted-condition shapes and of the located-by-position rule — a condition's binding declaration is read from its arity-determined slot, never searched for, and is one of *written* / *omitted* / *uninterpretable* |
 | `host/bindings.ex` | interprets binding declarations and renders the list a woven `dynamic/2` re-declares, as `{:ok, declarations} \| :error`; home of join placement (the join-slot rule: every join, whether a `from` join clause or the one a standalone `join/4,5` adds, holds one positional slot, an unnamed one re-declaring as `_`; and the `...` anchor rule) and of source-binding discovery |
 | `host/catalog.ex` | the own-catalog + island mutants for one hosted condition |
