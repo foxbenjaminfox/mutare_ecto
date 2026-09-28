@@ -102,7 +102,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   aggregate the query (one row over empty input) and SQLite reject it, so
   `order_by: coalesce(1, sum(r.x))` → `1` changes the result. Such mutants had been pruned.
 - Drop each occurrence of a repeated in-list element alone when it may evaluate differently
-  each time (`p.id in [^next_id(), ^next_id()]`, `^Counter.next()`, a `fragment`): identical
+  each time (`p.id in [^next_id(), ^next_id()]`, `^provider.next()`, a `fragment`): identical
   syntax had been read as one value, and the single-occurrence drop was never offered. A
   zero-argument remote call is no longer read as a field access where the plugin looks for
   calls Ecto may expand.

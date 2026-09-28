@@ -1459,10 +1459,35 @@ defmodule Mutare.Ecto.DslAuditRegressionTest do
              membership
            )
 
+    # A module held in a variable dispatches at runtime, with or without arguments.
+    for call <- ["provider.next()", "provider.next(:token)"] do
+      members = "[^#{call}, ^#{call}, ^3]"
+
+      source =
+        fixture(
+          ~s|provider = MyApp.Post\nfrom r in "rows", where: r.id in #{members}, select: r.id|
+        )
+
+      assert {"r.id in #{members}", "r.id in [^#{call}, ^3]"} in ecto_diffs(source, membership)
+    end
+
     # Repeated occurrences of a value that cannot change drop together.
-    source = fixture(~s|x = 1\nfrom r in "rows", where: r.id in [^x, ^x, 2], select: r.id|)
-    refute {"r.id in [^x, ^x, 2]", "r.id in [^x, 2]"} in ecto_diffs(source, membership)
-    assert {"r.id in [^x, ^x, 2]", "r.id in [2]"} in ecto_diffs(source, membership)
+    for member <- ["^x", "^opts.id", "^opts[:id]", "^@first_column", "r.id + 1"] do
+      source =
+        fixture(
+          ~s|x = 1\nopts = %{id: 1}\nfrom r in "rows", where: r.id in [#{member}, #{member}, 2], select: r.id|
+        )
+
+      refute {"r.id in [#{member}, #{member}, 2]", "r.id in [#{member}, 2]"} in ecto_diffs(
+               source,
+               membership
+             )
+
+      assert {"r.id in [#{member}, #{member}, 2]", "r.id in [2]"} in ecto_diffs(
+               source,
+               membership
+             )
+    end
   end
 
   test "an ordering aggregate may pick the row a SQLite bare column reads" do

@@ -332,6 +332,11 @@ judged ordering mutants by aggregation alone, missing SQLite's bare-column row c
 reads. Where such a column is observed (the projection of a value query, a `having`), every
 ordering value mutant is now kept (`picks_bare_row?/2`).
 
+Round twenty found the in-list fix still a proxy: it read a pin's interior in Ecto's query
+grammar, where a module held in a variable (`provider.next()`) looks like a field access. A
+pin's interior is Elixir, and repeatability is now an allow-list of plain values there
+(a variable, a literal, a module attribute, a map field or key, a collection of these).
+
 The fourth round also found that a keyword filter's scalar value, routed `:interpolated`, reaches Ecto
 as a parameter, which the planner `cast/1`s before `dump/1`ing, where a written literal is only
 `dump/1`ed. For a custom type whose `cast/1` is not the identity on the literal (one that

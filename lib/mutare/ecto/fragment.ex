@@ -631,12 +631,42 @@ defmodule Mutare.Ecto.Fragment do
 
   defp element_drops(_node), do: []
 
+  # The SQL around a pin is read in Ecto's grammar; a pin's interior is Elixir, where any call
+  # may answer differently each time (`provider.next()` dispatches on a variable), so only a
+  # plain value is known to repeat.
   defp repeatable?(elem) do
-    {_elem, fragment?} =
-      Macro.prewalk(elem, false, &{&1, &2 or match?({:fragment, _, args} when is_list(args), &1)})
+    {sql, interiors} =
+      Macro.prewalk(elem, [], fn
+        {:^, _meta, [interior]}, interiors -> {:pin, [interior | interiors]}
+        node, interiors -> {node, interiors}
+      end)
 
-    not fragment? and not Walk.contains_opaque_call?(elem)
+    {_sql, fragment?} =
+      Macro.prewalk(sql, false, &{&1, &2 or match?({:fragment, _, args} when is_list(args), &1)})
+
+    Enum.all?(interiors, &plain_value?/1) and not fragment? and
+      not Walk.contains_opaque_call?(sql)
   end
+
+  # A variable, a literal, a module attribute, a map field (`opts.id`, written without
+  # parentheses) or key (`opts[:id]`), and a collection of these.
+  defp plain_value?({name, _meta, context}) when is_atom(name) and is_atom(context), do: true
+  defp plain_value?({:__block__, _meta, [literal]}), do: plain_value?(literal)
+
+  defp plain_value?({:@, _meta, [{name, _, context}]}) when is_atom(name) and is_atom(context),
+    do: true
+
+  defp plain_value?({{:., _, [receiver, field]}, meta, []}) when is_atom(field),
+    do: Keyword.get(meta, :no_parens, false) and plain_value?(receiver)
+
+  defp plain_value?({{:., _, [Access, :get]}, _meta, args}), do: Enum.all?(args, &plain_value?/1)
+
+  defp plain_value?({form, _meta, args}) when form in [:{}, :%{}],
+    do: Enum.all?(args, &plain_value?/1)
+
+  defp plain_value?({left, right}), do: plain_value?(left) and plain_value?(right)
+  defp plain_value?(list) when is_list(list), do: Enum.all?(list, &plain_value?/1)
+  defp plain_value?(literal), do: not is_tuple(literal)
 
   # Rebuild each descent/drop mutant of a reverse-polarity unit's inner predicate back inside the
   # written `not`, keeping the tag — so the emitted node is the full condition, single-point.
