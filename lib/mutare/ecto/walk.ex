@@ -192,19 +192,25 @@ defmodule Mutare.Ecto.Walk do
   def opaque_call?(_node, _grammar), do: false
 
   @doc """
-  Whether any call in `ast` is opaque in `grammar` (`opaque_call?/2`). A field's receiver
-  (`as(:p)` in `as(:p).x`) is a binding, not a call, and is not asked.
+  Whether any call in `ast` is opaque in `grammar` (`opaque_call?/2`), or fills a slot where Ecto
+  can only be expanding it (`expanded_argument?/2`). A field's receiver (`as(:p)` in `as(:p).x`)
+  is a binding, not a call, and is not asked.
   """
   @spec contains_opaque_call?(Macro.t(), grammar()) :: boolean()
   def contains_opaque_call?(ast, grammar \\ :expression) do
     {_ast, found?} =
       Macro.prewalk(ast, false, fn
         {{:., _, [_receiver, field]}, _meta, []}, found? when is_atom(field) -> {:field, found?}
-        node, found? -> {node, found? or opaque_call?(node, grammar)}
+        node, found? -> {node, found? or opaque_call?(node, grammar) or expands_argument?(node)}
       end)
 
     found?
   end
+
+  defp expands_argument?({_form, _meta, args} = node) when is_list(args),
+    do: Enum.any?(0..(length(args) - 1)//1, &expanded_argument?(node, &1))
+
+  defp expands_argument?(_node), do: false
 
   defp ecto_call?(name, _arity, _grammar) when name in @any_arity, do: true
   defp ecto_call?(:fragment, arity, _grammar), do: arity > 0
@@ -260,8 +266,67 @@ defmodule Mutare.Ecto.Walk do
 
     for {arg, index} <- Enum.with_index(args),
         descend_arg?(routing, index),
+        not expanded_argument?(node, index),
+        not field_list?(node, index),
         do: {arg, child_ctx.(node, index, ctx), &{form, meta, List.replace_at(args, index, &1)}}
   end
+
+  # ## Arguments Ecto does not escape as expressions
+  #
+  # Some slots Ecto validates *before* escaping, taking only the forms it names there and
+  # expanding any other call as a macro: `over`'s function (`Ecto.Query.WindowAPI`'s functions or
+  # a fragment) and `type/2`'s operand (`typable?/1`). A call Ecto does not take there is an
+  # author macro even under a name that is Ecto's in an expression (`over(coalesce(a, b))`,
+  # `type(is_nil(x), :integer)`): a catalog neither mutates nor enters it, and an absence-based
+  # reader counts it as unknown. A select take's field list (`map(p, fields)`) is no SQL at all:
+  # Ecto `Macro.expand`s it to a list of atoms at compile time, unless it is a pin.
+
+  @doc """
+  Whether `parent`'s argument `index` is a call Ecto can only be expanding, in a slot that takes
+  only the forms it names (`over`'s function, `type/2`'s operand).
+  """
+  @spec expanded_argument?(Macro.t(), non_neg_integer()) :: boolean()
+  def expanded_argument?({:over, _meta, [function | _window]}, 0),
+    do: opaque_call?(function, :window_function)
+
+  def expanded_argument?({:type, _meta, [operand, _type]}, 0), do: not typable?(operand)
+  def expanded_argument?(_parent, _index), do: false
+
+  @doc """
+  Whether `node` is one of `type/2`'s operand forms, `Ecto.Query.Builder.escape/5`'s `type/2`
+  heads (unchanged from Ecto 3.12 through 3.14), read through Sourceror's wrapping. Ecto expands
+  anything else once and retries.
+  """
+  @spec typable?(Macro.t()) :: boolean()
+  def typable?({:^, _meta, [_interior]}), do: true
+
+  def typable?({{:., _, [{var, _, context}, field]}, _, []})
+      when is_atom(var) and is_atom(context) and is_atom(field),
+      do: true
+
+  def typable?({{:., _, [Access, :get]}, _, _args}), do: true
+  def typable?({{:., _, [{:parent_as, _, [_name]}, _field]}, _, []}), do: true
+
+  def typable?({form, _meta, [_ | _]}) when form in [:coalesce, :field, :json_extract_path],
+    do: true
+
+  def typable?({op, _meta, [_l, _r]}) when op in [:+, :-, :*, :/], do: true
+
+  def typable?({form, _meta, args})
+      when form in [:fragment, :avg, :count, :max, :min, :sum, :over, :filter] and is_list(args),
+      do: true
+
+  def typable?(_node), do: false
+
+  # `map/2` and `struct/2` over a binding variable take their fields at compile time. Outside a
+  # select the same call is an author macro, whose argument the author-macro rule would enter;
+  # the walk does not know its grammar, so it skips the argument there too, withholding only
+  # those mutants.
+  defp field_list?({take, _meta, [{var, _, context}, fields]}, 1)
+       when take in [:map, :struct] and is_atom(var) and is_atom(context),
+       do: not match?({:^, _, [_]}, fields)
+
+  defp field_list?(_parent, _index), do: false
 
   @doc """
   A child's `t:slot/0`, from its parent and the parent's own slot. A Sourceror block, a written

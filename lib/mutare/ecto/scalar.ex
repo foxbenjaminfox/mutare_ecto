@@ -23,7 +23,7 @@ defmodule Mutare.Ecto.Scalar do
   # number parses as the arity-1 `-` over the wrapped literal — sign syntax, not an operator to
   # swap.
 
-  alias Mutare.Ecto.{ExpressionWalk, Tag}
+  alias Mutare.Ecto.{ExpressionWalk, Tag, Walk}
 
   @behaviour Mutare.Ecto.Vocabulary
 
@@ -84,7 +84,7 @@ defmodule Mutare.Ecto.Scalar do
   #     `coalesce(nil, p.v) > 0` has no `nil > 0` drop. A keyword-filter pair value is such an
   #     operand too, because Ecto builds `field == value` from the pair, and its caller says so
   #     (`Mutare.Ecto.Subquery`);
-  #   * `type/2`'s first argument must be one of the forms its builder lists (`typable?/1`), so
+  #   * `type/2`'s first argument must be one of the forms its builder lists (`Mutare.Ecto.Walk.typable?/1`), so
   #     `type(coalesce(p.v > 0, false), :boolean)` has no `type(p.v > 0, :boolean)` drop;
   #   * a pin standing as a whole clause expression (`select: ^fields`), as an `order_by`
   #     entry (`[asc: ^field]`), or as a window option entry (`partition_by: ^fields`) names
@@ -102,7 +102,7 @@ defmodule Mutare.Ecto.Scalar do
   @pin_naming_clauses [:select, :select_merge, :order_by, :prepend_order_by]
 
   defp fits?(x, {comparison, 2, _index}) when comparison in @comparisons, do: not nil_literal?(x)
-  defp fits?(x, {:type, 2, 0}), do: typable?(x)
+  defp fits?(x, {:type, 2, 0}), do: Walk.typable?(x)
   defp fits?(x, {clause, 3, 2}) when clause in @pin_naming_clauses, do: not pin?(x)
   defp fits?(x, {:over, 2, 1}), do: not pin?(x)
   defp fits?(_x, _slot), do: true
@@ -111,27 +111,6 @@ defmodule Mutare.Ecto.Scalar do
 
   defp nil_literal?({:__block__, _meta, [nil]}), do: true
   defp nil_literal?(node), do: is_nil(node)
-
-  # `Ecto.Query.Builder.escape/5`'s `type/2` heads (unchanged from Ecto 3.12 through 3.14), read
-  # through Sourceror's wrapping. Anything else — a literal, a comparison, an author macro — is
-  # refused: Ecto expands a macro once and retries, and nothing here can expand it.
-  @typed_calls [:fragment, :avg, :count, :max, :min, :sum, :over, :filter]
-
-  defp typable?({:^, _meta, [_interior]}), do: true
-
-  defp typable?({{:., _, [{var, _, context}, field]}, _, []})
-       when is_atom(var) and is_atom(context) and is_atom(field),
-       do: true
-
-  defp typable?({{:., _, [Access, :get]}, _, _args}), do: true
-  defp typable?({{:., _, [{:parent_as, _, [_name]}, _field]}, _, []}), do: true
-
-  defp typable?({form, _meta, [_ | _]}) when form in [:coalesce, :field, :json_extract_path],
-    do: true
-
-  defp typable?({op, _meta, [_l, _r]}) when is_map_key(@arithmetic_swaps, op), do: true
-  defp typable?({form, _meta, args}) when form in @typed_calls and is_list(args), do: true
-  defp typable?(_node), do: false
 
   # `Mutare.Ecto.Vocabulary`: each swappable operator plus the coalesce drop's two positional
   # labels.

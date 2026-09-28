@@ -726,6 +726,11 @@ defmodule Mutare.Ecto.Subquery do
   defp hides_aggregate?({head, _meta, [_arg]}, _grammar) when head in @wrappers, do: false
   defp hides_aggregate?({:^, _meta, _args}, _grammar), do: true
   defp hides_aggregate?({:fragment, _meta, args}, _grammar) when is_list(args), do: true
+  # The walk skips an argument Ecto can only be expanding (`type(is_nil(x), :integer)`), so its
+  # call counts it.
+  defp hides_aggregate?({:type, _meta, [_operand, _type]} = node, _grammar),
+    do: Walk.expanded_argument?(node, 0)
+
   defp hides_aggregate?(node, grammar), do: Walk.opaque_call?(node, grammar)
 
   # A window's function is read in its own grammar (`row_number()` is Ecto's there).

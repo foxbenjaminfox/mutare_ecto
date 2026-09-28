@@ -52,6 +52,19 @@ defmodule Mutare.Ecto.DslAuditWindowMacros do
   defmacro coalesce(_left, _right), do: quote(do: row_number())
 end
 
+defmodule Mutare.Ecto.DslAuditTypeMacros do
+  @moduledoc false
+  # `type/2` takes only the operand forms its builder names; Ecto expands any other call there,
+  # even one of its own expression names.
+  defmacro is_nil(value), do: quote(do: sum(unquote(value)))
+end
+
+defmodule Mutare.Ecto.DslAuditTakeMacros do
+  @moduledoc false
+  # A select take's field list is expanded at compile time, never escaped as SQL.
+  defmacro sum(_expression), do: [:views]
+end
+
 defmodule Mutare.Ecto.DslAuditRegressionTest do
   use ExUnit.Case, async: true
 
@@ -871,7 +884,7 @@ defmodule Mutare.Ecto.DslAuditRegressionTest do
           {"where: false, or_where: coalesce(true)", :boolean_literal},
           # Ecto's fragment heads take at least the query, so it expands `fragment()`.
           {"where: false, or_where: coalesce(fragment(), false)", :coalesce},
-          {"where: false, or_where: map(r, 1)", :integer_literal}
+          {"where: false, or_where: map(r.a, 1)", :integer_literal}
         ] do
       source = fixture(~s|from r in "rows", #{clauses}, select: r.a|)
       assert ecto_diffs(source, only([family])) != []
@@ -1143,6 +1156,83 @@ defmodule Mutare.Ecto.DslAuditRegressionTest do
         """)
 
       assert_rewrite(source, [:coalesce], "coalesce(0, sum(r.views))", "0")
+      assert_builds(source, & &1.q(), only([:coalesce]))
+    end
+  end
+
+  describe "type/2's operand in its own grammar" do
+    defp type_fixture(body) do
+      """
+      defmodule TypeQuery do
+        import Kernel, except: [is_nil: 1]
+        import Ecto.Query
+        import Mutare.Ecto.DslAuditTypeMacros
+        alias MyApp.{Post, User}
+        def q do
+          #{body}
+        end
+      end
+      """
+    end
+
+    test "is an author macro, never mutated, unless type/2 names its form" do
+      source =
+        type_fixture("""
+        from p in Post, having: type(is_nil(p.views), :integer) > 0, select: sum(p.views)
+        """)
+
+      assert_native_builds(source)
+      assert ecto_diffs(source, only([:null_predicate])) == []
+      assert_builds(source, & &1.q(), only([:null_predicate, :comparison]))
+    end
+
+    test "hides whatever aggregate it expands to" do
+      source =
+        type_fixture("""
+        from u in User,
+          where: exists(from p in Post, where: false,
+            select: coalesce(0, type(is_nil(p.views), :integer))),
+          select: u.id
+        """)
+
+      assert_rewrite(source, [:coalesce], "coalesce(0, type(is_nil(p.views), :integer))", "0")
+      assert_builds(source, & &1.q(), only([:coalesce]))
+    end
+  end
+
+  describe "a select take's field list" do
+    defp take_fixture(body) do
+      """
+      defmodule TakeQuery do
+        import Ecto.Query
+        import Mutare.Ecto.DslAuditTakeMacros
+        alias MyApp.{Post, User}
+        def q do
+          #{body}
+        end
+      end
+      """
+    end
+
+    test "is never mutated as SQL" do
+      for take <- ["map", "struct"] do
+        source = take_fixture("from p in Post, select: #{take}(p, sum(p.views))")
+        assert_native_builds(source)
+        assert ecto_diffs(source, only([:aggregate])) == []
+        assert_builds(source, & &1.q(), only([:aggregate]))
+      end
+    end
+
+    test "holds no aggregate" do
+      source =
+        take_fixture("""
+        from u in User,
+          where: exists(from p in Post, where: false,
+            select: %{a: map(p, sum(p.views)), b: coalesce(0, sum(p.views))}),
+          select: u.id
+        """)
+
+      assert_rewrite(source, [:coalesce], "coalesce(0, sum(p.views))", "0")
       assert_builds(source, & &1.q(), only([:coalesce]))
     end
   end

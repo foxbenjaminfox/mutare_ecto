@@ -283,6 +283,12 @@ nor enter such a function (`Mutare.Ecto.Window`), and the aggregate count reads 
 keeps whole in the window's grammar. The same round found `fragment/n` accepted at any arity,
 though every fragment head takes at least the query.
 
+Round eleven found two more slots of the same kind: `type/2`'s operand, which Ecto also
+validates before escaping (so `type(is_nil(x), :integer)` expands an author's `is_nil/1`), and
+a select take's field list, which Ecto `Macro.expand`s to atoms and never escapes. Both rules
+now live in `Mutare.Ecto.Walk` (`expanded_argument?/2`, and the field-list skip), which every
+catalog's descent and `contains_opaque_call?/2` read, rather than in one catalog each.
+
 The fourth round also found that a keyword filter's scalar value, routed `:interpolated`, reaches Ecto
 as a parameter, which the planner `cast/1`s before `dump/1`ing, where a written literal is only
 `dump/1`ed. For a custom type whose `cast/1` is not the identity on the literal (one that

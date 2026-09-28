@@ -64,6 +64,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   functions there and expands any other call, so `over(coalesce(a, b))` is an author's
   macro. Its `coalesce` drop had broken the whole metamutant's compilation, and an aggregate
   in its arguments had been counted as certain when judging an `EXISTS` projection mutant.
+- Read `type/2`'s first argument in its own grammar: Ecto takes only the forms its `type/2`
+  heads name there and expands any other call, so `type(is_nil(x), :integer)` is an author's
+  `is_nil/1`. Its `not is_nil` swap had broken the whole metamutant's compilation, and an
+  aggregate it expands to had been missed when judging an `EXISTS` projection mutant.
+- Leave a select take's field list (`map(p, fields)`, `struct(p, fields)`) unmutated: Ecto
+  expands it to a list of atoms at compile time. A macro there had been mutated as SQL, which
+  broke the whole metamutant's compilation, and an `EXISTS` projection had counted it as an
+  aggregate.
 - Read `fragment()` as a macro Ecto expands (its fragment heads take at least the query): a
   `coalesce(fragment(), false)` drop had been woven into an `or_where`, where a `fragment()`
   expanding to `true` is discarded.
