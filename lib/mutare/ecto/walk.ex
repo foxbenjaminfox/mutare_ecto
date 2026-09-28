@@ -141,8 +141,10 @@ defmodule Mutare.Ecto.Walk do
   #
   # A fragment's own arguments are not told apart, so a helper there reads as unknown.
   @select_grammar [map: 2, struct: 2, merge: 2, selected_as: 2]
+  # Named bindings are grammar only as a field's receiver (`as(:p).x`), where no reader asks.
   @position_only @select_grammar ++
-                   [constant: 1, splice: 1, identifier: 1, literal: 1, values: 2]
+                   [constant: 1, splice: 1, identifier: 1, literal: 1, values: 2] ++
+                   [as: 1, parent_as: 1]
   @expression_calls (Ecto.Query.API.__info__(:functions) -- @position_only) ++
                       [over: 1, over: 2, filter: 1, -: 1, subquery: 1, ^: 1, .: 2, %: 2, |: 2] ++
                       [sigil_s: 2, sigil_S: 2, sigil_w: 2, sigil_W: 2]
@@ -176,10 +178,30 @@ defmodule Mutare.Ecto.Walk do
   def opaque_call?({{:., _, [receiver, _name]}, _meta, args} = node, _grammar) when is_list(args),
     do: remote?(receiver) or Calls.routed_treatments(node) != nil
 
+  # `map/2` and `struct/2` are the select builder's takes only over a binding variable
+  # (`map(p, [:id])`); over anything else Ecto expands a same-named macro.
+  def opaque_call?({take, _meta, [source, _fields]}, :projection) when take in [:map, :struct],
+    do: not match?({var, _, context} when is_atom(var) and is_atom(context), source)
+
   def opaque_call?({name, _meta, args} = node, grammar) when is_atom(name) and is_list(args),
     do: not ecto_call?(name, length(args), grammar) or Calls.routed_treatments(node) != nil
 
   def opaque_call?(_node, _grammar), do: false
+
+  @doc """
+  Whether any call in `ast` is opaque in `grammar` (`opaque_call?/2`). A field's receiver
+  (`as(:p)` in `as(:p).x`) is a binding, not a call, and is not asked.
+  """
+  @spec contains_opaque_call?(Macro.t(), grammar()) :: boolean()
+  def contains_opaque_call?(ast, grammar \\ :expression) do
+    {_ast, found?} =
+      Macro.prewalk(ast, false, fn
+        {{:., _, [_receiver, field]}, _meta, []}, found? when is_atom(field) -> {:field, found?}
+        node, found? -> {node, found? or opaque_call?(node, grammar)}
+      end)
+
+    found?
+  end
 
   defp ecto_call?(name, _arity, _grammar) when name in @any_arity, do: true
 

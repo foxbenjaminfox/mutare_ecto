@@ -54,6 +54,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   same options written inline are read; each use counts, so a drop that leaves another use
   keeps the aggregation. `over/2` is Ecto's own in every grammar (it had been read as a possible
   macro outside a window, keeping every mutant around a window).
+- Read `as/1` and `parent_as/1` as Ecto's own only as a field's receiver (`as(:p).x`), and
+  `map/2`/`struct/2` only over a binding variable: elsewhere Ecto expands a same-named macro,
+  and a standalone `or_where: as(…)` expanding to `true` had been woven and lost its row.
+- Stop counting an aggregate inside a macro's argument as certain when judging an `EXISTS`
+  projection mutant: the expansion may discard it (`discard(sum(r.x))`), so a live drop of the
+  query's only other aggregate was pruned.
 - Observe a window function beneath `is_nil` alike for `over/1` and `over/2`: the one-argument
   spelling offered the `sum` → `avg` swap the two-argument one prunes.
 - Leave a binary literal's segments unmutated: `<<0>>` → `<<-1>>` is no query Ecto accepts, and

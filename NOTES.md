@@ -268,6 +268,13 @@ expression vocabulary, so every window read as a possible macro. Also, `over/1` 
 descent beneath `is_nil`, resetting its function's observation to by-value, where `over/2`'s
 window rule keeps it; both now share the rule.
 
+Round nine found two more gaps of the same family. `as/1` and `parent_as/1` are Ecto's only
+as a field's receiver, so standing alone they are author macros; the prewalk-based checks now
+skip a receiver (`Walk.contains_opaque_call?/2`) instead of asking about it. And the aggregate
+count marked a macro as possibly hiding an aggregate while still descending into its arguments
+and counting a `sum` there as certain; it now stops at an opaque call, whose arguments the
+expansion may discard.
+
 The fourth round also found that a keyword filter's scalar value, routed `:interpolated`, reaches Ecto
 as a parameter, which the planner `cast/1`s before `dump/1`ing, where a written literal is only
 `dump/1`ed. For a custom type whose `cast/1` is not the identity on the literal (one that

@@ -651,8 +651,14 @@ defmodule Mutare.Ecto.Subquery do
 
   defp query_scope({head, _meta, [_arg]}, _grammar, _windows) when head in @wrappers, do: []
 
-  defp query_scope(node, grammar, _windows),
-    do: Walk.structural(node, grammar, &child_grammar/3)
+  # An opaque call (`Mutare.Ecto.Walk.opaque_call?/2`) is counted once, as possibly hiding an
+  # aggregate, and not entered: what its arguments hold may be discarded by its expansion, so an
+  # aggregate there is never a certain one.
+  defp query_scope(node, grammar, _windows) do
+    if Walk.opaque_call?(node, grammar),
+      do: [],
+      else: Walk.structural(node, grammar, &child_grammar/3)
+  end
 
   # A window's operands and options are ordinary expressions.
   defp window_scope(node, function, options) do
@@ -825,20 +831,16 @@ defmodule Mutare.Ecto.Subquery do
 
   defp may_define_alias?(projection),
     do:
-      contains?(
-        projection,
-        &(match?({:selected_as, _, [_, _]}, &1) or Walk.opaque_call?(&1, :projection))
-      )
+      contains?(projection, &match?({:selected_as, _, [_, _]}, &1)) or
+        Walk.contains_opaque_call?(projection, :projection)
 
   # A condition admits a dynamic only as the whole condition; a pin within its expression is a
   # parameter. Elsewhere (`group_by`, `distinct`, `windows`) a dynamic may stand at any level of
   # the clause's lists and keyword values. A `fragment` or an author macro may hide a read
   # anywhere.
   defp may_read_alias?(%Entry{key: key, value: value}) do
-    contains?(
-      value,
-      &(match?({:fragment, _, args} when is_list(args), &1) or Walk.opaque_call?(&1))
-    ) or
+    contains?(value, &match?({:fragment, _, args} when is_list(args), &1)) or
+      Walk.contains_opaque_call?(value) or
       if Surface.from_clause?(key, :hosted),
         do: Condition.shape(value) == {:predicate, :root_pin},
         else: grammar_pin?(value)
@@ -879,7 +881,8 @@ defmodule Mutare.Ecto.Subquery do
         cond do
           Aggregate.ecto_aggregate?(node) -> {:aggregate, found?}
           aggregate_filter?(node) -> {:aggregate, found?}
-          column?(node) -> {node, found? or not MapSet.member?(grouped, without_meta(node))}
+          # A column is a leaf: its receiver (`as(:p)` in `as(:p).x`) is a binding, not a call.
+          column?(node) -> {:column, found? or not MapSet.member?(grouped, without_meta(node))}
           hides_column?(node) -> {node, true}
           true -> {node, found?}
         end

@@ -21,6 +21,22 @@ defmodule Mutare.Ecto.DslAuditProjectionMacros do
   defmacro map(_source, value), do: quote(do: sum(unquote(value)))
 end
 
+defmodule Mutare.Ecto.DslAuditBindingMacros do
+  @moduledoc false
+  # Ecto's binding names are its own only as a field's receiver (`as(:p).x`); standing alone,
+  # Ecto expands a same-named macro.
+  defmacro as(_condition), do: true
+  defmacro parent_as(_condition), do: true
+end
+
+defmodule Mutare.Ecto.DslAuditDiscardMacros do
+  @moduledoc false
+  # Macros whose expansion drops their argument, aggregate and all. `map/2` over a non-variable
+  # is no select take, so Ecto expands it.
+  defmacro discard(_expression), do: 0
+  defmacro map(_source, _fields), do: 0
+end
+
 defmodule Mutare.Ecto.DslAuditRemoteMacros do
   @moduledoc false
   # Called remotely, so never Ecto's window grammar: Ecto expands every remote call.
@@ -1021,6 +1037,48 @@ defmodule Mutare.Ecto.DslAuditRegressionTest do
     # Ecto's own like/2 still swaps.
     source = fixture(~s|from r in "rows", where: like(r.name, "a%"), select: r.name|)
     assert {~s|like(r.name, "a%")|, ~s|ilike(r.name, "a%")|} in ecto_diffs(source, opts)
+  end
+
+  test "a standalone as/1 or parent_as/1 is a macro that may expand to true" do
+    for name <- ["as", "parent_as"] do
+      source = """
+      defmodule BindingQuery do
+        import Ecto.Query
+        import Mutare.Ecto.DslAuditBindingMacros
+        def q, do: from(u in "users", where: false, or_where: #{name}(u.id > 0), select: u.id)
+      end
+      """
+
+      assert ecto_diffs(source, only([:comparison])) != []
+      assert_builds(source, & &1.q(), only([:comparison]))
+      refute metamutant(source, only([:comparison])) =~ "dynamic("
+    end
+
+    # As a field's receiver, `as/1` is Ecto's named binding.
+    source =
+      fixture(~s|from(u in "users", as: :u, where: false, or_where: as(:u).id > 0, select: u.id)|)
+
+    assert metamutant(source, only([:comparison])) =~ "dynamic("
+  end
+
+  test "an aggregate in a macro's argument is not a certain one" do
+    for expression <- ["discard(sum(r.views))", "map(sum(r.views), [])"] do
+      source = """
+      defmodule DiscardQuery do
+        import Ecto.Query
+        import Mutare.Ecto.DslAuditDiscardMacros
+        def q do
+          from u in "users",
+            where: exists(from r in "posts", where: false,
+              select: %{a: #{expression}, b: coalesce(0, sum(r.views))}),
+            select: u.id
+        end
+      end
+      """
+
+      assert_rewrite(source, [:coalesce], "coalesce(0, sum(r.views))", "0")
+      assert_builds(source, & &1.q(), only([:coalesce]))
+    end
   end
 
   test "a value subquery's ordering is observed when its source may bring the limit" do
