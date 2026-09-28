@@ -22,7 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `where: false, or_where: true` returned no rows at baseline, and an `or_where` mutant to `true`
   delivered a different query than it reported. Rebuild, likewise, a condition whose pin or
   non-boolean literal takes the clause's own type (`where: coalesce(^flag, false)`): the static
-  build casts it as `:boolean`, a `dynamic` as `:any`. Both checks read through the `filter/1`
+  build casts it as `:boolean`, a `dynamic` as `:any`; `count(x, :distinct)`'s argument and
+  `filter/2`'s aggregate pass the type on too. Both checks read through the `filter/1`
   Ecto's escape erases, and count a call Ecto may be expanding as a macro as possibly either.
 - Under `EXISTS`, observe the projection when a grouping or `DISTINCT ON` term may name a
   projected column by position (`group_by: 1`, a `fragment`, a pin) past an offset or beside a
@@ -38,7 +39,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   value (a custom type, `Ecto.Enum`, `:binary_id`): interpolated for its mutants, the value was
   cast where the written literal is only dumped, so the baseline bound a different value. The
   schema is read through the call site's aliases with `Mutare.CallRouting.Call.resolved_module/2`,
-  new in Mutare 0.4.3, which is now the minimum. A source the plugin cannot read keeps the
+  new in Mutare 0.4.3, which is now the minimum; a module written as an atom
+  (`:"Elixir.MyApp.Post"`) is read too. A source the plugin cannot read keeps the
   previous behaviour.
 - Swap comparison, connective and `like`/`ilike` forms only at Ecto's arity 2: an author's
   `like/1` macro was swapped to a nonexistent `ilike/1`, failing the whole metamutant build.

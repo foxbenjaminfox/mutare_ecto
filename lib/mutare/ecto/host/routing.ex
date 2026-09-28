@@ -339,17 +339,29 @@ defmodule Mutare.Ecto.Host.Routing do
   defp literal_typed?(_schemaless_or_unknown, _key), do: true
 
   # How a queryable types its columns, as far as its written name tells: `{:schema, module}`
-  # (a schema module, resolved through the call site's aliases), `:schemaless` (a table name,
-  # whose keyword values Ecto types `:any`), or `:unknown`.
+  # (a schema module, resolved through the call site's aliases, or written as an atom),
+  # `:schemaless` (a table name, whose keyword values Ecto types `:any`), or `:unknown`. A
+  # `__MODULE__` source is unknown: the classifier is not told which module it is written in.
   defp source_types({:in, _meta, [_binding, queryable]}, resolve),
     do: source_types(queryable, resolve)
 
   defp source_types(queryable, resolve) do
     case Mutare.AST.unwrap_literal(queryable) do
-      {_table, schema} -> source_types(schema, resolve)
-      {:__aliases__, _meta, _segments} = name -> schema_types(resolve.(name))
-      table when is_binary(table) -> :schemaless
-      _computed -> :unknown
+      {_table, schema} ->
+        source_types(schema, resolve)
+
+      {:__aliases__, _meta, _segments} = name ->
+        schema_types(resolve.(name))
+
+      table when is_binary(table) ->
+        :schemaless
+
+      # A module written as an atom (`:"Elixir.MyApp.Post"`) names itself.
+      module when is_atom(module) and module not in [nil, true, false] ->
+        schema_types({:ok, module})
+
+      _computed ->
+        :unknown
     end
   end
 

@@ -834,6 +834,10 @@ defmodule Mutare.Ecto.DslAuditRegressionTest do
           {~s|coalesce(^flag, false)|, true},
           {"coalesce(r.flag, 1)", true},
           {"coalesce(r.flag, -(^n))", true},
+          # `count(x, :distinct)` and `filter`'s aggregate pass it on too.
+          {"count(r.a / ^n, :distinct)", true},
+          {"filter(count(r.a / ^n, :distinct), r.a > 0)", true},
+          {"count(r.a / ^n)", false},
           {"coalesce(r.flag, false)", false},
           {"r.a > ^n", false},
           {"r.flag and ^flag", false},
@@ -883,6 +887,7 @@ defmodule Mutare.Ecto.DslAuditRegressionTest do
     test "is mutated only where the column's type keeps the literal it is cast from" do
       for query <- [
             ~s|from l in L, where: [plain: "UP", folded: "DOWN"]|,
+            ~s|from l in :"Elixir.MyApp.Label", where: [plain: "UP", folded: "DOWN"]|,
             ~s|from l in "labels", join: m in L, on: [plain: "UP", folded: "DOWN"]|,
             ~s|where(L, plain: "UP", folded: "DOWN")|,
             ~s{L |> where([l], plain: "UP", folded: "DOWN")},

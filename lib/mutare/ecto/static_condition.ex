@@ -155,14 +155,24 @@ defmodule Mutare.Ecto.StaticCondition do
 
   # Whether a pin or a non-boolean literal takes the condition's own type: it is the condition,
   # or reached from it only through forms that pass their expected type on to their operands
-  # (`Ecto.Query.Builder.escape/5`). `and`/`or`/`not` and the comparisons fix their operands'
-  # types instead, and so stop the descent.
+  # (`Ecto.Query.Builder.escape/5`): `coalesce`'s and arithmetic's operands, a unary minus's,
+  # `filter`'s aggregate (not its condition), `count(x, :distinct)`'s `x`, and a window's
+  # function. `and`/`or`/`not`, the comparisons and the other calls fix their operands' types
+  # instead, and so stop the descent.
   defp clause_typed?({:^, _meta, [_interior]}), do: true
 
   defp clause_typed?({:coalesce, _meta, [left, right]}),
     do: clause_typed?(left) or clause_typed?(right)
 
-  defp clause_typed?({:filter, _meta, [aggregate]}), do: clause_typed?(aggregate)
+  defp clause_typed?({:filter, _meta, [aggregate | _condition]}), do: clause_typed?(aggregate)
+  defp clause_typed?({:over, _meta, [function | _window]}), do: clause_typed?(function)
+
+  defp clause_typed?({:count, _meta, [argument, modifier]} = node) do
+    if Mutare.AST.literal_value(modifier) == {:ok, :distinct},
+      do: clause_typed?(argument),
+      else: Walk.opaque_call?(node)
+  end
+
   defp clause_typed?({:-, _meta, [operand]}), do: clause_typed?(operand)
 
   defp clause_typed?({op, _meta, [left, right]}) when op in [:+, :-, :*, :/],
