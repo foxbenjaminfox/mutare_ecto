@@ -346,7 +346,7 @@ defmodule Mutare.Ecto.Fragment do
   # standing as a whole entry is structure. The operands of an entry's expression get their own
   # slots from the walk.
   defp window_children(node, ctx) do
-    if Mutare.Calls.routed_treatments(node) == nil do
+    if Walk.window?(node) and Mutare.Calls.routed_treatments(node) == nil do
       Mutare.Ecto.Window.children(node, ctx, fn _role, _ctx -> {{:over, 2, 1}, :value} end)
     else
       Walk.structural(node, ctx, &child_ctx/3)

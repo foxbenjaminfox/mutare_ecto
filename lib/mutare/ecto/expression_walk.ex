@@ -62,7 +62,7 @@ defmodule Mutare.Ecto.ExpressionWalk do
 
   # A window option's entries fill `over/2`'s option argument, where a pin names a field.
   defp over_children(node, ctx) do
-    if Mutare.Calls.routed_treatments(node) == nil do
+    if Walk.window?(node) and Mutare.Calls.routed_treatments(node) == nil do
       Window.children(node, ctx, fn
         :ordering, _ctx -> {:ordering, {:over, 2, 1}}
         _role, {position, _slot} -> {position, {:over, 2, 1}}

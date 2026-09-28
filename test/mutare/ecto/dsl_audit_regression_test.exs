@@ -84,6 +84,16 @@ defmodule Mutare.Ecto.DslAuditSyntaxMacros do
   defmacro unwrap_sum(expression), do: expression
 end
 
+defmodule Mutare.Ecto.DslAuditShapeMacros do
+  @moduledoc false
+  # Ecto's names in shapes Ecto's heads do not take: `over` over a literal or at arity three,
+  # `merge/2` outside the projection's own level. Ecto expands each.
+  defmacro over(nil, _condition), do: true
+  defmacro over(_first, _second, _third), do: 0
+  defmacro merge({:sum, _meta, [value]}, _right), do: value
+  defmacro merge(value, _right), do: value
+end
+
 defmodule Mutare.Ecto.DslAuditRegressionTest do
   use ExUnit.Case, async: true
 
@@ -1322,5 +1332,56 @@ defmodule Mutare.Ecto.DslAuditRegressionTest do
 
     assert_rewrite(source, [:aggregate], "sum(r.id)", "avg(r.id)")
     assert_builds(source, & &1.q(), only([:aggregate]))
+  end
+
+  describe "an over or merge in a shape Ecto's heads do not take" do
+    defp shape_fixture(body) do
+      """
+      defmodule ShapeQuery do
+        import Ecto.Query
+        import Mutare.Ecto.DslAuditShapeMacros
+        def q do
+          #{body}
+        end
+      end
+      """
+    end
+
+    test "over a literal is a macro that may expand to true" do
+      source =
+        shape_fixture(
+          ~s|from r in "rows", where: false, or_where: over(nil, r.id > 0), select: r.id|
+        )
+
+      assert ecto_diffs(source, only([:comparison])) != []
+      assert_builds(source, & &1.q(), only([:comparison]))
+      refute metamutant(source, only([:comparison])) =~ "dynamic("
+    end
+
+    test "over/3 holds no certain aggregate" do
+      source =
+        shape_fixture("""
+        from o in "rows",
+          where: exists(from r in "rows", where: r.id < 0,
+            select: %{a: over(0, sum(r.id), 0), b: coalesce(0, sum(r.id))}),
+          select: o.id
+        """)
+
+      assert_rewrite(source, [:coalesce], "coalesce(0, sum(r.id))", "0")
+      assert_builds(source, & &1.q(), only([:coalesce]))
+    end
+
+    test "merge/2 inside an expression is a macro that may read an aggregate's syntax" do
+      source =
+        shape_fixture("""
+        from o in "rows",
+          where: exists(from r in "rows", where: r.id < 0,
+            select: coalesce(merge(sum(r.id), %{}), 0)),
+          select: o.id
+        """)
+
+      assert_rewrite(source, [:aggregate], "sum(r.id)", "avg(r.id)")
+      assert_builds(source, & &1.q(), only([:aggregate]))
+    end
   end
 end

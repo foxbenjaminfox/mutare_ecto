@@ -299,6 +299,11 @@ assumed the syntax around a mutated node keeps its meaning: equal aggregate coun
 after pruned the mutant even where an enclosing author macro could pattern-match on the
 aggregate's name. The shortcut now stands only outside such a macro.
 
+Round fourteen found `over` recognised by name and arity alone, where Ecto's head also needs a
+call-shaped function: `over(nil, x)` and `over/3` are macros (`Walk.window?/1`, which every
+reader matching `over` now asks). And round thirteen's opaque-ancestor guard had used projection
+grammar at every depth, so `merge/2` inside a `coalesce` passed as the select builder's.
+
 The fourth round also found that a keyword filter's scalar value, routed `:interpolated`, reaches Ecto
 as a parameter, which the planner `cast/1`s before `dump/1`ing, where a written literal is only
 `dump/1`ed. For a custom type whose `cast/1` is not the identity on the literal (one that

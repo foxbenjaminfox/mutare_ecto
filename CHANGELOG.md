@@ -84,6 +84,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Keep an `EXISTS` projection mutant that holds the same aggregates as the node it replaces
   when an author macro encloses it: the macro may read the syntax (`unwrap_sum(sum(x))`), so
   `sum` → `avg` had been pruned though it turned zero rows into one.
+- Read `over` as Ecto's window only in the shapes its builder takes, a call-shaped function
+  with at most a window description: `over(nil, x)` or an `over/3` is an author macro. One
+  expanding to `true` had been woven into an `or_where`, changing the baseline, and one
+  discarding an aggregate had had that aggregate counted when judging an `EXISTS` projection.
+- Judge each call around an `EXISTS` projection mutant in the grammar Ecto reads it in:
+  inside an expression, `merge/2` is an author macro that may read the mutated aggregate.
 - Read `fragment()` as a macro Ecto expands (its fragment heads take at least the query): a
   `coalesce(fragment(), false)` drop had been woven into an `or_where`, where a `fragment()`
   expanding to `true` is discarded.

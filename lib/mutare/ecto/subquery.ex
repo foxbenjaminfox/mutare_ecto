@@ -502,15 +502,30 @@ defmodule Mutare.Ecto.Subquery do
 
   # Whether the replaced node is an argument, at any depth, of a projection call Ecto expands:
   # the expansion reads the node's syntax (`unwrap_sum(sum(x))` may unwrap a `sum` and keep an
-  # `avg`), so equal aggregate counts no longer show an unchanged aggregation.
+  # `avg`), so equal aggregate counts no longer show an unchanged aggregation. Each call is
+  # judged in the grammar Ecto reads it in, as the aggregate count judges it (`merge/2` is the
+  # select builder's only at the projection's own level).
   defp beneath_opaque_call?(entries, original) do
     Enum.any?(entries, fn %Entry{key: key, value: value} ->
-      key in @projection_keys and
-        contains?(value, fn node ->
-          node != original and Walk.opaque_call?(node, :projection) and
-            contains?(node, &(&1 == original))
-        end)
+      key in @projection_keys and beneath_opaque_call?(value, :projection, original)
     end)
+  end
+
+  defp beneath_opaque_call?(node, grammar, original) do
+    cond do
+      node == original ->
+        false
+
+      Walk.opaque_call?(node, grammar) ->
+        contains?(node, &(&1 == original))
+
+      true ->
+        node
+        |> Walk.structural(grammar, &child_grammar/3)
+        |> Enum.any?(fn {child, child_grammar, _splice} ->
+          beneath_opaque_call?(child, child_grammar, original)
+        end)
+    end
   end
 
   # `{written, hidden}` over the fields that survive the projection clauses, folded in written
@@ -661,15 +676,20 @@ defmodule Mutare.Ecto.Subquery do
   defp correlated?(aggregate), do: contains?(aggregate, &match?({:parent_as, _, [_]}, &1))
 
   # Only positions are read here, never rebuilt, so a child's splice returns its parent.
-  defp query_scope({:over, _meta, [function | options]} = node, _grammar, windows),
-    do: window_scope(node, function, window_options(options, windows))
+  defp query_scope({:over, _meta, [function | options]} = node, grammar, windows) do
+    if Walk.window?(node),
+      do: window_scope(node, function, window_options(options, windows)),
+      else: expression_scope(node, grammar)
+  end
 
   defp query_scope({head, _meta, [_arg]}, _grammar, _windows) when head in @wrappers, do: []
 
   # An opaque call (`Mutare.Ecto.Walk.opaque_call?/2`) is counted once, as possibly hiding an
   # aggregate, and not entered: what its arguments hold may be discarded by its expansion, so an
   # aggregate there is never a certain one.
-  defp query_scope(node, grammar, _windows) do
+  defp query_scope(node, grammar, _windows), do: expression_scope(node, grammar)
+
+  defp expression_scope(node, grammar) do
     if Walk.opaque_call?(node, grammar),
       do: [],
       else: Walk.structural(node, grammar, &child_grammar/3)

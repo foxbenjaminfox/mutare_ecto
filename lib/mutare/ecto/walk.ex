@@ -176,6 +176,7 @@ defmodule Mutare.Ecto.Walk do
   @spec opaque_call?(Macro.t(), grammar()) :: boolean()
   def opaque_call?(node, grammar \\ :expression)
   def opaque_call?({:@, _meta, [_attribute]}, _grammar), do: true
+  def opaque_call?({:over, _meta, _args} = node, _grammar), do: not window?(node)
   def opaque_call?({{:., _, [Access, :get]}, _meta, _args}, _grammar), do: false
 
   def opaque_call?({{:., _, [receiver, _name]}, _meta, args} = node, _grammar) when is_list(args),
@@ -282,8 +283,12 @@ defmodule Mutare.Ecto.Walk do
   only the forms it names (`over`'s function, `type/2`'s operand).
   """
   @spec expanded_argument?(Macro.t(), non_neg_integer()) :: boolean()
-  def expanded_argument?({:over, _meta, [function | _window]}, 0),
-    do: opaque_call?(function, :window_function)
+  # Ecto calls a variable there (`over(x)` is `over(x())`), so it is a macro too.
+  def expanded_argument?({:over, _meta, [function | _window]} = node, 0),
+    do:
+      window?(node) and
+        (match?({name, _, context} when is_atom(name) and is_atom(context), function) or
+           opaque_call?(function, :window_function))
 
   def expanded_argument?({:type, _meta, [operand, _type]}, 0), do: not typable?(operand)
   def expanded_argument?(_parent, _index), do: false
@@ -313,6 +318,18 @@ defmodule Mutare.Ecto.Walk do
       do: true
 
   def typable?(_node), do: false
+
+  @doc """
+  Whether `node` is Ecto's window, `over(function)` or `over(function, window)`: the builder's
+  `over` head takes a call-shaped function (any three-element tuple), so over a literal
+  (`over(nil, x)`), or at another arity, `over` is an author macro. Read through Sourceror's
+  literal wrapping.
+  """
+  @spec window?(Macro.t()) :: boolean()
+  def window?({:over, _meta, [function | window]}) when length(window) <= 1,
+    do: match?({_, _, _}, function) and not match?({:ok, _}, Mutare.AST.literal_value(function))
+
+  def window?(_node), do: false
 
   @doc """
   Whether `node` has an argument Ecto can only be expanding (`expanded_argument?/2`).
