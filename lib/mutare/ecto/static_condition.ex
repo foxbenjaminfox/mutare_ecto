@@ -165,7 +165,9 @@ defmodule Mutare.Ecto.StaticCondition do
     do: clause_typed?(left) or clause_typed?(right)
 
   defp clause_typed?({:filter, _meta, [aggregate | _condition]}), do: clause_typed?(aggregate)
-  defp clause_typed?({:over, _meta, [function | _window]}), do: clause_typed?(function)
+  # A window's function is read in its own grammar: any other call there is expanded.
+  defp clause_typed?({:over, _meta, [function | _window]}),
+    do: Walk.opaque_call?(function, :window_function) or clause_typed?(function)
 
   defp clause_typed?({:count, _meta, [argument, modifier]} = node) do
     if Mutare.AST.literal_value(modifier) == {:ok, :distinct},

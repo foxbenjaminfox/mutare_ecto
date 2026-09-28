@@ -6,6 +6,7 @@ defmodule Mutare.Ecto.DslAuditMacros do
   defmacro ignore(_condition), do: true
   # Ecto's own names at arities Ecto does not have, so Ecto expands them.
   defmacro coalesce(value), do: value
+  defmacro fragment, do: true
   defmacro sum(left, right), do: quote(do: sum(unquote(left) + unquote(right)))
   defmacro like(value), do: quote(do: like(unquote(value), "ok%"))
   defmacro aliased(value), do: quote(do: selected_as(unquote(value), :bucket))
@@ -42,6 +43,13 @@ defmodule Mutare.Ecto.DslAuditRemoteMacros do
   # Called remotely, so never Ecto's window grammar: Ecto expands every remote call.
   defmacro over(value, options),
     do: quote(do: coalesce(unquote(value), unquote(Keyword.fetch!(options, :fallback))))
+end
+
+defmodule Mutare.Ecto.DslAuditWindowMacros do
+  @moduledoc false
+  # A window's function is Ecto's only if `Ecto.Query.WindowAPI` names it; Ecto expands any
+  # other call there, even one of its own expression names.
+  defmacro coalesce(_left, _right), do: quote(do: row_number())
 end
 
 defmodule Mutare.Ecto.DslAuditRegressionTest do
@@ -861,6 +869,8 @@ defmodule Mutare.Ecto.DslAuditRegressionTest do
           {"where: false, or_where: filter(true)", :boolean_literal},
           {"where: false, or_where: ignore(r.a > 1)", :comparison},
           {"where: false, or_where: coalesce(true)", :boolean_literal},
+          # Ecto's fragment heads take at least the query, so it expands `fragment()`.
+          {"where: false, or_where: coalesce(fragment(), false)", :coalesce},
           {"where: false, or_where: map(r, 1)", :integer_literal}
         ] do
       source = fixture(~s|from r in "rows", #{clauses}, select: r.a|)
@@ -1098,6 +1108,42 @@ defmodule Mutare.Ecto.DslAuditRegressionTest do
 
       assert_builds(source, & &1.q(), ordering)
       assert ecto_diffs(source, ordering) != [] == kept?
+    end
+  end
+
+  describe "a window's function in its own grammar" do
+    defp window_fixture(body) do
+      """
+      defmodule WindowQuery do
+        import Ecto.Query
+        import Mutare.Ecto.DslAuditWindowMacros
+        def q do
+          #{body}
+        end
+      end
+      """
+    end
+
+    test "is an author macro, never mutated, unless Ecto.Query.WindowAPI names it" do
+      for window <- ["over(coalesce(0, 0))", "over(coalesce(0, 0), partition_by: r.a)"] do
+        source = window_fixture(~s|from r in "rows", select: #{window}|)
+        assert_native_builds(source)
+        assert ecto_diffs(source, only([:coalesce, :integer_literal])) == []
+        assert_builds(source, & &1.q(), only([:coalesce, :integer_literal]))
+      end
+    end
+
+    test "hides whatever aggregate its arguments seem to hold" do
+      source =
+        window_fixture("""
+        from u in "users",
+          where: exists(from r in "posts",
+            select: coalesce(0, sum(r.views)) + over(coalesce(sum(r.views), 0))),
+          select: u.id
+        """)
+
+      assert_rewrite(source, [:coalesce], "coalesce(0, sum(r.views))", "0")
+      assert_builds(source, & &1.q(), only([:coalesce]))
     end
   end
 end

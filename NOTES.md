@@ -275,6 +275,14 @@ count marked a macro as possibly hiding an aggregate while still descending into
 and counting a `sum` there as certain; it now stops at an opaque call, whose arguments the
 expansion may discard.
 
+Round ten found the window's function read in the wrong grammar. Ecto validates `over`'s
+function against `Ecto.Query.WindowAPI` *before* escaping it and expands any other call, so
+there even an expression name (`coalesce/2`) is an author macro; the vocabulary had added
+`WindowAPI` to the expression names instead of replacing them. The catalogs now neither mutate
+nor enter such a function (`Mutare.Ecto.Window`), and the aggregate count reads a function it
+keeps whole in the window's grammar. The same round found `fragment/n` accepted at any arity,
+though every fragment head takes at least the query.
+
 The fourth round also found that a keyword filter's scalar value, routed `:interpolated`, reaches Ecto
 as a parameter, which the planner `cast/1`s before `dump/1`ing, where a written literal is only
 `dump/1`ed. For a custom type whose `cast/1` is not the identity on the literal (one that

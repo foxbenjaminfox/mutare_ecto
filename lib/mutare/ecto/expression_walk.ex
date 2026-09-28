@@ -54,6 +54,9 @@ defmodule Mutare.Ecto.ExpressionWalk do
   defp children({:over, _meta, [_window_expr, _options]} = node, ctx),
     do: over_children(node, ctx)
 
+  # `over/1`: no options, but its function is read in the window's grammar all the same.
+  defp children({:over, _meta, [_window_expr]} = node, ctx), do: over_children(node, ctx)
+
   # Everything else descends structurally, each child inheriting the surrounding position.
   defp children(node, ctx), do: Walk.structural(node, ctx, &child_ctx/3)
 

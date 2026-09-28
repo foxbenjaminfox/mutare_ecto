@@ -135,9 +135,12 @@ defmodule Mutare.Ecto.Walk do
   #     `splice/1`, `identifier/1` and its older name `literal/1`) and the `values/2` source,
   #     plus what the builder accepts beyond them (`over/1,2`, which `Ecto.Query.WindowAPI`
   #     defines, `filter/1`, a unary `-`, `subquery/1`) and the syntax forms it escapes, a field access's inner `.` node included
-  #     (a prewalk visits it). `fragment/n` and the collection forms take any arity;
+  #     (a prewalk visits it). The collection forms take any arity, `fragment/n` any but zero
+  #     (the builder's fragment heads take at least the query, so `fragment()` is expanded);
   #   * a projection reads the select grammar besides;
-  #   * a window's function reads `Ecto.Query.WindowAPI`'s besides.
+  #   * a window's function reads `Ecto.Query.WindowAPI`'s *instead*: the builder validates it
+  #     against that module before escaping it, expanding any other call, so `over(coalesce(…))`
+  #     is an author's `coalesce/2`, not SQL's.
   #
   # A fragment's own arguments are not told apart, so a helper there reads as unknown.
   @select_grammar [map: 2, struct: 2, merge: 2, selected_as: 2]
@@ -151,9 +154,9 @@ defmodule Mutare.Ecto.Walk do
   @calls %{
     expression: MapSet.new(@expression_calls),
     projection: MapSet.new(@expression_calls ++ @select_grammar),
-    window_function: MapSet.new(@expression_calls ++ Ecto.Query.WindowAPI.__info__(:functions))
+    window_function: MapSet.new(Ecto.Query.WindowAPI.__info__(:functions))
   }
-  @any_arity [:fragment, :{}, :%{}, :<<>>, :__block__, :__aliases__]
+  @any_arity [:{}, :%{}, :<<>>, :__block__, :__aliases__]
 
   @typedoc "The grammar a call is read in, for `opaque_call?/2`."
   @type grammar :: :expression | :projection | :window_function
@@ -204,6 +207,7 @@ defmodule Mutare.Ecto.Walk do
   end
 
   defp ecto_call?(name, _arity, _grammar) when name in @any_arity, do: true
+  defp ecto_call?(:fragment, arity, _grammar), do: arity > 0
 
   defp ecto_call?(name, arity, grammar),
     do: MapSet.member?(Map.fetch!(@calls, grammar), {name, arity})

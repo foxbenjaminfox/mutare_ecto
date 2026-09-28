@@ -660,10 +660,11 @@ defmodule Mutare.Ecto.Subquery do
       else: Walk.structural(node, grammar, &child_grammar/3)
   end
 
-  # A window's operands and options are ordinary expressions.
+  # A window's operands and options are ordinary expressions; a function kept whole is read in
+  # the window's own grammar.
   defp window_scope(node, function, options) do
-    for operand <- window_operands(function) ++ options,
-        do: {operand, :expression, fn _ -> node end}
+    for {operand, grammar} <- window_operands(function) ++ Enum.map(options, &{&1, :expression}),
+        do: {operand, grammar, fn _ -> node end}
   end
 
   # The options a window is read with: written inline, or the definition of the window it
@@ -691,6 +692,8 @@ defmodule Mutare.Ecto.Subquery do
   defp child_grammar(parent, _index, :projection),
     do: if(select_grammar?(parent), do: :projection, else: :expression)
 
+  # A window function's own operands (a `fragment`'s, say) are ordinary expressions.
+  defp child_grammar(_parent, _index, :window_function), do: :expression
   defp child_grammar(_parent, _index, grammar), do: grammar
 
   # The forms Ecto's select builder reads itself, passing its own grammar on to their elements.
@@ -706,15 +709,17 @@ defmodule Mutare.Ecto.Subquery do
   # (`over(fragment("sum(sum(?))", r.value))`), and a pin is opaque, so each is kept whole to
   # be counted as possibly hiding one.
   defp window_operands({:filter, _meta, [function, condition]}),
-    do: window_operands(function) ++ [condition]
+    do: window_operands(function) ++ [{condition, :expression}]
 
   defp window_operands(function) do
     case function do
       {name, _meta, args} when is_atom(name) and is_list(args) ->
-        if window_function_hides?(function), do: [function], else: args
+        if window_function_hides?(function),
+          do: [{function, :window_function}],
+          else: Enum.map(args, &{&1, :expression})
 
       _opaque ->
-        [function]
+        [{function, :window_function}]
     end
   end
 

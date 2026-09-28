@@ -60,6 +60,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Stop counting an aggregate inside a macro's argument as certain when judging an `EXISTS`
   projection mutant: the expansion may discard it (`discard(sum(r.x))`), so a live drop of the
   query's only other aggregate was pruned.
+- Read a window's function in its own grammar: Ecto takes only `Ecto.Query.WindowAPI`'s
+  functions there and expands any other call, so `over(coalesce(a, b))` is an author's
+  macro. Its `coalesce` drop had broken the whole metamutant's compilation, and an aggregate
+  in its arguments had been counted as certain when judging an `EXISTS` projection mutant.
+- Read `fragment()` as a macro Ecto expands (its fragment heads take at least the query): a
+  `coalesce(fragment(), false)` drop had been woven into an `or_where`, where a `fragment()`
+  expanding to `true` is discarded.
 - Observe a window function beneath `is_nil` alike for `over/1` and `over/2`: the one-argument
   spelling offered the `sum` → `avg` swap the two-argument one prunes.
 - Leave a binary literal's segments unmutated: `<<0>>` → `<<-1>>` is no query Ecto accepts, and

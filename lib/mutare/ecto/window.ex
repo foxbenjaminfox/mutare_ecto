@@ -3,6 +3,9 @@ defmodule Mutare.Ecto.Window do
   # The grammar inside over/2, shared by the fragment and value-expression walks.
   # Option/direction keys and shorthand columns are structure; expression operands remain
   # walkable. A pin in a window description computes structure, not a scalar parameter.
+  # The window's function is Ecto's only if `Ecto.Query.WindowAPI` names it (`Walk`'s
+  # `:window_function` grammar): Ecto expands any other call there, so `over(coalesce(a, b))` is
+  # an author macro, neither mutated nor entered.
 
   alias Mutare.Ecto.{AST, Walk}
 
@@ -11,10 +14,10 @@ defmodule Mutare.Ecto.Window do
   @spec children(Macro.t(), ctx, (role(), ctx -> ctx)) :: [Walk.child(ctx)] when ctx: var
   # `over/1` has no options: its function alone, under the window's own context.
   def children({form, meta, [expression]}, ctx, _refine),
-    do: [{expression, ctx, &{form, meta, [&1]}}]
+    do: function(expression, ctx, &{form, meta, [&1]})
 
   def children({form, meta, [expression, options]}, ctx, refine) do
-    expression_child = {expression, ctx, &{form, meta, [&1, options]}}
+    expression_children = function(expression, ctx, &{form, meta, [&1, options]})
 
     options_children =
       case AST.unwrap_list(options) do
@@ -29,12 +32,16 @@ defmodule Mutare.Ecto.Window do
           end
       end
 
-    [
-      expression_child
-      | Enum.map(options_children, fn {child, role, rebuild} ->
-          {child, refine.(role, ctx), &{form, meta, [expression, rebuild.(&1)]}}
-        end)
-    ]
+    expression_children ++
+      Enum.map(options_children, fn {child, role, rebuild} ->
+        {child, refine.(role, ctx), &{form, meta, [expression, rebuild.(&1)]}}
+      end)
+  end
+
+  defp function(expression, ctx, rebuild) do
+    if Walk.opaque_call?(expression, :window_function),
+      do: [],
+      else: [{expression, ctx, rebuild}]
   end
 
   defp option(:order_by, value), do: fields(value, :ordering)
