@@ -74,7 +74,7 @@ defmodule Mutare.Ecto.MixProject do
 
   defp deps do
     [
-      {:mutare, "~> 0.4.2"}
+      {:mutare, "~> 0.4.3"}
       | ecto_deps() ++
           [
             # Static-analysis tooling: lints (credo) and type/discrepancy checks (dialyxir,

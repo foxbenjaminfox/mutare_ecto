@@ -73,7 +73,7 @@ analyzes `lib/`, not the test-only fixtures.
 
 ## The `mutare` dependency and the `../mutare` checkout
 
-`mix.exs` targets `{:mutare, "~> 0.4.2"}`, with direct-call pipe delivery, public region
+`mix.exs` targets `{:mutare, "~> 0.4.3"}`, with direct-call pipe delivery, public region
 resolution (`Mutare.Analyze.resolve/2`), and core-owned rerouting of rebuilt calls.
 The lockfile pins the published core package.
 The sibling `../mutare` checkout is where to read core callback contracts. To develop against

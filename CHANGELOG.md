@@ -38,7 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   value (a custom type, `Ecto.Enum`, `:binary_id`): interpolated for its mutants, the value was
   cast where the written literal is only dumped, so the baseline bound a different value. The
   schema is read through the call site's aliases with `Mutare.CallRouting.Call.resolved_module/2`,
-  which requires the Mutare release that adds it. A source the plugin cannot read keeps the
+  new in Mutare 0.4.3, which is now the minimum. A source the plugin cannot read keeps the
   previous behaviour.
 - Swap comparison, connective and `like`/`ilike` forms only at Ecto's arity 2: an author's
   `like/1` macro was swapped to a nonexistent `ilike/1`, failing the whole metamutant build.
