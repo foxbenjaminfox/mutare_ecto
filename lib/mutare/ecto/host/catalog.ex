@@ -30,7 +30,7 @@ defmodule Mutare.Ecto.Host.Catalog do
     # in the woven `^`/`dynamic` selector, never which mutants are produced or how any one branch
     # behaves — equivalent either way.
     # mutare:ignore[operand_swap] equivalent: concatenation order of two independent mutant sets is not observable
-    own(condition, config) ++ Island.subcontracted(condition, context)
+    own(condition, config) ++ Island.subcontracted(condition, :condition, context)
   end
 
   @doc """

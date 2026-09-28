@@ -583,7 +583,7 @@ defmodule Mutare.Ecto.SubcontractTest do
     # The second consumer of the sub-contract: `dynamic` registers `:raw`, so core keeps the
     # DSL argument raw — but core threads the run's specs into the whole-call offer of a
     # registered macro (`context.mutators`), so `Mutare.Ecto.Dynamic` sub-contracts each island
-    # through the same seam as the host (`Mutare.Ecto.Island.subcontracted/3`). Only delivery differs:
+    # through the same seam as the host (`Mutare.Ecto.Island.subcontracted/4`). Only delivery differs:
     # each relayed mutant is the whole `dynamic` call rebuilt, passed through
     # `Mutare.Ecto.mutate/2` untouched (no `families:` filter — the mutant is a core family's)
     # and delivered by the ordinary in-place selector (no weave — the call sits in expression
@@ -812,7 +812,7 @@ defmodule Mutare.Ecto.SubcontractTest do
       # `^[field: value]` (and a computed `^(if …, do: [field: value], else: []))`) is Ecto's
       # interpolated shorthand filter — the key names a column. Core, handed the bare keyword list,
       # would rename the key (`:views` → `:mutare`, an unknown-field query error) or drop the pair;
-      # `Mutare.Ecto.Island.subcontracted/3` drops any mutant that changes the interior's keyword-key set,
+      # `Mutare.Ecto.Island.subcontracted/4` drops any mutant that changes the interior's keyword-key set,
       # exactly as the non-pinned shorthand routing skips keys — while the *value* mutation survives.
       for body <- [
             ~s{where(q, ^[views: 5])},
@@ -1015,6 +1015,11 @@ defmodule Mutare.Ecto.SubcontractTest do
 
       assert Enum.any?(as_value, &(&1 =~ "mutare: :all"))
       assert Enum.any?(as_value, &(&1 =~ "scope: :mutare"))
+
+      # A `dynamic`'s whole body is never a keyword filter: Ecto's dynamic builder escapes it as
+      # an expression, so a pin there is a parameter (or a nested `dynamic`).
+      as_dynamic_body = mutateds(wrap.("dynamic(^lookup(n, scope: :all))"))
+      assert Enum.any?(as_dynamic_body, &(&1 =~ "mutare: :all"))
     end
 
     test "a subquery's pins keep their roles through the wrapper" do
@@ -1044,7 +1049,7 @@ defmodule Mutare.Ecto.SubcontractTest do
 
     test "the whole-call seams apply the same policy" do
       # `Mutare.Ecto.Dynamic` and `Mutare.Ecto.StaticCondition` deliver through
-      # `subcontracted/3` too, so a role is honoured wherever an island is relayed.
+      # `subcontracted/4` too, so a role is honoured wherever an island is relayed.
       dynamic =
         mutateds("""
         defmodule M do
@@ -1283,7 +1288,7 @@ defmodule Mutare.Ecto.SubcontractTest do
     end
   end
 
-  describe "totality — subcontracted/2,3 under a context with no enabled specs" do
+  describe "totality — subcontracted/3,4 under a context with no enabled specs" do
     # Every real caller (`host/2`, `Mutare.Ecto.Dynamic`) reaches this through core's
     # `analyze_known_macro/5`, which always injects `:mutators` first. An *ordinary* node offer
     # carries no `:mutators` key at all, which `Mutare.Ecto.Context.new/1` reads as `[]` (core
@@ -1292,7 +1297,7 @@ defmodule Mutare.Ecto.SubcontractTest do
     # the `for` comprehension's `Mutare.Analyze.collect_expression/2` call.
     test "an empty spec set yields no sub-contracted mutants, never crashes" do
       condition = Sourceror.parse_string!("u.age > ^(min * 2)")
-      assert Mutare.Ecto.Island.subcontracted(condition, context()) == []
+      assert Mutare.Ecto.Island.subcontracted(condition, :condition, context()) == []
     end
   end
 end

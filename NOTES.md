@@ -304,6 +304,12 @@ call-shaped function: `over(nil, x)` and `over/3` are macros (`Walk.window?/1`, 
 reader matching `over` now asks). And round thirteen's opaque-ancestor guard had used projection
 grammar at every depth, so `merge/2` inside a `coalesce` passed as the select builder's.
 
+Round fifteen, asked to favour ordinary code, found the island seam's root role fixed at
+`:condition` for every caller. A `dynamic`'s whole-body pin is a parameter (Ecto's dynamic
+builder escapes the body as an expression; only a nested `DynamicExpr` is expanded), so holding
+its keyword keys dropped live mutants. `Island.subcontracted/4` now takes the root role from its
+caller.
+
 The fourth round also found that a keyword filter's scalar value, routed `:interpolated`, reaches Ecto
 as a parameter, which the planner `cast/1`s before `dump/1`ing, where a written literal is only
 `dump/1`ed. For a custom type whose `cast/1` is not the identity on the literal (one that

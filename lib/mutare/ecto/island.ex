@@ -11,7 +11,7 @@ defmodule Mutare.Ecto.Island do
   # Computed subquery sources use this same seam as unpinned Elixir islands; their location
   # and reconstruction belong to `Mutare.Ecto.Subquery.source_islands/1`.
   #
-  # `subcontracted/3` runs each pin interior (`Mutare.Ecto.Fragment.islands/2` — collected under
+  # `subcontracted/4` runs each pin interior (`Mutare.Ecto.Fragment.islands/2` — collected under
   # the catalog's own descent rules, so no island is reached that the catalog would not have
   # walked past) through `Mutare.Analyze.collect_expression/3` over the `mutators` of the
   # plugin's `%Mutare.Ecto.Context{}`: the run's **full** enabled spec set, which core threads
@@ -39,7 +39,7 @@ defmodule Mutare.Ecto.Island do
   # whose own `finalize/2` funnel already ran at generation, so core skips the *relaying*
   # plugin's `finalize/2` for it on both paths (`Mutare.Ecto.Equivalence`), and
   # `Mutare.Ecto.Tag.to_mutation/1` passes it through untouched. No family tagging happens here.
-  # **Delivery stays the owner's**, via `subcontracted/3`'s `deliver`: the host relays the
+  # **Delivery stays the owner's**, via `subcontracted/4`'s `deliver`: the host relays the
   # condition itself (its weave carries it — the identity default), while `Mutare.Ecto.Dynamic`
   # rebuilds the whole free-standing `dynamic` call around it.
   #
@@ -58,7 +58,7 @@ defmodule Mutare.Ecto.Island do
   # for: a pin moves a value out of the SQL, never out of the position it fills, and
   # `field(p, ^:score)` names a column as surely as `field(p, :score)` does. So
   # `Fragment.islands/2` reports each pin's **role**, and this seam is the home of the **role
-  # policy** (`subcontracted/3`): which written literals of an interior are still query
+  # policy** (`subcontracted/4`): which written literals of an interior are still query
   # structure, and so not core's to rewrite.
   #
   # **Only the pins inside a condition are sub-contracted**, whatever their role — unimplemented
@@ -77,7 +77,10 @@ defmodule Mutare.Ecto.Island do
   The island sub-contract described in the module header: every relayed, `producer:`-attributed
   mutant of every `^` pin interior in `condition`, each rebuilt into the condition and mapped
   through `deliver` to the node the caller's delivery path emits (the identity default for the
-  host's weave; `Mutare.Ecto.Dynamic` rebuilds its whole call).
+  host's weave; `Mutare.Ecto.Dynamic` rebuilds its whole call). `root_role` is the role of a pin
+  that *is* the whole `condition`, which only the caller knows: `:condition` for a filter, where
+  Ecto reads a pinned keyword list as one; `:value` for a `dynamic`'s body, where Ecto only
+  ever binds the pin as a parameter or expands a nested `dynamic`.
 
   ## The role policy
 
@@ -147,13 +150,14 @@ defmodule Mutare.Ecto.Island do
   emitted: an unknown-column query on the path that takes the default, which any test running
   that path kills.
   """
-  @spec subcontracted(Macro.t(), Context.t(), (Macro.t() -> Macro.t())) :: [Mutation.t()]
-  def subcontracted(condition, %Context{mutators: specs, core: core}, deliver \\ & &1) do
+  @spec subcontracted(Macro.t(), Fragment.role(), Context.t(), (Macro.t() -> Macro.t())) ::
+          [Mutation.t()]
+  def subcontracted(condition, root_role, %Context{mutators: specs, core: core}, deliver \\ & &1) do
     # Core's seam takes its own callback context back, unchanged: it carries the enclosing
     # call's lexical environment, in which core resolves the island before analyzing it (a
     # nested `dynamic` keeps its `:raw` route, an author's `:skip` macro stays opaque). The
     # plugin's own struct never crosses.
-    for {interior, role, rebuild} <- Fragment.islands(condition, :condition),
+    for {interior, role, rebuild} <- Fragment.islands(condition, root_role),
         mutation <- Mutare.Analyze.collect_expression(interior, specs, core),
         structure_kept?(mutation.producer, role, interior, mutation.node) do
       Mutation.map_node(mutation, &deliver.(rebuild.(&1)))
@@ -172,7 +176,7 @@ defmodule Mutare.Ecto.Island do
   defp structure_kept?(_spec, role, original, mutated),
     do: held(role, mutated) == held(role, original)
 
-  # The role policy (`subcontracted/3`'s doc): the written literals of `interior` that are
+  # The role policy (`subcontracted/4`'s doc): the written literals of `interior` that are
   # structure under `role`, as the set the guard compares. A role with no clause here has no
   # policy, and crashes rather than pass as plain data.
   defp held(:value, _interior), do: MapSet.new()
@@ -191,7 +195,7 @@ defmodule Mutare.Ecto.Island do
     MapSet.new(keys)
   end
 
-  # The name rule's reader (`subcontracted/3`'s doc): the written literals `ast` can evaluate
+  # The name rule's reader (`subcontracted/4`'s doc): the written literals `ast` can evaluate
   # **to**, one clause per form the rule lists. Every other form — a variable, a call and its
   # arguments, an interpolated string — computes its value by means this reader does not know,
   # and yields nothing.

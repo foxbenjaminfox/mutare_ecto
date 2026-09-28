@@ -307,7 +307,7 @@ defmodule Mutare.Ecto.Host.Routing do
   # The written-shorthand application of the condition-position keyword rule: a pair's **key
   # names a column** (left raw by the per-pair routing itself), only its value routes. The same
   # rule's *pin-side* application — a keyword filter interior a pin computes, where no call
-  # shape exists to route — lives in `Mutare.Ecto.Island.subcontracted/3`'s key-set guard.
+  # shape exists to route — lives in `Mutare.Ecto.Island.subcontracted/4`'s key-set guard.
   defp pair_treatments(%KeywordList{entries: entries}, types) do
     Enum.map(entries, &pair_treatment(&1.key, &1.value, types))
   end

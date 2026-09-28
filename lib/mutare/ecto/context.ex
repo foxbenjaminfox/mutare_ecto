@@ -12,7 +12,7 @@ defmodule Mutare.Ecto.Context do
   #     sub-contract seams (a `host/2` offer, and the whole-call `mutate/2` offer of a registered
   #     macro) and omits on an ordinary node offer, where it descends the node itself. `[]` for the
   #     latter is the contract's reading of absence, not a fallback: the island sub-contract
-  #     (`Mutare.Ecto.Island.subcontracted/3`) then relays nothing, correctly — there is no
+  #     (`Mutare.Ecto.Island.subcontracted/4`) then relays nothing, correctly — there is no
   #     island core hasn't already reached.
   #   * `core` — core's map itself, kept for the two places the plugin hands code back to core:
   #     the island sub-contract (`Mutare.Analyze.collect_expression/3` wants the callback

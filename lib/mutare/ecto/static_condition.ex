@@ -302,7 +302,7 @@ defmodule Mutare.Ecto.StaticCondition do
         own = for tag <- Catalog.own_catalog(condition, config), do: Tag.map_node(tag, rebuild)
 
         # mutare:ignore[operand_swap] equivalent — two independent mutant lists, consumed as a set
-        own ++ Island.subcontracted(condition, context, rebuild)
+        own ++ Island.subcontracted(condition, :condition, context, rebuild)
     end
   end
 end

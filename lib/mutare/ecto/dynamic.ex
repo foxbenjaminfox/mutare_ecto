@@ -83,7 +83,9 @@ defmodule Mutare.Ecto.Dynamic do
   defp body([_bindings, expression]), do: {expression, 1}
   defp body(_args), do: nil
 
-  # The island sub-contract (`Mutare.Ecto.Island.subcontracted/3`), delivered as the whole call.
+  # The island sub-contract (`Mutare.Ecto.Island.subcontracted/4`), delivered as the whole call.
+  # A pin that is the whole body is a parameter (or a nested `dynamic`), never a keyword filter:
+  # Ecto's dynamic builder escapes the body as an expression.
   defp subcontracted(condition, call, index, context),
-    do: Island.subcontracted(condition, context, &QueryCall.replace_arg(call, index, &1))
+    do: Island.subcontracted(condition, :value, context, &QueryCall.replace_arg(call, index, &1))
 end
