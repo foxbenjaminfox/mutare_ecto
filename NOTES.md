@@ -229,6 +229,14 @@ filter path discards a condition that expands to `true` whatever its operator, s
 the statement (`WHERE ?` for `WHERE TRUE`), so the condition is rebuilt instead, whenever it or a
 catalog mutant of it is the literal `true`.
 
+A third round found four more, three of them gaps in the round before's fixes: a keyword
+`having: [y: 1]` names a bare column by key, a module attribute or macro in `group_by` may
+expand to a position, and `max(parent_as(:outer).x)` inside a subquery aggregates the outer
+query, not the subquery. The fourth is another difference between Ecto's two build paths: the
+static builder types a condition `:boolean` and a `dynamic` types it `:any`, and `coalesce`
+and arithmetic pass that type to their operands, so `where: coalesce(^"true", false)` binds
+`true` statically and the string woven. Such a condition is now rebuilt as well.
+
 The coalesce family's equivalence note ("differ only where x is NULL") still describes
 scalar evaluation only; an aggregate-removing drop is killed by an empty input instead.
 

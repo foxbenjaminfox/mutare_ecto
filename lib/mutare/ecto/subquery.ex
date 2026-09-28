@@ -585,9 +585,9 @@ defmodule Mutare.Ecto.Subquery do
   defp aggregation({0, 0}, :ungrouped), do: :no
   defp aggregation(_counts, _grouping), do: :unknown
 
-  # Whether a `group_by` groups the query. A pinned one may be `[]` at runtime, and a written
-  # `[]` or `nil` renders no grouping columns (Ecto `List.wrap`s the value), so none of them
-  # proves grouping.
+  # Whether a `group_by` groups the query. A written `[]` or `nil` renders no grouping columns
+  # (Ecto `List.wrap`s the value), and an opaque one may be either, so none of them proves
+  # grouping.
   defp grouping(entries) do
     group_bys = for %Entry{key: :group_by, value: value} <- entries, do: value
 
@@ -598,18 +598,17 @@ defmodule Mutare.Ecto.Subquery do
     end
   end
 
-  defp grouping_terms({:^, _meta, [_interior]}), do: :unknown
-
+  # A pin, a module attribute or an author macro may evaluate to `[]` or `nil`.
   defp grouping_terms(value) do
     case {AST.unwrap_list(value), Mutare.AST.literal_value(value)} do
       {terms, _literal} when is_list(terms) -> terms
       {nil, {:ok, nil}} -> []
-      {nil, _expression} -> [value]
+      {nil, _expression} -> if opaque_term?(value), do: :unknown, else: [value]
     end
   end
 
   # `{written, hidden}`: the Ecto aggregates in `node` that aggregate *this* query, and the
-  # nodes that may hide one (a pin, a `fragment`, an author macro). A nested query aggregates
+  # nodes that may hide one (a pin, a `fragment`, an author macro, a correlated aggregate). A nested query aggregates
   # itself, so it is not entered. A window's function call (`over/1,2`) aggregates the window,
   # so it is skipped. But its operands and the window's options are evaluated in the query's
   # own scope: `over(sum(sum(r.value)))` and `over(row_number(), order_by: sum(r.value))`
@@ -620,12 +619,17 @@ defmodule Mutare.Ecto.Subquery do
         reduce: {0, 0} do
       {written, hidden} ->
         cond do
+          Aggregate.ecto_aggregate?(position) and correlated?(position) -> {written, hidden + 1}
           Aggregate.ecto_aggregate?(position) -> {written + 1, hidden}
           hides_aggregate?(position) -> {written, hidden + 1}
           true -> {written, hidden}
         end
     end
   end
+
+  # An aggregate over an enclosing query's columns (`max(parent_as(:outer).x)`) belongs to the
+  # enclosing query when it reads none of this one's, so it is counted as possibly hiding one.
+  defp correlated?(aggregate), do: contains?(aggregate, &match?({:parent_as, _, [_]}, &1))
 
   # Only positions are read here, never rebuilt, so a child's splice returns its parent.
   defp query_scope({:over, _meta, [function | options]} = node, ctx),
@@ -704,14 +708,17 @@ defmodule Mutare.Ecto.Subquery do
   end
 
   # Whether a grouping or DISTINCT ON value may hold a positional term: an integer literal at
-  # the level of its lists and keyword values, a pin there (which may hold `dynamic(1)`), or a
+  # the level of its lists and keyword values, or there what may evaluate to one (a pin, which
+  # may hold `dynamic(1)`; a module attribute or an author macro, which Ecto expands), or a
   # `fragment` anywhere (`fragment("1")`).
   defp positional?(value) do
     contains?(value, &match?({:fragment, _, args} when is_list(args), &1)) or
-      grammar_term?(value, fn term ->
-        match?({:^, _, [_]}, term) or is_integer(AST.int_value(term))
-      end)
+      grammar_term?(value, &(is_integer(AST.int_value(&1)) or opaque_term?(&1)))
   end
+
+  defp opaque_term?({:^, _meta, [_interior]}), do: true
+  defp opaque_term?({:@, _meta, [_attribute]}), do: true
+  defp opaque_term?(term), do: Calls.routed_treatments(term) != nil
 
   defp grammar_term?({_key, value}, term?), do: grammar_term?(value, term?)
 
@@ -782,7 +789,8 @@ defmodule Mutare.Ecto.Subquery do
   # aggregates alike: under `having: r.y == 1`, `min(r.x)` → `max(r.x)` reads another row's
   # `y`. (Postgres rejects the bare column.) Outside its aggregate calls, a `having` may read
   # one through a column that no written `group_by` expression names, or through what may hide
-  # one: a pinned condition, a `fragment`, a subquery, an author macro.
+  # one: a pinned condition, a `fragment`, a subquery, an author macro. A keyword filter
+  # (`having: [y: 1]`) names its columns by key, and is read as possibly bare.
   defp having_reads_bare_column?(entries) do
     grouped =
       for %Entry{key: :group_by, value: value} <- entries,
@@ -792,7 +800,13 @@ defmodule Mutare.Ecto.Subquery do
 
     Enum.any?(entries, fn %Entry{key: key, value: value} ->
       key in [:having, :or_having] and
-        (Condition.shape(value) == {:predicate, :root_pin} or bare_column?(value, grouped))
+        case Condition.shape(value) do
+          {:predicate, :root_pin} -> true
+          {:predicate, :expression} -> bare_column?(value, grouped)
+          # Ecto writes each pair as a comparison on its key's column.
+          {:keyword_filter, _pairs} -> true
+          :pairless_list -> false
+        end
     end)
   end
 

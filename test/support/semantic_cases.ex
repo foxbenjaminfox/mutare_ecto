@@ -294,6 +294,48 @@ defmodule Mutare.Ecto.SemanticCases do
         end
       end
 
+      # Statically, `^"true"` takes the where clause's `:boolean` type through `coalesce` and
+      # binds `true`; woven into a dynamic it would bind the string, which SQLite reads as false.
+      test "audit: a pin typed by its where clause keeps its cast" do
+        source =
+          audit_source("""
+          flag = "true"
+          from p in Post, where: coalesce(^flag, false), select: p.id, order_by: p.id
+          """)
+
+        assert H.assert_delivery(@repo, source, {"false", "true"}, [:boolean_literal]) ==
+                 {[1, 2, 3], [1, 2, 3]}
+      end
+
+      if @repo.__adapter__() == Ecto.Adapters.SQLite3 do
+        # The keyword filter is `p.user_id == 2` on a bare column; see the bare-HAVING case.
+        test "audit: EXISTS observes an aggregate swap under a keyword having" do
+          source =
+            audit_source("""
+            from u in User, where: exists(from p in Post, select: min(p.views),
+              having: [user_id: 2]), select: u.id, order_by: u.id
+            """)
+
+          assert H.assert_delivery(@repo, source, {"min(p.views)", "max(p.views)"}, [:aggregate]) ==
+                   {[], [1, 2, 3, 4, 5, 6]}
+        end
+
+        # `max(parent_as(:outer).age)` aggregates the outer query, so without the `sum` the
+        # inner query does not aggregate its empty input into a row.
+        test "audit: EXISTS keeps an aggregate drop beside a correlated aggregate" do
+          source =
+            audit_source("""
+            from u in User, as: :outer,
+              having: exists(from p in Post, where: p.id == 99,
+                select: coalesce(0, sum(p.views)) + max(parent_as(:outer).age)),
+              select: count(u.id)
+            """)
+
+          assert H.assert_delivery(@repo, source, {"coalesce(0, sum(p.views))", "0"}, [:coalesce]) ==
+                   {[6], []}
+        end
+      end
+
       # `GROUP BY 1` groups by the projection: `views - views` is one group, which `offset: 1`
       # skips; `views + views` is three.
       test "audit: EXISTS observes a projection grouped by position" do

@@ -8,6 +8,7 @@ defmodule Mutare.Ecto.DslAuditRegressionTest do
     defmodule AuditQuery do
       import Ecto.Query
       alias MyApp.{Post, User}
+      @first_column 1
       def q do
         #{body}
       end
@@ -652,6 +653,8 @@ defmodule Mutare.Ecto.DslAuditRegressionTest do
             {"group_by: ^grouping, limit: 10, offset: 1", true},
             {"group_by: 1, having: count(r.a) > 1", true},
             {"distinct: 1, limit: 10, offset: 1", true},
+            # Ecto expands a module attribute or a macro in a grouping term.
+            {"group_by: @first_column, limit: 10, offset: 1", true},
             # The number of groups decides nothing without an offset or a having.
             {"group_by: 1", false},
             {"group_by: r.a, limit: 10, offset: 1", false}
@@ -671,15 +674,30 @@ defmodule Mutare.Ecto.DslAuditRegressionTest do
     end
 
     test "group_by: nil groups nothing" do
-      for grouping <- ["nil", "[]"] do
+      for grouping <- ["nil", "[]", "@empty", "^empty"] do
         source =
           exists_source(
-            ~s|from r in "rows", group_by: #{grouping}, select: coalesce(0, sum(r.value))|
+            ~s|from r in "rows", group_by: #{grouping}, select: coalesce(0, sum(r.value))|,
+            "empty = []"
           )
+          |> String.replace("@first_column 1", "@first_column 1\n  @empty []")
 
         assert_rewrite(source, [:coalesce], "coalesce(0, sum(r.value))", "0")
         assert_builds(source, & &1.q(), only([:coalesce]))
       end
+    end
+
+    test "an aggregate over only an enclosing query's columns is not this query's" do
+      source =
+        fixture("""
+        from o in "outer_rows", as: :outer,
+          having: exists(from r in "rows", where: r.x > 10,
+            select: coalesce(0, sum(r.x)) + max(parent_as(:outer).x)),
+          select: max(o.x)
+        """)
+
+      assert_rewrite(source, [:coalesce], "coalesce(0, sum(r.x))", "0")
+      assert_builds(source, & &1.q(), only([:coalesce]))
     end
 
     test "a having that may read a bare column observes the aggregate swap" do
@@ -688,6 +706,7 @@ defmodule Mutare.Ecto.DslAuditRegressionTest do
             {"group_by: r.z, having: r.y == 1", true},
             {"having: ^condition", true},
             {~s|having: fragment("y = 1")|, true},
+            {"having: [y: 1]", true},
             # Only aggregated or grouped columns: the aggregate picks no row for the `having`.
             {"having: sum(r.y) > 1", false},
             {"group_by: r.y, having: r.y == 1", false},
@@ -729,6 +748,34 @@ defmodule Mutare.Ecto.DslAuditRegressionTest do
     # Any other condition still weaves.
     source = fixture(~s|from r in "rows", where: false, or_where: r.a > 1, select: r.a|)
     assert metamutant(source, only([:comparison])) =~ "dynamic("
+  end
+
+  test "a condition whose pin or literal takes the clause's type is rebuilt, never woven" do
+    for {condition, rebuilt?} <- [
+          {~s|coalesce(^flag, false)|, true},
+          {"coalesce(r.flag, 1)", true},
+          {"coalesce(r.flag, -(^n))", true},
+          {"coalesce(r.flag, false)", false},
+          {"r.a > ^n", false},
+          {"r.flag and ^flag", false},
+          {"not coalesce(^flag, false)", false}
+        ] do
+      source =
+        fixture(~s|flag = true\nn = 1\nfrom r in "rows", where: #{condition}, select: r.a|)
+
+      families =
+        only([
+          :boolean_literal,
+          :integer_literal,
+          :coalesce,
+          :comparison,
+          :connective,
+          :arithmetic
+        ])
+
+      assert_builds(source, & &1.q(), families)
+      assert metamutant(source, families) =~ "dynamic(" != rebuilt?
+    end
   end
 
   test "a value subquery's ordering is observed when its source may bring the limit" do

@@ -41,6 +41,15 @@ defmodule Mutare.Ecto.StaticCondition do
   or a mutant of the plugin's own catalog, is the literal `true`. A pin's mutants cannot be:
   they keep the pin. A join's `on:` keeps a `true` on both paths.
 
+  **A condition typed by its clause.** The static builder escapes a condition as `:boolean`, the
+  dynamic one as `:any`, and the type reaches whatever the condition passes it on to:
+  `coalesce`'s operands, arithmetic operands, a unary minus. A pin there is cast by that type
+  (`where: coalesce(^"true", false)` binds `true` statically and the string `"true"` in a
+  dynamic, which SQLite reads as false), and a non-boolean literal there is tagged with it. So a
+  condition is rebuilt when a pin or a non-boolean literal takes the condition's own type, in the
+  condition or in a catalog mutant of it. A root pin is exempt: it is woven pin-only, never into
+  a `dynamic/2`, and Ecto builds it at runtime natively too.
+
   **Opaque macro expansions.** With `condition_delivery: :static`, every condition uses this
   rebuild path, including a macro that introduces a subquery invisible in written source.
   Registering that macro's arguments as raw does not prevent its enclosing condition from
@@ -49,7 +58,7 @@ defmodule Mutare.Ecto.StaticCondition do
   ## The rule
 
   `delivery/5` applies the configured policy, rebuilds a filter that is or may become the literal
-  `true` (above), then `delivery/4` decides from the receiving
+  `true` and a condition typed by its clause (above), then `delivery/4` decides from the receiving
   clause, the expression, its predicate kind, and the declaration it is read under. A condition is **rebuilt** when the
   expression carries a subquery (`Mutare.Ecto.Subquery.present?/1`) that the clause rejects in a
   dynamic (`Mutare.Ecto.Surface.dynamic_subqueries?/1` — everything but `where`/`or_where`), or when
@@ -118,21 +127,45 @@ defmodule Mutare.Ecto.StaticCondition do
     do: :rebuilt
 
   def delivery(clause, condition, kind, bindings, %{condition_delivery: :auto} = config) do
-    if may_be_true?(clause, condition, config),
+    # A root pin is woven pin-only, as it is built natively: Ecto's runtime path either way.
+    originals = if kind == :root_pin, do: [], else: [condition]
+    branches = originals ++ for(tag <- Catalog.own_catalog(condition, config), do: tag.node)
+
+    if Enum.any?(branches, &static_only?(clause, &1)),
       do: :rebuilt,
       else: delivery(clause, condition, kind, bindings)
   end
 
   @filters [:where, :or_where, :having, :or_having]
 
-  defp may_be_true?(clause, condition, config) when clause in @filters,
-    do:
-      Enum.any?(
-        [condition | for(tag <- Catalog.own_catalog(condition, config), do: tag.node)],
-        &(Mutare.AST.literal_value(&1) == {:ok, true})
-      )
+  # A branch the runtime path would build differently from the static one (see "A filter that
+  # is, or may become, the literal `true`" and "A condition typed by its clause").
+  defp static_only?(clause, branch) do
+    (clause in @filters and Mutare.AST.literal_value(branch) == {:ok, true}) or
+      clause_typed?(branch)
+  end
 
-  defp may_be_true?(_clause, _condition, _config), do: false
+  # Whether a pin or a non-boolean literal takes the condition's own type: it is the condition,
+  # or reached from it only through forms that pass their expected type on to their operands
+  # (`Ecto.Query.Builder.escape/5`). `and`/`or`/`not` and the comparisons fix their operands'
+  # types instead, and so stop the descent.
+  defp clause_typed?({:^, _meta, [_interior]}), do: true
+
+  defp clause_typed?({:coalesce, _meta, [left, right]}),
+    do: clause_typed?(left) or clause_typed?(right)
+
+  defp clause_typed?({:filter, _meta, [aggregate]}), do: clause_typed?(aggregate)
+  defp clause_typed?({:-, _meta, [operand]}), do: clause_typed?(operand)
+
+  defp clause_typed?({op, _meta, [left, right]}) when op in [:+, :-, :*, :/],
+    do: clause_typed?(left) or clause_typed?(right)
+
+  defp clause_typed?(node) do
+    case Mutare.AST.literal_value(node) do
+      {:ok, value} -> not is_boolean(value) and value != nil
+      _expression -> false
+    end
+  end
 
   # A root pin's weave re-declares nothing, so its declaration is never read.
   defp woven(:root_pin, _bindings), do: {:woven, []}
