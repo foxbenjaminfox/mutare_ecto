@@ -614,14 +614,19 @@ defmodule Mutare.Ecto.Subquery do
   # own scope: `over(sum(sum(r.value)))` and `over(row_number(), order_by: sum(r.value))`
   # each hold one ordinary `sum`. An author macro's arguments are entered only under the walk's
   # own rule.
+  #
+  # Each position carries the grammar Ecto reads it in (`t:Mutare.Ecto.Walk.grammar/0`): a
+  # projection's own select grammar (maps, tuples, lists, `merge/2`) passes the projection's on,
+  # and any other call's operands are ordinary expressions, where a select-only name such as
+  # `map/2` is a macro Ecto expands.
   defp scoped_aggregates(node) do
-    for {position, _ctx, _rebuild} <- Walk.positions(node, nil, &query_scope/2),
+    for {position, grammar, _rebuild} <- Walk.positions(node, :projection, &query_scope/2),
         reduce: {0, 0} do
       {written, hidden} ->
         cond do
           Aggregate.ecto_aggregate?(position) and correlated?(position) -> {written, hidden + 1}
           Aggregate.ecto_aggregate?(position) -> {written + 1, hidden}
-          hides_aggregate?(position) -> {written, hidden + 1}
+          hides_aggregate?(position, grammar) -> {written, hidden + 1}
           true -> {written, hidden}
         end
     end
@@ -636,10 +641,26 @@ defmodule Mutare.Ecto.Subquery do
     do: window_scope(node, function, options, ctx)
 
   defp query_scope({head, _meta, [_arg]}, _ctx) when head in @wrappers, do: []
-  defp query_scope(node, ctx), do: Walk.structural(node, ctx)
+  defp query_scope(node, grammar), do: Walk.structural(node, grammar, &child_grammar/3)
 
-  defp window_scope(node, function, options, ctx),
-    do: for(operand <- window_operands(function) ++ options, do: {operand, ctx, fn _ -> node end})
+  # A window's operands and options are ordinary expressions.
+  defp window_scope(node, function, options, _grammar) do
+    for operand <- window_operands(function) ++ options,
+        do: {operand, :expression, fn _ -> node end}
+  end
+
+  defp child_grammar(parent, _index, :projection),
+    do: if(select_grammar?(parent), do: :projection, else: :expression)
+
+  defp child_grammar(_parent, _index, grammar), do: grammar
+
+  # The forms Ecto's select builder reads itself, passing its own grammar on to their elements.
+  defp select_grammar?({form, _meta, _args}) when form in [:%{}, :{}, :%, :|, :__block__],
+    do: true
+
+  defp select_grammar?({:merge, _meta, [_left, _right]}), do: true
+  defp select_grammar?({_left, _right}), do: true
+  defp select_grammar?(list), do: is_list(list)
 
   # The windowed call's operands: a `filter/2`'s aggregate operands and its condition, or a
   # function's arguments. A `fragment` or an author macro may hide an ordinary aggregate
@@ -658,10 +679,10 @@ defmodule Mutare.Ecto.Subquery do
     end
   end
 
-  defp hides_aggregate?({head, _meta, [_arg]}) when head in @wrappers, do: false
-  defp hides_aggregate?({:^, _meta, _args}), do: true
-  defp hides_aggregate?({:fragment, _meta, args}) when is_list(args), do: true
-  defp hides_aggregate?(node), do: Walk.opaque_call?(node, :projection)
+  defp hides_aggregate?({head, _meta, [_arg]}, _grammar) when head in @wrappers, do: false
+  defp hides_aggregate?({:^, _meta, _args}, _grammar), do: true
+  defp hides_aggregate?({:fragment, _meta, args}, _grammar) when is_list(args), do: true
+  defp hides_aggregate?(node, grammar), do: Walk.opaque_call?(node, grammar)
 
   # A window's function is read in its own grammar (`row_number()` is Ecto's there).
   defp window_function_hides?({:^, _meta, _args}), do: true

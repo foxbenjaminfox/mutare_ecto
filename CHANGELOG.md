@@ -41,6 +41,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   as a fragment argument) as possible macros anywhere else.
 - Stop pruning `min`/`max` swaps, and mutants inside them, beneath `is_nil`: on SQLite the
   aggregate also picks the row a bare column is read from.
+- Leave a binary literal's segments unmutated: `<<0>>` → `<<-1>>` is no query Ecto accepts, and
+  failed the whole metamutant build.
+- Read a projection's select grammar only at its own level: `map/2` inside `coalesce` is an
+  ordinary expression, where Ecto expands a same-named macro.
 - Protect inline window grammar in free-standing dynamics, including opt-in atom mutations.
 - Mutate list-valued dynamics and repeated explicit join predicates; permit hosting a sole
   explicit predicate on an association join.

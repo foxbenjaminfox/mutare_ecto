@@ -15,6 +15,12 @@ defmodule Mutare.Ecto.DslAuditMacros do
   defmacro constant(value), do: quote(do: sum(unquote(value)))
 end
 
+defmodule Mutare.Ecto.DslAuditProjectionMacros do
+  @moduledoc false
+  # `map/2` inside an ordinary expression is no select grammar: Ecto expands it.
+  defmacro map(_source, value), do: quote(do: sum(unquote(value)))
+end
+
 defmodule Mutare.Ecto.DslAuditRemoteMacros do
   @moduledoc false
   # Called remotely, so never Ecto's window grammar: Ecto expands every remote call.
@@ -723,6 +729,28 @@ defmodule Mutare.Ecto.DslAuditRegressionTest do
       end
     end
 
+    test "a select-only name nested in a projection expression is a macro" do
+      source =
+        """
+        defmodule AuditQuery do
+          import Ecto.Query
+          import Mutare.Ecto.DslAuditProjectionMacros
+          def q do
+            from p in "outer_rows",
+              where: exists(from r in "rows", select: coalesce(0, map(r, r.value))),
+              select: p.id
+          end
+        end
+        """
+
+      assert_rewrite(source, [:coalesce], "coalesce(0, map(r, r.value))", "0")
+      assert_builds(source, & &1.q(), only([:coalesce]))
+
+      # At the projection's own grammar level, `map/2` is Ecto's take and hides nothing.
+      source = exists_source(~s|from r in "rows", select: {map(r, [:value]), coalesce(0, 1)}|)
+      assert ecto_diffs(source, only([:coalesce])) == []
+    end
+
     test "an unregistered macro in the projection may define the alias a clause reads" do
       source =
         exists_source(
@@ -826,6 +854,19 @@ defmodule Mutare.Ecto.DslAuditRegressionTest do
 
       assert_builds(source, & &1.q(), families)
       assert metamutant(source, families) =~ "dynamic(" != rebuilt?
+    end
+  end
+
+  test "a binary literal's segments are never mutated" do
+    for clauses <- [
+          "where: r.value == <<0>>",
+          "where: r.value == <<0::utf8>>",
+          "select: <<0>>",
+          "order_by: fragment(\"?\", <<0>>)"
+        ] do
+      source = fixture(~s|from r in "rows", #{clauses}|)
+      assert ecto_diffs(source, only([:integer_literal])) == []
+      assert_compiles(source, only([:integer_literal]))
     end
   end
 

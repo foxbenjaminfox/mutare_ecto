@@ -254,6 +254,10 @@ only as a fragment argument, so elsewhere a same-named macro is expanded. It als
 remote `Mod.over/2` read as window grammar (Ecto expands every remote call), and a `min` →
 `max` swap pruned beneath `is_nil` although, on SQLite, the aggregate picks the row a bare
 column is read from; `min`/`max` lost their NULL rule.
+A seventh round showed that the grammar must follow the descent: inside `coalesce` in a
+projection, `map/2` is an ordinary expression again. The aggregate count now threads the
+grammar through its walk. It also found a binary literal's integer segment mutated to a
+negative number, which Ecto's binary escape rejects; a binary literal is now a leaf.
 
 The fourth round also found that a keyword filter's scalar value, routed `:interpolated`, reaches Ecto
 as a parameter, which the planner `cast/1`s before `dump/1`ing, where a written literal is only
