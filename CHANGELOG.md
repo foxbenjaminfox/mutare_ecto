@@ -31,7 +31,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and an aggregate over only an enclosing query's columns (`max(parent_as(:outer).x)`) no longer
   counts as aggregating the subquery. Every such observation check now counts a call outside
   Ecto's query vocabulary, which Ecto can only be expanding as a macro, as unknown, whether or
-  not the macro's routes are registered.
+  not the macro's routes are registered. The vocabulary is keyed by name and arity, as Ecto
+  dispatches (an author's `coalesce/1` or `sum/2` is a macro), and a macro in the projection may
+  define an alias.
+- Swap comparison, connective and `like`/`ilike` forms only at Ecto's arity 2: an author's
+  `like/1` macro was swapped to a nonexistent `ilike/1`, failing the whole metamutant build.
 - Protect inline window grammar in free-standing dynamics, including opt-in atom mutations.
 - Mutate list-valued dynamics and repeated explicit join predicates; permit hosting a sole
   explicit predicate on an association join.

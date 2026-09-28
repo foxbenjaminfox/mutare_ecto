@@ -244,9 +244,13 @@ column, not `true`, not clause-typed) recognised only macros whose routes were r
 the walk reads an unregistered call as standard syntax. Ecto expands any call outside its own
 query vocabulary, so those checks now ask `Mutare.Ecto.Walk.opaque_call?/1`, which reads that
 vocabulary from the compiled `Ecto.Query.API` and `Ecto.Query.WindowAPI`. The walk's descent is
-unchanged.
+unchanged. A fifth round keyed that vocabulary by arity as well: Ecto dispatches on name and
+arity before it expands, so an author's `coalesce/1` or `sum/2` is a macro while a same-arity
+`sum/1` never is. The same round found the name-keyed swaps (`like` → `ilike`) renaming an
+author's `like/1` into a function that does not exist, and a macro in the projection defining
+the alias a `fragment` reads.
 
-The same round found that a keyword filter's scalar value, routed `:interpolated`, reaches Ecto
+The fourth round also found that a keyword filter's scalar value, routed `:interpolated`, reaches Ecto
 as a parameter, which the planner `cast/1`s before `dump/1`ing, where a written literal is only
 `dump/1`ed. For a custom type whose `cast/1` is not the identity on the literal (one that
 downcases, say), the baseline binds a different value. Not yet fixed; see the open question

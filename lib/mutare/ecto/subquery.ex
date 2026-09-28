@@ -753,9 +753,9 @@ defmodule Mutare.Ecto.Subquery do
 
   # `selected_as/1` is an ordinary expression, so any clause may read an alias: written, or
   # hidden where a clause admits a `dynamic` (`group_by: ^[dynamic(selected_as(:bucket))]`), in
-  # an author macro's expansion, or named by a `fragment`'s raw SQL. The hidden reads matter only if the projection may define
-  # an alias: a written `selected_as/2`, or a pinned projection, which may be a dynamic that
-  # writes one.
+  # an author macro's expansion, or named by a `fragment`'s raw SQL. The hidden reads matter only
+  # if the projection may define an alias: a written `selected_as/2`, a call Ecto may expand into
+  # one (`Walk.opaque_call?/1`), or a pinned projection, which may be a dynamic that writes one.
   defp reads_selected_alias?(entries) do
     {projections, readers} = Enum.split_with(entries, &(&1.key in @projection_keys))
     readers = Enum.reject(readers, &(&1.key == :order_by))
@@ -768,7 +768,7 @@ defmodule Mutare.Ecto.Subquery do
   defp may_define_alias?({:^, _meta, [_interior]}), do: true
 
   defp may_define_alias?(projection),
-    do: contains?(projection, &match?({:selected_as, _, [_, _]}, &1))
+    do: contains?(projection, &(match?({:selected_as, _, [_, _]}, &1) or Walk.opaque_call?(&1)))
 
   # A condition admits a dynamic only as the whole condition; a pin within its expression is a
   # parameter. Elsewhere (`group_by`, `distinct`, `windows`) a dynamic may stand at any level of

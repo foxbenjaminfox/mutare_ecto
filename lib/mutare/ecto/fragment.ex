@@ -731,20 +731,25 @@ defmodule Mutare.Ecto.Fragment do
   # The atom-form node's own single swap, tagged by family **and** by the operator it swaps (the
   # source `form`, e.g. `<`) — so `# mutare:ignore[ecto:<]` names just this swap. `like`↔`ilike` is
   # dialect-gated (Postgres); comparison/connective are portable.
+  # Ecto's comparison, connective and `like`/`ilike` forms are exactly /2; a same-named call of
+  # another arity is an author macro Ecto expands, and its swap would name no function at all.
   defp swap(form, meta, args, position, config) do
+    binary? = length(args) == 2
+
     cond do
-      Map.has_key?(@comparison_swaps, form) ->
+      Map.has_key?(@comparison_swaps, form) and binary? ->
         [Tag.new(:comparison, {@comparison_swaps[form], meta, args}, to_string(form))]
 
-      Map.has_key?(@connective_swaps, form) ->
+      Map.has_key?(@connective_swaps, form) and binary? ->
         [Tag.new(:connective, {@connective_swaps[form], meta, args}, to_string(form))]
 
-      Map.has_key?(@membership_op_swaps, form) and Config.dialect_enabled?(config, [:postgres]) ->
+      Map.has_key?(@membership_op_swaps, form) and binary? and
+          Config.dialect_enabled?(config, [:postgres]) ->
         [Tag.new(:membership, {@membership_op_swaps[form], meta, args}, to_string(form))]
 
       # `ago(n, unit)` ↔ `from_now(n, unit)` — Ecto's interval helpers are exactly /2, so an
       # off-arity same-named call is an author helper, left alone.
-      Map.has_key?(@temporal_swaps, form) and length(args) == 2 ->
+      Map.has_key?(@temporal_swaps, form) and binary? ->
         [Tag.new(:temporal, {@temporal_swaps[form], meta, args}, to_string(form))]
 
       # Anything else may still be a value-expression form owned by a shared per-node catalog —

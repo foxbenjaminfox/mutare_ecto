@@ -4,6 +4,11 @@ defmodule Mutare.Ecto.DslAuditMacros do
   defmacro positive_alias, do: quote(do: selected_as(:n) > 1)
   defmacro total(x), do: quote(do: sum(unquote(x)))
   defmacro ignore(_condition), do: true
+  # Ecto's own names at arities Ecto does not have, so Ecto expands them.
+  defmacro coalesce(value), do: value
+  defmacro sum(left, right), do: quote(do: sum(unquote(left) + unquote(right)))
+  defmacro like(value), do: quote(do: like(unquote(value), "ok%"))
+  defmacro aliased(value), do: quote(do: selected_as(unquote(value), :bucket))
 end
 
 defmodule Mutare.Ecto.DslAuditRegressionTest do
@@ -699,11 +704,22 @@ defmodule Mutare.Ecto.DslAuditRegressionTest do
     end
 
     test "an unregistered macro may hide the projection's aggregate" do
-      source =
-        exists_source(~s|from r in "rows", select: coalesce(0, total(r.value))|)
+      # `sum/2` is not Ecto's `sum/1`: Ecto expands it.
+      for aggregate <- ["total(r.value)", "sum(r.x, r.y)"] do
+        source = exists_source(~s|from r in "rows", select: coalesce(0, #{aggregate})|)
+        assert_rewrite(source, [:coalesce], "coalesce(0, #{aggregate})", "0")
+        assert_builds(source, & &1.q(), only([:coalesce]))
+      end
+    end
 
-      assert_rewrite(source, [:coalesce], "coalesce(0, total(r.value))", "0")
-      assert_builds(source, & &1.q(), only([:coalesce]))
+    test "an unregistered macro in the projection may define the alias a clause reads" do
+      source =
+        exists_source(
+          ~s|from r in "rows", where: fragment("bucket > 0"), select: aliased(r.x + r.y)|
+        )
+
+      assert_rewrite(source, [:arithmetic], "r.x + r.y", "r.x - r.y")
+      assert_builds(source, & &1.q(), only([:arithmetic]))
     end
 
     test "an aggregate over only an enclosing query's columns is not this query's" do
@@ -758,7 +774,8 @@ defmodule Mutare.Ecto.DslAuditRegressionTest do
           {"where: false, or_where: coalesce(true, false)", :coalesce},
           # Ecto's escape erases `filter/1`, and expands a macro, into the literal `true`.
           {"where: false, or_where: filter(true)", :boolean_literal},
-          {"where: false, or_where: ignore(r.a > 1)", :comparison}
+          {"where: false, or_where: ignore(r.a > 1)", :comparison},
+          {"where: false, or_where: coalesce(true)", :boolean_literal}
         ] do
       source = fixture(~s|from r in "rows", #{clauses}, select: r.a|)
       assert ecto_diffs(source, only([family])) != []
@@ -798,6 +815,21 @@ defmodule Mutare.Ecto.DslAuditRegressionTest do
       assert_builds(source, & &1.q(), families)
       assert metamutant(source, families) =~ "dynamic(" != rebuilt?
     end
+  end
+
+  test "an author's like/1 is not swapped to a nonexistent ilike/1" do
+    source = fixture(~s|from r in "rows", where: like(r.name), select: r.name|)
+
+    opts = [
+      mutators: [{Mutare.Ecto, repo: MyApp.Repo, families: [:membership], dialects: [:postgres]}]
+    ]
+
+    assert ecto_diffs(source, opts) == []
+    assert_builds(source, & &1.q(), opts)
+
+    # Ecto's own like/2 still swaps.
+    source = fixture(~s|from r in "rows", where: like(r.name, "a%"), select: r.name|)
+    assert {~s|like(r.name, "a%")|, ~s|ilike(r.name, "a%")|} in ecto_diffs(source, opts)
   end
 
   test "a value subquery's ordering is observed when its source may bring the limit" do

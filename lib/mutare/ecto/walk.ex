@@ -124,20 +124,25 @@ defmodule Mutare.Ecto.Walk do
 
   defp anchor(tag, _node), do: tag
 
-  # The calls Ecto's query builder reads itself: `Ecto.Query.API`'s and `Ecto.Query.WindowAPI`'s
-  # functions (read from the Ecto this is compiled against), `subquery/1`, and the syntax forms
-  # it escapes (a field access's inner `.` node included, which a prewalk visits). `literal/1` is `identifier/1`'s older name.
+  # The calls Ecto's query builder reads itself, by name **and arity**: the builder dispatches on
+  # both before it tries a macro expansion, so an author's `coalesce/1` or `sum/2` is expanded
+  # while a same-arity `sum/1` never is. They are `Ecto.Query.API`'s and `Ecto.Query.WindowAPI`'s
+  # functions (read from the Ecto this is compiled against), the arities the builder accepts
+  # beyond those (`over/1`, `filter/1`, a unary `-`, `subquery/1`, `literal/1`, the older name of
+  # `identifier/1`), and the syntax forms it escapes, a field access's inner `.` node included
+  # (a prewalk visits it). `fragment/n` and the collection forms take any arity.
   @ecto_calls MapSet.new(
-                Keyword.keys(Ecto.Query.API.__info__(:functions)) ++
-                  Keyword.keys(Ecto.Query.WindowAPI.__info__(:functions)) ++
-                  [:subquery, :literal, :^, :., :{}, :%{}, :%, :|, :<<>>, :__block__] ++
-                  [:__aliases__, :sigil_s, :sigil_S, :sigil_w, :sigil_W]
+                Ecto.Query.API.__info__(:functions) ++
+                  Ecto.Query.WindowAPI.__info__(:functions) ++
+                  [over: 1, filter: 1, -: 1, subquery: 1, literal: 1, ^: 1, .: 2, %: 2, |: 2] ++
+                  [sigil_s: 2, sigil_S: 2, sigil_w: 2, sigil_W: 2]
               )
+  @any_arity [:fragment, :{}, :%{}, :<<>>, :__block__, :__aliases__]
 
   @doc """
   Whether Ecto may expand `node` into query syntax that the written source does not show: a
   registered author macro, a module attribute, a remote call, or any other local call outside
-  Ecto's own query vocabulary, which Ecto can only be expanding as a macro. A field access
+  Ecto's own query vocabulary (by name and arity), which Ecto can only be expanding as a macro. A field access
   (`p.x`, `as(:p).x`) and a JSON path (`p.meta["k"]`) are not calls in this sense.
 
   The descent itself does not ask this (an unregistered call is still read as standard syntax,
@@ -153,9 +158,12 @@ defmodule Mutare.Ecto.Walk do
     do: remote?(receiver) or Calls.routed_treatments(node) != nil
 
   def opaque_call?({name, _meta, args} = node) when is_atom(name) and is_list(args),
-    do: name not in @ecto_calls or Calls.routed_treatments(node) != nil
+    do: not ecto_call?(name, length(args)) or Calls.routed_treatments(node) != nil
 
   def opaque_call?(_node), do: false
+
+  defp ecto_call?(name, _arity) when name in @any_arity, do: true
+  defp ecto_call?(name, arity), do: MapSet.member?(@ecto_calls, {name, arity})
 
   defp remote?({:__aliases__, _meta, _segments}), do: true
   defp remote?(module), do: is_atom(module)
