@@ -611,13 +611,17 @@ defmodule Mutare.Ecto.Fragment do
   # another occurrence of the same value (`[1, 1, 2]` → `[1, 2]`) would leave the set unchanged —
   # equivalent to the original by construction — so `[1, 1, 2]` shrinks exactly to `[2]` and
   # `[1, 1]`. Two elements are one member when they are the same written expression
-  # (structurally, source metadata ignored): `1`/`1`, `^a`/`^a`, `u.x`/`u.x`. Only a literal list
+  # (structurally, source metadata ignored): `1`/`1`, `^a`/`^a`, `u.x`/`u.x` — and when nothing
+  # in it can evaluate differently each time. A call Ecto does not own (`^next_id()`, an author
+  # macro) or a `fragment` (`random()`) may, so each of its occurrences drops alone. Only a literal list
   # the author wrote qualifies: a pinned `^list`, a field reference, or a subquery right-hand
   # side has no written elements to drop. A singleton drops to `x in []` (constantly false —
   # still valid, trivially killable SQL). Tagged `"element"` so `# mutare:ignore[ecto:element]`
   # names the drops apart from the polarity flip.
   defp element_drops({:in, meta, [l, {:__block__, lmeta, [elems]}]}) when is_list(elems) do
-    keys = Enum.map(elems, &Sourceror.strip_meta/1)
+    keys =
+      for {elem, index} <- Enum.with_index(elems),
+          do: if(repeatable?(elem), do: Sourceror.strip_meta(elem), else: {:occurrence, index})
 
     for key <- Enum.uniq(keys) do
       kept = for {elem, k} <- Enum.zip(elems, keys), k != key, do: elem
@@ -626,6 +630,13 @@ defmodule Mutare.Ecto.Fragment do
   end
 
   defp element_drops(_node), do: []
+
+  defp repeatable?(elem) do
+    {_elem, fragment?} =
+      Macro.prewalk(elem, false, &{&1, &2 or match?({:fragment, _, args} when is_list(args), &1)})
+
+    not fragment? and not Walk.contains_opaque_call?(elem)
+  end
 
   # Rebuild each descent/drop mutant of a reverse-polarity unit's inner predicate back inside the
   # written `not`, keeping the tag — so the emitted node is the full condition, single-point.

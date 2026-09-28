@@ -101,6 +101,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   where it may change whether the query aggregates: an aggregate in `ORDER BY` makes Postgres
   aggregate the query (one row over empty input) and SQLite reject it, so
   `order_by: coalesce(1, sum(r.x))` → `1` changes the result. Such mutants had been pruned.
+- Drop each occurrence of a repeated in-list element alone when it may evaluate differently
+  each time (`p.id in [^next_id(), ^next_id()]`, a `fragment`): identical syntax had been read
+  as one value, and the single-occurrence drop was never offered.
 - Read `fragment()` as a macro Ecto expands (its fragment heads take at least the query): a
   `coalesce(fragment(), false)` drop had been woven into an `or_where`, where a `fragment()`
   expanding to `true` is discarded.

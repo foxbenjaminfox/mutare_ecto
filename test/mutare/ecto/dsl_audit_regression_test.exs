@@ -106,6 +106,7 @@ defmodule Mutare.Ecto.DslAuditRegressionTest do
       import Mutare.Ecto.DslAuditMacros
       alias MyApp.{Post, User}
       @first_column 1
+      def next_id, do: System.unique_integer([:positive])
       def q do
         #{body}
       end
@@ -1433,5 +1434,23 @@ defmodule Mutare.Ecto.DslAuditRegressionTest do
 
       assert ecto_diffs(source, only([:coalesce, :aggregate, :ordering, :arithmetic])) == []
     end
+  end
+
+  test "an in-list drops each occurrence of an element that may evaluate differently alone" do
+    membership = only([:membership])
+
+    source = fixture(~s|from r in "rows", where: r.id in [^next_id(), ^next_id()], select: r.id|)
+
+    assert {"r.id in [^next_id(), ^next_id()]", "r.id in [^next_id()]"} in ecto_diffs(
+             source,
+             membership
+           )
+
+    assert_builds(source, & &1.q(), membership)
+
+    # Repeated occurrences of a value that cannot change drop together.
+    source = fixture(~s|x = 1\nfrom r in "rows", where: r.id in [^x, ^x, 2], select: r.id|)
+    refute {"r.id in [^x, ^x, 2]", "r.id in [^x, 2]"} in ecto_diffs(source, membership)
+    assert {"r.id in [^x, ^x, 2]", "r.id in [2]"} in ecto_diffs(source, membership)
   end
 end

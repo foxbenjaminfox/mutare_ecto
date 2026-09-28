@@ -321,6 +321,10 @@ though an aggregate in `ORDER BY` decides aggregation (Postgres aggregates by it
 it on an otherwise non-aggregating query). An ordering value mutant is now kept there when it may
 change whether the query holds an aggregate (`aggregating_ordering/2`), in both modes.
 
+Round eighteen found the in-list element drop reading identical syntax as one value, a proxy
+for "evaluates to the same member": two `^next_id()` calls need not. Grouping now requires an
+element with no call Ecto does not own and no `fragment`.
+
 The fourth round also found that a keyword filter's scalar value, routed `:interpolated`, reaches Ecto
 as a parameter, which the planner `cast/1`s before `dump/1`ing, where a written literal is only
 `dump/1`ed. For a custom type whose `cast/1` is not the identity on the literal (one that
