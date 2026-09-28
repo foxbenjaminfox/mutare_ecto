@@ -486,8 +486,9 @@ defmodule Mutare.Ecto.Subquery do
         grouping = grouping(entries)
         before = aggregation(projected_aggregates(from), grouping)
         after_mutant = aggregation(projected_aggregates(mutant), grouping)
+        windows = named_windows(entries)
 
-        scoped_aggregates(original) != scoped_aggregates(mutated) and
+        scoped_aggregates(original, windows) != scoped_aggregates(mutated, windows) and
           (before == :unknown or before != after_mutant)
 
       nil ->
@@ -504,6 +505,8 @@ defmodule Mutare.Ecto.Subquery do
   # every earlier contribution may or may not survive, so its aggregates count only as hidden.
   # A whole contribution followed by any merge is in the same position.
   defp projected_aggregates(%FromCall{clauses: %{entries: entries}}) do
+    windows = named_windows(entries)
+
     entries
     |> Enum.filter(&(&1.key in @projection_keys))
     |> Enum.flat_map(&merges(&1.value))
@@ -525,7 +528,7 @@ defmodule Mutare.Ecto.Subquery do
       end
     end)
     |> Enum.reduce({0, 0}, fn {_kind, part, certainty}, {written, hidden} ->
-      {w, h} = scoped_aggregates(part)
+      {w, h} = scoped_aggregates(part, windows)
 
       case certainty do
         :certain -> {written + w, hidden + h}
@@ -619,8 +622,14 @@ defmodule Mutare.Ecto.Subquery do
   # projection's own select grammar (maps, tuples, lists, `merge/2`) passes the projection's on,
   # and any other call's operands are ordinary expressions, where a select-only name such as
   # `map/2` is a macro Ecto expands.
-  defp scoped_aggregates(node) do
-    for {position, grammar, _rebuild} <- Walk.positions(node, :projection, &query_scope/2),
+  #
+  # A window named in `over/2` (`over(row_number(), :w)`) is read at its use, from the `windows:`
+  # definition (`named_windows/1`), exactly as the same options written inline would be: naming
+  # a window does not change its meaning, and SQLite aggregates the query by a named window's
+  # aggregate only while the projection uses it.
+  defp scoped_aggregates(node, windows) do
+    for {position, grammar, _rebuild} <-
+          Walk.positions(node, :projection, &query_scope(&1, &2, windows)),
         reduce: {0, 0} do
       {written, hidden} ->
         cond do
@@ -637,16 +646,40 @@ defmodule Mutare.Ecto.Subquery do
   defp correlated?(aggregate), do: contains?(aggregate, &match?({:parent_as, _, [_]}, &1))
 
   # Only positions are read here, never rebuilt, so a child's splice returns its parent.
-  defp query_scope({:over, _meta, [function | options]} = node, ctx),
-    do: window_scope(node, function, options, ctx)
+  defp query_scope({:over, _meta, [function | options]} = node, _grammar, windows),
+    do: window_scope(node, function, window_options(options, windows))
 
-  defp query_scope({head, _meta, [_arg]}, _ctx) when head in @wrappers, do: []
-  defp query_scope(node, grammar), do: Walk.structural(node, grammar, &child_grammar/3)
+  defp query_scope({head, _meta, [_arg]}, _grammar, _windows) when head in @wrappers, do: []
+
+  defp query_scope(node, grammar, _windows),
+    do: Walk.structural(node, grammar, &child_grammar/3)
 
   # A window's operands and options are ordinary expressions.
-  defp window_scope(node, function, options, _grammar) do
+  defp window_scope(node, function, options) do
     for operand <- window_operands(function) ++ options,
         do: {operand, :expression, fn _ -> node end}
+  end
+
+  # The options a window is read with: written inline, or the definition of the window it
+  # names. Ecto accepts only a written keyword list as `windows:`, and pins only an option's
+  # value (`w: [order_by: ^order]`), which the count reads as it does any pin. A name without a
+  # definition is one Ecto rejects.
+  defp window_options([name] = options, windows) do
+    case Mutare.AST.literal_value(name) do
+      {:ok, atom} when is_atom(atom) and not is_nil(atom) -> List.wrap(Map.get(windows, atom))
+      _inline -> options
+    end
+  end
+
+  defp window_options(options, _windows), do: options
+
+  # The windows a query names, `%{name => definition}`, from its `windows:` clauses.
+  defp named_windows(entries) do
+    for %Entry{key: :windows, value: value} <- entries,
+        %KeywordList{entries: pairs} <- [KeywordList.parse(value)],
+        pair <- pairs,
+        into: %{},
+        do: {pair.key, pair.value}
   end
 
   defp child_grammar(parent, _index, :projection),

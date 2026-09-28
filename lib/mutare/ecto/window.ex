@@ -9,6 +9,10 @@ defmodule Mutare.Ecto.Window do
   @type role :: :value | :ordering | :structural
 
   @spec children(Macro.t(), ctx, (role(), ctx -> ctx)) :: [Walk.child(ctx)] when ctx: var
+  # `over/1` has no options: its function alone, under the window's own context.
+  def children({form, meta, [expression]}, ctx, _refine),
+    do: [{expression, ctx, &{form, meta, [&1]}}]
+
   def children({form, meta, [expression, options]}, ctx, refine) do
     expression_child = {expression, ctx, &{form, meta, [&1, options]}}
 

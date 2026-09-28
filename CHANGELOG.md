@@ -49,6 +49,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   as a fragment argument) as possible macros anywhere else.
 - Stop pruning `min`/`max` swaps, and mutants inside them, beneath `is_nil`: on SQLite the
   aggregate also picks the row a bare column is read from.
+- Read a window named in `over/2` (`over(row_number(), :w)`) from its `windows:` definition
+  when judging whether an `EXISTS` projection mutant changes the query's aggregation, as the
+  same options written inline are read; each use counts, so a drop that leaves another use
+  keeps the aggregation. `over/2` is Ecto's own in every grammar (it had been read as a possible
+  macro outside a window, keeping every mutant around a window).
+- Observe a window function beneath `is_nil` alike for `over/1` and `over/2`: the one-argument
+  spelling offered the `sum` → `avg` swap the two-argument one prunes.
 - Leave a binary literal's segments unmutated: `<<0>>` → `<<-1>>` is no query Ecto accepts, and
   failed the whole metamutant build.
 - Read a projection's select grammar only at its own level: `map/2` inside `coalesce` is an

@@ -133,8 +133,8 @@ defmodule Mutare.Ecto.Walk do
   #   * an expression reads `Ecto.Query.API`'s functions, less the select grammar (`map/2`,
   #     `struct/2`, `merge/2`, `selected_as/2`), the fragment-argument helpers (`constant/1`,
   #     `splice/1`, `identifier/1` and its older name `literal/1`) and the `values/2` source,
-  #     plus the arities the builder accepts beyond them (`over/1`, `filter/1`, a unary `-`,
-  #     `subquery/1`) and the syntax forms it escapes, a field access's inner `.` node included
+  #     plus what the builder accepts beyond them (`over/1,2`, which `Ecto.Query.WindowAPI`
+  #     defines, `filter/1`, a unary `-`, `subquery/1`) and the syntax forms it escapes, a field access's inner `.` node included
   #     (a prewalk visits it). `fragment/n` and the collection forms take any arity;
   #   * a projection reads the select grammar besides;
   #   * a window's function reads `Ecto.Query.WindowAPI`'s besides.
@@ -144,7 +144,7 @@ defmodule Mutare.Ecto.Walk do
   @position_only @select_grammar ++
                    [constant: 1, splice: 1, identifier: 1, literal: 1, values: 2]
   @expression_calls (Ecto.Query.API.__info__(:functions) -- @position_only) ++
-                      [over: 1, filter: 1, -: 1, subquery: 1, ^: 1, .: 2, %: 2, |: 2] ++
+                      [over: 1, over: 2, filter: 1, -: 1, subquery: 1, ^: 1, .: 2, %: 2, |: 2] ++
                       [sigil_s: 2, sigil_S: 2, sigil_w: 2, sigil_W: 2]
   @calls %{
     expression: MapSet.new(@expression_calls),

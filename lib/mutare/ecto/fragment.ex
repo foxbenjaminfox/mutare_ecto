@@ -330,6 +330,8 @@ defmodule Mutare.Ecto.Fragment do
   # values, not the unary minus a numeric mutant may write, so it is a leaf.
   defp children({:<<>>, _meta, _segments}, _ctx), do: []
 
+  # Both spellings, `over/1` and `over/2`: the window function keeps the window's observation.
+  defp children({:over, _meta, [_function]} = node, ctx), do: window_children(node, ctx)
   defp children({:over, _meta, [_, _]} = node, ctx), do: window_children(node, ctx)
 
   # Everything else — an operator/call (its arguments under the author-macro rule), a written

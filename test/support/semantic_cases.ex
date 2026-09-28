@@ -336,6 +336,21 @@ defmodule Mutare.Ecto.SemanticCases do
                    {["P2", "P3"], ["P1", "P2"]}
         end
 
+        # The named window's `sum` makes the query aggregate its empty input into one row only
+        # while the projection uses the window (the definition stays written in the mutant).
+        test "audit: EXISTS keeps an aggregate drop whose only aggregate is a named window's" do
+          source =
+            audit_source("""
+            from u in User, where: exists(from p in Post, where: p.id == 99,
+              windows: [w: [order_by: sum(p.views)]],
+              select: coalesce(0, over(row_number(), :w))), select: u.id, order_by: u.id
+            """)
+
+          assert H.assert_delivery(@repo, source, {"coalesce(0, over(row_number(), :w))", "0"}, [
+                   :coalesce
+                 ]) == {[1, 2, 3, 4, 5, 6], []}
+        end
+
         # `max(parent_as(:outer).age)` aggregates the outer query, so without the `sum` the
         # inner query does not aggregate its empty input into a row.
         test "audit: EXISTS keeps an aggregate drop beside a correlated aggregate" do

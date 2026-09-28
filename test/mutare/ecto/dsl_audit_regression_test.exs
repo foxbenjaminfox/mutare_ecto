@@ -729,6 +729,36 @@ defmodule Mutare.Ecto.DslAuditRegressionTest do
       end
     end
 
+    test "a named window's aggregate is read at each use of the window" do
+      for {windows, projection, kept?} <- [
+            # Inline and named spell the same window.
+            {"", "coalesce(0, over(row_number(), order_by: sum(r.value)))", true},
+            {"windows: [w: [order_by: sum(r.value)]],", "coalesce(0, over(row_number(), :w))",
+             true},
+            # A pinned window option may be an aggregate.
+            {"windows: [w: [order_by: ^order]],", "coalesce(0, over(row_number(), :w))", true},
+            # A window with no aggregate, inline or named, aggregates nothing.
+            {"", "coalesce(0, over(row_number(), order_by: r.value))", false},
+            {"windows: [w: [order_by: r.value]],", "coalesce(0, over(row_number(), :w))", false},
+            # Another use of `:w` keeps the query aggregating after the drop.
+            {"windows: [w: [order_by: sum(r.value)]],",
+             "%{changed: coalesce(0, over(row_number(), :w)), retained: over(row_number(), :w)}",
+             false}
+          ] do
+        source =
+          exists_source(
+            ~s|from r in "rows", #{windows} select: #{projection}|,
+            "order = [asc: dynamic([r], sum(r.value))]"
+          )
+
+        assert_builds(source, & &1.q(), only([:coalesce]))
+
+        if kept?,
+          do: assert_rewrite(source, [:coalesce], "coalesce(0, over(row_number(), ", "0"),
+          else: assert(ecto_diffs(source, only([:coalesce])) == [])
+      end
+    end
+
     test "a select-only name nested in a projection expression is a macro" do
       source =
         """
@@ -938,6 +968,20 @@ defmodule Mutare.Ecto.DslAuditRegressionTest do
         assert Enum.any?(diffs(source, string_only()), &(elem(&1, 1) == ~s|"UP"|))
       end
     end
+  end
+
+  test "over/1 and over/2 observe their window function alike beneath is_nil" do
+    diffs_for = fn window ->
+      source = fixture(~s|dynamic([r], is_nil(#{window}))|)
+
+      for {original, mutated} <- ecto_diffs(source, only([:aggregate])),
+          into: MapSet.new(),
+          do: {String.replace(original, ", []", ""), String.replace(mutated, ", []", "")}
+    end
+
+    # `sum` and `avg` over one frame are NULL on the same rows, so the swap is pruned in both.
+    assert diffs_for.("over(sum(r.value))") == MapSet.new()
+    assert diffs_for.("over(sum(r.value), [])") == MapSet.new()
   end
 
   test "a binary literal's segments are never mutated" do

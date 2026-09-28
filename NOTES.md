@@ -259,6 +259,15 @@ projection, `map/2` is an ordinary expression again. The aggregate count now thr
 grammar through its walk. It also found a binary literal's integer segment mutated to a
 negative number, which Ecto's binary escape rejects; a binary literal is now a leaf.
 
+Then a named window (`windows: [w: [order_by: sum(r.value)]]`, used as `over(row_number(), :w)`)
+turned out to hide its aggregate from the count, which read `:w` as an atom; it now reads each
+use from the definition, and a second use of the window keeps the drop of the first pruned. The
+reproduction first showed the mutant already kept, for the wrong reason: the grammar split had
+left `over/2`, which `Ecto.Query.WindowAPI` rather than `Ecto.Query.API` defines, out of the
+expression vocabulary, so every window read as a possible macro. Also, `over/1` took the generic
+descent beneath `is_nil`, resetting its function's observation to by-value, where `over/2`'s
+window rule keeps it; both now share the rule.
+
 The fourth round also found that a keyword filter's scalar value, routed `:interpolated`, reaches Ecto
 as a parameter, which the planner `cast/1`s before `dump/1`ing, where a written literal is only
 `dump/1`ed. For a custom type whose `cast/1` is not the identity on the literal (one that
