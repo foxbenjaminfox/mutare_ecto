@@ -513,5 +513,99 @@ defmodule Mutare.Ecto.DslAuditRegressionTest do
 
       assert ecto_diffs(source, only([:coalesce])) == []
     end
+
+    # Whether the EXISTS subquery Ecto plans for `source` projects an aggregate. Planning is
+    # where a subquery's merges replace fields (`map/2` takes included), so the premise is
+    # read there rather than off the built query.
+    defp inner_aggregates?(source) do
+      query = Ecto.Queryable.to_query(compile_native(source).q())
+
+      {planned, _params, _cache_key} =
+        Ecto.Adapter.Queryable.plan_query(:all, Ecto.Adapters.SQLite3, query)
+
+      [%{subqueries: [subquery]}] = planned.wheres
+
+      {_expr, found?} =
+        Macro.prewalk(subquery.query.select.expr, false, fn
+          {:sum, _meta, [_arg]} = node, _found? -> {node, true}
+          node, found? -> {node, found?}
+        end)
+
+      found?
+    end
+
+    test "a map update and merge/2 are folded like select_merge" do
+      for {projection, kept?} <- [
+            # A map update's pairs replace the fields it takes, so the base is no empty map.
+            {"%{map(r, [:value]) | value: coalesce(0, sum(r.value))}", true},
+            {"merge(%{n: sum(r.a)}, %{n: coalesce(0, sum(r.value))})", true},
+            {"merge(%{kept: sum(r.a)}, %{n: coalesce(0, sum(r.value))})", false},
+            {"%{value: coalesce(0, sum(r.value))}", true}
+          ] do
+        source = exists_source(~s|from r in "audit_rows", select: #{projection}|)
+        assert inner_aggregates?(source)
+
+        refute inner_aggregates?(String.replace(source, "coalesce(0, sum(r.value))", "0")) ==
+                 kept?
+
+        assert_builds(source, & &1.q(), only([:coalesce]))
+
+        if kept?,
+          do: assert_rewrite(source, [:coalesce], "coalesce(0, sum(r.value))", "0"),
+          else: assert(ecto_diffs(source, only([:coalesce])) == [])
+      end
+    end
+
+    test "a projection pin that decides the aggregation reaches core" do
+      # No plugin family is enabled, so only core's `true` → `false` inside the pin can pass.
+      boolean_only = [
+        mutators: [Mutare.Mutators.BooleanLiteral, {Mutare.Ecto, repo: MyApp.Repo, families: []}]
+      ]
+
+      for inner <- [
+            # The whole projection, picked from dynamics built elsewhere.
+            ~s|select: ^(if true, do: aggregate, else: plain)|,
+            # A merge key that replaces the aggregate or leaves it.
+            ~s|select: %{n: sum(r.value)}, select_merge: %{^(if true, do: :n, else: :other) => 0}|,
+            # A take's field list that replaces the aggregate or leaves it.
+            ~s|select: %{value: sum(r.value)}, select_merge: map(r, ^(if true, do: [:value], else: [:id]))|
+          ] do
+        source =
+          exists_source(
+            ~s|from r in "audit_rows", #{inner}|,
+            "aggregate = dynamic([r], sum(r.value))\nplain = dynamic(0)"
+          )
+
+        assert inner_aggregates?(source) !=
+                 inner_aggregates?(String.replace(source, "if true", "if false"))
+
+        diffs = diffs(source, boolean_only)
+        assert {:boolean, "true", "false"} in diffs, "got #{inspect(diffs)}"
+        assert_builds(source, & &1.q(), boolean_only)
+      end
+    end
+
+    test "a query parameter in the projection stays out of core's reach under EXISTS" do
+      arithmetic_only = [
+        mutators: [Mutare.Mutators.Arithmetic, {Mutare.Ecto, repo: MyApp.Repo, families: []}]
+      ]
+
+      for projection <- [
+            "%{n: ^(bump + 1)}",
+            "{r.value, ^(bump + 1)}",
+            "sum(r.value + ^(bump + 1))"
+          ] do
+        inner = ~s|from r in "audit_rows", select: #{projection}|
+        assert diffs(exists_source(inner, "bump = 1"), arithmetic_only) == []
+
+        # The same parameter is observed where the wrapper reads projected values.
+        value_source =
+          fixture(
+            ~s|bump = 1\nfrom p in "outer_rows", where: p.id in subquery(#{inner}), select: p.id|
+          )
+
+        assert diffs(value_source, arithmetic_only) != []
+      end
+    end
   end
 end

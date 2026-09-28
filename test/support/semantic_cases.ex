@@ -199,7 +199,12 @@ defmodule Mutare.Ecto.SemanticCases do
               {"from p in Post, where: p.id == 99, select: ^dynamic([p], coalesce(0, sum(p.views)))",
                "coalesce(0, sum(p.views))"},
               {~s|from p in Post, where: p.id == 99, select: coalesce(0, over(fragment("sum(sum(?))", p.views)))|,
-               ~s|coalesce(0, over(fragment("sum(sum(?))", p.views)))|}
+               ~s|coalesce(0, over(fragment("sum(sum(?))", p.views)))|},
+              # The update replaces the taken `views`, leaving only the aggregate.
+              {"from p in Post, where: p.id == 99, select: %{map(p, [:views]) | views: coalesce(0, sum(p.views))}",
+               "coalesce(0, sum(p.views))"},
+              {"from p in Post, where: p.id == 99, select: merge(%{n: sum(p.id)}, %{n: coalesce(0, sum(p.views))})",
+               "coalesce(0, sum(p.views))"}
             ] do
           source =
             audit_source("""
@@ -210,6 +215,33 @@ defmodule Mutare.Ecto.SemanticCases do
           {baseline, mutant} = H.assert_delivery(@repo, source, {expression, "0"}, [:coalesce])
           assert baseline == [1, 2, 3, 4, 5, 6]
           assert mutant == []
+        end
+      end
+
+      # A projection pin that picks between prebuilt dynamics, or computes the merge key that
+      # replaces an aggregate, decides whether the empty input aggregates into one row. Core's
+      # `true` → `false` in the pin flips that; no plugin family is enabled to supply it.
+      test "audit: EXISTS observes a core mutant in a pin that decides the aggregation" do
+        for {inner, baseline_ids, mutant_ids} <- [
+              {"from p in Post, where: p.id == 99, select: ^(if true, do: aggregate, else: plain)",
+               [1, 2, 3, 4, 5, 6], []},
+              {"from p in Post, where: p.id == 99, select: %{n: sum(p.views)}, select_merge: %{^(if true, do: :n, else: :other) => 0}",
+               [], [1, 2, 3, 4, 5, 6]}
+            ] do
+          source =
+            audit_source("""
+            aggregate = dynamic([p], sum(p.views))
+            plain = dynamic(0)
+            from u in User, where: exists(#{inner}), select: u.id, order_by: u.id
+            """)
+
+          {module, sites} =
+            H.compile(source,
+              mutators: [Mutare.Mutators.BooleanLiteral, {Mutare.Ecto, repo: @repo, families: []}]
+            )
+
+          assert H.observe(@repo, sites, {"true", "false"}, &module.q/0) ==
+                   {baseline_ids, mutant_ids}
         end
       end
 

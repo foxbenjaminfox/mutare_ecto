@@ -194,6 +194,20 @@ considered and rejected. Core attributes a mutant at the Elixir node it changed,
 flow change (negating the `if` that picks between two dynamics) is attributed at a node with no
 aggregate, while it still switches which projection runs.
 
+The next review found both of those fixes too narrow. The fold read a map update,
+`%{map(r, [:value]) | value: coalesce(0, sum(r.value))}`, as an empty literal map: its
+comprehension skipped the `|` member instead of rejecting it. So both sides counted no
+aggregate, and the drop was pruned. The fold now expands a clause into the merges Ecto's
+subquery planner applies (a map update's base, then its pairs; `merge/2`'s left operand, then
+its right), and a map with any member that is not a literal-keyed field contributes whole. The
+pin gate asked whether the interior *builds* a `dynamic`, but a pin can pick between dynamics
+built elsewhere, and a merge key or a `map/2` field list decides which fields survive with no
+`dynamic` at all. The gate now asks what the pin is to the projection, by a descent over Ecto's
+select grammar (`Mutare.Ecto.Subquery.projection_roots/1`): only a query parameter is withheld
+under EXISTS. That descent also changed two roles in value mode. A map key pin and a take's
+field-list pin were read as `:value` by the condition walk, which has no map grammar. They are
+now `:structural`, so `Mutare.Ecto.Island` holds the names they can evaluate to.
+
 The coalesce family's equivalence note ("differ only where x is NULL") still describes
 scalar evaluation only; an aggregate-removing drop is killed by an empty input instead.
 

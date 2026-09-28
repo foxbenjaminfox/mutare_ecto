@@ -40,8 +40,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fix the aggregation (Ecto drops a runtime-true one; SQLite rejects `HAVING` on a query that
   does not aggregate). A drop that keeps an aggregate in its retained operand is still pruned.
   The aggregation is read from the effective projection, after `select_merge` replaces earlier
-  fields. A projection pin that builds a `dynamic` now reaches core under `EXISTS`. A windowed
-  `fragment` counts as possibly hiding an aggregate.
+  fields, a map update's pairs, or `merge/2`'s right operand. Under `EXISTS`, every
+  projection pin except a query parameter reaches core: the whole projection, a map key, or a
+  `map/2` take's field list decides which fields survive, and so whether the query aggregates.
+  A windowed `fragment` counts as possibly hiding an aggregate.
 - Beneath `is_nil`, mutate a window's partition and ordering keys: their values decide which
   rows the window function reads, even when their NULL-ness is unchanged.
 - Include terminal composed subquery stages, inline subquery bounds, and windowed value-query

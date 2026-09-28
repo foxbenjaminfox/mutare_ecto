@@ -21,8 +21,9 @@ defmodule Mutare.Ecto.Subquery do
   # * General clause drops (including group_by/distinct) remain unimplemented here.
   #
   # Pins are collected from conditions and observable projections, with structural roots for
-  # projection descriptions. Under EXISTS, a projection pin is collected only when it builds a
-  # `dynamic` (`island_observed?/3`). Computed query sources go to core as Elixir, never to SQL catalogs.
+  # projection descriptions. Under EXISTS, a projection pin that is a query parameter is not
+  # collected (`island_observed?/3`). Computed query sources go to core as Elixir, never to SQL
+  # catalogs.
   # Composed queries use their ordinary stage coverage, as if constructed in a prior assignment;
   # the inline-from equivalence pruning is not applied across that Elixir boundary.
 
@@ -119,7 +120,7 @@ defmodule Mutare.Ecto.Subquery do
             fn entry, index ->
               for {root, root_role, rebuild_value} <- island_roots(entry),
                   {interior, role, rebuild} <- Fragment.islands(root, root_role),
-                  island_observed?(entry.key, interior, projection_mode(from, mode)) do
+                  island_observed?(entry.key, role, projection_mode(from, mode)) do
                 {interior, role,
                  &wrap.(rebuild_clause(from, index, rebuild_value.(rebuild.(&1))))}
               end
@@ -211,41 +212,111 @@ defmodule Mutare.Ecto.Subquery do
   defp island_clause?(key), do: Surface.from_clause?(key, :hosted) or key in @projection_keys
 
   # A condition's pins are observed in every mode, and so are a projection's where its values
-  # are observed. Under EXISTS a projection pin is observed only through whether the query
-  # aggregates, and inline query syntax reaches a projection through a pin only as a `dynamic`
-  # (`select: ^dynamic([r], coalesce(0, sum(r.value)))`). So only a pin whose interior builds one
-  # is passed to core. Its mutants are all kept: a core mutant is attributed at the Elixir node it
-  # changed, and negating the `flag` of `^if(flag, do: dynamic(..sum..), else: …)` changes a node
-  # with no aggregate while switching which dynamic is projected. So nothing about the changed
-  # node shows whether the aggregation survives. Some of the kept mutants are equivalent, such
-  # as an arithmetic swap inside the dynamic. That cost falls only on pinned projections that
-  # build a dynamic.
-  defp island_observed?(key, interior, projection_mode) do
-    key not in @projection_keys or projection_mode == :value or builds_dynamic?(interior)
+  # are observed. Under EXISTS only a projection pin that is a query parameter (role `:value`,
+  # `projection_roots/1`) is withheld: its value changes neither the statement nor whether the
+  # query aggregates, only projected values, which EXISTS does not read. (A value that fails to
+  # encode or to evaluate is not pursued, as for the plugin's own projection mutants.)
+  # Every other projection pin computes projection structure, and nothing short of evaluating
+  # it shows whether the aggregation survives. `select: ^(if flag, do: aggregate, else: plain)`
+  # picks between two dynamics built elsewhere, and in
+  # `select: %{n: sum(r.value)}, select_merge: %{^key => 0}` the key decides whether the merge
+  # replaces the aggregate. So all of such a pin's mutants are kept, including the equivalent
+  # ones (an arithmetic swap inside a projected dynamic): a core mutant is attributed at the
+  # Elixir node it changed, and negating `flag` changes a node with no aggregate in it.
+  defp island_observed?(key, role, projection_mode) do
+    key not in @projection_keys or projection_mode == :value or role != :value
   end
 
-  defp builds_dynamic?(interior) do
-    {_interior, found?} =
-      Macro.prewalk(interior, false, fn node, found? ->
-        {node,
-         found? or
-           match?({:ok, :dynamic, _, _}, Calls.resolved_call_to(node, Ecto.Query, :dynamic))}
-      end)
-
-    found?
-  end
-
-  # The roots whose pins are surfaced in one such clause: a condition's are the very roots its
-  # catalog walks (`catalog_roots/1`), so the two readers keep agreeing about which nodes exist;
-  # a projection is no condition position and is read whole. Each root carries the role of a
-  # pin standing *as* that root (`t:Mutare.Ecto.Fragment.role/0` — a pin beneath it reads its
-  # own position): a pinned projection (`select: ^fields`) is a list of column names, or a map
-  # of dynamics — structure the builder writes out, never a parameter.
+  # The roots whose pins are surfaced in one such clause, each with the role of a pin standing
+  # *as* that root (`t:Mutare.Ecto.Fragment.role/0` — a pin beneath it reads its own position).
+  # A condition's roots are the very roots its catalog walks (`catalog_roots/1`), so the two
+  # readers keep agreeing about which nodes exist. A projection's are the expressions within
+  # its select grammar (`projection_roots/1`).
   defp island_roots(%Entry{key: key, value: value}) do
     if Surface.from_clause?(key, :hosted),
       do: for({root, role, _slot, rebuild} <- catalog_roots(value), do: {root, role, rebuild}),
-      else: [{value, :structural, & &1}]
+      else: projection_roots(value)
   end
+
+  # A projection is Ecto's select grammar (`Ecto.Query.Builder.Select.escape/4`) around
+  # expressions: maps, map updates, structs, tuples, lists, `merge/2`, and `map/2`/`struct/2`
+  # takes. This descends the grammar to its expressions, each with the rebuild of the whole
+  # projection. Where a pin fills a grammar position, the position decides what Ecto does
+  # with its value:
+  #
+  #   * the whole clause (`select: ^fields`) is a field list, a dynamic, or a map of dynamics,
+  #     expanded at runtime: `:structural`;
+  #   * a map key (`%{^key => …}`) names an output field, which a merge may replace:
+  #     `:structural`;
+  #   * a take's field list (`map(r, ^fields)`) names columns: `:structural`;
+  #   * anywhere else (a map value, a tuple or list element) Ecto escapes it as a query
+  #     parameter: `:value`.
+  defp projection_roots({:^, _meta, [_interior]} = pin), do: [{pin, :structural, & &1}]
+  defp projection_roots(projection), do: projection_parts(projection)
+
+  defp projection_parts({:%{}, meta, [{:|, bar_meta, [base, updates]}]}) do
+    update = fn base, updates -> {:%{}, meta, [{:|, bar_meta, [base, updates]}]} end
+
+    within(projection_parts(base), &update.(&1, updates)) ++
+      within(pair_parts(updates), &update.(base, &1))
+  end
+
+  defp projection_parts({:%{}, meta, pairs}), do: within(pair_parts(pairs), &{:%{}, meta, &1})
+
+  defp projection_parts({:%, meta, [name, map]}),
+    do: within(projection_parts(map), &{:%, meta, [name, &1]})
+
+  defp projection_parts({:merge, meta, [_left, {kind, _, _}] = operands})
+       when kind in [:%{}, :map],
+       do: within(element_parts(operands), &{:merge, meta, &1})
+
+  defp projection_parts({tag, meta, [{var, _, context} = source, fields]})
+       when tag in [:map, :struct] and is_atom(var) and is_atom(context) do
+    case fields do
+      {:^, _meta, [_interior]} -> [{fields, :structural, &{tag, meta, [source, &1]}}]
+      _written -> []
+    end
+  end
+
+  defp projection_parts({:{}, meta, elements}),
+    do: within(element_parts(elements), &{:{}, meta, &1})
+
+  # Sourceror's wrapper around a written list or 2-tuple.
+  defp projection_parts({:__block__, meta, [inner]})
+       when is_list(inner) or (is_tuple(inner) and tuple_size(inner) == 2),
+       do: within(projection_parts(inner), &{:__block__, meta, [&1]})
+
+  defp projection_parts(elements) when is_list(elements), do: element_parts(elements)
+
+  defp projection_parts({left, right}),
+    do: within(element_parts([left, right]), fn [left, right] -> {left, right} end)
+
+  defp projection_parts(expression), do: [{expression, :value, & &1}]
+
+  defp element_parts(elements) do
+    for {element, index} <- Enum.with_index(elements),
+        {root, role, rebuild} <- projection_parts(element),
+        do: {root, role, &List.replace_at(elements, index, rebuild.(&1))}
+  end
+
+  # A map's (or a map update's) `key => value` pairs. The map-update form is matched before a
+  # map's pairs are read, so every member here is a pair.
+  defp pair_parts(pairs) do
+    pairs
+    |> Enum.with_index()
+    |> Enum.flat_map(fn {{key, value}, index} ->
+      within(
+        within(key_parts(key), &{&1, value}) ++ within(projection_parts(value), &{key, &1}),
+        &List.replace_at(pairs, index, &1)
+      )
+    end)
+  end
+
+  defp key_parts({:^, _meta, [_interior]} = pin), do: [{pin, :structural, & &1}]
+  defp key_parts(key), do: projection_parts(key)
+
+  defp within(parts, wrap),
+    do: for({root, role, rebuild} <- parts, do: {root, role, &wrap.(rebuild.(&1))})
 
   # The row-set producers, composed straight from `Mutare.Ecto.Query` — attribution included (the
   # outer condition's walk anchors only an *unattributed* tag, so `Query`'s inner-clause stamp
@@ -424,15 +495,16 @@ defmodule Mutare.Ecto.Subquery do
   defp changes_aggregation?(_from, _unattributed), do: true
 
   # `{written, hidden}` over the fields that survive the projection clauses, folded in written
-  # order the way Ecto merges them. A literal map's key replaces an earlier field with that key.
-  # A projection that is not a literal map (a source, a tuple, a pin, a map with a computed key)
+  # order the way Ecto merges them (`merges/1`). A literal map's key replaces an earlier field
+  # with that key. Any other merge (a source, a tuple, a pin, a map with a computed key)
   # contributes whole. After a merge that could replace any key (anything but a literal map),
   # every earlier contribution may or may not survive, so its aggregates count only as hidden.
   # A whole contribution followed by any merge is in the same position.
   defp projected_aggregates(%FromCall{clauses: %{entries: entries}}) do
     entries
     |> Enum.filter(&(&1.key in @projection_keys))
-    |> Enum.reduce([], fn %Entry{value: value}, contributions ->
+    |> Enum.flat_map(&merges(&1.value))
+    |> Enum.reduce([], fn value, contributions ->
       case literal_map_fields(value) do
         {:ok, fields} ->
           keys = MapSet.new(fields, &elem(&1, 0))
@@ -465,17 +537,43 @@ defmodule Mutare.Ecto.Subquery do
   defp maybe_whole({:whole, part, _certainty}), do: {:whole, part, :maybe}
   defp maybe_whole(field), do: field
 
-  # A map written with literal keys, as `{key, value}` fields in written order.
+  # One projection clause as the merges Ecto's subquery planner applies in order: a map update
+  # (`%{base | pairs}`) keeps its base's fields except the ones its pairs replace, `merge/2` is
+  # its left operand merged with its right, and a struct has its map's fields.
+  defp merges({:%{}, meta, [{:|, _bar_meta, [base, pairs]}]}),
+    do: merges(base) ++ [{:%{}, meta, pairs}]
+
+  defp merges({:merge, _meta, [left, {kind, _, _} = right]}) when kind in [:%{}, :map],
+    do: merges(left) ++ merges(right)
+
+  defp merges({:%, _meta, [_name, map]}), do: merges(map)
+  defp merges(projection), do: [projection]
+
+  # A map written with literal keys, as `{key, value}` fields in written order, or `:error` if
+  # any member is not such a field.
   defp literal_map_fields({:%{}, _meta, pairs}) do
-    fields = for {key, value} <- pairs, do: {literal_key(key), value}
-    if Enum.any?(fields, &(elem(&1, 0) == :error)), do: :error, else: {:ok, fields}
+    Enum.reduce_while(pairs, {:ok, []}, fn pair, {:ok, fields} ->
+      case literal_field(pair) do
+        {:ok, field} -> {:cont, {:ok, [field | fields]}}
+        :error -> {:halt, :error}
+      end
+    end)
+    |> case do
+      {:ok, fields} -> {:ok, Enum.reverse(fields)}
+      :error -> :error
+    end
   end
 
   defp literal_map_fields(_projection), do: :error
 
-  defp literal_key({:__block__, _meta, [key]}) when is_atom(key) or is_binary(key), do: key
-  defp literal_key(key) when is_atom(key) or is_binary(key), do: key
-  defp literal_key(_computed), do: :error
+  defp literal_field({key, value}) do
+    case Mutare.AST.literal_value(key) do
+      {:ok, name} when is_atom(name) or is_binary(name) -> {:ok, {name, value}}
+      _computed -> :error
+    end
+  end
+
+  defp literal_field(_update), do: :error
 
   # `:yes`, `:no` or `:unknown`: whether a query with this grouping and a projection holding
   # `{written, hidden}` aggregates aggregates.
