@@ -1517,4 +1517,19 @@ defmodule Mutare.Ecto.DslAuditRegressionTest do
     assert_rewrite(source, [:aggregate], "min(r.age)", "max(r.age)")
     assert_builds(source, & &1.q(), only([:aggregate]))
   end
+
+  test "a named window is read from its definition in either pair spelling" do
+    for windows <- ["[w: [order_by: sum(r.views)]]", "[{:w, [order_by: sum(r.views)]}]"] do
+      source =
+        fixture("""
+        from p in "posts",
+          where: exists(from r in "posts", where: r.id < 0, windows: #{windows},
+            select: coalesce(0, over(row_number(), :w))),
+          select: p.id
+        """)
+
+      assert_rewrite(source, [:coalesce], "coalesce(0, over(row_number(), :w))", "0")
+      assert_builds(source, & &1.q(), only([:coalesce]))
+    end
+  end
 end

@@ -787,14 +787,20 @@ defmodule Mutare.Ecto.Subquery do
 
   defp window_options(options, _windows), do: options
 
-  # The windows a query names, `%{name => definition}`, from its `windows:` clauses.
+  # The windows a query names, `%{name => definition}`, from its `windows:` clauses. Ecto takes
+  # only a written list there, of keyword pairs or explicit tuples (`[{:w, [...]}]`) alike.
   defp named_windows(entries) do
     for %Entry{key: :windows, value: value} <- entries,
-        %KeywordList{entries: pairs} <- [KeywordList.parse(value)],
-        pair <- pairs,
+        element <- AST.unwrap_list(value) || [],
+        {name, definition} <- [window_pair(element)],
+        is_atom(name) and not is_nil(name),
         into: %{},
-        do: {pair.key, pair.value}
+        do: {name, definition}
   end
+
+  defp window_pair({:__block__, _meta, [{_name, _definition} = pair]}), do: window_pair(pair)
+  defp window_pair({name, definition}), do: {AST.atom_value(name), definition}
+  defp window_pair(_element), do: {nil, nil}
 
   defp child_grammar(parent, _index, :projection),
     do: if(select_grammar?(parent), do: :projection, else: :expression)

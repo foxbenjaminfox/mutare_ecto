@@ -340,6 +340,10 @@ Round twenty-one then struck the field and key reads from it (a module in the va
 struct's `fetch/2`), and found the `having` bare-column check reading an unread non-empty list
 (`[{:name, "Carol"}]`, keyword pairs to Ecto) as naming no column.
 
+Round twenty-two was cut short by codex's usage limit; its one demonstrated probe showed the same
+spelling gap in `named_windows/1`, which read only keyword-syntax pairs, so an explicit-tuple
+window definition's aggregate went uncounted.
+
 The fourth round also found that a keyword filter's scalar value, routed `:interpolated`, reaches Ecto
 as a parameter, which the planner `cast/1`s before `dump/1`ing, where a written literal is only
 `dump/1`ed. For a custom type whose `cast/1` is not the identity on the literal (one that
