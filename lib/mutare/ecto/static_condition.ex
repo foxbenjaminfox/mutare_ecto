@@ -31,6 +31,16 @@ defmodule Mutare.Ecto.StaticCondition do
   condition, so each written predicate must be rebuilt statically. A sole explicit predicate
   on an association join can weave: Ecto attaches association constraints later, in planning.
 
+  **A filter that is, or may become, the literal `true`.** Ecto's runtime filter path discards a
+  `where`/`having` condition that expands to `true`, whatever its operator
+  (`Ecto.Query.Builder.Filter.apply/3`); the static build keeps it. Alone that loses nothing, but
+  `where: false, or_where: true` becomes `where: false`, and `where: true, or_where: p.x > 1`
+  becomes `where: p.x > 1`. A woven branch that is the literal `true` is lost the same way,
+  whether it is the original (baseline rows change) or a mutant (`or_where: coalesce(true, x)`
+  → `true` delivers another query than it reports). So a filter condition is rebuilt when it,
+  or a mutant of the plugin's own catalog, is the literal `true`. A pin's mutants cannot be:
+  they keep the pin. A join's `on:` keeps a `true` on both paths.
+
   **Opaque macro expansions.** With `condition_delivery: :static`, every condition uses this
   rebuild path, including a macro that introduces a subquery invisible in written source.
   Registering that macro's arguments as raw does not prevent its enclosing condition from
@@ -38,7 +48,8 @@ defmodule Mutare.Ecto.StaticCondition do
 
   ## The rule
 
-  `delivery/5` applies the configured policy, then `delivery/4` decides from the receiving
+  `delivery/5` applies the configured policy, rebuilds a filter that is or may become the literal
+  `true` (above), then `delivery/4` decides from the receiving
   clause, the expression, its predicate kind, and the declaration it is read under. A condition is **rebuilt** when the
   expression carries a subquery (`Mutare.Ecto.Subquery.present?/1`) that the clause rejects in a
   dynamic (`Mutare.Ecto.Surface.dynamic_subqueries?/1` — everything but `where`/`or_where`), or when
@@ -106,8 +117,22 @@ defmodule Mutare.Ecto.StaticCondition do
   def delivery(_clause, _condition, _kind, _bindings, %{condition_delivery: :static}),
     do: :rebuilt
 
-  def delivery(clause, condition, kind, bindings, %{condition_delivery: :auto}),
-    do: delivery(clause, condition, kind, bindings)
+  def delivery(clause, condition, kind, bindings, %{condition_delivery: :auto} = config) do
+    if may_be_true?(clause, condition, config),
+      do: :rebuilt,
+      else: delivery(clause, condition, kind, bindings)
+  end
+
+  @filters [:where, :or_where, :having, :or_having]
+
+  defp may_be_true?(clause, condition, config) when clause in @filters,
+    do:
+      Enum.any?(
+        [condition | for(tag <- Catalog.own_catalog(condition, config), do: tag.node)],
+        &(Mutare.AST.literal_value(&1) == {:ok, true})
+      )
+
+  defp may_be_true?(_clause, _condition, _config), do: false
 
   # A root pin's weave re-declares nothing, so its declaration is never read.
   defp woven(:root_pin, _bindings), do: {:woven, []}

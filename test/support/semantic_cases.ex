@@ -275,6 +275,51 @@ defmodule Mutare.Ecto.SemanticCases do
         end
       end
 
+      # Ecto's runtime filter path drops a condition that is the literal `true`, so a woven
+      # `true` must still reach the engine: as an `or_where`, before one, and as the coalesce
+      # drop's replacement (which is equivalent here, so the mutant keeps every row).
+      test "audit: a woven literal true keeps its OR clause" do
+        for {query, {before, after_code}, family, expected} <- [
+              {"from p in Post, where: false, or_where: true, select: p.id, order_by: p.id",
+               {"true", "false"}, :boolean_literal, {[1, 2, 3], []}},
+              {"from p in Post, where: true, or_where: p.views > 100, select: p.id, order_by: p.id",
+               {"true", "false"}, :boolean_literal, {[1, 2, 3], []}},
+              {"from p in Post, group_by: p.user_id, having: false, or_having: true, select: p.user_id, order_by: p.user_id",
+               {"true", "false"}, :boolean_literal, {[1, 2, 99], []}},
+              {"from p in Post, where: false, or_where: coalesce(true, false), select: p.id, order_by: p.id",
+               {"coalesce(true, false)", "true"}, :coalesce, {[1, 2, 3], [1, 2, 3]}}
+            ] do
+          source = audit_source(query)
+          assert H.assert_delivery(@repo, source, {before, after_code}, [family]) == expected
+        end
+      end
+
+      # `GROUP BY 1` groups by the projection: `views - views` is one group, which `offset: 1`
+      # skips; `views + views` is three.
+      test "audit: EXISTS observes a projection grouped by position" do
+        source =
+          audit_source("""
+          from u in User, where: exists(from p in Post, group_by: 1, limit: 10, offset: 1,
+            select: p.views - p.views), select: u.id, order_by: u.id
+          """)
+
+        assert H.assert_delivery(@repo, source, {"p.views - p.views", "p.views + p.views"}, [
+                 :arithmetic
+               ]) == {[], [1, 2, 3, 4, 5, 6]}
+      end
+
+      # `group_by: nil` renders no GROUP BY, so the aggregate still makes one row of no input.
+      test "audit: EXISTS keeps the aggregate drop under group_by: nil" do
+        source =
+          audit_source("""
+          from u in User, where: exists(from p in Post, where: p.id == 99, group_by: nil,
+            select: coalesce(0, sum(p.views))), select: u.id, order_by: u.id
+          """)
+
+        assert H.assert_delivery(@repo, source, {"coalesce(0, sum(p.views))", "0"}, [:coalesce]) ==
+                 {[1, 2, 3, 4, 5, 6], []}
+      end
+
       # The limit comes from `base`, so the direction picks user 1's post or the orphan's.
       test "audit: a value subquery orders under the limit its source brings" do
         source =

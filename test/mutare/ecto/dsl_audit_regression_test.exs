@@ -634,14 +634,52 @@ defmodule Mutare.Ecto.DslAuditRegressionTest do
           else: assert(ecto_diffs(source, only([:arithmetic])) == [])
       end
 
-      # Without an alias to read, a pinned grouping reads none.
+      # Without an alias to read, and with no offset or having for a positional term to matter
+      # in, a pinned grouping reads nothing that changes existence.
       source =
         exists_source(
-          ~s|from r in "rows", group_by: ^grouping, limit: 10, offset: 1, select: r.a + r.b|,
+          ~s|from r in "rows", group_by: ^grouping, select: r.a + r.b|,
           "grouping = [dynamic([r], r.a)]"
         )
 
       assert ecto_diffs(source, only([:arithmetic])) == []
+    end
+
+    test "a grouping by projected position observes the projection" do
+      for {clauses, kept?} <- [
+            {"group_by: 1, limit: 10, offset: 1", true},
+            {~s|group_by: fragment("1"), limit: 10, offset: 1|, true},
+            {"group_by: ^grouping, limit: 10, offset: 1", true},
+            {"group_by: 1, having: count(r.a) > 1", true},
+            {"distinct: 1, limit: 10, offset: 1", true},
+            # The number of groups decides nothing without an offset or a having.
+            {"group_by: 1", false},
+            {"group_by: r.a, limit: 10, offset: 1", false}
+          ] do
+        source =
+          exists_source(
+            ~s|from r in "rows", #{clauses}, select: r.a + r.b|,
+            "grouping = [dynamic(1)]"
+          )
+
+        assert_builds(source, & &1.q(), only([:arithmetic]))
+
+        if kept?,
+          do: assert_rewrite(source, [:arithmetic], "r.a + r.b", "r.a - r.b"),
+          else: assert(ecto_diffs(source, only([:arithmetic])) == [])
+      end
+    end
+
+    test "group_by: nil groups nothing" do
+      for grouping <- ["nil", "[]"] do
+        source =
+          exists_source(
+            ~s|from r in "rows", group_by: #{grouping}, select: coalesce(0, sum(r.value))|
+          )
+
+        assert_rewrite(source, [:coalesce], "coalesce(0, sum(r.value))", "0")
+        assert_builds(source, & &1.q(), only([:coalesce]))
+      end
     end
 
     test "a having that may read a bare column observes the aggregate swap" do
@@ -672,6 +710,25 @@ defmodule Mutare.Ecto.DslAuditRegressionTest do
             )
       end
     end
+  end
+
+  test "a filter that is or may become the literal true is rebuilt, never woven" do
+    for {clauses, family} <- [
+          {"where: false, or_where: true", :boolean_literal},
+          {"where: true, or_where: r.a > 1", :boolean_literal},
+          {"group_by: r.a, having: false, or_having: true", :boolean_literal},
+          {"where: false, or_where: coalesce(true, false)", :coalesce}
+        ] do
+      source = fixture(~s|from r in "rows", #{clauses}, select: r.a|)
+      assert ecto_diffs(source, only([family])) != []
+      assert_builds(source, & &1.q(), only([family]))
+      # Ecto's runtime filter path would drop a woven `true`.
+      refute metamutant(source, only([family])) =~ "dynamic("
+    end
+
+    # Any other condition still weaves.
+    source = fixture(~s|from r in "rows", where: false, or_where: r.a > 1, select: r.a|)
+    assert metamutant(source, only([:comparison])) =~ "dynamic("
   end
 
   test "a value subquery's ordering is observed when its source may bring the limit" do

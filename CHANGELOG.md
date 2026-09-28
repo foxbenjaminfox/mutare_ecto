@@ -17,6 +17,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Rebuild, instead of weaving, a `where`/`having` condition that is the literal `true` or has a
+  mutant that is: Ecto's dynamic filter path discards such a condition, so a woven
+  `where: false, or_where: true` returned no rows at baseline, and an `or_where` mutant to `true`
+  delivered a different query than it reported.
+- Under `EXISTS`, observe the projection when a grouping or `DISTINCT ON` term may name a
+  projected column by position (`group_by: 1`, a `fragment`, a pin) past an offset or beside a
+  `having`, and stop reading `group_by: nil` as grouping the query.
 - Protect inline window grammar in free-standing dynamics, including opt-in atom mutations.
 - Mutate list-valued dynamics and repeated explicit join predicates; permit hosting a sole
   explicit predicate on an association join.

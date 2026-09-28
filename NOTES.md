@@ -220,6 +220,15 @@ bounds, although a query source may bring the limit. The audit's fourth finding,
 overflow breaks the `is_nil` rules for `+`/`-`/`*`, was kept as an accepted limitation and
 documented in `Mutare.Ecto.Fragment`.
 
+A second round of that audit found three more. Two continue the same pattern. A grouping or
+`DISTINCT ON` term can read the projection by position with no alias at all (`group_by: 1` is
+`GROUP BY 1`), and `grouping/1` read `group_by: nil` as grouping, though Ecto `List.wrap`s it into
+no grouping. The third was outside the subquery pruning, and broke baselines. Ecto's runtime
+filter path discards a condition that expands to `true` whatever its operator, so a woven
+`where: false, or_where: true` returned no rows. A weave of `^true` would keep the rows but not
+the statement (`WHERE ?` for `WHERE TRUE`), so the condition is rebuilt instead, whenever it or a
+catalog mutant of it is the literal `true`.
+
 The coalesce family's equivalence note ("differ only where x is NULL") still describes
 scalar evaluation only; an aggregate-removing drop is killed by an empty input instead.
 

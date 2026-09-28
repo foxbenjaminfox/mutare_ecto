@@ -186,7 +186,7 @@ Each row is role + the rule(s) that module is the **home** for.
 | `join_type.ex` | the join-kind swap table, keyed by qualifier and read by both spellings (`query.ex` rewrites a `left_join:` key, `clause.ex` a `join(q, :left, …)` qualifier); the direction policy stays `query.ex`'s |
 | `bound.ex` | the `:bound` ±1 bump; home of pin-only hosting and the `literal?/1` = `bumps/1` agreement |
 | `dynamic.ex` | free-standing `dynamic/1,2`; home of its whole-call in-place delivery |
-| `static_condition.ex` | the condition the host cannot weave (a subquery in a `having`; a declaration the plugin cannot re-declare); home of the delivery rule (`delivery/5` — configured policy + receiving clause × expression × predicate kind × declaration, consulted by the host and the fallback alike) and of its whole-call fallback delivery |
+| `static_condition.ex` | the condition the host cannot weave (a subquery in a `having`; a declaration the plugin cannot re-declare; a filter that is, or whose catalog makes it, the literal `true`); home of the delivery rule (`delivery/5` — configured policy + receiving clause × expression × predicate kind × declaration, consulted by the host and the fallback alike) and of its whole-call fallback delivery |
 | `query.ex` | whole-`from` rewrites; home of the JoinType narrowing rationale and of which `from` keys drop (one the rest of the keyword list cannot need — so never a join, `select:`, `update:` or `windows:`) |
 | `clause.ex` | standalone/pipe cousins of `query.ex` |
 | `clause_drop.ex` / `changeset.ex` | stage drops (a query clause / a changeset validator or hook) over `stage_drop.ex`; `changeset.ex` is home of the stage table (`stages/0`) the changeset routes derive from |
@@ -247,7 +247,8 @@ Each is the conclusion; the canonical statement is in the named module.
   the host (`Mutare.Ecto.Host`); the pin-only bound bump (`Mutare.Ecto.Bound`) is the precedent.
 - **Weaving changes how Ecto builds a clause, and Ecto's dynamic path accepts less than its
   static one.** A weave Ecto rejects still compiles; it raises when the query is *built*, at
-  baseline too. So hostability depends on the receiving clause as well as the expression
+  baseline too. The dynamic path also discards a filter that is the literal `true`, even an
+  `or_where`. So hostability depends on the receiving clause as well as the expression
   (`Mutare.Ecto.StaticCondition`), and a hosted delivery is proven by building the query under
   every mutant (`TestSupport.assert_builds/3`), not by `assert_compiles/2`.
 - **Never `dynamic`-wrap a condition that is itself a `^` pin.** Ecto dispatches a root

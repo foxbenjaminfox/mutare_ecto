@@ -586,19 +586,25 @@ defmodule Mutare.Ecto.Subquery do
   defp aggregation(_counts, _grouping), do: :unknown
 
   # Whether a `group_by` groups the query. A pinned one may be `[]` at runtime, and a written
-  # `[]` renders no grouping columns, so neither one proves grouping.
+  # `[]` or `nil` renders no grouping columns (Ecto `List.wrap`s the value), so none of them
+  # proves grouping.
   defp grouping(entries) do
     group_bys = for %Entry{key: :group_by, value: value} <- entries, do: value
 
     cond do
-      Enum.any?(group_bys, &(not match?({:^, _, _}, &1) and AST.unwrap_list(&1) != [])) ->
-        :grouped
+      Enum.any?(group_bys, &(grouping_terms(&1) not in [:unknown, []])) -> :grouped
+      group_bys != [] -> :unknown
+      true -> :ungrouped
+    end
+  end
 
-      group_bys != [] ->
-        :unknown
+  defp grouping_terms({:^, _meta, [_interior]}), do: :unknown
 
-      true ->
-        :ungrouped
+  defp grouping_terms(value) do
+    case {AST.unwrap_list(value), Mutare.AST.literal_value(value)} do
+      {terms, _literal} when is_list(terms) -> terms
+      {nil, {:ok, nil}} -> []
+      {nil, _expression} -> [value]
     end
   end
 
@@ -683,18 +689,49 @@ defmodule Mutare.Ecto.Subquery do
       Enum.any?(entries, &(&1.key in @value_comparisons)) or
       (Enum.any?(entries, &deduplicates?/1) and offset_may_skip?(entries)) or
       reads_selected_alias?(entries) or
+      groups_by_projection?(entries) or
       having_reads_bare_column?(entries)
+  end
+
+  # A grouping term may name a projected column by its position: `group_by: 1` is `GROUP BY 1`,
+  # which groups by the first projected expression, so a projection mutant can change the
+  # groups. It may also hide such a term (`positional?/1`). The number of groups decides
+  # existence only past an offset that may skip one, and what a `having` sees in each group
+  # only if there is one.
+  defp groups_by_projection?(entries) do
+    Enum.any?(entries, &(&1.key == :group_by and positional?(&1.value))) and
+      (offset_may_skip?(entries) or Enum.any?(entries, &(&1.key in [:having, :or_having])))
+  end
+
+  # Whether a grouping or DISTINCT ON value may hold a positional term: an integer literal at
+  # the level of its lists and keyword values, a pin there (which may hold `dynamic(1)`), or a
+  # `fragment` anywhere (`fragment("1")`).
+  defp positional?(value) do
+    contains?(value, &match?({:fragment, _, args} when is_list(args), &1)) or
+      grammar_term?(value, fn term ->
+        match?({:^, _, [_]}, term) or is_integer(AST.int_value(term))
+      end)
+  end
+
+  defp grammar_term?({_key, value}, term?), do: grammar_term?(value, term?)
+
+  defp grammar_term?(value, term?) do
+    case AST.unwrap_list(value) do
+      elements when is_list(elements) -> Enum.any?(elements, &grammar_term?(&1, term?))
+      nil -> term?.(value)
+    end
   end
 
   # UNION deduplicates the combined projection. `distinct: true` deduplicates the projection,
   # while `distinct: false` does not, and any other written value is DISTINCT ON its own
-  # expressions. A pinned value may be `true`.
+  # expressions, which may name a projected column by position (`positional?/1`). A pinned
+  # value may be `true`.
   defp deduplicates?(%Entry{key: :union}), do: true
 
   defp deduplicates?(%Entry{key: :distinct, value: value}) do
     case value do
       {:^, _meta, _args} -> true
-      _written -> AST.atom_value(value) == true
+      _written -> AST.atom_value(value) == true or positional?(value)
     end
   end
 
@@ -737,15 +774,7 @@ defmodule Mutare.Ecto.Subquery do
         else: grammar_pin?(value)
   end
 
-  defp grammar_pin?({:^, _meta, [_interior]}), do: true
-  defp grammar_pin?({_key, value}), do: grammar_pin?(value)
-
-  defp grammar_pin?(value) do
-    case AST.unwrap_list(value) do
-      elements when is_list(elements) -> Enum.any?(elements, &grammar_pin?/1)
-      nil -> false
-    end
-  end
+  defp grammar_pin?(value), do: grammar_term?(value, &match?({:^, _, [_]}, &1))
 
   # SQLite lets a `having` read a column that is neither grouped nor aggregated, and gives it
   # the value from the row the query's lone `min`/`max` picked (from an arbitrary row
