@@ -471,7 +471,8 @@ defmodule Mutare.Ecto.Subquery do
   # not equivalent, so it is kept.
   #
   # The mutant is pruned when its replacement holds the same aggregates as the node it replaces,
-  # including the ones a pin or fragment may hide (an arithmetic swap beside `^bump`), or when
+  # including the ones a pin or fragment may hide (an arithmetic swap beside `^bump`), unless an
+  # author macro around it reads its syntax (`beneath_opaque_call?/2`), or when
   # the query's aggregation is known and the same before and after (`aggregation/2`). Each side
   # is judged on its effective projection (`projected_aggregates/1`), because a later
   # `select_merge` key replaces an earlier field. A drop that keeps an aggregate in its retained
@@ -488,7 +489,8 @@ defmodule Mutare.Ecto.Subquery do
         after_mutant = aggregation(projected_aggregates(mutant), grouping)
         windows = named_windows(entries)
 
-        scoped_aggregates(original, windows) != scoped_aggregates(mutated, windows) and
+        (scoped_aggregates(original, windows) != scoped_aggregates(mutated, windows) or
+           beneath_opaque_call?(entries, original)) and
           (before == :unknown or before != after_mutant)
 
       nil ->
@@ -497,6 +499,19 @@ defmodule Mutare.Ecto.Subquery do
   end
 
   defp changes_aggregation?(_from, _unattributed), do: true
+
+  # Whether the replaced node is an argument, at any depth, of a projection call Ecto expands:
+  # the expansion reads the node's syntax (`unwrap_sum(sum(x))` may unwrap a `sum` and keep an
+  # `avg`), so equal aggregate counts no longer show an unchanged aggregation.
+  defp beneath_opaque_call?(entries, original) do
+    Enum.any?(entries, fn %Entry{key: key, value: value} ->
+      key in @projection_keys and
+        contains?(value, fn node ->
+          node != original and Walk.opaque_call?(node, :projection) and
+            contains?(node, &(&1 == original))
+        end)
+    end)
+  end
 
   # `{written, hidden}` over the fields that survive the projection clauses, folded in written
   # order the way Ecto merges them (`merges/1`). A literal map's key replaces an earlier field

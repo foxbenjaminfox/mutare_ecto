@@ -293,6 +293,12 @@ reader with its own traversal that had not been told (the `having` bare-column c
 asking `Walk.expands_argument?/1`), and a positional grouping hidden by `filter/1`, which
 Ecto's escape erases.
 
+Round thirteen found a string sigil missing from the clause-typing literals (Ecto escapes
+`~s`/`~S`/`~w`/`~W` as literals), and a shortcut in the `EXISTS` aggregation judgement that
+assumed the syntax around a mutated node keeps its meaning: equal aggregate counts before and
+after pruned the mutant even where an enclosing author macro could pattern-match on the
+aggregate's name. The shortcut now stands only outside such a macro.
+
 The fourth round also found that a keyword filter's scalar value, routed `:interpolated`, reaches Ecto
 as a parameter, which the planner `cast/1`s before `dump/1`ing, where a written literal is only
 `dump/1`ed. For a custom type whose `cast/1` is not the identity on the literal (one that

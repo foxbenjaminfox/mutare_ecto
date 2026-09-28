@@ -177,6 +177,11 @@ defmodule Mutare.Ecto.StaticCondition do
 
   defp clause_typed?({:-, _meta, [operand]}), do: clause_typed?(operand)
 
+  # Ecto escapes a string or word-list sigil as a literal, typed like any other.
+  defp clause_typed?({sigil, _meta, [_contents, _modifiers]})
+       when sigil in [:sigil_s, :sigil_S, :sigil_w, :sigil_W],
+       do: true
+
   defp clause_typed?({op, _meta, [left, right]}) when op in [:+, :-, :*, :/],
     do: clause_typed?(left) or clause_typed?(right)
 

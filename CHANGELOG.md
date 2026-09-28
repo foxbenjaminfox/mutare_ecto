@@ -78,6 +78,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Read what `type/2` expands in a `having` as possibly a bare column when judging an `EXISTS`
   projection mutant, and a positional grouping through `filter/1` (`group_by: filter(1)` is
   `GROUP BY 1`): each had pruned a live projection mutant.
+- Rebuild, instead of weaving, a condition whose string sigil (`coalesce(~s(0.5), false)`)
+  takes the clause's `:boolean` type: Ecto escapes the sigil as a literal, cast differently on
+  the dynamic path, so the woven baseline had returned other rows.
+- Keep an `EXISTS` projection mutant that holds the same aggregates as the node it replaces
+  when an author macro encloses it: the macro may read the syntax (`unwrap_sum(sum(x))`), so
+  `sum` → `avg` had been pruned though it turned zero rows into one.
 - Read `fragment()` as a macro Ecto expands (its fragment heads take at least the query): a
   `coalesce(fragment(), false)` drop had been woven into an `or_where`, where a `fragment()`
   expanding to `true` is discarded.

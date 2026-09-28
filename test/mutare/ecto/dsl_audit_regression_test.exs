@@ -77,6 +77,13 @@ defmodule Mutare.Ecto.DslAuditUnwrapMacros do
   defmacro is_nil({:sum, _meta, [field]}), do: field
 end
 
+defmodule Mutare.Ecto.DslAuditSyntaxMacros do
+  @moduledoc false
+  # A macro that reads its argument's syntax: it unwraps a `sum`, and keeps anything else.
+  defmacro unwrap_sum({:sum, _meta, [expression]}), do: expression
+  defmacro unwrap_sum(expression), do: expression
+end
+
 defmodule Mutare.Ecto.DslAuditRegressionTest do
   use ExUnit.Case, async: true
 
@@ -918,6 +925,9 @@ defmodule Mutare.Ecto.DslAuditRegressionTest do
           # `count(x, :distinct)` and `filter`'s aggregate pass it on too.
           {"count(r.a / ^n, :distinct)", true},
           {"filter(count(r.a / ^n, :distinct), r.a > 0)", true},
+          # A string sigil is a literal to Ecto.
+          {"coalesce(~s(0.5), false)", true},
+          {"coalesce(~S(0.5), false)", true},
           {"count(r.a / ^n)", false},
           {"coalesce(r.flag, false)", false},
           {"r.a > ^n", false},
@@ -1295,5 +1305,22 @@ defmodule Mutare.Ecto.DslAuditRegressionTest do
 
     assert_rewrite(source, [:arithmetic], "r.x + r.y", "r.x - r.y")
     assert_builds(source, & &1.q(), only([:arithmetic]))
+  end
+
+  test "EXISTS keeps an aggregate swap an enclosing macro may read" do
+    source = """
+    defmodule UnwrapSumQuery do
+      import Ecto.Query
+      import Mutare.Ecto.DslAuditSyntaxMacros
+      def q do
+        from p in "rows",
+          where: exists(from r in "rows", where: r.id < 0, select: unwrap_sum(sum(r.id))),
+          select: p.id
+      end
+    end
+    """
+
+    assert_rewrite(source, [:aggregate], "sum(r.id)", "avg(r.id)")
+    assert_builds(source, & &1.q(), only([:aggregate]))
   end
 end
