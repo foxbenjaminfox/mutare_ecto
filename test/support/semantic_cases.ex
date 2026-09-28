@@ -287,7 +287,9 @@ defmodule Mutare.Ecto.SemanticCases do
               {"from p in Post, group_by: p.user_id, having: false, or_having: true, select: p.user_id, order_by: p.user_id",
                {"true", "false"}, :boolean_literal, {[1, 2, 99], []}},
               {"from p in Post, where: false, or_where: coalesce(true, false), select: p.id, order_by: p.id",
-               {"coalesce(true, false)", "true"}, :coalesce, {[1, 2, 3], [1, 2, 3]}}
+               {"coalesce(true, false)", "true"}, :coalesce, {[1, 2, 3], [1, 2, 3]}},
+              {"from p in Post, where: false, or_where: filter(true), select: p.id, order_by: p.id",
+               {"true", "false"}, :boolean_literal, {[1, 2, 3], []}}
             ] do
           source = audit_source(query)
           assert H.assert_delivery(@repo, source, {before, after_code}, [family]) == expected

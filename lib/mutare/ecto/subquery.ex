@@ -664,7 +664,7 @@ defmodule Mutare.Ecto.Subquery do
   defp hides_aggregate?({head, _meta, [_arg]}) when head in @wrappers, do: false
   defp hides_aggregate?({:^, _meta, _args}), do: true
   defp hides_aggregate?({:fragment, _meta, args}) when is_list(args), do: true
-  defp hides_aggregate?(node), do: Calls.routed_treatments(node) != nil
+  defp hides_aggregate?(node), do: Walk.opaque_call?(node)
 
   defp projection_mode(from, :existence),
     do: if(projection_observed?(from), do: :value, else: :existence)
@@ -717,8 +717,7 @@ defmodule Mutare.Ecto.Subquery do
   end
 
   defp opaque_term?({:^, _meta, [_interior]}), do: true
-  defp opaque_term?({:@, _meta, [_attribute]}), do: true
-  defp opaque_term?(term), do: Calls.routed_treatments(term) != nil
+  defp opaque_term?(term), do: Walk.opaque_call?(term)
 
   defp grammar_term?({_key, value}, term?), do: grammar_term?(value, term?)
 
@@ -753,8 +752,8 @@ defmodule Mutare.Ecto.Subquery do
   end
 
   # `selected_as/1` is an ordinary expression, so any clause may read an alias: written, or
-  # hidden where a clause admits a `dynamic` (`group_by: ^[dynamic(selected_as(:bucket))]`), or
-  # named by a `fragment`'s raw SQL. The hidden reads matter only if the projection may define
+  # hidden where a clause admits a `dynamic` (`group_by: ^[dynamic(selected_as(:bucket))]`), in
+  # an author macro's expansion, or named by a `fragment`'s raw SQL. The hidden reads matter only if the projection may define
   # an alias: a written `selected_as/2`, or a pinned projection, which may be a dynamic that
   # writes one.
   defp reads_selected_alias?(entries) do
@@ -773,9 +772,13 @@ defmodule Mutare.Ecto.Subquery do
 
   # A condition admits a dynamic only as the whole condition; a pin within its expression is a
   # parameter. Elsewhere (`group_by`, `distinct`, `windows`) a dynamic may stand at any level of
-  # the clause's lists and keyword values.
+  # the clause's lists and keyword values. A `fragment` or an author macro may hide a read
+  # anywhere.
   defp may_read_alias?(%Entry{key: key, value: value}) do
-    contains?(value, &match?({:fragment, _, args} when is_list(args), &1)) or
+    contains?(
+      value,
+      &(match?({:fragment, _, args} when is_list(args), &1) or Walk.opaque_call?(&1))
+    ) or
       if Surface.from_clause?(key, :hosted),
         do: Condition.shape(value) == {:predicate, :root_pin},
         else: grammar_pin?(value)
@@ -836,7 +839,7 @@ defmodule Mutare.Ecto.Subquery do
 
   defp hides_column?({head, _meta, [_arg]}) when head in @wrappers, do: true
   defp hides_column?({:fragment, _meta, args}) when is_list(args), do: true
-  defp hides_column?(node), do: Calls.routed_treatments(node) != nil
+  defp hides_column?(node), do: Walk.opaque_call?(node)
 
   defp without_meta(ast),
     do:

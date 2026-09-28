@@ -237,6 +237,21 @@ static builder types a condition `:boolean` and a `dynamic` types it `:any`, and
 and arithmetic pass that type to their operands, so `where: coalesce(^"true", false)` binds
 `true` statically and the string woven. Such a condition is now rebuilt as well.
 
+A fourth round found `filter(true)` passing the literal-`true` check (Ecto's escape erases
+`filter/1`) and an alias read hidden in an unregistered macro. The macro case exposed a wider
+assumption: each check that concludes from absence (no alias read, no hidden aggregate, no bare
+column, not `true`, not clause-typed) recognised only macros whose routes were registered, while
+the walk reads an unregistered call as standard syntax. Ecto expands any call outside its own
+query vocabulary, so those checks now ask `Mutare.Ecto.Walk.opaque_call?/1`, which reads that
+vocabulary from the compiled `Ecto.Query.API` and `Ecto.Query.WindowAPI`. The walk's descent is
+unchanged.
+
+The same round found that a keyword filter's scalar value, routed `:interpolated`, reaches Ecto
+as a parameter, which the planner `cast/1`s before `dump/1`ing, where a written literal is only
+`dump/1`ed. For a custom type whose `cast/1` is not the identity on the literal (one that
+downcases, say), the baseline binds a different value. Not yet fixed; see the open question
+this was raised under.
+
 The coalesce family's equivalence note ("differ only where x is NULL") still describes
 scalar evaluation only; an aggregate-removing drop is killed by an empty input instead.
 

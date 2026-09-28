@@ -124,6 +124,42 @@ defmodule Mutare.Ecto.Walk do
 
   defp anchor(tag, _node), do: tag
 
+  # The calls Ecto's query builder reads itself: `Ecto.Query.API`'s and `Ecto.Query.WindowAPI`'s
+  # functions (read from the Ecto this is compiled against), `subquery/1`, and the syntax forms
+  # it escapes (a field access's inner `.` node included, which a prewalk visits). `literal/1` is `identifier/1`'s older name.
+  @ecto_calls MapSet.new(
+                Keyword.keys(Ecto.Query.API.__info__(:functions)) ++
+                  Keyword.keys(Ecto.Query.WindowAPI.__info__(:functions)) ++
+                  [:subquery, :literal, :^, :., :{}, :%{}, :%, :|, :<<>>, :__block__] ++
+                  [:__aliases__, :sigil_s, :sigil_S, :sigil_w, :sigil_W]
+              )
+
+  @doc """
+  Whether Ecto may expand `node` into query syntax that the written source does not show: a
+  registered author macro, a module attribute, a remote call, or any other local call outside
+  Ecto's own query vocabulary, which Ecto can only be expanding as a macro. A field access
+  (`p.x`, `as(:p).x`) and a JSON path (`p.meta["k"]`) are not calls in this sense.
+
+  The descent itself does not ask this (an unregistered call is still read as standard syntax,
+  the author-macro rule above). A reader that *concludes* something from what it did not see —
+  that a clause reads no projection, that a condition is not the literal `true` — asks it, so an
+  unseen expansion counts as unknown rather than as absent.
+  """
+  @spec opaque_call?(Macro.t()) :: boolean()
+  def opaque_call?({:@, _meta, [_attribute]}), do: true
+  def opaque_call?({{:., _, [Access, :get]}, _meta, _args}), do: false
+
+  def opaque_call?({{:., _, [receiver, _name]}, _meta, args} = node) when is_list(args),
+    do: remote?(receiver) or Calls.routed_treatments(node) != nil
+
+  def opaque_call?({name, _meta, args} = node) when is_atom(name) and is_list(args),
+    do: name not in @ecto_calls or Calls.routed_treatments(node) != nil
+
+  def opaque_call?(_node), do: false
+
+  defp remote?({:__aliases__, _meta, _segments}), do: true
+  defp remote?(module), do: is_atom(module)
+
   @doc """
   The default descent: a call's arguments (only those the author-macro rule admits), a
   2-tuple's two sides, a written list's elements — each with the context `child_ctx` derives for

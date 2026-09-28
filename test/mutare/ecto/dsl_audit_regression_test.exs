@@ -1,3 +1,11 @@
+defmodule Mutare.Ecto.DslAuditMacros do
+  @moduledoc false
+  # Unregistered author macros: no call routes, so only Ecto's expansion shows what they are.
+  defmacro positive_alias, do: quote(do: selected_as(:n) > 1)
+  defmacro total(x), do: quote(do: sum(unquote(x)))
+  defmacro ignore(_condition), do: true
+end
+
 defmodule Mutare.Ecto.DslAuditRegressionTest do
   use ExUnit.Case, async: true
 
@@ -7,6 +15,7 @@ defmodule Mutare.Ecto.DslAuditRegressionTest do
     """
     defmodule AuditQuery do
       import Ecto.Query
+      import Mutare.Ecto.DslAuditMacros
       alias MyApp.{Post, User}
       @first_column 1
       def q do
@@ -617,6 +626,8 @@ defmodule Mutare.Ecto.DslAuditRegressionTest do
             {~s|group_by: fragment("bucket")|, true},
             {"having: ^condition", true},
             {"group_by: selected_as(:bucket)", true},
+            # An unregistered macro Ecto expands (`selected_as(:n) > 1`, aliased as `:bucket`).
+            {"where: positive_alias()", true},
             # A parameter inside a condition is no dynamic.
             {"where: r.a > ^floor", false},
             {"group_by: r.a", false}
@@ -687,6 +698,14 @@ defmodule Mutare.Ecto.DslAuditRegressionTest do
       end
     end
 
+    test "an unregistered macro may hide the projection's aggregate" do
+      source =
+        exists_source(~s|from r in "rows", select: coalesce(0, total(r.value))|)
+
+      assert_rewrite(source, [:coalesce], "coalesce(0, total(r.value))", "0")
+      assert_builds(source, & &1.q(), only([:coalesce]))
+    end
+
     test "an aggregate over only an enclosing query's columns is not this query's" do
       source =
         fixture("""
@@ -736,7 +755,10 @@ defmodule Mutare.Ecto.DslAuditRegressionTest do
           {"where: false, or_where: true", :boolean_literal},
           {"where: true, or_where: r.a > 1", :boolean_literal},
           {"group_by: r.a, having: false, or_having: true", :boolean_literal},
-          {"where: false, or_where: coalesce(true, false)", :coalesce}
+          {"where: false, or_where: coalesce(true, false)", :coalesce},
+          # Ecto's escape erases `filter/1`, and expands a macro, into the literal `true`.
+          {"where: false, or_where: filter(true)", :boolean_literal},
+          {"where: false, or_where: ignore(r.a > 1)", :comparison}
         ] do
       source = fixture(~s|from r in "rows", #{clauses}, select: r.a|)
       assert ecto_diffs(source, only([family])) != []

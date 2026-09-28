@@ -38,7 +38,8 @@ defmodule Mutare.Ecto.StaticCondition do
   becomes `where: p.x > 1`. A woven branch that is the literal `true` is lost the same way,
   whether it is the original (baseline rows change) or a mutant (`or_where: coalesce(true, x)`
   → `true` delivers another query than it reports). So a filter condition is rebuilt when it,
-  or a mutant of the plugin's own catalog, is the literal `true`. A pin's mutants cannot be:
+  or a mutant of the plugin's own catalog, is the literal `true`, read through the `filter/1`
+  that Ecto's escape erases (`filter(true)`). A pin's mutants cannot be:
   they keep the pin. A join's `on:` keeps a `true` on both paths.
 
   **A condition typed by its clause.** The static builder escapes a condition as `:boolean`, the
@@ -90,7 +91,7 @@ defmodule Mutare.Ecto.StaticCondition do
   to accept the dynamic form, this delivery would remain valid, only more verbose than the weave.
   """
 
-  alias Mutare.Ecto.{Context, Island, Subquery, Surface, Tag}
+  alias Mutare.Ecto.{Context, Island, Subquery, Surface, Tag, Walk}
   alias Mutare.Ecto.AST.{FromCall, KeywordList, QueryCall}
   alias Mutare.Ecto.AST.KeywordList.Entry
   alias Mutare.Ecto.Host.{Bindings, Catalog, Condition, JoinOn}
@@ -141,9 +142,16 @@ defmodule Mutare.Ecto.StaticCondition do
   # A branch the runtime path would build differently from the static one (see "A filter that
   # is, or may become, the literal `true`" and "A condition typed by its clause").
   defp static_only?(clause, branch) do
-    (clause in @filters and Mutare.AST.literal_value(branch) == {:ok, true}) or
-      clause_typed?(branch)
+    (clause in @filters and may_expand_to_true?(escaped(branch))) or clause_typed?(branch)
   end
+
+  # Ecto's escape erases `filter/1` (`filter(true)` is `true`), so it cannot hide a `true`.
+  defp escaped({:filter, _meta, [expression]}), do: escaped(expression)
+  defp escaped(expression), do: expression
+
+  # An author macro, or any call Ecto can only be expanding, may expand to `true`.
+  defp may_expand_to_true?(branch),
+    do: Mutare.AST.literal_value(branch) == {:ok, true} or Walk.opaque_call?(branch)
 
   # Whether a pin or a non-boolean literal takes the condition's own type: it is the condition,
   # or reached from it only through forms that pass their expected type on to their operands
@@ -163,7 +171,8 @@ defmodule Mutare.Ecto.StaticCondition do
   defp clause_typed?(node) do
     case Mutare.AST.literal_value(node) do
       {:ok, value} -> not is_boolean(value) and value != nil
-      _expression -> false
+      # An author macro, or any call Ecto can only be expanding, may expand to either.
+      _expression -> Walk.opaque_call?(node)
     end
   end
 

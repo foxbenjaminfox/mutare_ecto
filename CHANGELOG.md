@@ -22,13 +22,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `where: false, or_where: true` returned no rows at baseline, and an `or_where` mutant to `true`
   delivered a different query than it reported. Rebuild, likewise, a condition whose pin or
   non-boolean literal takes the clause's own type (`where: coalesce(^flag, false)`): the static
-  build casts it as `:boolean`, a `dynamic` as `:any`.
+  build casts it as `:boolean`, a `dynamic` as `:any`. Both checks read through the `filter/1`
+  Ecto's escape erases, and count a call Ecto may be expanding as a macro as possibly either.
 - Under `EXISTS`, observe the projection when a grouping or `DISTINCT ON` term may name a
   projected column by position (`group_by: 1`, a `fragment`, a pin) past an offset or beside a
   `having`, and stop reading `group_by: nil` as grouping the query. A module attribute or macro
   in a grouping term may evaluate to either. A keyword `having` counts as reading a bare column,
   and an aggregate over only an enclosing query's columns (`max(parent_as(:outer).x)`) no longer
-  counts as aggregating the subquery.
+  counts as aggregating the subquery. Every such observation check now counts a call outside
+  Ecto's query vocabulary, which Ecto can only be expanding as a macro, as unknown, whether or
+  not the macro's routes are registered.
 - Protect inline window grammar in free-standing dynamics, including opt-in atom mutations.
 - Mutate list-valued dynamics and repeated explicit join predicates; permit hosting a sole
   explicit predicate on an association join.

@@ -176,7 +176,7 @@ Each row is role + the rule(s) that module is the **home** for.
 | `fragment.ex` | the SQL-semantics catalog for conditions (public family table); home of the SQL side of the ownership rule, the `is_nil` observation rule (beneath it a mutant is pruned only where the per-form NULL rules *know* it keeps the argument's NULL-ness; an unknown form — and every pin — is emitted), and the structural-position registry — which also gives a `^` pin its role (`role/0`: `:value` / `:condition` / `:structural`, reported by `islands/2`) |
 | `subquery.ex` | recurses the catalogs into an inline subquery; home of the wrapper observation modes, of what is pruned as equivalent vs. merely not composed yet, and of the interior keyword-filter rule (a pair's value is a catalog root, its key never) |
 | `island.ex` | the interpolation-island seam; home of the sub-contract and of the role policy — what of a pin's interior is still query structure, held against core's families: a `:condition` pin's keyword keys (the pin-side keyword-key rule), a `:structural` pin's literals known to be the name |
-| `walk.ex` | the one structural walk under every catalog; home of the author-macro rule, node-level attribution, and the call-argument slot a node fills (`child_slot/3`) |
+| `walk.ex` | the one structural walk under every catalog; home of the author-macro rule, node-level attribution, the call-argument slot a node fills (`child_slot/3`), and of what counts as an expansion the source does not show (`opaque_call?/1`) |
 | `window.ex` | shared `over/2` grammar: structural window names, keys, directions and shorthand fields, with traversable value expressions |
 | `expression_walk.ex` | the value-expression rules over `walk.ex` (the `over/2` `order_by:` refinement) |
 | `value_catalog.ex` | capability → catalog dispatch for an in-place clause value, and the ordering-position rule (`position/1`) |
@@ -230,7 +230,9 @@ Each is the conclusion; the canonical statement is in the named module.
   reports each pin's role (`Mutare.Ecto.Fragment`), and the seam holds the literals that role
   makes structure while the logic computing them stays core's (`Mutare.Ecto.Island`).
 - **A nested author macro may invent its own argument syntax — descend only into `:expression`**
-  (or a non-macro node); every other routing is left raw. `Mutare.Ecto.Walk`.
+  (or a non-macro node); every other routing is left raw. A reader that concludes something from
+  what it did *not* see (no alias read, no aggregate, not `true`) counts any call Ecto may be
+  expanding, registered or not, as unknown (`opaque_call?/1`). `Mutare.Ecto.Walk`.
 - **A key that admits a condition does not make its value a predicate.** A list literal at a
   condition position is a keyword filter — core's, per pair — and core offers the *whole call* to
   the host once any sibling position is hosted, so every path from a condition value to the
