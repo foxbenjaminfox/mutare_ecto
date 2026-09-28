@@ -97,6 +97,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `fragment` as possibly defining an alias, when judging an `EXISTS` projection mutant: raw SQL
   may make the aggregate a window function (`fragment("? OVER ()", count())`) or name an alias
   a `where` reads (`fragment("? AS n", x)`, on SQLite), and each had pruned a live mutant.
+- Keep an inline subquery's `order_by` value mutant, without a window and under `EXISTS`,
+  where it may change whether the query aggregates: an aggregate in `ORDER BY` makes Postgres
+  aggregate the query (one row over empty input) and SQLite reject it, so
+  `order_by: coalesce(1, sum(r.x))` → `1` changes the result. Such mutants had been pruned.
 - Read `fragment()` as a macro Ecto expands (its fragment heads take at least the query): a
   `coalesce(fragment(), false)` drop had been woven into an `or_where`, where a `fragment()`
   expanding to `true` is discarded.

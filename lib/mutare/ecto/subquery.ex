@@ -17,7 +17,8 @@ defmodule Mutare.Ecto.Subquery do
   #   (`limit_drop_observed?/1`). Value wrappers receive all bound drops and nonnegative bumps.
   #   An overridden bound never mutates.
   # * Ordering and its value expressions mutate in windowed value queries (a limit or offset,
-  #   written or possibly brought by an opaque source).
+  #   written or possibly brought by an opaque source). Elsewhere only an ordering value mutant
+  #   that may change whether the query aggregates is kept (`aggregating_ordering/2`).
   #   Unwindowed scalar ordering is still not composed, even on SQLite where it can be live.
   # * General clause drops (including group_by/distinct) remain unimplemented here.
   #
@@ -402,10 +403,23 @@ defmodule Mutare.Ecto.Subquery do
   defp ordering(%FromCall{clauses: %{entries: entries}} = from, config, :value) do
     if Enum.any?(entries, &Surface.bound?(&1.key)) or not plain_source?(from),
       do: Query.mutations_for(from, config, [:ordering, :aggregate, :scalar], &(&1 == :order_by)),
-      else: []
+      else: aggregating_ordering(from, config)
   end
 
-  defp ordering(_from, _config, :existence), do: []
+  defp ordering(from, config, :existence), do: aggregating_ordering(from, config)
+
+  # Without a window an ordering never changes which rows there are, but an aggregate in it can
+  # decide whether the query aggregates: Postgres aggregates an ungrouped query by one in
+  # `ORDER BY` (one row over empty input), and SQLite rejects one there on a query that does not
+  # otherwise aggregate. So either wrapper observes an `order_by` value mutant that may change
+  # whether the query holds an aggregate, judged as a projection mutant is
+  # (`changes_aggregation?/2`) but over the projection's and the ordering's aggregates together.
+  # A direction flip never does.
+  defp aggregating_ordering(from, config) do
+    from
+    |> Query.mutations_for(config, [:aggregate, :scalar], &(&1 == :order_by))
+    |> Enum.filter(&changes_ordering_aggregation?(from, &1))
+  end
 
   # What the predicate catalog may walk in one hosted-clause value, by the classification routing
   # and hosting share (`Mutare.Ecto.Host.Condition.shape/1`), each root with the rebuild of the
@@ -472,7 +486,7 @@ defmodule Mutare.Ecto.Subquery do
   #
   # The mutant is pruned when its replacement holds the same aggregates as the node it replaces,
   # including the ones a pin or fragment may hide (an arithmetic swap beside `^bump`), unless an
-  # author macro around it reads its syntax (`beneath_opaque_call?/2`), or when
+  # author macro around it reads its syntax (`clauses_beneath_opaque_call?/3`), or when
   # the query's aggregation is known and the same before and after (`aggregation/2`). Each side
   # is judged on its effective projection (`projected_aggregates/1`), because a later
   # `select_merge` key replaces an earlier field. A drop that keeps an aggregate in its retained
@@ -490,7 +504,7 @@ defmodule Mutare.Ecto.Subquery do
         windows = named_windows(entries)
 
         (scoped_aggregates(original, windows) != scoped_aggregates(mutated, windows) or
-           beneath_opaque_call?(entries, original)) and
+           clauses_beneath_opaque_call?(entries, @projection_keys, original)) and
           (before == :unknown or before != after_mutant)
 
       nil ->
@@ -500,16 +514,53 @@ defmodule Mutare.Ecto.Subquery do
 
   defp changes_aggregation?(_from, _unattributed), do: true
 
+  defp changes_ordering_aggregation?(%FromCall{clauses: %{entries: entries}} = from, %Tag{
+         node: node,
+         attribution: %{original: original, mutated: mutated}
+       }) do
+    case FromCall.parse(node) do
+      %FromCall{} = mutant ->
+        grouping = grouping(entries)
+        before = aggregation(ordered_aggregates(from), grouping)
+        after_mutant = aggregation(ordered_aggregates(mutant), grouping)
+        windows = named_windows(entries)
+
+        (scoped_aggregates(original, windows, :expression) !=
+           scoped_aggregates(mutated, windows, :expression) or
+           clauses_beneath_opaque_call?(entries, [:order_by], original)) and
+          (before == :unknown or before != after_mutant)
+
+      nil ->
+        true
+    end
+  end
+
+  defp changes_ordering_aggregation?(_from, _unattributed), do: true
+
+  # The projection's aggregates and the ordering's, as Postgres counts them.
+  defp ordered_aggregates(%FromCall{clauses: %{entries: entries}} = from) do
+    windows = named_windows(entries)
+
+    for %Entry{key: :order_by, value: value} <- entries,
+        reduce: projected_aggregates(from) do
+      {written, hidden} ->
+        {more_written, more_hidden} = scoped_aggregates(value, windows, :expression)
+        {written + more_written, hidden + more_hidden}
+    end
+  end
+
   # Whether the replaced node is an argument, at any depth, of a projection call Ecto expands:
   # the expansion reads the node's syntax (`unwrap_sum(sum(x))` may unwrap a `sum` and keep an
   # `avg`), so equal aggregate counts no longer show an unchanged aggregation. Each call is
   # judged in the grammar Ecto reads it in, as the aggregate count judges it (`merge/2` is the
   # select builder's only at the projection's own level).
-  defp beneath_opaque_call?(entries, original) do
+  defp clauses_beneath_opaque_call?(entries, keys, original) do
     Enum.any?(entries, fn %Entry{key: key, value: value} ->
-      key in @projection_keys and beneath_opaque_call?(value, :projection, original)
+      key in keys and beneath_opaque_call?(value, root_grammar(key), original)
     end)
   end
+
+  defp root_grammar(key), do: if(key in @projection_keys, do: :projection, else: :expression)
 
   defp beneath_opaque_call?(node, grammar, original) do
     cond do
@@ -657,9 +708,9 @@ defmodule Mutare.Ecto.Subquery do
   # definition (`named_windows/1`), exactly as the same options written inline would be: naming
   # a window does not change its meaning, and SQLite aggregates the query by a named window's
   # aggregate only while the projection uses it.
-  defp scoped_aggregates(node, windows) do
+  defp scoped_aggregates(node, windows, grammar \\ :projection) do
     for {position, grammar, _rebuild} <-
-          Walk.positions(node, :projection, &query_scope(&1, &2, windows)),
+          Walk.positions(node, grammar, &query_scope(&1, &2, windows)),
         reduce: {0, 0} do
       {written, hidden} ->
         cond do

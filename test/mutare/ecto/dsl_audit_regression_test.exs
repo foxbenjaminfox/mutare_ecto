@@ -1411,4 +1411,27 @@ defmodule Mutare.Ecto.DslAuditRegressionTest do
     assert_rewrite(source, [:coalesce], "coalesce(0, sum(r.x))", "0")
     assert_builds(source, & &1.q(), only([:coalesce]))
   end
+
+  test "an ordering mutant that changes whether the query aggregates is observed without a window" do
+    for condition <- [
+          ~s|exists(from r in "rows", select: 1, order_by: coalesce(1, sum(r.x)))|,
+          ~s|o.x in subquery(from r in "rows", select: 1, order_by: coalesce(1, sum(r.x)))|
+        ] do
+      source = fixture(~s|from o in "rows", where: #{condition}, select: o.x|)
+      assert_rewrite(source, [:coalesce], "coalesce(1, sum(r.x))", "1")
+      assert_builds(source, & &1.q(), only([:coalesce, :aggregate, :ordering]))
+    end
+
+    # One that keeps the aggregation, or only flips a direction, is not.
+    for ordering <- ["[desc: sum(r.x)]", "coalesce(1, sum(r.x)) + sum(r.x)"] do
+      source =
+        fixture("""
+        from o in "rows",
+          where: exists(from r in "rows", select: 1, order_by: #{ordering}),
+          select: o.x
+        """)
+
+      assert ecto_diffs(source, only([:coalesce, :aggregate, :ordering, :arithmetic])) == []
+    end
+  end
 end

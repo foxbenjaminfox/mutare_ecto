@@ -316,6 +316,11 @@ arguments as certain, though raw SQL can move one into a window (`? OVER ()`); i
 fragment as at an opaque call. And the alias check did not count a fragment's raw SQL as possibly
 defining an alias (`? AS n`), which SQLite lets a `where` read.
 
+Round seventeen found the ordering pruned wholesale where no window makes the order visible,
+though an aggregate in `ORDER BY` decides aggregation (Postgres aggregates by it; SQLite rejects
+it on an otherwise non-aggregating query). An ordering value mutant is now kept there when it may
+change whether the query holds an aggregate (`aggregating_ordering/2`), in both modes.
+
 The fourth round also found that a keyword filter's scalar value, routed `:interpolated`, reaches Ecto
 as a parameter, which the planner `cast/1`s before `dump/1`ing, where a written literal is only
 `dump/1`ed. For a custom type whose `cast/1` is not the identity on the literal (one that
