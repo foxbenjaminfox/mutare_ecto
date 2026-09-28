@@ -207,11 +207,6 @@ defmodule Mutare.Ecto.Walk do
     found?
   end
 
-  defp expands_argument?({_form, _meta, args} = node) when is_list(args),
-    do: Enum.any?(0..(length(args) - 1)//1, &expanded_argument?(node, &1))
-
-  defp expands_argument?(_node), do: false
-
   defp ecto_call?(name, _arity, _grammar) when name in @any_arity, do: true
   defp ecto_call?(:fragment, arity, _grammar), do: arity > 0
 
@@ -267,7 +262,7 @@ defmodule Mutare.Ecto.Walk do
     for {arg, index} <- Enum.with_index(args),
         descend_arg?(routing, index),
         not expanded_argument?(node, index),
-        not field_list?(node, index),
+        not compile_time_argument?(node, index),
         do: {arg, child_ctx.(node, index, ctx), &{form, meta, List.replace_at(args, index, &1)}}
   end
 
@@ -278,8 +273,9 @@ defmodule Mutare.Ecto.Walk do
   # a fragment) and `type/2`'s operand (`typable?/1`). A call Ecto does not take there is an
   # author macro even under a name that is Ecto's in an expression (`over(coalesce(a, b))`,
   # `type(is_nil(x), :integer)`): a catalog neither mutates nor enters it, and an absence-based
-  # reader counts it as unknown. A select take's field list (`map(p, fields)`) is no SQL at all:
-  # Ecto `Macro.expand`s it to a list of atoms at compile time, unless it is a pin.
+  # reader counts it as unknown. Other slots are no SQL at all: Ecto `Macro.expand`s a select
+  # take's field list (`map(p, fields)`) to a list of atoms, and a fragment's template to a
+  # string, at compile time, unless the one is a pin or the other a keyword fragment.
 
   @doc """
   Whether `parent`'s argument `index` is a call Ecto can only be expanding, in a slot that takes
@@ -318,15 +314,29 @@ defmodule Mutare.Ecto.Walk do
 
   def typable?(_node), do: false
 
+  @doc """
+  Whether `node` has an argument Ecto can only be expanding (`expanded_argument?/2`).
+  """
+  @spec expands_argument?(Macro.t()) :: boolean()
+  def expands_argument?({_form, _meta, args} = node) when is_list(args),
+    do: Enum.any?(0..(length(args) - 1)//1, &expanded_argument?(node, &1))
+
+  def expands_argument?(_node), do: false
+
   # `map/2` and `struct/2` over a binding variable take their fields at compile time. Outside a
   # select the same call is an author macro, whose argument the author-macro rule would enter;
   # the walk does not know its grammar, so it skips the argument there too, withholding only
   # those mutants.
-  defp field_list?({take, _meta, [{var, _, context}, fields]}, 1)
+  defp compile_time_argument?({take, _meta, [{var, _, context}, fields]}, 1)
        when take in [:map, :struct] and is_atom(var) and is_atom(context),
        do: not match?({:^, _, [_]}, fields)
 
-  defp field_list?(_parent, _index), do: false
+  # A fragment's template, unless the fragment is a keyword one (`fragment(collection: ...)`) or
+  # a lone pin, which Ecto reads at runtime.
+  defp compile_time_argument?({:fragment, _meta, [template | _args] = args}, 0),
+    do: not (match?([_], args) and (is_list(template) or match?({:^, _, [_]}, template)))
+
+  defp compile_time_argument?(_parent, _index), do: false
 
   @doc """
   A child's `t:slot/0`, from its parent and the parent's own slot. A Sourceror block, a written

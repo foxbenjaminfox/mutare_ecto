@@ -793,6 +793,9 @@ defmodule Mutare.Ecto.Subquery do
 
   defp grammar_term?({_key, value}, term?), do: grammar_term?(value, term?)
 
+  # Ecto's escape erases `filter/1` (`group_by: filter(1)` is `GROUP BY 1`).
+  defp grammar_term?({:filter, _meta, [expression]}, term?), do: grammar_term?(expression, term?)
+
   defp grammar_term?(value, term?) do
     case AST.unwrap_list(value) do
       elements when is_list(elements) -> Enum.any?(elements, &grammar_term?(&1, term?))
@@ -893,6 +896,9 @@ defmodule Mutare.Ecto.Subquery do
           aggregate_filter?(node) -> {:aggregate, found?}
           # A column is a leaf: its receiver (`as(:p)` in `as(:p).x`) is a binding, not a call.
           column?(node) -> {:column, found? or not MapSet.member?(grouped, without_meta(node))}
+          # What Ecto expands (`type(is_nil(x), :integer)`) may be a bare column, whatever
+          # aggregate its arguments seem to hold.
+          Walk.expands_argument?(node) -> {:expanded, true}
           hides_column?(node) -> {node, true}
           true -> {node, found?}
         end

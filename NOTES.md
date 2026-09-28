@@ -288,6 +288,10 @@ validates before escaping (so `type(is_nil(x), :integer)` expands an author's `i
 a select take's field list, which Ecto `Macro.expand`s to atoms and never escapes. Both rules
 now live in `Mutare.Ecto.Walk` (`expanded_argument?/2`, and the field-list skip), which every
 catalog's descent and `contains_opaque_call?/2` read, rather than in one catalog each.
+Round twelve added a fragment's template, which Ecto also expands at compile time, and found a
+reader with its own traversal that had not been told (the `having` bare-column check, now
+asking `Walk.expands_argument?/1`), and a positional grouping hidden by `filter/1`, which
+Ecto's escape erases.
 
 The fourth round also found that a keyword filter's scalar value, routed `:interpolated`, reaches Ecto
 as a parameter, which the planner `cast/1`s before `dump/1`ing, where a written literal is only

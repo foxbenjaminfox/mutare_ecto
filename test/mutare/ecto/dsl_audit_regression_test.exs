@@ -65,6 +65,18 @@ defmodule Mutare.Ecto.DslAuditTakeMacros do
   defmacro sum(_expression), do: [:views]
 end
 
+defmodule Mutare.Ecto.DslAuditTemplateMacros do
+  @moduledoc false
+  # A fragment's template is expanded to a string at compile time, never escaped as SQL.
+  defmacro sum(_expression), do: "?"
+end
+
+defmodule Mutare.Ecto.DslAuditUnwrapMacros do
+  @moduledoc false
+  # Expanded in `type/2`'s operand, this discards the aggregate its argument seems to hold.
+  defmacro is_nil({:sum, _meta, [field]}), do: field
+end
+
 defmodule Mutare.Ecto.DslAuditRegressionTest do
   use ExUnit.Case, async: true
 
@@ -1235,5 +1247,53 @@ defmodule Mutare.Ecto.DslAuditRegressionTest do
       assert_rewrite(source, [:coalesce], "coalesce(0, sum(p.views))", "0")
       assert_builds(source, & &1.q(), only([:coalesce]))
     end
+  end
+
+  test "a fragment's template is never mutated as SQL" do
+    source = """
+    defmodule TemplateQuery do
+      import Ecto.Query
+      import Mutare.Ecto.DslAuditTemplateMacros
+      def q, do: from(r in "rows", where: fragment(sum(r.x), r.x) > 0, select: r.x)
+    end
+    """
+
+    assert_native_builds(source)
+    assert ecto_diffs(source, only([:aggregate])) == []
+    assert_builds(source, & &1.q(), only([:aggregate, :comparison]))
+  end
+
+  test "EXISTS reads a having's type/2 operand as possibly a bare column" do
+    source = """
+    defmodule UnwrapQuery do
+      import Kernel, except: [is_nil: 1]
+      import Ecto.Query
+      import Mutare.Ecto.DslAuditUnwrapMacros
+      def q do
+        from o in "rows",
+          where: exists(from r in "rows",
+            having: type(is_nil(sum(r.y)), :integer) == 1,
+            select: min(r.x)),
+          select: o.x
+      end
+    end
+    """
+
+    assert_rewrite(source, [:aggregate], "min(r.x)", "max(r.x)")
+    assert_builds(source, & &1.q(), only([:aggregate]))
+  end
+
+  test "EXISTS reads a positional grouping through filter/1" do
+    source =
+      fixture("""
+      from o in "rows",
+        where: exists(from r in "rows",
+          group_by: filter(1), limit: 10, offset: 1,
+          select: r.x + r.y),
+        select: o.x
+      """)
+
+    assert_rewrite(source, [:arithmetic], "r.x + r.y", "r.x - r.y")
+    assert_builds(source, & &1.q(), only([:arithmetic]))
   end
 end

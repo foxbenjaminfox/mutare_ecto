@@ -72,6 +72,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   expands it to a list of atoms at compile time. A macro there had been mutated as SQL, which
   broke the whole metamutant's compilation, and an `EXISTS` projection had counted it as an
   aggregate.
+- Leave a fragment's template unmutated: Ecto expands it to a string at compile time, so a
+  macro there (`fragment(sql(), x)`) had been mutated as SQL, breaking the whole metamutant's
+  compilation.
+- Read what `type/2` expands in a `having` as possibly a bare column when judging an `EXISTS`
+  projection mutant, and a positional grouping through `filter/1` (`group_by: filter(1)` is
+  `GROUP BY 1`): each had pruned a live projection mutant.
 - Read `fragment()` as a macro Ecto expands (its fragment heads take at least the query): a
   `coalesce(fragment(), false)` drop had been woven into an `or_where`, where a `fragment()`
   expanding to `true` is discarded.
