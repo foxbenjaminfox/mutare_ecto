@@ -991,7 +991,9 @@ defmodule Mutare.Ecto.Subquery do
           {:predicate, :expression} -> bare_column?(value, grouped)
           # Ecto writes each pair as a comparison on its key's column.
           {:keyword_filter, _pairs} -> true
-          :pairless_list -> false
+          # Ecto reads an explicit-tuple list (`[{:name, "Carol"}]`) as keyword pairs too; only
+          # an empty list is known to read nothing.
+          :pairless_list -> AST.unwrap_list(value) != []
         end
     end)
   end

@@ -102,13 +102,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   aggregate the query (one row over empty input) and SQLite reject it, so
   `order_by: coalesce(1, sum(r.x))` → `1` changes the result. Such mutants had been pruned.
 - Drop each occurrence of a repeated in-list element alone when it may evaluate differently
-  each time (`p.id in [^next_id(), ^next_id()]`, `^provider.next()`, a `fragment`): identical
+  each time (`p.id in [^next_id(), ^next_id()]`, `^provider.next()`, `^value[:id]`, a
+  `fragment`): identical
   syntax had been read as one value, and the single-occurrence drop was never offered. A
   zero-argument remote call is no longer read as a field access where the plugin looks for
   calls Ecto may expand.
 - Keep every `order_by` value mutant of an unwindowed inline subquery that may aggregate while
   a column neither grouped nor aggregated is observed: SQLite gives that column the row its
   lone `min`/`max` picks, even from `ORDER BY` (`order_by: min(r.x)` → `max(r.x)`).
+- Read a non-empty `having` list the plugin cannot read as pairs (`[{:name, "Carol"}]`, which
+  Ecto reads as a keyword filter) as possibly naming a bare column when judging an `EXISTS`
+  projection mutant; it had been read as naming none.
 - Read `fragment()` as a macro Ecto expands (its fragment heads take at least the query): a
   `coalesce(fragment(), false)` drop had been woven into an `or_where`, where a `fragment()`
   expanding to `true` is discarded.

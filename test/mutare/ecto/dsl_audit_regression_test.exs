@@ -1459,8 +1459,9 @@ defmodule Mutare.Ecto.DslAuditRegressionTest do
              membership
            )
 
-    # A module held in a variable dispatches at runtime, with or without arguments.
-    for call <- ["provider.next()", "provider.next(:token)"] do
+    # A module held in a variable dispatches at runtime, with or without arguments, and a key
+    # read may dispatch to a struct's `fetch/2`.
+    for call <- ["provider.next()", "provider.next(:token)", "provider.next", "provider[:id]"] do
       members = "[^#{call}, ^#{call}, ^3]"
 
       source =
@@ -1472,7 +1473,7 @@ defmodule Mutare.Ecto.DslAuditRegressionTest do
     end
 
     # Repeated occurrences of a value that cannot change drop together.
-    for member <- ["^x", "^opts.id", "^opts[:id]", "^@first_column", "r.id + 1"] do
+    for member <- ["^x", "^@first_column", "^{x, 2}", "r.id + 1"] do
       source =
         fixture(
           ~s|x = 1\nopts = %{id: 1}\nfrom r in "rows", where: r.id in [#{member}, #{member}, 2], select: r.id|
@@ -1503,5 +1504,17 @@ defmodule Mutare.Ecto.DslAuditRegressionTest do
       assert {"min(r.x)", "max(r.x)"} in ecto_diffs(source, only([:aggregate])) == kept?
       assert_builds(source, & &1.q(), only([:aggregate]))
     end
+  end
+
+  test "EXISTS reads an explicit-tuple keyword having as possibly naming a bare column" do
+    source =
+      fixture(~S"""
+      from o in "rows",
+        where: exists(from r in "rows", having: [{:name, "Carol"}], select: min(r.age)),
+        select: o.id
+      """)
+
+    assert_rewrite(source, [:aggregate], "min(r.age)", "max(r.age)")
+    assert_builds(source, & &1.q(), only([:aggregate]))
   end
 end

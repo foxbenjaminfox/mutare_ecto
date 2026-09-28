@@ -648,18 +648,14 @@ defmodule Mutare.Ecto.Fragment do
       not Walk.contains_opaque_call?(sql)
   end
 
-  # A variable, a literal, a module attribute, a map field (`opts.id`, written without
-  # parentheses) or key (`opts[:id]`), and a collection of these.
+  # A variable, a literal, a module attribute, and a collection of these. Not a field or key
+  # read: `value.next` calls a function when `value` holds a module, and `value[:id]` a
+  # struct's `fetch/2`.
   defp plain_value?({name, _meta, context}) when is_atom(name) and is_atom(context), do: true
   defp plain_value?({:__block__, _meta, [literal]}), do: plain_value?(literal)
 
   defp plain_value?({:@, _meta, [{name, _, context}]}) when is_atom(name) and is_atom(context),
     do: true
-
-  defp plain_value?({{:., _, [receiver, field]}, meta, []}) when is_atom(field),
-    do: Keyword.get(meta, :no_parens, false) and plain_value?(receiver)
-
-  defp plain_value?({{:., _, [Access, :get]}, _meta, args}), do: Enum.all?(args, &plain_value?/1)
 
   defp plain_value?({form, _meta, args}) when form in [:{}, :%{}],
     do: Enum.all?(args, &plain_value?/1)

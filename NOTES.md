@@ -336,6 +336,9 @@ Round twenty found the in-list fix still a proxy: it read a pin's interior in Ec
 grammar, where a module held in a variable (`provider.next()`) looks like a field access. A
 pin's interior is Elixir, and repeatability is now an allow-list of plain values there
 (a variable, a literal, a module attribute, a map field or key, a collection of these).
+Round twenty-one then struck the field and key reads from it (a module in the variable, a
+struct's `fetch/2`), and found the `having` bare-column check reading an unread non-empty list
+(`[{:name, "Carol"}]`, keyword pairs to Ecto) as naming no column.
 
 The fourth round also found that a keyword filter's scalar value, routed `:interpolated`, reaches Ecto
 as a parameter, which the planner `cast/1`s before `dump/1`ing, where a written literal is only
