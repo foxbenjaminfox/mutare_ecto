@@ -325,6 +325,13 @@ Round eighteen found the in-list element drop reading identical syntax as one va
 for "evaluates to the same member": two `^next_id()` calls need not. Grouping now requires an
 element with no call Ecto does not own and no `fragment`.
 
+Round nineteen found that fix incomplete: `contains_opaque_call?/2` skipped every zero-argument
+dot call as a field access, `Counter.next()` included. And round seventeen's ordering rule had
+judged ordering mutants by aggregation alone, missing SQLite's bare-column row choice: a lone
+`min`/`max` anywhere, `ORDER BY` included, picks the row an ungrouped, unaggregated column
+reads. Where such a column is observed (the projection of a value query, a `having`), every
+ordering value mutant is now kept (`picks_bare_row?/2`).
+
 The fourth round also found that a keyword filter's scalar value, routed `:interpolated`, reaches Ecto
 as a parameter, which the planner `cast/1`s before `dump/1`ing, where a written literal is only
 `dump/1`ed. For a custom type whose `cast/1` is not the identity on the literal (one that

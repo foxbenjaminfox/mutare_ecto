@@ -201,8 +201,12 @@ defmodule Mutare.Ecto.Walk do
   def contains_opaque_call?(ast, grammar \\ :expression) do
     {_ast, found?} =
       Macro.prewalk(ast, false, fn
-        {{:., _, [_receiver, field]}, _meta, []}, found? when is_atom(field) -> {:field, found?}
-        node, found? -> {node, found? or opaque_call?(node, grammar) or expands_argument?(node)}
+        # A zero-argument remote call (`Counter.next()`) has a field access's shape.
+        {{:., _, [receiver, field]}, _meta, []} = node, found? when is_atom(field) ->
+          if remote?(receiver), do: {node, true}, else: {:field, found?}
+
+        node, found? ->
+          {node, found? or opaque_call?(node, grammar) or expands_argument?(node)}
       end)
 
     found?

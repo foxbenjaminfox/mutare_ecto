@@ -1448,9 +1448,35 @@ defmodule Mutare.Ecto.DslAuditRegressionTest do
 
     assert_builds(source, & &1.q(), membership)
 
+    # A zero-argument remote call has a field access's shape, but is a call.
+    source =
+      fixture(
+        ~s|from r in "rows", where: r.id in [^Counter.next(), ^Counter.next()], select: r.id|
+      )
+
+    assert {"r.id in [^Counter.next(), ^Counter.next()]", "r.id in [^Counter.next()]"} in ecto_diffs(
+             source,
+             membership
+           )
+
     # Repeated occurrences of a value that cannot change drop together.
     source = fixture(~s|x = 1\nfrom r in "rows", where: r.id in [^x, ^x, 2], select: r.id|)
     refute {"r.id in [^x, ^x, 2]", "r.id in [^x, 2]"} in ecto_diffs(source, membership)
     assert {"r.id in [^x, ^x, 2]", "r.id in [2]"} in ecto_diffs(source, membership)
+  end
+
+  test "an ordering aggregate may pick the row a SQLite bare column reads" do
+    for {condition, kept?} <- [
+          {~s|o.y in subquery(from r in "rows", select: coalesce(r.y, count()), order_by: min(r.x))|,
+           true},
+          {~s|exists(from r in "rows", having: r.y == 1, select: count(), order_by: min(r.x))|,
+           true},
+          # Nothing observes a bare column here.
+          {~s|o.y in subquery(from r in "rows", select: count(), order_by: min(r.x))|, false}
+        ] do
+      source = fixture(~s|from o in "rows", where: #{condition}, select: o.y|)
+      assert {"min(r.x)", "max(r.x)"} in ecto_diffs(source, only([:aggregate])) == kept?
+      assert_builds(source, & &1.q(), only([:aggregate]))
+    end
   end
 end

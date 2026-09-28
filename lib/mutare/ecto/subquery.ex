@@ -403,10 +403,10 @@ defmodule Mutare.Ecto.Subquery do
   defp ordering(%FromCall{clauses: %{entries: entries}} = from, config, :value) do
     if Enum.any?(entries, &Surface.bound?(&1.key)) or not plain_source?(from),
       do: Query.mutations_for(from, config, [:ordering, :aggregate, :scalar], &(&1 == :order_by)),
-      else: aggregating_ordering(from, config)
+      else: aggregating_ordering(from, config, :value)
   end
 
-  defp ordering(from, config, :existence), do: aggregating_ordering(from, config)
+  defp ordering(from, config, :existence), do: aggregating_ordering(from, config, :existence)
 
   # Without a window an ordering never changes which rows there are, but an aggregate in it can
   # decide whether the query aggregates: Postgres aggregates an ungrouped query by one in
@@ -415,10 +415,30 @@ defmodule Mutare.Ecto.Subquery do
   # whether the query holds an aggregate, judged as a projection mutant is
   # (`changes_aggregation?/2`) but over the projection's and the ordering's aggregates together.
   # A direction flip never does.
-  defp aggregating_ordering(from, config) do
-    from
-    |> Query.mutations_for(config, [:aggregate, :scalar], &(&1 == :order_by))
-    |> Enum.filter(&changes_ordering_aggregation?(from, &1))
+  #
+  # SQLite also gives a column neither grouped nor aggregated the value from the row the query's
+  # lone `min`/`max` picks, wherever that aggregate stands (`order_by: min(r.x)` included). So
+  # where the query may aggregate and such a column is observed (`picks_bare_row?/2`), any
+  # ordering value mutant may change which row it reads, and all are kept.
+  defp aggregating_ordering(from, config, mode) do
+    tags = Query.mutations_for(from, config, [:aggregate, :scalar], &(&1 == :order_by))
+
+    if picks_bare_row?(from, mode),
+      do: tags,
+      else: Enum.filter(tags, &changes_ordering_aggregation?(from, &1))
+  end
+
+  defp picks_bare_row?(%FromCall{clauses: %{entries: entries}} = from, mode) do
+    aggregation(ordered_aggregates(from), grouping(entries)) != :no and
+      case mode do
+        :value ->
+          projection_reads_bare_column?(entries)
+
+        :existence ->
+          having_reads_bare_column?(entries) or
+            (projection_mode(from, :existence) == :value and
+               projection_reads_bare_column?(entries))
+      end
   end
 
   # What the predicate catalog may walk in one hosted-clause value, by the classification routing
@@ -962,11 +982,7 @@ defmodule Mutare.Ecto.Subquery do
   # one: a pinned condition, a `fragment`, a subquery, an author macro. A keyword filter
   # (`having: [y: 1]`) names its columns by key, and is read as possibly bare.
   defp having_reads_bare_column?(entries) do
-    grouped =
-      for %Entry{key: :group_by, value: value} <- entries,
-          expression <- AST.unwrap_list(value) || [value],
-          into: MapSet.new(),
-          do: without_meta(expression)
+    grouped = grouped_expressions(entries)
 
     Enum.any?(entries, fn %Entry{key: key, value: value} ->
       key in [:having, :or_having] and
@@ -980,11 +996,30 @@ defmodule Mutare.Ecto.Subquery do
     end)
   end
 
-  defp bare_column?(value, grouped) do
+  # A projection reads a bare column as a `having` does, and also through a whole source
+  # (`select: r`, `map(r, [:x])`) or a pin, which may be a dynamic or a field list.
+  defp projection_reads_bare_column?(entries) do
+    grouped = grouped_expressions(entries)
+
+    Enum.any?(entries, fn %Entry{key: key, value: value} ->
+      key in @projection_keys and
+        (contains?(value, &match?({:^, _, [_]}, &1)) or bare_column?(value, grouped, true))
+    end)
+  end
+
+  defp grouped_expressions(entries) do
+    for %Entry{key: :group_by, value: value} <- entries,
+        expression <- AST.unwrap_list(value) || [value],
+        into: MapSet.new(),
+        do: without_meta(expression)
+  end
+
+  defp bare_column?(value, grouped, whole_sources? \\ false) do
     {_pruned, found?} =
       Macro.prewalk(value, false, fn node, found? ->
         cond do
           Aggregate.ecto_aggregate?(node) -> {:aggregate, found?}
+          whole_sources? and binding?(node) -> {node, true}
           aggregate_filter?(node) -> {:aggregate, found?}
           # A column is a leaf: its receiver (`as(:p)` in `as(:p).x`) is a binding, not a call.
           column?(node) -> {:column, found? or not MapSet.member?(grouped, without_meta(node))}
@@ -998,6 +1033,9 @@ defmodule Mutare.Ecto.Subquery do
 
     found?
   end
+
+  defp binding?({name, _meta, context}), do: is_atom(name) and is_atom(context)
+  defp binding?(_node), do: false
 
   defp aggregate_filter?({:filter, _meta, [aggregate, _condition]}),
     do: Aggregate.ecto_aggregate?(aggregate)
