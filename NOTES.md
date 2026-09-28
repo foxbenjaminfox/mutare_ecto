@@ -310,6 +310,12 @@ builder escapes the body as an expression; only a nested `DynamicExpr` is expand
 its keyword keys dropped live mutants. `Island.subcontracted/4` now takes the root role from its
 caller.
 
+Round sixteen found the `EXISTS` readers trusting a projection `fragment` in two ways. The
+aggregate count marked it as possibly hiding an aggregate but still counted the aggregates in its
+arguments as certain, though raw SQL can move one into a window (`? OVER ()`); it now stops at a
+fragment as at an opaque call. And the alias check did not count a fragment's raw SQL as possibly
+defining an alias (`? AS n`), which SQLite lets a `where` read.
+
 The fourth round also found that a keyword filter's scalar value, routed `:interpolated`, reaches Ecto
 as a parameter, which the planner `cast/1`s before `dump/1`ing, where a written literal is only
 `dump/1`ed. For a custom type whose `cast/1` is not the identity on the literal (one that

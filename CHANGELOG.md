@@ -93,6 +93,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Treat a pin that is a `dynamic`'s whole body as a parameter, not a keyword filter: core's
   mutants that change keyword keys inside it (`dynamic(^Keyword.get([value: 1], :value, 0))`)
   had been dropped, though Ecto never reads a keyword list there as a filter.
+- Count an aggregate in a projection `fragment`'s argument as uncertain, and a projection
+  `fragment` as possibly defining an alias, when judging an `EXISTS` projection mutant: raw SQL
+  may make the aggregate a window function (`fragment("? OVER ()", count())`) or name an alias
+  a `where` reads (`fragment("? AS n", x)`, on SQLite), and each had pruned a live mutant.
 - Read `fragment()` as a macro Ecto expands (its fragment heads take at least the query): a
   `coalesce(fragment(), false)` drop had been woven into an `or_where`, where a `fragment()`
   expanding to `true` is discarded.

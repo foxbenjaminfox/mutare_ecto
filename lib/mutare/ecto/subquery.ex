@@ -686,11 +686,12 @@ defmodule Mutare.Ecto.Subquery do
 
   # An opaque call (`Mutare.Ecto.Walk.opaque_call?/2`) is counted once, as possibly hiding an
   # aggregate, and not entered: what its arguments hold may be discarded by its expansion, so an
-  # aggregate there is never a certain one.
+  # aggregate there is never a certain one. A `fragment` likewise: its raw SQL may put an
+  # argument in another scope (`fragment("? OVER ()", count())` is a window function).
   defp query_scope(node, grammar, _windows), do: expression_scope(node, grammar)
 
   defp expression_scope(node, grammar) do
-    if Walk.opaque_call?(node, grammar),
+    if Walk.opaque_call?(node, grammar) or match?({:fragment, _, args} when is_list(args), node),
       do: [],
       else: Walk.structural(node, grammar, &child_grammar/3)
   end
@@ -865,7 +866,8 @@ defmodule Mutare.Ecto.Subquery do
   # hidden where a clause admits a `dynamic` (`group_by: ^[dynamic(selected_as(:bucket))]`), in
   # an author macro's expansion, or named by a `fragment`'s raw SQL. The hidden reads matter only
   # if the projection may define an alias: a written `selected_as/2`, a call Ecto may expand into
-  # one (`Walk.opaque_call?/2`), or a pinned projection, which may be a dynamic that writes one.
+  # one (`Walk.opaque_call?/2`), a `fragment` whose raw SQL may write one, or a pinned
+  # projection, which may be a dynamic that writes one.
   defp reads_selected_alias?(entries) do
     {projections, readers} = Enum.split_with(entries, &(&1.key in @projection_keys))
     readers = Enum.reject(readers, &(&1.key == :order_by))
@@ -877,10 +879,14 @@ defmodule Mutare.Ecto.Subquery do
 
   defp may_define_alias?({:^, _meta, [_interior]}), do: true
 
+  # A `fragment`'s raw SQL may define one too (`fragment("? AS n", r.x + 1)`).
   defp may_define_alias?(projection),
     do:
-      contains?(projection, &match?({:selected_as, _, [_, _]}, &1)) or
-        Walk.contains_opaque_call?(projection, :projection)
+      contains?(
+        projection,
+        &(match?({:selected_as, _, [_, _]}, &1) or
+            match?({:fragment, _, args} when is_list(args), &1))
+      ) or Walk.contains_opaque_call?(projection, :projection)
 
   # A condition admits a dynamic only as the whole condition; a pin within its expression is a
   # parameter. Elsewhere (`group_by`, `distinct`, `windows`) a dynamic may stand at any level of

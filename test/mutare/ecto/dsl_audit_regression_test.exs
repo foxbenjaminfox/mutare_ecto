@@ -1384,4 +1384,31 @@ defmodule Mutare.Ecto.DslAuditRegressionTest do
       assert_builds(source, & &1.q(), only([:aggregate]))
     end
   end
+
+  test "EXISTS reads a projection fragment as possibly defining an alias" do
+    source =
+      fixture(~S"""
+      from o in "rows",
+        where: exists(from r in "rows",
+          where: fragment("n > 1"),
+          select: fragment("? AS n", r.x + 1)),
+        select: o.x
+      """)
+
+    assert_rewrite(source, [:arithmetic], "r.x + 1", "r.x - 1")
+    assert_builds(source, & &1.q(), only([:arithmetic]))
+  end
+
+  test "EXISTS counts an aggregate in a fragment's argument as uncertain" do
+    source =
+      fixture(~S"""
+      from o in "rows",
+        where: exists(from r in "rows",
+          select: %{a: coalesce(0, sum(r.x)), b: fragment("? OVER ()", count())}),
+        select: o.x
+      """)
+
+    assert_rewrite(source, [:coalesce], "coalesce(0, sum(r.x))", "0")
+    assert_builds(source, & &1.q(), only([:coalesce]))
+  end
 end
