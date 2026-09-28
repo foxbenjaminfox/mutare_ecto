@@ -607,5 +607,90 @@ defmodule Mutare.Ecto.DslAuditRegressionTest do
         assert diffs(value_source, arithmetic_only) != []
       end
     end
+
+    test "a clause may read a projection alias through a pin or a fragment" do
+      select = "select: selected_as(r.a + r.b, :bucket)"
+
+      for {reader, kept?} <- [
+            {"group_by: ^grouping", true},
+            {~s|group_by: fragment("bucket")|, true},
+            {"having: ^condition", true},
+            {"group_by: selected_as(:bucket)", true},
+            # A parameter inside a condition is no dynamic.
+            {"where: r.a > ^floor", false},
+            {"group_by: r.a", false}
+          ] do
+        source =
+          exists_source(
+            ~s|from r in "rows", #{reader}, limit: 10, offset: 1, #{select}|,
+            "grouping = [dynamic(selected_as(:bucket))]\n" <>
+              "condition = dynamic(selected_as(:bucket) > 0)\nfloor = 0"
+          )
+
+        assert_builds(source, & &1.q(), only([:arithmetic]))
+
+        if kept?,
+          do: assert_rewrite(source, [:arithmetic], "r.a + r.b", "r.a - r.b"),
+          else: assert(ecto_diffs(source, only([:arithmetic])) == [])
+      end
+
+      # Without an alias to read, a pinned grouping reads none.
+      source =
+        exists_source(
+          ~s|from r in "rows", group_by: ^grouping, limit: 10, offset: 1, select: r.a + r.b|,
+          "grouping = [dynamic([r], r.a)]"
+        )
+
+      assert ecto_diffs(source, only([:arithmetic])) == []
+    end
+
+    test "a having that may read a bare column observes the aggregate swap" do
+      for {clauses, kept?} <- [
+            {"having: r.y == 1", true},
+            {"group_by: r.z, having: r.y == 1", true},
+            {"having: ^condition", true},
+            {~s|having: fragment("y = 1")|, true},
+            # Only aggregated or grouped columns: the aggregate picks no row for the `having`.
+            {"having: sum(r.y) > 1", false},
+            {"group_by: r.y, having: r.y == 1", false},
+            {"having: filter(count(r.id), r.y == 1) > 0", false}
+          ] do
+        source =
+          exists_source(
+            ~s|from r in "rows", #{clauses}, select: min(r.x)|,
+            "condition = dynamic([r], r.y == 1)"
+          )
+
+        assert_builds(source, & &1.q(), only([:aggregate]))
+
+        if kept?,
+          do: assert_rewrite(source, [:aggregate], "min(r.x)", "max(r.x)"),
+          # The `having`'s own aggregates are still its catalog's.
+          else:
+            refute(
+              Enum.any?(ecto_diffs(source, only([:aggregate])), &(elem(&1, 0) == "min(r.x)"))
+            )
+      end
+    end
+  end
+
+  test "a value subquery's ordering is observed when its source may bring the limit" do
+    ordering = [mutators: [{Mutare.Ecto, repo: MyApp.Repo, families: [:ordering]}]]
+
+    for {prelude, source_query, kept?} <- [
+          {~s|base = from r in "rows", limit: 1|, "base", true},
+          {"", ~s|"rows"|, false}
+        ] do
+      source =
+        fixture("""
+        #{prelude}
+        from p in "outer_rows",
+          where: p.id == subquery(from r in #{source_query}, order_by: [asc: r.id], select: r.id),
+          select: p.id
+        """)
+
+      assert_builds(source, & &1.q(), ordering)
+      assert ecto_diffs(source, ordering) != [] == kept?
+    end
   end
 end

@@ -16,7 +16,8 @@ defmodule Mutare.Ecto.Subquery do
   #   drop does unless the limit it uncovers is known to match it in zero-ness
   #   (`limit_drop_observed?/1`). Value wrappers receive all bound drops and nonnegative bumps.
   #   An overridden bound never mutates.
-  # * Ordering and its value expressions mutate in windowed value queries (limit or offset).
+  # * Ordering and its value expressions mutate in windowed value queries (a limit or offset,
+  #   written or possibly brought by an opaque source).
   #   Unwindowed scalar ordering is still not composed, even on SQLite where it can be live.
   # * General clause drops (including group_by/distinct) remain unimplemented here.
   #
@@ -395,9 +396,11 @@ defmodule Mutare.Ecto.Subquery do
     end
   end
 
-  # A windowed value query observes which rows the ordering picks. EXISTS does not.
+  # A windowed value query observes which rows the ordering picks. EXISTS does not. A source
+  # that is itself a query (`plain_source?/1`) may bring the window: Ecto keeps
+  # `base = from r in "rows", limit: 1` as the limit of `from r in base, order_by: r.id`.
   defp ordering(%FromCall{clauses: %{entries: entries}} = from, config, :value) do
-    if Enum.any?(entries, &Surface.bound?(&1.key)),
+    if Enum.any?(entries, &Surface.bound?(&1.key)) or not plain_source?(from),
       do: Query.mutations_for(from, config, [:ordering, :aggregate, :scalar], &(&1 == :order_by)),
       else: []
   end
@@ -667,7 +670,10 @@ defmodule Mutare.Ecto.Subquery do
   #     number into existence: `{2, 2} ∪ {2}` leaves one row and `OFFSET 1` none, while the
   #     `{0, 2} ∪ {2}` of an arithmetic mutant leaves two and `OFFSET 1` one;
   #   * a clause other than the projection or the ordering reads a projected value back
-  #     through `selected_as/1` (`having: selected_as(:total) > 10`);
+  #     through `selected_as/1` (`having: selected_as(:total) > 10`), or may
+  #     (`reads_selected_alias?/1`);
+  #   * a `having` may read a bare column on SQLite, whose row the aggregates pick
+  #     (`having_reads_bare_column?/1`);
   #   * the source is a query whose own clauses are out of view (`plain_source?/1`), and any of
   #     the above may hide in them.
   #
@@ -676,7 +682,8 @@ defmodule Mutare.Ecto.Subquery do
     not plain_source?(from) or
       Enum.any?(entries, &(&1.key in @value_comparisons)) or
       (Enum.any?(entries, &deduplicates?/1) and offset_may_skip?(entries)) or
-      Enum.any?(entries, &reads_selected_alias?/1)
+      reads_selected_alias?(entries) or
+      having_reads_bare_column?(entries)
   end
 
   # UNION deduplicates the combined projection. `distinct: true` deduplicates the projection,
@@ -701,15 +708,103 @@ defmodule Mutare.Ecto.Subquery do
     end
   end
 
-  defp reads_selected_alias?(%Entry{key: key, value: value}) do
-    key not in [:order_by | @projection_keys] and
-      elem(
-        Macro.prewalk(value, false, fn
-          {:selected_as, _meta, [_name]} = node, _found? -> {node, true}
-          node, found? -> {node, found?}
-        end),
-        1
-      )
+  # `selected_as/1` is an ordinary expression, so any clause may read an alias: written, or
+  # hidden where a clause admits a `dynamic` (`group_by: ^[dynamic(selected_as(:bucket))]`), or
+  # named by a `fragment`'s raw SQL. The hidden reads matter only if the projection may define
+  # an alias: a written `selected_as/2`, or a pinned projection, which may be a dynamic that
+  # writes one.
+  defp reads_selected_alias?(entries) do
+    {projections, readers} = Enum.split_with(entries, &(&1.key in @projection_keys))
+    readers = Enum.reject(readers, &(&1.key == :order_by))
+
+    Enum.any?(readers, &contains?(&1.value, fn node -> match?({:selected_as, _, [_]}, node) end)) or
+      (Enum.any?(projections, &may_define_alias?(&1.value)) and
+         Enum.any?(readers, &may_read_alias?/1))
+  end
+
+  defp may_define_alias?({:^, _meta, [_interior]}), do: true
+
+  defp may_define_alias?(projection),
+    do: contains?(projection, &match?({:selected_as, _, [_, _]}, &1))
+
+  # A condition admits a dynamic only as the whole condition; a pin within its expression is a
+  # parameter. Elsewhere (`group_by`, `distinct`, `windows`) a dynamic may stand at any level of
+  # the clause's lists and keyword values.
+  defp may_read_alias?(%Entry{key: key, value: value}) do
+    contains?(value, &match?({:fragment, _, args} when is_list(args), &1)) or
+      if Surface.from_clause?(key, :hosted),
+        do: Condition.shape(value) == {:predicate, :root_pin},
+        else: grammar_pin?(value)
+  end
+
+  defp grammar_pin?({:^, _meta, [_interior]}), do: true
+  defp grammar_pin?({_key, value}), do: grammar_pin?(value)
+
+  defp grammar_pin?(value) do
+    case AST.unwrap_list(value) do
+      elements when is_list(elements) -> Enum.any?(elements, &grammar_pin?/1)
+      nil -> false
+    end
+  end
+
+  # SQLite lets a `having` read a column that is neither grouped nor aggregated, and gives it
+  # the value from the row the query's lone `min`/`max` picked (from an arbitrary row
+  # otherwise). So an aggregate swap can change what such a `having` reads while the query
+  # aggregates alike: under `having: r.y == 1`, `min(r.x)` → `max(r.x)` reads another row's
+  # `y`. (Postgres rejects the bare column.) Outside its aggregate calls, a `having` may read
+  # one through a column that no written `group_by` expression names, or through what may hide
+  # one: a pinned condition, a `fragment`, a subquery, an author macro.
+  defp having_reads_bare_column?(entries) do
+    grouped =
+      for %Entry{key: :group_by, value: value} <- entries,
+          expression <- AST.unwrap_list(value) || [value],
+          into: MapSet.new(),
+          do: without_meta(expression)
+
+    Enum.any?(entries, fn %Entry{key: key, value: value} ->
+      key in [:having, :or_having] and
+        (Condition.shape(value) == {:predicate, :root_pin} or bare_column?(value, grouped))
+    end)
+  end
+
+  defp bare_column?(value, grouped) do
+    {_pruned, found?} =
+      Macro.prewalk(value, false, fn node, found? ->
+        cond do
+          Aggregate.ecto_aggregate?(node) -> {:aggregate, found?}
+          aggregate_filter?(node) -> {:aggregate, found?}
+          column?(node) -> {node, found? or not MapSet.member?(grouped, without_meta(node))}
+          hides_column?(node) -> {node, true}
+          true -> {node, found?}
+        end
+      end)
+
+    found?
+  end
+
+  defp aggregate_filter?({:filter, _meta, [aggregate, _condition]}),
+    do: Aggregate.ecto_aggregate?(aggregate)
+
+  defp aggregate_filter?(_node), do: false
+
+  defp column?({{:., _, [_source, field]}, _meta, []}) when is_atom(field), do: true
+  defp column?({:field, _meta, [_source, _name]}), do: true
+  defp column?(_node), do: false
+
+  defp hides_column?({head, _meta, [_arg]}) when head in @wrappers, do: true
+  defp hides_column?({:fragment, _meta, args}) when is_list(args), do: true
+  defp hides_column?(node), do: Calls.routed_treatments(node) != nil
+
+  defp without_meta(ast),
+    do:
+      Macro.prewalk(ast, fn
+        {form, _meta, args} -> {form, [], args}
+        node -> node
+      end)
+
+  defp contains?(ast, predicate) do
+    {_ast, found?} = Macro.prewalk(ast, false, &{&1, &2 or predicate.(&1)})
+    found?
   end
 
   # Whether the source brings no query clauses of its own: a table name, a schema module, both

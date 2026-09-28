@@ -44,6 +44,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   projection pin except a query parameter reaches core: the whole projection, a map key, or a
   `map/2` take's field list decides which fields survive, and so whether the query aggregates.
   A windowed `fragment` counts as possibly hiding an aggregate.
+- Observe an `EXISTS` subquery's projection where another clause may read it: a projection
+  alias read through a pinned `dynamic` or a `fragment`, not only a written `selected_as/1`;
+  and, on SQLite, a `having` that reads a column neither grouped nor aggregated, whose value
+  comes from the row `min`/`max` picks.
+- Mutate a value subquery's ordering when its source is a query, which may bring the `limit`.
 - Beneath `is_nil`, mutate a window's partition and ordering keys: their values decide which
   rows the window function reads, even when their NULL-ness is unchanged.
 - Include terminal composed subquery stages, inline subquery bounds, and windowed value-query

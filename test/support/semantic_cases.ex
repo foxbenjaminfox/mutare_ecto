@@ -245,6 +245,49 @@ defmodule Mutare.Ecto.SemanticCases do
         end
       end
 
+      # `views - views` puts every post in one bucket, which `offset: 1` skips; `views + views`
+      # makes three. The grouping reads the alias only through its pinned dynamic.
+      test "audit: EXISTS observes a projection alias read through a pinned grouping" do
+        source =
+          audit_source("""
+          grouping = [dynamic(selected_as(:bucket))]
+          from u in User, where: exists(from p in Post, group_by: ^grouping, limit: 10, offset: 1,
+            select: selected_as(p.views - p.views, :bucket)), select: u.id, order_by: u.id
+          """)
+
+        assert H.assert_delivery(@repo, source, {"p.views - p.views", "p.views + p.views"}, [
+                 :arithmetic
+               ]) == {[], [1, 2, 3, 4, 5, 6]}
+      end
+
+      # SQLite reads the bare `p.user_id` from the row `min`/`max` picks: post 3 (user 99) for
+      # the least views, post 2 (user 2) for the most. Postgres rejects the bare column.
+      if @repo.__adapter__() == Ecto.Adapters.SQLite3 do
+        test "audit: EXISTS observes which row an aggregate hands a bare HAVING column" do
+          source =
+            audit_source("""
+            from u in User, where: exists(from p in Post, select: min(p.views),
+              having: p.user_id == 2), select: u.id, order_by: u.id
+            """)
+
+          assert H.assert_delivery(@repo, source, {"min(p.views)", "max(p.views)"}, [:aggregate]) ==
+                   {[], [1, 2, 3, 4, 5, 6]}
+        end
+      end
+
+      # The limit comes from `base`, so the direction picks user 1's post or the orphan's.
+      test "audit: a value subquery orders under the limit its source brings" do
+        source =
+          audit_source("""
+          base = from p in Post, limit: 1
+          from u in User, where: u.id == subquery(from p in base, order_by: [asc: p.user_id],
+            select: p.user_id), select: u.id
+          """)
+
+        assert H.assert_delivery(@repo, source, {"asc: p.user_id", "desc: p.user_id"}, [:ordering]) ==
+                 {[1], []}
+      end
+
       # Dropping the effective `limit: 5` uncovers the overridden `limit: 0`; dropping a pinned
       # limit lifts a runtime zero. Both change existence.
       test "audit: an EXISTS limit drop is observed when what it uncovers is zero" do

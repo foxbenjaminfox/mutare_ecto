@@ -101,6 +101,11 @@ defmodule Mutare.Ecto.Fragment do
     * `coalesce(a, b)` is NULL exactly when both operands are;
     * `sum`/`avg`/`min`/`max` of `x` is NULL exactly when no input row has a non-NULL `x`.
 
+  The arithmetic rules assume the arithmetic stays finite. A float that overflows breaks them:
+  on SQLite, `Inf - Inf` is NaN, which it returns as NULL, and Postgres raises on the overflow.
+  A mutant that only such values can tell apart (`(x + x) - (x + x)` → `(x + x) + (x + x)` at
+  `x = 1.0e308`) is pruned as equivalent anyway: no test suite is expected to kill it.
+
   Two decisions read that table. A mutant is pruned when it and the node it replaces are both
   never NULL (a literal bump) or follow the same rule over the same operands (`+`→`-`,
   `sum`→`avg`). And the NULL-ness-only observation passes down through a form only while that

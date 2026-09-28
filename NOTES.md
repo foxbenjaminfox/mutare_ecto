@@ -208,6 +208,18 @@ under EXISTS. That descent also changed two roles in value mode. A map key pin a
 field-list pin were read as `:value` by the condition walk, which has no map grammar. They are
 now `:structural`, so `Mutare.Ecto.Island` holds the names they can evaluate to.
 
+A broader audit then looked for the same kinds of error elsewhere in the subquery pruning, and
+found three more. The alias check searched each clause for a written `selected_as/1`, so a
+pinned `group_by: ^[dynamic(selected_as(:bucket))]` counted as reading no alias. An unknown is
+now read as a possible read wherever a clause admits a `dynamic`, or holds a `fragment`, but
+only if the projection may define an alias at all, so an ordinary pinned filter keeps its
+pruning. Aggregation alone also turned out not to settle an aggregate swap under EXISTS: SQLite
+hands a bare `having` column the value from the row `min`/`max` picked, so `min` → `max` can
+flip `having: r.y == 1`. And the value-mode ordering gate read only the inner `from`'s own
+bounds, although a query source may bring the limit. The audit's fourth finding, that a float
+overflow breaks the `is_nil` rules for `+`/`-`/`*`, was kept as an accepted limitation and
+documented in `Mutare.Ecto.Fragment`.
+
 The coalesce family's equivalence note ("differ only where x is NULL") still describes
 scalar evaluation only; an aggregate-removing drop is killed by an empty input instead.
 
