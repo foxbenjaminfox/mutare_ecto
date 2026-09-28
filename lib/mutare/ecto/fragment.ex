@@ -99,7 +99,11 @@ defmodule Mutare.Ecto.Fragment do
     * a non-`nil` literal (a written negative number included) is never NULL;
     * `a + b`, `a - b` and `a * b` are NULL exactly when an operand is;
     * `coalesce(a, b)` is NULL exactly when both operands are;
-    * `sum`/`avg`/`min`/`max` of `x` is NULL exactly when no input row has a non-NULL `x`.
+    * `sum`/`avg` of `x` is NULL exactly when no input row has a non-NULL `x`.
+
+  `min`/`max` follow that rule too, but on SQLite they also choose the row that a bare
+  (ungrouped, unaggregated) column is read from, so a swap that keeps their NULL-ness can still
+  change the result; they are unknown.
 
   The arithmetic rules assume the arithmetic stays finite. A float that overflows breaks them:
   on SQLite, `Inf - Inf` is NaN, which it returns as NULL, and Postgres raises on the overflow.
@@ -324,9 +328,6 @@ defmodule Mutare.Ecto.Fragment do
 
   defp children({:over, _meta, [_, _]} = node, ctx), do: window_children(node, ctx)
 
-  defp children({{:., _, [_, :over]}, _, [_, _]} = node, ctx),
-    do: window_children(node, ctx)
-
   # Everything else — an operator/call (its arguments under the author-macro rule), a written
   # list, a Sourceror block — descends structurally; a `^` pin is a leaf (`Mutare.Ecto.Walk`).
   # That includes `is_nil`: its argument is ordinary syntax, entered like any other, under the
@@ -435,7 +436,10 @@ defmodule Mutare.Ecto.Fragment do
 
   defp ecto_nullness(:coalesce, [_x, _default] = operands), do: {:every_operand, operands}
 
-  defp ecto_nullness(aggregate, [_x] = operands) when aggregate in [:sum, :avg, :min, :max],
+  # `min`/`max` are NULL by the same rule, but on SQLite they also pick the row a bare column
+  # is read from (`having: not is_nil(min(r.x)), select: r.y`), so a mutant that keeps their
+  # NULL-ness can still change the result: they are unknown here.
+  defp ecto_nullness(aggregate, [_x] = operands) when aggregate in [:sum, :avg],
     do: {:no_input, operands}
 
   defp ecto_nullness(_form, _args), do: :unknown

@@ -124,46 +124,67 @@ defmodule Mutare.Ecto.Walk do
 
   defp anchor(tag, _node), do: tag
 
-  # The calls Ecto's query builder reads itself, by name **and arity**: the builder dispatches on
-  # both before it tries a macro expansion, so an author's `coalesce/1` or `sum/2` is expanded
-  # while a same-arity `sum/1` never is. They are `Ecto.Query.API`'s and `Ecto.Query.WindowAPI`'s
-  # functions (read from the Ecto this is compiled against), the arities the builder accepts
-  # beyond those (`over/1`, `filter/1`, a unary `-`, `subquery/1`, `literal/1`, the older name of
-  # `identifier/1`), and the syntax forms it escapes, a field access's inner `.` node included
-  # (a prewalk visits it). `fragment/n` and the collection forms take any arity.
-  @ecto_calls MapSet.new(
-                Ecto.Query.API.__info__(:functions) ++
-                  Ecto.Query.WindowAPI.__info__(:functions) ++
-                  [over: 1, filter: 1, -: 1, subquery: 1, literal: 1, ^: 1, .: 2, %: 2, |: 2] ++
-                  [sigil_s: 2, sigil_S: 2, sigil_w: 2, sigil_W: 2]
-              )
+  # The calls Ecto's query builder reads itself, by name **and arity** and by grammar: the
+  # builder dispatches on name and arity before it tries a macro expansion, so an author's
+  # `coalesce/1` or `sum/2` is expanded while a same-arity `sum/1` never is, and some of
+  # `Ecto.Query.API`'s names are grammar of one position only. Read from the Ecto this is
+  # compiled against:
+  #
+  #   * an expression reads `Ecto.Query.API`'s functions, less the select grammar (`map/2`,
+  #     `struct/2`, `merge/2`, `selected_as/2`), the fragment-argument helpers (`constant/1`,
+  #     `splice/1`, `identifier/1` and its older name `literal/1`) and the `values/2` source,
+  #     plus the arities the builder accepts beyond them (`over/1`, `filter/1`, a unary `-`,
+  #     `subquery/1`) and the syntax forms it escapes, a field access's inner `.` node included
+  #     (a prewalk visits it). `fragment/n` and the collection forms take any arity;
+  #   * a projection reads the select grammar besides;
+  #   * a window's function reads `Ecto.Query.WindowAPI`'s besides.
+  #
+  # A fragment's own arguments are not told apart, so a helper there reads as unknown.
+  @select_grammar [map: 2, struct: 2, merge: 2, selected_as: 2]
+  @position_only @select_grammar ++
+                   [constant: 1, splice: 1, identifier: 1, literal: 1, values: 2]
+  @expression_calls (Ecto.Query.API.__info__(:functions) -- @position_only) ++
+                      [over: 1, filter: 1, -: 1, subquery: 1, ^: 1, .: 2, %: 2, |: 2] ++
+                      [sigil_s: 2, sigil_S: 2, sigil_w: 2, sigil_W: 2]
+  @calls %{
+    expression: MapSet.new(@expression_calls),
+    projection: MapSet.new(@expression_calls ++ @select_grammar),
+    window_function: MapSet.new(@expression_calls ++ Ecto.Query.WindowAPI.__info__(:functions))
+  }
   @any_arity [:fragment, :{}, :%{}, :<<>>, :__block__, :__aliases__]
+
+  @typedoc "The grammar a call is read in, for `opaque_call?/2`."
+  @type grammar :: :expression | :projection | :window_function
 
   @doc """
   Whether Ecto may expand `node` into query syntax that the written source does not show: a
   registered author macro, a module attribute, a remote call, or any other local call outside
-  Ecto's own query vocabulary (by name and arity), which Ecto can only be expanding as a macro. A field access
-  (`p.x`, `as(:p).x`) and a JSON path (`p.meta["k"]`) are not calls in this sense.
+  Ecto's own vocabulary for `grammar` (by name and arity), which Ecto can only be expanding as
+  a macro. A field access (`p.x`, `as(:p).x`) and a JSON path (`p.meta["k"]`) are not calls in
+  this sense.
 
   The descent itself does not ask this (an unregistered call is still read as standard syntax,
   the author-macro rule above). A reader that *concludes* something from what it did not see —
   that a clause reads no projection, that a condition is not the literal `true` — asks it, so an
   unseen expansion counts as unknown rather than as absent.
   """
-  @spec opaque_call?(Macro.t()) :: boolean()
-  def opaque_call?({:@, _meta, [_attribute]}), do: true
-  def opaque_call?({{:., _, [Access, :get]}, _meta, _args}), do: false
+  @spec opaque_call?(Macro.t(), grammar()) :: boolean()
+  def opaque_call?(node, grammar \\ :expression)
+  def opaque_call?({:@, _meta, [_attribute]}, _grammar), do: true
+  def opaque_call?({{:., _, [Access, :get]}, _meta, _args}, _grammar), do: false
 
-  def opaque_call?({{:., _, [receiver, _name]}, _meta, args} = node) when is_list(args),
+  def opaque_call?({{:., _, [receiver, _name]}, _meta, args} = node, _grammar) when is_list(args),
     do: remote?(receiver) or Calls.routed_treatments(node) != nil
 
-  def opaque_call?({name, _meta, args} = node) when is_atom(name) and is_list(args),
-    do: not ecto_call?(name, length(args)) or Calls.routed_treatments(node) != nil
+  def opaque_call?({name, _meta, args} = node, grammar) when is_atom(name) and is_list(args),
+    do: not ecto_call?(name, length(args), grammar) or Calls.routed_treatments(node) != nil
 
-  def opaque_call?(_node), do: false
+  def opaque_call?(_node, _grammar), do: false
 
-  defp ecto_call?(name, _arity) when name in @any_arity, do: true
-  defp ecto_call?(name, arity), do: MapSet.member?(@ecto_calls, {name, arity})
+  defp ecto_call?(name, _arity, _grammar) when name in @any_arity, do: true
+
+  defp ecto_call?(name, arity, grammar),
+    do: MapSet.member?(Map.fetch!(@calls, grammar), {name, arity})
 
   defp remote?({:__aliases__, _meta, _segments}), do: true
   defp remote?(module), do: is_atom(module)

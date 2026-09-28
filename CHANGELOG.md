@@ -36,6 +36,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   define an alias.
 - Swap comparison, connective and `like`/`ilike` forms only at Ecto's arity 2: an author's
   `like/1` macro was swapped to a nonexistent `ilike/1`, failing the whole metamutant build.
+  Read a remote `over/2` as an author macro, never a window: it crashed the transform.
+- Read Ecto's names that are grammar of one position only (`map/2` in a select, `constant/1`
+  as a fragment argument) as possible macros anywhere else.
+- Stop pruning `min`/`max` swaps, and mutants inside them, beneath `is_nil`: on SQLite the
+  aggregate also picks the row a bare column is read from.
 - Protect inline window grammar in free-standing dynamics, including opt-in atom mutations.
 - Mutate list-valued dynamics and repeated explicit join predicates; permit hosting a sole
   explicit predicate on an association join.

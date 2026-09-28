@@ -589,8 +589,14 @@ defmodule Mutare.Ecto.FragmentTest do
       # so the swap cannot change the predicate — pruned like the arithmetic and literal arms,
       # and the aggregate's operand stays under the same NULL-ness-only observation.
       assert mutants("is_nil(sum(u.x))") == MapSet.new(["not is_nil(sum(u.x))"])
-      assert mutants("not is_nil(min(u.x))") == MapSet.new(["is_nil(min(u.x))"])
-      assert mutants("is_nil(max(u.x + 1) - 1)") == MapSet.new(["not is_nil(max(u.x + 1) - 1)"])
+      assert mutants("is_nil(avg(u.x + 1) - 1)") == MapSet.new(["not is_nil(avg(u.x + 1) - 1)"])
+    end
+
+    test "min/max are not pruned under is_nil — on SQLite they pick a bare column's row" do
+      # `having: not is_nil(min(r.x)), select: r.y` reads `y` from the row `min` picked, so
+      # `min` → `max` changes the result though the predicate's truth does not.
+      assert "not is_nil(max(u.x))" in mutants("not is_nil(min(u.x))")
+      assert "is_nil(max(u.x - 1) - 1)" in mutants("is_nil(max(u.x + 1) - 1)")
     end
   end
 

@@ -9,6 +9,17 @@ defmodule Mutare.Ecto.DslAuditMacros do
   defmacro sum(left, right), do: quote(do: sum(unquote(left) + unquote(right)))
   defmacro like(value), do: quote(do: like(unquote(value), "ok%"))
   defmacro aliased(value), do: quote(do: selected_as(unquote(value), :bucket))
+  # Ecto's names that are grammar of one position only: `map/2` in a select, `constant/1` as a
+  # fragment argument. Anywhere else Ecto expands them.
+  defmacro map(_source, _value), do: true
+  defmacro constant(value), do: quote(do: sum(unquote(value)))
+end
+
+defmodule Mutare.Ecto.DslAuditRemoteMacros do
+  @moduledoc false
+  # Called remotely, so never Ecto's window grammar: Ecto expands every remote call.
+  defmacro over(value, options),
+    do: quote(do: coalesce(unquote(value), unquote(Keyword.fetch!(options, :fallback))))
 end
 
 defmodule Mutare.Ecto.DslAuditRegressionTest do
@@ -705,7 +716,7 @@ defmodule Mutare.Ecto.DslAuditRegressionTest do
 
     test "an unregistered macro may hide the projection's aggregate" do
       # `sum/2` is not Ecto's `sum/1`: Ecto expands it.
-      for aggregate <- ["total(r.value)", "sum(r.x, r.y)"] do
+      for aggregate <- ["total(r.value)", "sum(r.x, r.y)", "constant(r.x)"] do
         source = exists_source(~s|from r in "rows", select: coalesce(0, #{aggregate})|)
         assert_rewrite(source, [:coalesce], "coalesce(0, #{aggregate})", "0")
         assert_builds(source, & &1.q(), only([:coalesce]))
@@ -775,7 +786,8 @@ defmodule Mutare.Ecto.DslAuditRegressionTest do
           # Ecto's escape erases `filter/1`, and expands a macro, into the literal `true`.
           {"where: false, or_where: filter(true)", :boolean_literal},
           {"where: false, or_where: ignore(r.a > 1)", :comparison},
-          {"where: false, or_where: coalesce(true)", :boolean_literal}
+          {"where: false, or_where: coalesce(true)", :boolean_literal},
+          {"where: false, or_where: map(r, 1)", :integer_literal}
         ] do
       source = fixture(~s|from r in "rows", #{clauses}, select: r.a|)
       assert ecto_diffs(source, only([family])) != []
@@ -815,6 +827,17 @@ defmodule Mutare.Ecto.DslAuditRegressionTest do
       assert_builds(source, & &1.q(), families)
       assert metamutant(source, families) =~ "dynamic(" != rebuilt?
     end
+  end
+
+  test "a remote over/2 is an author macro, never window grammar" do
+    source =
+      fixture("""
+      require Mutare.Ecto.DslAuditRemoteMacros
+      from r in "rows", select: Mutare.Ecto.DslAuditRemoteMacros.over(r.x + 1, fallback: 1)
+      """)
+
+    assert {"r.x + 1", "r.x - 1"} in ecto_diffs(source, only([:arithmetic]))
+    assert_builds(source, & &1.q(), only([:arithmetic]))
   end
 
   test "an author's like/1 is not swapped to a nonexistent ilike/1" do

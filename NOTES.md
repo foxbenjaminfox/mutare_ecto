@@ -249,6 +249,11 @@ arity before it expands, so an author's `coalesce/1` or `sum/2` is a macro while
 `sum/1` never is. The same round found the name-keyed swaps (`like` → `ilike`) renaming an
 author's `like/1` into a function that does not exist, and a macro in the projection defining
 the alias a `fragment` reads.
+A sixth round keyed it by grammar too: `map/2` is Ecto's only in a select and `constant/1`
+only as a fragment argument, so elsewhere a same-named macro is expanded. It also found a
+remote `Mod.over/2` read as window grammar (Ecto expands every remote call), and a `min` →
+`max` swap pruned beneath `is_nil` although, on SQLite, the aggregate picks the row a bare
+column is read from; `min`/`max` lost their NULL rule.
 
 The fourth round also found that a keyword filter's scalar value, routed `:interpolated`, reaches Ecto
 as a parameter, which the planner `cast/1`s before `dump/1`ing, where a written literal is only

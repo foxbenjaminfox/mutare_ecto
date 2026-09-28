@@ -635,9 +635,6 @@ defmodule Mutare.Ecto.Subquery do
   defp query_scope({:over, _meta, [function | options]} = node, ctx),
     do: window_scope(node, function, options, ctx)
 
-  defp query_scope({{:., _, [_, :over]}, _meta, [function | options]} = node, ctx),
-    do: window_scope(node, function, options, ctx)
-
   defp query_scope({head, _meta, [_arg]}, _ctx) when head in @wrappers, do: []
   defp query_scope(node, ctx), do: Walk.structural(node, ctx)
 
@@ -654,7 +651,7 @@ defmodule Mutare.Ecto.Subquery do
   defp window_operands(function) do
     case function do
       {name, _meta, args} when is_atom(name) and is_list(args) ->
-        if hides_aggregate?(function), do: [function], else: args
+        if window_function_hides?(function), do: [function], else: args
 
       _opaque ->
         [function]
@@ -664,7 +661,12 @@ defmodule Mutare.Ecto.Subquery do
   defp hides_aggregate?({head, _meta, [_arg]}) when head in @wrappers, do: false
   defp hides_aggregate?({:^, _meta, _args}), do: true
   defp hides_aggregate?({:fragment, _meta, args}) when is_list(args), do: true
-  defp hides_aggregate?(node), do: Walk.opaque_call?(node)
+  defp hides_aggregate?(node), do: Walk.opaque_call?(node, :projection)
+
+  # A window's function is read in its own grammar (`row_number()` is Ecto's there).
+  defp window_function_hides?({:^, _meta, _args}), do: true
+  defp window_function_hides?({:fragment, _meta, args}) when is_list(args), do: true
+  defp window_function_hides?(function), do: Walk.opaque_call?(function, :window_function)
 
   defp projection_mode(from, :existence),
     do: if(projection_observed?(from), do: :value, else: :existence)
@@ -755,7 +757,7 @@ defmodule Mutare.Ecto.Subquery do
   # hidden where a clause admits a `dynamic` (`group_by: ^[dynamic(selected_as(:bucket))]`), in
   # an author macro's expansion, or named by a `fragment`'s raw SQL. The hidden reads matter only
   # if the projection may define an alias: a written `selected_as/2`, a call Ecto may expand into
-  # one (`Walk.opaque_call?/1`), or a pinned projection, which may be a dynamic that writes one.
+  # one (`Walk.opaque_call?/2`), or a pinned projection, which may be a dynamic that writes one.
   defp reads_selected_alias?(entries) do
     {projections, readers} = Enum.split_with(entries, &(&1.key in @projection_keys))
     readers = Enum.reject(readers, &(&1.key == :order_by))
@@ -768,7 +770,11 @@ defmodule Mutare.Ecto.Subquery do
   defp may_define_alias?({:^, _meta, [_interior]}), do: true
 
   defp may_define_alias?(projection),
-    do: contains?(projection, &(match?({:selected_as, _, [_, _]}, &1) or Walk.opaque_call?(&1)))
+    do:
+      contains?(
+        projection,
+        &(match?({:selected_as, _, [_, _]}, &1) or Walk.opaque_call?(&1, :projection))
+      )
 
   # A condition admits a dynamic only as the whole condition; a pin within its expression is a
   # parameter. Elsewhere (`group_by`, `distinct`, `windows`) a dynamic may stand at any level of

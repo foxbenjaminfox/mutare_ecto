@@ -322,6 +322,20 @@ defmodule Mutare.Ecto.SemanticCases do
                    {[], [1, 2, 3, 4, 5, 6]}
         end
 
+        # Beneath `is_nil`, `min` → `max` keeps the predicate but not the row SQLite reads the
+        # bare `p.title` from. The published group holds P1 (10 views) and P3 (5 views): `min`
+        # reads P3's title, `max` P1's. The unpublished group is P2 alone either way.
+        test "audit: an aggregate swap beneath is_nil moves SQLite's bare column" do
+          source =
+            audit_source("""
+            from p in Post, group_by: p.published, having: not is_nil(min(p.views)),
+              select: p.title, order_by: p.title
+            """)
+
+          assert H.assert_delivery(@repo, source, {"min(p.views)", "max(p.views)"}, [:aggregate]) ==
+                   {["P2", "P3"], ["P1", "P2"]}
+        end
+
         # `max(parent_as(:outer).age)` aggregates the outer query, so without the `sum` the
         # inner query does not aggregate its empty input into a row.
         test "audit: EXISTS keeps an aggregate drop beside a correlated aggregate" do
