@@ -123,6 +123,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `%{^:title => p.title}`): a key names a field of the result or of the updated struct, and
   its atom-literal mutant raised a `KeyError` when the results were loaded. A value is still
   data, a 2-tuple inside it included (`%{pair: {11, 22}}`).
+- Drop each occurrence of a bare pinned variable in an in-list alone (`p.id in [^d, ^d]`): it
+  may hold a `dynamic`, which Ecto expands afresh at each occurrence, so the two may differ.
+  Dropping either of two identical such elements is offered once.
 - Drop each occurrence of `ago/2` or `from_now/2` in an in-list alone: Ecto builds each on its
   own `DateTime.utc_now()`, so identical occurrences are distinct values, and dropping them
   together had replaced two live single-occurrence drops.

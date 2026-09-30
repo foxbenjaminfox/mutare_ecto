@@ -637,10 +637,11 @@ defmodule Mutare.Ecto.Fragment do
   # another occurrence of the same value (`[1, 1, 2]` → `[1, 2]`) would leave the set unchanged —
   # equivalent to the original by construction — so `[1, 1, 2]` shrinks exactly to `[2]` and
   # `[1, 1]`. Two elements are one member when they are the same written expression
-  # (structurally, source metadata ignored): `1`/`1`, `^a`/`^a`, `u.x`/`u.x` — and when nothing
+  # (structurally, source metadata ignored): `1`/`1`, `^@a`/`^@a`, `u.x`/`u.x` — and when nothing
   # in it can evaluate differently each time. A call Ecto does not own (`^next_id()`, an author
-  # macro), a `fragment` (`random()`) or a clock read (`ago/2`, `from_now/2`) may, so each of its
-  # occurrences drops alone. Only a literal list
+  # macro), a `fragment` (`random()`) or a clock read (`ago/2`, `from_now/2`) may, and so may a bare pinned variable,
+  # which may hold a `dynamic` Ecto expands at each occurrence, so each of its occurrences drops
+  # alone. Only a literal list
   # the author wrote qualifies: a pinned `^list`, a field reference, or a subquery right-hand
   # side has no written elements to drop. A singleton drops to `x in []` (constantly false —
   # still valid, trivially killable SQL). Tagged `"element"` so `# mutare:ignore[ecto:element]`
@@ -650,10 +651,12 @@ defmodule Mutare.Ecto.Fragment do
       for {elem, index} <- Enum.with_index(elems),
           do: if(repeatable?(elem), do: Sourceror.strip_meta(elem), else: {:occurrence, index})
 
-    for key <- Enum.uniq(keys) do
-      kept = for {elem, k} <- Enum.zip(elems, keys), k != key, do: elem
-      Tag.new(:membership, {:in, meta, [l, {:__block__, lmeta, [kept]}]}, "element")
-    end
+    # Dropping either of two identical unrepeatable elements writes one query, offered once.
+    keys
+    |> Enum.uniq()
+    |> Enum.map(fn key -> for {elem, k} <- Enum.zip(elems, keys), k != key, do: elem end)
+    |> Enum.uniq_by(&Sourceror.strip_meta/1)
+    |> Enum.map(&Tag.new(:membership, {:in, meta, [l, {:__block__, lmeta, [&1]}]}, "element"))
   end
 
   defp element_drops(_node), do: []
@@ -670,9 +673,15 @@ defmodule Mutare.Ecto.Fragment do
 
     {_sql, varies?} = Macro.prewalk(sql, false, &{&1, &2 or varies?(&1)})
 
-    Enum.all?(interiors, &plain_value?/1) and not varies? and
+    Enum.all?(interiors, &plain_interior?/1) and not varies? and
       not Walk.contains_opaque_call?(sql)
   end
+
+  # A pin whose value is a `DynamicExpr` is not a parameter: Ecto expands the dynamic afresh at
+  # each occurrence, running its own pins and SQL again, and only a bare variable can hold one
+  # (a collection, a literal or an attribute is data).
+  defp plain_interior?({name, _meta, context}) when is_atom(name) and is_atom(context), do: false
+  defp plain_interior?(interior), do: plain_value?(interior)
 
   # SQL of Ecto's own that may answer differently each time: a `fragment` (`random()`), and
   # `ago/2` and `from_now/2`, each of which Ecto builds on its own `^DateTime.utc_now()`.

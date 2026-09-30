@@ -1472,8 +1472,12 @@ defmodule Mutare.Ecto.DslAuditRegressionTest do
       assert {"r.id in #{members}", "r.id in [^#{call}, ^3]"} in ecto_diffs(source, membership)
     end
 
+    # A bare pinned variable may hold a `dynamic`, which Ecto expands at each occurrence.
+    source = fixture(~s|x = 1\nfrom r in "rows", where: r.id in [^x, ^x, 2], select: r.id|)
+    assert {"r.id in [^x, ^x, 2]", "r.id in [^x, 2]"} in ecto_diffs(source, membership)
+
     # Repeated occurrences of a value that cannot change drop together.
-    for member <- ["^x", "^@first_column", "^{x, 2}", "r.id + 1"] do
+    for member <- ["^@first_column", "^{x, 2}", "r.id + 1"] do
       source =
         fixture(
           ~s|x = 1\nopts = %{id: 1}\nfrom r in "rows", where: r.id in [#{member}, #{member}, 2], select: r.id|
@@ -1658,6 +1662,18 @@ defmodule Mutare.Ecto.DslAuditRegressionTest do
       if map =~ ":left", do: assert(":left" in originals)
       assert_builds(source, & &1.q(), mutators)
     end
+  end
+
+  test "a repeated pinned variable in an in-list drops alone, as it may hold a dynamic" do
+    source =
+      fixture("""
+      random = dynamic(fragment("abs(random() % 2)"))
+      condition = dynamic([p], p.id in [^random, ^random])
+      from p in "posts", where: ^condition, select: p.id
+      """)
+
+    assert_rewrite(source, [:membership], "p.id in [^random, ^random]", "p.id in [^random]")
+    assert_builds(source, & &1.q(), only([:membership]))
   end
 
   test "a binary literal is a leaf in a projection and an ordering, not only in a condition" do

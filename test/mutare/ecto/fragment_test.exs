@@ -275,10 +275,20 @@ defmodule Mutare.Ecto.FragmentTest do
       # `IN` is set membership: `[1, 1, 2]` denotes `{1, 2}`, so a per-index drop that left the
       # other `1` (`[1, 2]`) would be equivalent to the original — and offered twice. One drop
       # per distinct written value, removing every occurrence; a pinned or referenced member
-      # duplicates by the same written-expression test as a literal.
+      # duplicates by the same written-expression test as a literal — unless it may evaluate
+      # differently each time: a bare pinned variable may hold a `dynamic`, which Ecto expands
+      # afresh at each occurrence, so either `^a` drops alone (one query, offered once).
       assert drops("u.x in [1, 1, 2]") == MapSet.new(["u.x in [2]", "u.x in [1, 1]"])
       assert drops("u.x not in [1, 1, 2]") == MapSet.new(["u.x not in [2]", "u.x not in [1, 1]"])
-      assert drops("u.x in [^a, ^a, ^b]") == MapSet.new(["u.x in [^b]", "u.x in [^a, ^a]"])
+      assert drops("u.x in [^@a, ^@a, ^b]") == MapSet.new(["u.x in [^b]", "u.x in [^@a, ^@a]"])
+      assert drops("u.x in [^{a}, ^{a}]") == MapSet.new(["u.x in []"])
+      assert drops("u.x in [^a, ^a, ^b]") == MapSet.new(["u.x in [^a, ^b]", "u.x in [^a, ^a]"])
+
+      assert "u.x in [^a, ^a]"
+             |> Sourceror.parse_string!()
+             |> Fragment.mutants(@config)
+             |> Enum.count(&(&1.label == "element")) == 1
+
       assert drops("u.x in [u.y, u.y]") == MapSet.new(["u.x in []"])
     end
 

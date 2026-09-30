@@ -359,6 +359,10 @@ pinned key was a `:value` island. A map key is now a structural position. Round 
 found that fix reading a map pair by its slot, which the pair's value inherited, so a 2-tuple
 in a value (`%{pair: {11, 22}}`) lost its first element as a key; a value now has a slot of
 its own.
+Round twenty-eight found the repeat check's allow-list still admitting a bare pinned variable,
+which may hold a `DynamicExpr`: Ecto expands such a parameter at each occurrence, rerunning its
+pins and SQL. A variable inside a pinned collection stays plain, since such a parameter is data.
+The cost is an equivalent drop where the variable holds plain data (`[^x, ^x]` → `[^x]`).
 Round twenty-six found the binary-literal leaf rule held only by the condition catalog: the
 value walk read a bitstring's specifiers (`unsigned-integer-size(128)`) as subtraction, and the
 mutant failed the whole build. The rule now lives in `Mutare.Ecto.Walk.structural/3`, under
