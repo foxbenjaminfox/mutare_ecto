@@ -384,6 +384,7 @@ defmodule Mutare.Ecto.SemanticCases do
 
         # `max(parent_as(:outer).age)` aggregates the outer query, so without the `sum` the
         # inner query does not aggregate its empty input into a row.
+        @tag needs_ecto: ">= 3.12.5"
         test "audit: EXISTS keeps an aggregate drop beside a correlated aggregate" do
           source =
             audit_source("""
