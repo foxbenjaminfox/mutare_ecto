@@ -866,6 +866,9 @@ defmodule Mutare.Ecto.Subquery do
   #     (`reads_selected_alias?/1`);
   #   * a `having` may read a bare column on SQLite, whose row the aggregates pick
   #     (`having_reads_bare_column?/1`);
+  #   * the projection splices a pinned list (`fragment("max(?)", splice(^list))`), whose length
+  #     is the SQL call's arity, so a core mutant of the list may turn SQLite's scalar
+  #     two-argument `max` into its aggregate, and aggregation decides existence;
   #   * the source is a query whose own clauses are out of view (`plain_source?/1`), and any of
   #     the above may hide in them.
   #
@@ -876,7 +879,14 @@ defmodule Mutare.Ecto.Subquery do
       (Enum.any?(entries, &deduplicates?/1) and offset_may_skip?(entries)) or
       reads_selected_alias?(entries) or
       groups_by_projection?(entries) or
-      having_reads_bare_column?(entries)
+      having_reads_bare_column?(entries) or
+      projection_splices?(entries)
+  end
+
+  defp projection_splices?(entries) do
+    Enum.any?(entries, fn %Entry{key: key, value: value} ->
+      key in @projection_keys and contains?(value, &match?({:splice, _, [_]}, &1))
+    end)
   end
 
   # A grouping term may name a projected column by its position: `group_by: 1` is `GROUP BY 1`,
@@ -1043,14 +1053,18 @@ defmodule Mutare.Ecto.Subquery do
   # A window runs over the aggregated rows, so its own function aggregates nothing there:
   # `over(sum(r.y))` reads `r.y` as the query's bare column. Its options are read likewise, and
   # a shorthand field (`partition_by: :y`), a named window, or any other form may name one.
-  defp window_reads_bare?({:over, _meta, [function | window]}, grouped) do
-    bare_column?(window_inputs(function), grouped) or
+  # A call Ecto can only be expanding there (`Walk.expanded_argument?/2`) may read anything.
+  defp window_reads_bare?({:over, _meta, [function | window]} = node, grouped) do
+    Walk.expanded_argument?(node, 0) or bare_column?(window_inputs(function), grouped) or
       Enum.any?(window, &window_options_bare?(&1, grouped))
   end
 
-  # A window function's arguments; a `filter/2`'s are its aggregate's and its condition.
+  # A window function's arguments; a `filter/2`'s are its aggregate's and its condition. A
+  # `fragment` is kept whole, for the bare-column reader counts what its SQL may read.
   defp window_inputs({:filter, _meta, [aggregate, condition]}),
     do: [condition | window_inputs(aggregate)]
+
+  defp window_inputs({:fragment, _meta, args} = fragment) when is_list(args), do: [fragment]
 
   defp window_inputs({_name, _meta, args}) when is_list(args), do: args
   defp window_inputs(_function), do: []

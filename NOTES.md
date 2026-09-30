@@ -374,6 +374,9 @@ Round thirty-one found the bare-column reader behind the ordering retention skip
 whole, as an aggregate: a window runs over the aggregated rows, so `over(sum(r.y))` reads `r.y`
 bare. A window's function arguments are now read as bare, and its options conservatively.
 Round thirty-two found `filter/2` around the window's aggregate still hiding them.
+Round thirty-three found a `fragment` as the window function hiding them too (it is now read
+whole), and an `EXISTS` projection pin pruned as data where it is a spliced list, whose length
+is an arity (such a projection is now observed).
 Round twenty-six found the binary-literal leaf rule held only by the condition catalog: the
 value walk read a bitstring's specifiers (`unsigned-integer-size(128)`) as subtraction, and the
 mutant failed the whole build. The rule now lives in `Mutare.Ecto.Walk.structural/3`, under

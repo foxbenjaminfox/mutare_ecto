@@ -1725,6 +1725,7 @@ defmodule Mutare.Ecto.DslAuditRegressionTest do
     for clauses <- [
           "select: sum(r.views) + over(sum(r.id)), order_by: min(r.user_id)",
           "select: sum(0) + over(filter(sum(r.id), true)), order_by: min(r.user_id)",
+          ~s|select: sum(r.views) + over(fragment("first_value(id)")), order_by: min(r.user_id)|,
           "group_by: r.user_id, select: over(count(), partition_by: :views), order_by: min(r.id)",
           "group_by: r.user_id, windows: [w: [partition_by: r.views]], select: over(count(), :w), order_by: min(r.id)"
         ] do
@@ -1737,6 +1738,20 @@ defmodule Mutare.Ecto.DslAuditRegressionTest do
       assert_rewrite(source, [:aggregate], aggregate, String.replace(aggregate, "min", "max"))
       assert_builds(source, & &1.q(), only([:aggregate]))
     end
+  end
+
+  test "an EXISTS projection that splices observes the pinned list, whose length is an arity" do
+    mutators = [mutators: [Mutare.Mutators.List, {Mutare.Ecto, families: []}]]
+
+    source =
+      fixture("""
+      from p in "posts",
+        where: exists(from r in "posts", select: fragment("max(?)", splice(^([1] ++ [2])))),
+        select: p.id
+      """)
+
+    assert {:list, "[1] ++ [2]", "[1] -- [2]"} in diffs(source, mutators)
+    assert_builds(source, & &1.q(), mutators)
   end
 
   test "a binary literal is a leaf in a projection and an ordering, not only in a condition" do

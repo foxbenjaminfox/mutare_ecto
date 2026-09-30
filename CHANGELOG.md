@@ -111,7 +111,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a column neither grouped nor aggregated is observed: SQLite gives that column the row its
   lone `min`/`max` picks, even from `ORDER BY` (`order_by: min(r.x)` → `max(r.x)`).
   A window's inputs count too (`over(sum(r.y))`, `over(filter(sum(r.y), c))`,
-  `partition_by: :y`, a named window): a window
+  `over(fragment("first_value(y)"))`, `partition_by: :y`, a named window): a window
   runs over the aggregated rows, so its function's arguments are bare columns there.
 - Read a non-empty `having` list the plugin cannot read as pairs (`[{:name, "Carol"}]`, which
   Ecto reads as a keyword filter) as possibly naming a bare column when judging an `EXISTS`
@@ -126,6 +126,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `%{^:title => p.title}`): a key names a field of the result or of the updated struct, and
   its atom-literal mutant raised a `KeyError` when the results were loaded. A value is still
   data, a 2-tuple inside it included (`%{pair: {11, 22}}`).
+- Observe an `EXISTS` projection that splices a pinned list (`fragment("max(?)", splice(^list))`):
+  the list's length is the call's arity, which can turn SQLite's scalar `max` into its
+  aggregate, so a core mutant of the list may decide existence.
 - Rebuild, instead of weaving, a condition that splices (`fragment("? IN (?)", p.id,
   splice(^values))`): the dynamic path binds the spliced list once per placeholder, and the woven
   baseline failed with more parameters than placeholders.
