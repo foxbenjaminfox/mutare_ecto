@@ -211,7 +211,10 @@ defmodule Mutare.Ecto.StaticCondition do
   defp clause_typed?({:coalesce, _meta, [left, right]}),
     do: clause_typed?(left) or clause_typed?(right)
 
-  defp clause_typed?({:filter, _meta, [aggregate | _condition]}), do: clause_typed?(aggregate)
+  # Ecto escapes `filter/1,2` only; any other arity is a call it expands.
+  defp clause_typed?({:filter, _meta, [aggregate]}), do: clause_typed?(aggregate)
+  defp clause_typed?({:filter, _meta, [aggregate, _condition]}), do: clause_typed?(aggregate)
+
   # A window's function is read in its own grammar: any other call there is expanded.
   defp clause_typed?({:over, _meta, [function | _window]} = node) do
     if Walk.window?(node),

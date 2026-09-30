@@ -9,6 +9,10 @@ defmodule Mutare.Ecto.DslAuditMacros do
   defmacro fragment, do: true
   defmacro sum(left, right), do: quote(do: sum(unquote(left) + unquote(right)))
   defmacro like(value), do: quote(do: like(unquote(value), "ok%"))
+  # Types its second argument by the clause, not its first as Ecto's `filter/1,2` would.
+  defmacro filter(_aggregate, value, default),
+    do: quote(do: coalesce(unquote(value), unquote(default)))
+
   defmacro aliased(value), do: quote(do: selected_as(unquote(value), :bucket))
   # Ecto's names that are grammar of one position only: `map/2` in a select, `constant/1` as a
   # fragment argument. Anywhere else Ecto expands them.
@@ -936,6 +940,8 @@ defmodule Mutare.Ecto.DslAuditRegressionTest do
           # `count(x, :distinct)` and `filter`'s aggregate pass it on too.
           {"count(r.a / ^n, :distinct)", true},
           {"filter(count(r.a / ^n, :distinct), r.a > 0)", true},
+          # An author's `filter/3` is expanded, so any of its arguments may take the type.
+          {"filter(r.a > 1, ^flag, false) + r.a", true},
           # A string sigil is a literal to Ecto.
           {"coalesce(~s(0.5), false)", true},
           {"coalesce(~S(0.5), false)", true},
