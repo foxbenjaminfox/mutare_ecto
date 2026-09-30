@@ -127,8 +127,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its atom-literal mutant raised a `KeyError` when the results were loaded. A value is still
   data, a 2-tuple inside it included (`%{pair: {11, 22}}`).
 - Rebuild, instead of weaving, a `from` condition followed by a filter which is, or may become,
-  the literal `true` (or `[]`): a woven condition made the rest of the `from` runtime, where Ecto discards `or_where: true`, and the baseline lost it. The piped spelling
-  (`from(...) |> or_where(true)`) is not yet handled; see NOTES.
+  the literal `true` (or `[]`): a woven condition made the rest of the `from` runtime, where
+  Ecto discards `or_where: true`, and the baseline lost it. The piped spelling is not yet
+  handled: in `from(p in Post, where: p.views > 10) |> or_where(true)`, instrumenting the
+  `from` still makes the `or_where` runtime, and the baseline returns only the rows the `from`
+  selects. A chain rooted at a schema or a variable (`Post |> where(…) |> or_where(true)`) is
+  unaffected, since Ecto builds it at runtime natively and discards the `true` there too.
 - Observe an `EXISTS` projection that splices a pinned list (`fragment("max(?)", splice(^list))`):
   the list's length is the call's arity, which can turn SQLite's scalar `max` into its
   aggregate, so a core mutant of the list may decide existence.
