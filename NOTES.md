@@ -350,6 +350,9 @@ still takes keyword syntax only: `Mutare.Ecto.AST.KeywordList`, so a `from` whos
 written in explicit tuples (`from(p in P, [{:where, …}])`) gets only whole-call mutants. The gap
 loses mutants without pruning any, and closing it means an `Entry` that remembers its spelling,
 so that a re-key (`put_key/3`) writes an atom literal and not a keyword key into a tuple.
+Round twenty-four found the in-list repeat check trusting Ecto's own vocabulary: `ago/2` and
+`from_now/2` each build on a fresh `^DateTime.utc_now()`, so two written occurrences are two
+values, and each now drops alone, as a `fragment` does.
 
 The fourth round also found that a keyword filter's scalar value, routed `:interpolated`, reaches Ecto
 as a parameter, which the planner `cast/1`s before `dump/1`ing, where a written literal is only

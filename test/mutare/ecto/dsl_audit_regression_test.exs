@@ -1584,4 +1584,23 @@ defmodule Mutare.Ecto.DslAuditRegressionTest do
     source = fixture(~s|from p in "posts", order_by: [{:asc_nulls_first, p.views}], select: p.id|)
     assert_rewrite(source, [:ordering_nulls], "{:asc_nulls_first", "{:asc_nulls_last")
   end
+
+  test "each ago/2 or from_now/2 occurrence in an in-list reads the clock and drops alone" do
+    for helper <- ["ago", "from_now"] do
+      element = ~s|#{helper}(0, "second")|
+
+      source =
+        fixture("""
+        from p in "posts",
+          where: type(p.inserted_at, :utc_datetime_usec) in [#{element}, ^DateTime.utc_now(), #{element}],
+          select: p.id
+        """)
+
+      replacements = Enum.map(ecto_diffs(source, only([:membership])), &elem(&1, 1))
+      assert Enum.any?(replacements, &(&1 =~ "[^DateTime.utc_now(), #{element}]"))
+      assert Enum.any?(replacements, &(&1 =~ "[#{element}, ^DateTime.utc_now()]"))
+      refute Enum.any?(replacements, &(&1 =~ "in [^DateTime.utc_now()]"))
+      assert_builds(source, & &1.q(), only([:membership]))
+    end
+  end
 end

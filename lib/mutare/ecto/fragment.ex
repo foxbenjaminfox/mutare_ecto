@@ -613,7 +613,8 @@ defmodule Mutare.Ecto.Fragment do
   # `[1, 1]`. Two elements are one member when they are the same written expression
   # (structurally, source metadata ignored): `1`/`1`, `^a`/`^a`, `u.x`/`u.x` — and when nothing
   # in it can evaluate differently each time. A call Ecto does not own (`^next_id()`, an author
-  # macro) or a `fragment` (`random()`) may, so each of its occurrences drops alone. Only a literal list
+  # macro), a `fragment` (`random()`) or a clock read (`ago/2`, `from_now/2`) may, so each of its
+  # occurrences drops alone. Only a literal list
   # the author wrote qualifies: a pinned `^list`, a field reference, or a subquery right-hand
   # side has no written elements to drop. A singleton drops to `x in []` (constantly false —
   # still valid, trivially killable SQL). Tagged `"element"` so `# mutare:ignore[ecto:element]`
@@ -641,12 +642,17 @@ defmodule Mutare.Ecto.Fragment do
         node, interiors -> {node, interiors}
       end)
 
-    {_sql, fragment?} =
-      Macro.prewalk(sql, false, &{&1, &2 or match?({:fragment, _, args} when is_list(args), &1)})
+    {_sql, varies?} = Macro.prewalk(sql, false, &{&1, &2 or varies?(&1)})
 
-    Enum.all?(interiors, &plain_value?/1) and not fragment? and
+    Enum.all?(interiors, &plain_value?/1) and not varies? and
       not Walk.contains_opaque_call?(sql)
   end
+
+  # SQL of Ecto's own that may answer differently each time: a `fragment` (`random()`), and
+  # `ago/2` and `from_now/2`, each of which Ecto builds on its own `^DateTime.utc_now()`.
+  defp varies?({:fragment, _meta, args}) when is_list(args), do: true
+  defp varies?({clock, _meta, [_count, _interval]}) when clock in [:ago, :from_now], do: true
+  defp varies?(_node), do: false
 
   # A variable, a literal, a module attribute, and a collection of these. Not a field or key
   # read: `value.next` calls a function when `value` holds a module, and `value[:id]` a
