@@ -1023,6 +1023,7 @@ defmodule Mutare.Ecto.Subquery do
     {_pruned, found?} =
       Macro.prewalk(value, false, fn node, found? ->
         cond do
+          Walk.window?(node) -> {:window, found? or window_reads_bare?(node, grouped)}
           Aggregate.ecto_aggregate?(node) -> {:aggregate, found?}
           whole_sources? and binding?(node) -> {node, true}
           aggregate_filter?(node) -> {:aggregate, found?}
@@ -1037,6 +1038,37 @@ defmodule Mutare.Ecto.Subquery do
       end)
 
     found?
+  end
+
+  # A window runs over the aggregated rows, so its own function aggregates nothing there:
+  # `over(sum(r.y))` reads `r.y` as the query's bare column. Its options are read likewise, and
+  # a shorthand field (`partition_by: :y`), a named window, or any other form may name one.
+  defp window_reads_bare?({:over, _meta, [function | window]}, grouped) do
+    function_bare? =
+      case function do
+        {_name, _meta, args} when is_list(args) -> bare_column?(args, grouped)
+        _other -> false
+      end
+
+    function_bare? or Enum.any?(window, &window_options_bare?(&1, grouped))
+  end
+
+  defp window_options_bare?(options, grouped) do
+    case AST.unwrap_list(options) do
+      nil ->
+        true
+
+      entries ->
+        Enum.any?(entries, fn entry ->
+          case AST.unwrap_pair(entry) do
+            {_key, value} ->
+              grammar_term?(value, &(AST.atom_value(&1) != nil)) or bare_column?(value, grouped)
+
+            nil ->
+              true
+          end
+        end)
+    end
   end
 
   defp binding?({name, _meta, context}), do: is_atom(name) and is_atom(context)

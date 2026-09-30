@@ -110,6 +110,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Keep every `order_by` value mutant of an unwindowed inline subquery that may aggregate while
   a column neither grouped nor aggregated is observed: SQLite gives that column the row its
   lone `min`/`max` picks, even from `ORDER BY` (`order_by: min(r.x)` → `max(r.x)`).
+  A window's inputs count too (`over(sum(r.y))`, `partition_by: :y`, a named window): a window
+  runs over the aggregated rows, so its function's arguments are bare columns there.
 - Read a non-empty `having` list the plugin cannot read as pairs (`[{:name, "Carol"}]`, which
   Ecto reads as a keyword filter) as possibly naming a bare column when judging an `EXISTS`
   projection mutant; it had been read as naming none.

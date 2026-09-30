@@ -370,6 +370,9 @@ Round thirty found a weave that broke the baseline: Ecto's dynamic path appends 
 list's parameter at each of its placeholders, so a condition with `splice(^values)` is now
 rebuilt. It also found two more unreached pins, in the receiver of `as(^name).id` and in a
 window's `{^direction, term}` sort pair.
+Round thirty-one found the bare-column reader behind the ordering retention skipping a window
+whole, as an aggregate: a window runs over the aggregated rows, so `over(sum(r.y))` reads `r.y`
+bare. A window's function arguments are now read as bare, and its options conservatively.
 Round twenty-six found the binary-literal leaf rule held only by the condition catalog: the
 value walk read a bitstring's specifiers (`unsigned-integer-size(128)`) as subtraction, and the
 mutant failed the whole build. The rule now lives in `Mutare.Ecto.Walk.structural/3`, under
