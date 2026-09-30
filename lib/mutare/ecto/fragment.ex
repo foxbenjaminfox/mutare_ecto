@@ -329,10 +329,6 @@ defmodule Mutare.Ecto.Fragment do
   defp children({:{}, _meta, _elements} = tuple, ctx), do: tuple_children(tuple, ctx)
   defp children({_left, _right} = tuple, ctx), do: tuple_children(tuple, ctx)
 
-  # A binary literal (`<<0>>`, `<<0::utf8>>`) takes only integer and binary literals as segment
-  # values, not the unary minus a numeric mutant may write, so it is a leaf.
-  defp children({:<<>>, _meta, _segments}, _ctx), do: []
-
   # Both spellings, `over/1` and `over/2`: the window function keeps the window's observation.
   defp children({:over, _meta, [_function]} = node, ctx), do: window_children(node, ctx)
   defp children({:over, _meta, [_, _]} = node, ctx), do: window_children(node, ctx)

@@ -225,12 +225,18 @@ defmodule Mutare.Ecto.Walk do
   The default descent: a call's arguments (only those the author-macro rule admits), a
   2-tuple's two sides, a written list's elements — each with the context `child_ctx` derives for
   it (inheriting the parent's by default) and the splice that puts a replacement back into the
-  parent. A `^` pin and every other node (a variable, a bare scalar, a field reference) is a leaf.
+  parent. A `^` pin, a binary literal and every other node (a variable, a bare scalar, a field
+  reference) is a leaf.
   """
   @spec structural(Macro.t(), ctx, child_ctx(ctx)) :: [child(ctx)] when ctx: var
   def structural(node, ctx, child_ctx \\ &inherit/3)
 
   def structural({:^, _meta, _args}, _ctx, _child_ctx), do: []
+
+  # A binary literal (`<<0>>`, `<<0::unsigned-integer-size(128)>>`) is one literal to Ecto: its
+  # segment values must be written integers or binaries, not the unary minus a numeric mutant
+  # may write, and its specifiers are Elixir's (`unsigned-integer` is no subtraction).
+  def structural({:<<>>, _meta, _segments}, _ctx, _child_ctx), do: []
 
   def structural({:|>, _meta, [_left, right]} = node, ctx, child_ctx) do
     if QueryCall.parse(right) do

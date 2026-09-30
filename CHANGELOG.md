@@ -131,7 +131,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Observe a window function beneath `is_nil` alike for `over/1` and `over/2`: the one-argument
   spelling offered the `sum` → `avg` swap the two-argument one prunes.
 - Leave a binary literal's segments unmutated: `<<0>>` → `<<-1>>` is no query Ecto accepts, and
-  failed the whole metamutant build.
+  failed the whole metamutant build. This holds in a projection and an ordering too, where the
+  value walk had also read a size specifier as arithmetic (`<<0::unsigned-integer-size(128)>>`
+  → `unsigned + integer`).
 - Read a projection's select grammar only at its own level: `map/2` inside `coalesce` is an
   ordinary expression, where Ecto expands a same-named macro.
 - Protect inline window grammar in free-standing dynamics, including opt-in atom mutations.

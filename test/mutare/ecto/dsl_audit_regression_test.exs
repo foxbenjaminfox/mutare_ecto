@@ -1635,4 +1635,22 @@ defmodule Mutare.Ecto.DslAuditRegressionTest do
       assert_builds(source, & &1.q(), mutators)
     end
   end
+
+  test "a binary literal is a leaf in a projection and an ordering, not only in a condition" do
+    for query <- [
+          ~s|from p in MyApp.Post, select: <<0::unsigned-integer-size(128)>>|,
+          ~s/MyApp.Post |> select([p], <<0::unsigned-integer-size(128)>>)/,
+          ~s|from p in MyApp.Post, order_by: <<0::unsigned-integer-size(128)>>, select: p.id|,
+          ~s|from p in MyApp.Post, select: {p.views + 1, <<0::8*16>>}|,
+          ~s|from p in MyApp.Post, where: p.title == <<0::unsigned-integer-size(128)>>|
+        ] do
+      source = fixture(query)
+
+      refute Enum.any?(ecto_diffs(source), fn {original, _mutated} ->
+               String.starts_with?(original, ["0", "unsigned", "8"])
+             end)
+
+      assert_builds(source, & &1.q())
+    end
+  end
 end

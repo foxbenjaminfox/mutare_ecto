@@ -356,6 +356,10 @@ values, and each now drops alone, as a `fragment` does.
 Round twenty-five found a `dynamic`'s select map walked as a condition: its keys, which name
 the result's fields or, in a map update, the struct's, were data to the literal arms, and a
 pinned key was a `:value` island. A map key is now a structural position.
+Round twenty-six found the binary-literal leaf rule held only by the condition catalog: the
+value walk read a bitstring's specifiers (`unsigned-integer-size(128)`) as subtraction, and the
+mutant failed the whole build. The rule now lives in `Mutare.Ecto.Walk.structural/3`, under
+every catalog.
 
 The fourth round also found that a keyword filter's scalar value, routed `:interpolated`, reaches Ecto
 as a parameter, which the planner `cast/1`s before `dump/1`ing, where a written literal is only
