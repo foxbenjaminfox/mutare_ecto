@@ -280,7 +280,8 @@ Each is the conclusion; the canonical statement is in the named module.
   the `from` form's problem. `Mutare.Ecto.ClauseDrop`.
 - **One home per rule in the docs.** Mechanics and family rationale → the owning module's doc;
   history ("used to be …") → `NOTES.md` "Design history"; cross-module gotchas → here, as a
-  pointer. Layering per `../mutare/.claude/skills/editing-docs/SKILL.md`. Public moduledocs are
+  pointer. `NOTES.md` is internal and `CHANGELOG.md` external: a changelog entry stands on its
+  own and never points at NOTES. Layering per `../mutare/.claude/skills/editing-docs/SKILL.md`. Public moduledocs are
   hexdocs; only `mix docs` validates their autolinks (a public doc referencing a hidden module
   needs the referencing module in `mix.exs`'s skip-list).
 
