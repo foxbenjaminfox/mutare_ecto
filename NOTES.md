@@ -366,6 +366,10 @@ The cost is an equivalent drop where the variable holds plain data (`[^x, ^x]` â
 Round twenty-nine found a compound cast spec (`{:array, ^inner}`) skipped whole, so a pin
 inside it never reached core; its pins are now islands, `:structural`, while its literals stay
 unentered.
+Round thirty found a weave that broke the baseline: Ecto's dynamic path appends a spliced
+list's parameter at each of its placeholders, so a condition with `splice(^values)` is now
+rebuilt. It also found two more unreached pins, in the receiver of `as(^name).id` and in a
+window's `{^direction, term}` sort pair.
 Round twenty-six found the binary-literal leaf rule held only by the condition catalog: the
 value walk read a bitstring's specifiers (`unsigned-integer-size(128)`) as subtraction, and the
 mutant failed the whole build. The rule now lives in `Mutare.Ecto.Walk.structural/3`, under

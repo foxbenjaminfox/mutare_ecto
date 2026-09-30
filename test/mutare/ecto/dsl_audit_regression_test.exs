@@ -1706,6 +1706,21 @@ defmodule Mutare.Ecto.DslAuditRegressionTest do
     end
   end
 
+  test "a pin computing a named binding or a window direction reaches core" do
+    mutators = [mutators: [Mutare.Mutators.BooleanLiteral, {Mutare.Ecto, families: []}]]
+
+    for query <- [
+          ~s|from a in "posts", as: :a, join: b in "posts", as: :b, on: a.id != b.id, where: as(^(if true, do: :a, else: :b)).id == 1, select: a.id|,
+          ~s|from a in "posts", as: :a, where: exists(from b in "posts", where: parent_as(^(if true, do: :a, else: :b)).id == b.id), select: a.id|,
+          ~s|value = dynamic([p], over(row_number(), order_by: [{^(if true, do: :asc, else: :desc), p.id}]))\nfrom p in "posts", select: ^value|
+        ] do
+      source = fixture(query)
+
+      assert {:boolean, "true", "false"} in diffs(source, mutators)
+      assert_builds(source, & &1.q(), mutators)
+    end
+  end
+
   test "a binary literal is a leaf in a projection and an ordering, not only in a condition" do
     for query <- [
           ~s|from p in MyApp.Post, select: <<0::unsigned-integer-size(128)>>|,

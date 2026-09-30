@@ -296,6 +296,20 @@ defmodule Mutare.Ecto.SemanticCases do
         end
       end
 
+      # A splice's placeholders all name one parameter, which the static planner binds once and
+      # the dynamic path once per placeholder: woven, the baseline bound four values to two.
+      test "audit: a condition with a fragment splice keeps its parameters" do
+        source =
+          audit_source("""
+          values = [1, 2]
+          from p in Post, where: fragment("? IN (?)", p.id, splice(^values)) and p.views > 10,
+            select: p.id, order_by: p.id
+          """)
+
+        assert H.assert_delivery(@repo, source, {"p.views > 10", "p.views >= 10"}, [:comparison]) ==
+                 {[2], [1, 2]}
+      end
+
       # Statically, `^"true"` takes the where clause's `:boolean` type through `coalesce` and
       # binds `true`; woven into a dynamic it would bind the string, which SQLite reads as false.
       test "audit: a pin typed by its where clause keeps its cast" do

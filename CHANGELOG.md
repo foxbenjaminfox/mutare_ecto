@@ -123,6 +123,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `%{^:title => p.title}`): a key names a field of the result or of the updated struct, and
   its atom-literal mutant raised a `KeyError` when the results were loaded. A value is still
   data, a 2-tuple inside it included (`%{pair: {11, 22}}`).
+- Rebuild, instead of weaving, a condition that splices (`fragment("? IN (?)", p.id,
+  splice(^values))`): the dynamic path binds the spliced list once per placeholder, and the woven
+  baseline failed with more parameters than placeholders.
+- Hand core the pin in a named binding read through a dot (`as(^name).id`, `parent_as(^name).id`)
+  and a window's pinned sort direction (`over(f, order_by: [{^direction, p.id}])`); neither had
+  been reached.
 - Hand core a pin nested in a compound cast type (`type(x, {:array, ^(if flag, do: …)})`), as a
   structural island: the walk skipped the whole type, and the pin's logic went unmutated.
 - Drop each occurrence of a bare pinned variable in an in-list alone (`p.id in [^d, ^d]`): it

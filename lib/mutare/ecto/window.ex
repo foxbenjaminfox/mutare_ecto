@@ -69,9 +69,10 @@ defmodule Mutare.Ecto.Window do
   defp field(entry, :ordering) do
     case AST.unwrap_pair(entry) do
       {key, value} ->
-        Enum.map(field_term(value, :ordering), fn {child, role, rebuild} ->
-          {child, role, &AST.rewrap_pair(entry, {key, rebuild.(&1)})}
-        end)
+        direction_children(key, value, entry) ++
+          Enum.map(field_term(value, :ordering), fn {child, role, rebuild} ->
+            {child, role, &AST.rewrap_pair(entry, {key, rebuild.(&1)})}
+          end)
 
       nil ->
         field_term(entry, :ordering)
@@ -79,6 +80,12 @@ defmodule Mutare.Ecto.Window do
   end
 
   defp field(value, position), do: field_term(value, position)
+
+  # A pinned direction (`{^direction, p.id}`, which Ecto takes) computes structure.
+  defp direction_children({:^, _meta, [_interior]} = key, value, entry),
+    do: [{key, :structural, &AST.rewrap_pair(entry, {&1, value})}]
+
+  defp direction_children(_key, _value, _entry), do: []
 
   defp field_term({:^, _, _} = value, _position), do: [{value, :structural, & &1}]
 

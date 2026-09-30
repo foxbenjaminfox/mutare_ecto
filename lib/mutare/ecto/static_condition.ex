@@ -51,6 +51,12 @@ defmodule Mutare.Ecto.StaticCondition do
   condition or in a catalog mutant of it. A root pin is exempt: it is woven pin-only, never into
   a `dynamic/2`, and Ecto builds it at runtime natively too.
 
+  **A fragment splice.** `fragment("? IN (?)", p.id, splice(^values))` writes one placeholder per
+  list element, each naming the one parameter the list is (`Ecto.Query.Builder.splice!/2`). The
+  static planner binds the list's elements once; the dynamic path appends the parameter at each
+  placeholder, so a woven `values = [1, 2]` binds four values to two placeholders and the
+  baseline fails. So a condition that splices is rebuilt.
+
   **Opaque macro expansions.** With `condition_delivery: :static`, every condition uses this
   rebuild path, including a macro that introduces a subquery invisible in written source.
   Registering that macro's arguments as raw does not prevent its enclosing condition from
@@ -59,7 +65,7 @@ defmodule Mutare.Ecto.StaticCondition do
   ## The rule
 
   `delivery/5` applies the configured policy, rebuilds a filter that is or may become the literal
-  `true` and a condition typed by its clause (above), then `delivery/4` decides from the receiving
+  `true`, a condition typed by its clause and one that splices (above), then `delivery/4` decides from the receiving
   clause, the expression, its predicate kind, and the declaration it is read under. A condition is **rebuilt** when the
   expression carries a subquery (`Mutare.Ecto.Subquery.present?/1`) that the clause rejects in a
   dynamic (`Mutare.Ecto.Surface.dynamic_subqueries?/1` — everything but `where`/`or_where`), or when
@@ -132,9 +138,20 @@ defmodule Mutare.Ecto.StaticCondition do
     originals = if kind == :root_pin, do: [], else: [condition]
     branches = originals ++ for(tag <- Catalog.own_catalog(condition, config), do: tag.node)
 
-    if Enum.any?(branches, &static_only?(clause, &1)),
+    if splices?(condition) or Enum.any?(branches, &static_only?(clause, &1)),
       do: :rebuilt,
       else: delivery(clause, condition, kind, bindings)
+  end
+
+  # A catalog mutant keeps the original's splices, so the original alone is read.
+  defp splices?(condition) do
+    {_condition, found?} =
+      Macro.prewalk(condition, false, fn
+        {:splice, _meta, [_value]} = node, _found? -> {node, true}
+        node, found? -> {node, found?}
+      end)
+
+    found?
   end
 
   @filters [:where, :or_where, :having, :or_having]

@@ -247,6 +247,18 @@ defmodule Mutare.Ecto.Walk do
     end
   end
 
+  # A field read on a named binding (`as(:a).id`, `parent_as(^name).id`): the binding call is the
+  # dot's receiver, not an argument, but Ecto reads it as `field(as(…), :id)`, so a pin in it
+  # still computes the binding's name.
+  def structural(
+        {{:., dot_meta, [{binding, _, [_]} = receiver, field]}, meta, []} = node,
+        ctx,
+        child_ctx
+      )
+      when binding in [:as, :parent_as] do
+    [{receiver, child_ctx.(node, 0, ctx), &{{:., dot_meta, [&1, field]}, meta, []}}]
+  end
+
   def structural({_form, _meta, args} = node, ctx, child_ctx) when is_list(args) do
     # Query macros build queries; even their :expression sources are Elixir, not SQL.
     # Subquery reads their clauses explicitly and sub-contracts computed sources to core.
