@@ -123,6 +123,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `%{^:title => p.title}`): a key names a field of the result or of the updated struct, and
   its atom-literal mutant raised a `KeyError` when the results were loaded. A value is still
   data, a 2-tuple inside it included (`%{pair: {11, 22}}`).
+- Hand core a pin nested in a compound cast type (`type(x, {:array, ^(if flag, do: …)})`), as a
+  structural island: the walk skipped the whole type, and the pin's logic went unmutated.
 - Drop each occurrence of a bare pinned variable in an in-list alone (`p.id in [^d, ^d]`): it
   may hold a `dynamic`, which Ecto expands afresh at each occurrence, so the two may differ.
   Dropping either of two identical such elements is offered once.

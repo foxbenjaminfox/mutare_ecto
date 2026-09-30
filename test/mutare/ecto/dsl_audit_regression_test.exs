@@ -1676,6 +1676,36 @@ defmodule Mutare.Ecto.DslAuditRegressionTest do
     assert_builds(source, & &1.q(), only([:membership]))
   end
 
+  test "a pin inside a compound cast type is an island that holds the type's names" do
+    mutators = [
+      mutators: [
+        Mutare.Mutators.Logical,
+        Mutare.Mutators.AtomLiteral,
+        {Mutare.Ecto, families: []}
+      ]
+    ]
+
+    for spec <- [
+          "{:array, ^(if not flag, do: :integer, else: :string)}",
+          "{:map, {:array, ^(if not flag, do: :integer, else: :string)}}"
+        ] do
+      source =
+        fixture("""
+        flag = System.get_env("FLAG") == "1"
+        from p in "posts", where: fragment("? IS NOT NULL", type(^["1"], #{spec})), select: p.id
+        """)
+
+      changes = diffs(source, mutators)
+      assert {:logical, "not flag", "flag"} in changes
+
+      refute Enum.any?(changes, fn {_family, original, _} ->
+               original in [":integer", ":string", ":array"]
+             end)
+
+      assert_builds(source, & &1.q(), mutators)
+    end
+  end
+
   test "a binary literal is a leaf in a projection and an ordering, not only in a condition" do
     for query <- [
           ~s|from p in MyApp.Post, select: <<0::unsigned-integer-size(128)>>|,

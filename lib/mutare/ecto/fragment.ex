@@ -87,7 +87,8 @@ defmodule Mutare.Ecto.Fragment do
   at most of them — `field(p, ^name)`, `type(^v, ^type)`, `ago(^n, ^unit)`, `as(^binding)`,
   `selected_as(^name)`, a fragment's `identifier(^name)` — and the value the pin computes is the
   same column, cast type, unit or name the written literal would have been. `islands/2` reports
-  such a pin as `:structural`, never as a plain `:value`.
+  such a pin as `:structural`, never as a plain `:value`, and so it does a pin nested in a
+  compound cast spec (`type(x, {:array, ^inner})`), which the walk does not otherwise enter.
 
   ## What `is_nil` observes
 
@@ -597,6 +598,12 @@ defmodule Mutare.Ecto.Fragment do
     [{interior, role, &{:^, meta, [&1]}}]
   end
 
+  # A tuple at a structural position is a compound cast spec, left unentered so its literals stay
+  # the type (`tuple_children/2`). A pin inside it (`{:array, ^inner}`, which Ecto unwraps) still
+  # computes part of the type, so it is an island all the same, `:structural`.
+  defp local_islands({_left, _right} = spec, position), do: spec_islands(spec, position)
+  defp local_islands({:{}, _meta, _elements} = spec, position), do: spec_islands(spec, position)
+
   # A reverse-polarity unit's islands are its predicate's, rebuilt inside the written `not` —
   # the mirror of `children/2`, which splices the predicate's descent through the `not` the same
   # way (the predicate itself is not a position, so nothing else reads it). A generic `not` over
@@ -629,6 +636,16 @@ defmodule Mutare.Ecto.Fragment do
 
   # Variables, field references, literals: no pin can hide here.
   defp local_islands(_node, _position), do: []
+
+  defp spec_islands(spec, position) do
+    if structural_position?(position),
+      do:
+        for(
+          {{:^, meta, [interior]}, _ctx, rebuild} <- Walk.positions(spec, nil, &Walk.structural/2),
+          do: {interior, :structural, &rebuild.({:^, meta, [&1]})}
+        ),
+      else: []
+  end
 
   # Membership set shrink: one mutant per **distinct** element of a **written** in-list, each
   # dropping every occurrence of that element (`x in [1, 2, 3]` → `x in [2, 3]` / `[1, 3]` /

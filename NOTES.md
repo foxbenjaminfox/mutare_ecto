@@ -363,6 +363,9 @@ Round twenty-eight found the repeat check's allow-list still admitting a bare pi
 which may hold a `DynamicExpr`: Ecto expands such a parameter at each occurrence, rerunning its
 pins and SQL. A variable inside a pinned collection stays plain, since such a parameter is data.
 The cost is an equivalent drop where the variable holds plain data (`[^x, ^x]` → `[^x]`).
+Round twenty-nine found a compound cast spec (`{:array, ^inner}`) skipped whole, so a pin
+inside it never reached core; its pins are now islands, `:structural`, while its literals stay
+unentered.
 Round twenty-six found the binary-literal leaf rule held only by the condition catalog: the
 value walk read a bitstring's specifiers (`unsigned-integer-size(128)`) as subtraction, and the
 mutant failed the whole build. The rule now lives in `Mutare.Ecto.Walk.structural/3`, under
