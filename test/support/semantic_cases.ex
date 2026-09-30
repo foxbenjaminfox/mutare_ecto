@@ -310,6 +310,23 @@ defmodule Mutare.Ecto.SemanticCases do
                  {[2], [1, 2]}
       end
 
+      # A woven condition makes the rest of its `from` runtime, where a later `or_where: true`
+      # would be discarded, so no condition of a `from` holding such a filter is woven.
+      test "audit: weaving a sibling condition keeps a later literal true" do
+        for {query, expected} <- [
+              {"from p in Post, where: p.views > 10, or_where: true, select: p.id, order_by: p.id",
+               {[1, 2, 3], [1, 2, 3]}},
+              {"from p in Post, where: p.views > 10, or_where: [], select: p.id, order_by: p.id",
+               {[1, 2, 3], [1, 2, 3]}}
+            ],
+            families <- [[:comparison], :default] do
+          source = audit_source(query)
+
+          assert H.assert_delivery(@repo, source, {"p.views > 10", "p.views >= 10"}, families) ==
+                   expected
+        end
+      end
+
       # Statically, `^"true"` takes the where clause's `:boolean` type through `coalesce` and
       # binds `true`; woven into a dynamic it would bind the string, which SQLite reads as false.
       test "audit: a pin typed by its where clause keeps its cast" do

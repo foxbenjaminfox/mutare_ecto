@@ -97,12 +97,41 @@ defmodule Mutare.Ecto.StaticCondition do
   to accept the dynamic form, this delivery would remain valid, only more verbose than the weave.
   """
 
-  alias Mutare.Ecto.{Context, Island, Subquery, Surface, Tag, Walk}
+  alias Mutare.Ecto.{AST, Context, Island, Subquery, Surface, Tag, Walk}
   alias Mutare.Ecto.AST.{FromCall, KeywordList, QueryCall}
   alias Mutare.Ecto.AST.KeywordList.Entry
   alias Mutare.Ecto.Host.{Bindings, Catalog, Condition, JoinOn}
 
   @behaviour Mutare.Ecto.SubMutator
+
+  @filters [:where, :or_where, :having, :or_having]
+
+  @typedoc """
+  The clause receiving a condition (`Mutare.Ecto.Host.JoinOn.receiver/0`), or, as
+  `{:static_from, receiver}`, one in a `from` that holds a filter Ecto's runtime path discards
+  (`from_receiver/3`).
+  """
+  @type receiver :: JoinOn.receiver() | {:static_from, JoinOn.receiver()}
+
+  @doc """
+  The receiver of the condition at `index` of a `from`'s `clauses`. A `from` is built
+  statically only up to its first runtime clause, and a woven condition is one: every clause
+  after it is applied at runtime, where Ecto's filter builder discards a filter that is the
+  literal `true` (see "A filter that is, or may become, the literal `true`"). So a condition
+  followed by a filter that is, or may expand to, the literal `true` (or `[]`, which Ecto
+  escapes to it) is rebuilt.
+  """
+  @spec from_receiver(atom(), KeywordList.t(), non_neg_integer()) :: receiver()
+  def from_receiver(key, %KeywordList{entries: entries} = clauses, index) do
+    receiver = JoinOn.from_receiver(key, clauses, index)
+
+    if entries |> Enum.drop(index + 1) |> Enum.any?(&discarded_at_runtime?/1),
+      do: {:static_from, receiver},
+      else: receiver
+  end
+
+  defp discarded_at_runtime?(%Entry{key: key, value: value}),
+    do: key in @filters and (may_expand_to_true?(escaped(value)) or AST.unwrap_list(value) == [])
 
   @typedoc "How one hosted condition's mutants are delivered — see `delivery/4`."
   @type delivery :: {:woven, bindings :: [Macro.t()]} | :rebuilt
@@ -114,9 +143,10 @@ defmodule Mutare.Ecto.StaticCondition do
   `dynamic/2` re-declares (none for a `:root_pin`, which is woven without one), or `:rebuilt`, by
   `mutations/2` — see "The rule" in the moduledoc.
   """
-  @spec delivery(JoinOn.receiver(), Macro.t(), Condition.predicate_kind(), Bindings.result()) ::
+  @spec delivery(receiver(), Macro.t(), Condition.predicate_kind(), Bindings.result()) ::
           delivery()
   def delivery({:on, :combined}, _condition, _kind, _bindings), do: :rebuilt
+  def delivery({:static_from, _receiver}, _condition, _kind, _bindings), do: :rebuilt
 
   def delivery(clause, condition, kind, bindings) do
     if weavable?(clause, condition), do: woven(kind, bindings), else: :rebuilt
@@ -124,7 +154,7 @@ defmodule Mutare.Ecto.StaticCondition do
 
   @doc "Apply the configured delivery policy before considering automatic hosting."
   @spec delivery(
-          JoinOn.receiver(),
+          receiver(),
           Macro.t(),
           Condition.predicate_kind(),
           Bindings.result(),
@@ -132,6 +162,8 @@ defmodule Mutare.Ecto.StaticCondition do
         ) :: delivery()
   def delivery(_clause, _condition, _kind, _bindings, %{condition_delivery: :static}),
     do: :rebuilt
+
+  def delivery({:static_from, _receiver}, _condition, _kind, _bindings, _config), do: :rebuilt
 
   def delivery(clause, condition, kind, bindings, %{condition_delivery: :auto} = config) do
     # A root pin is woven pin-only, as it is built natively: Ecto's runtime path either way.
@@ -153,8 +185,6 @@ defmodule Mutare.Ecto.StaticCondition do
 
     found?
   end
-
-  @filters [:where, :or_where, :having, :or_having]
 
   # A branch the runtime path would build differently from the static one (see "A filter that
   # is, or may become, the literal `true`" and "A condition typed by its clause").
@@ -248,7 +278,7 @@ defmodule Mutare.Ecto.StaticCondition do
               bindings = Bindings.from(source, Bindings.visible_to(clauses, index))
 
               rebuilt(
-                JoinOn.from_receiver(key, clauses, index),
+                from_receiver(key, clauses, index),
                 condition,
                 kind,
                 bindings,

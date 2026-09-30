@@ -97,7 +97,7 @@ defmodule Mutare.Ecto.Host do
           bindings = Bindings.from(source, Bindings.visible_to(clauses, index))
 
           from_target(
-            JoinOn.from_receiver(key, clauses, index),
+            StaticCondition.from_receiver(key, clauses, index),
             value,
             Map.fetch!(conditions, index),
             bindings,

@@ -377,6 +377,10 @@ Round thirty-two found `filter/2` around the window's aggregate still hiding the
 Round thirty-three found a `fragment` as the window function hiding them too (it is now read
 whole), and an `EXISTS` projection pin pruned as data where it is a spliced list, whose length
 is an arity (such a projection is now observed).
+Round thirty-four found the literal-`true` rule applied condition by condition: weaving an
+earlier condition made the rest of its `from` runtime, where a later `or_where: true` was
+discarded, and the baseline changed. See "A piped literal-`true` filter after an instrumented
+static chain" for the fix and the piped spelling it leaves.
 Round twenty-six found the binary-literal leaf rule held only by the condition catalog: the
 value walk read a bitstring's specifiers (`unsigned-integer-size(128)`) as subtraction, and the
 mutant failed the whole build. The rule now lives in `Mutare.Ecto.Walk.structural/3`, under
@@ -424,6 +428,34 @@ each is unimplemented.
   * **A computed `from` source** (`from p in recent(2)`). The source argument is an `in`
     pattern, and core's treatments are per argument: nothing routes "the right side of this
     `in`" `:expression` while the left stays raw. A nested treatment is a core seam.
+
+### A piped literal-`true` filter after an instrumented static chain
+
+Ecto builds a query at compile time while every stage does (`Ecto.Query.Builder.apply_query/4`
+expands the query argument to an escaped struct), and at runtime from the first stage that
+does not. Its runtime filter path discards a filter whose expression is the literal `true`
+(`Ecto.Query.Builder.Filter.apply/3`), `or_where` included; the static one keeps it. So
+`from(p in Post, where: p.views > 10) |> or_where(true)` returns every row natively, and any
+instrumentation of the upstream `from` makes the `or_where` runtime: a weave, a whole-call
+selector `case` (even `:filter_drop` alone), so `condition_delivery: :static` does not help.
+The **baseline** then returns only the rows with more than 10 views.
+
+The keyword spelling is handled: a condition followed by such a filter in its `from` is rebuilt
+(`Mutare.Ecto.StaticCondition.from_receiver/3`), and every selector branch is then a static
+`from`. The piped spelling is not, because each stage is offered to `mutate/2` alone. The
+options, none taken:
+
+  * deliver every mutant of such a chain as a rewrite of the whole chain, which per-call
+    delivery has no seam for;
+  * rewrite the downstream `true` in every branch, the baseline included, to a form the runtime
+    path keeps (`^true`), where the chain is natively static (rooted at `from(...)` through Ecto
+    macros only); where it is natively runtime, Ecto already discards the filter, and the rewrite
+    would keep it;
+  * skip instrumenting a static chain whose downstream stages hold such a filter.
+
+The pattern is rare: a literal `or_where(true)` (or `where: true`/`[]` before an `or_where`)
+downstream of a fully static chain. Composed at runtime from a query argument, as most
+pipelines are, the filter is discarded natively too.
 
 ### Stage drops: a dependency break is not told from a weakened query
 
