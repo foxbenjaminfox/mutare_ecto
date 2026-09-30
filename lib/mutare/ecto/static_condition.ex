@@ -190,11 +190,19 @@ defmodule Mutare.Ecto.StaticCondition do
   end
 
   # The part of `condition` Ecto escapes with it: a pin's interior and a subquery wrapper's
-  # argument are Elixir, evaluated apart from the escape, and are pruned.
+  # argument are Elixir, evaluated apart from the escape, and are pruned. The pin and the
+  # wrapper stay, since a parent reads its operand's form (`type(^n, :integer)` is Ecto's,
+  # `Walk.typable?/1`, where `type(:pin, :integer)` would be an expansion).
   defp escaped_part(condition) do
     Macro.prewalk(condition, fn
-      {:^, _meta, [_interior]} -> :pin
-      node -> if Subquery.wrapper?(node), do: :subquery, else: node
+      {:^, meta, [_interior]} ->
+        {:^, meta, [:pruned]}
+
+      {head, meta, [_argument]} = node ->
+        if Subquery.wrapper?(node), do: {head, meta, [:pruned]}, else: node
+
+      node ->
+        node
     end)
   end
 

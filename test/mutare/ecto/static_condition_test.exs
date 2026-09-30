@@ -400,12 +400,32 @@ defmodule Mutare.Ecto.StaticConditionTest do
       refute woven?("p.views > 10 or not member_sql(p.id, ^values)")
     end
 
+    test "rebuilds a condition whose type/2 operand Ecto can only be expanding" do
+      refute woven?("p.id > type(author_sql(^values), :integer)")
+    end
+
     test "reads neither a pin's interior nor a subquery wrapper's argument" do
       assert woven?("p.views > ^Enum.count(values) and p.id > 0")
+      # Pruning keeps the pin itself, which `type/2` reads as its operand.
+      assert woven?("p.id > type(^values, :integer)")
 
       assert woven?(
                ~s|p.id in subquery(from(r in "rows", where: member_sql(r.id, ^values), select: r.id)) and p.views > 10|
              )
+    end
+
+    test "a woven typed pin builds under every mutant" do
+      src = """
+      defmodule Q do
+        import Ecto.Query
+
+        def q(n), do: from(p in "posts", where: p.id > type(^n, :integer), select: p.id)
+      end
+      """
+
+      assert rendered(src) =~ "Query.dynamic("
+      assert {"p.id > type(^n, :integer)", "p.id >= type(^n, :integer)"} in ecto_diffs(src)
+      assert_builds(src, & &1.q(10))
     end
   end
 
