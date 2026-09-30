@@ -355,7 +355,10 @@ Round twenty-four found the in-list repeat check trusting Ecto's own vocabulary:
 values, and each now drops alone, as a `fragment` does.
 Round twenty-five found a `dynamic`'s select map walked as a condition: its keys, which name
 the result's fields or, in a map update, the struct's, were data to the literal arms, and a
-pinned key was a `:value` island. A map key is now a structural position.
+pinned key was a `:value` island. A map key is now a structural position. Round twenty-seven
+found that fix reading a map pair by its slot, which the pair's value inherited, so a 2-tuple
+in a value (`%{pair: {11, 22}}`) lost its first element as a key; a value now has a slot of
+its own.
 Round twenty-six found the binary-literal leaf rule held only by the condition catalog: the
 value walk read a bitstring's specifiers (`unsigned-integer-size(128)`) as subtraction, and the
 mutant failed the whole build. The rule now lives in `Mutare.Ecto.Walk.structural/3`, under

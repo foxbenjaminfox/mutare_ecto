@@ -1636,6 +1636,30 @@ defmodule Mutare.Ecto.DslAuditRegressionTest do
     end
   end
 
+  test "a dynamic select map's value is data, a pair inside it included" do
+    mutators = [
+      mutators: [Mutare.Mutators.AtomLiteral, {Mutare.Ecto, families: [:integer_literal]}]
+    ]
+
+    for map <- [
+          "%{pair: {11, 22}}",
+          "%{p | title: {11, 22}}",
+          "%{pair: {^:left, 22}, other: 11}"
+        ] do
+      source =
+        fixture("""
+        projection = dynamic([p], #{map})
+        from p in "posts", select: ^projection
+        """)
+
+      originals = for {_family, original, _mutated} <- diffs(source, mutators), do: original
+      assert "11" in originals
+      assert "22" in originals
+      if map =~ ":left", do: assert(":left" in originals)
+      assert_builds(source, & &1.q(), mutators)
+    end
+  end
+
   test "a binary literal is a leaf in a projection and an ordering, not only in a condition" do
     for query <- [
           ~s|from p in MyApp.Post, select: <<0::unsigned-integer-size(128)>>|,

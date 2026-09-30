@@ -172,8 +172,10 @@ defmodule Mutare.Ecto.Fragment do
   @atom_sentinel Mutare.AST.sentinel_atom()
   @string_sentinel Mutare.AST.sentinel_string()
 
-  # The slot of a map key (`tuple_children/2`): a map pair is no call, so it has no argument slot.
-  @map_key {:map_key, 2, 0}
+  # The slots of a map key and value (`tuple_children/2`): a map pair is no call, so it has no
+  # argument slot of its own.
+  @map_key {:map_pair, 2, 0}
+  @map_value {:map_pair, 2, 1}
 
   # The context the walk threads to every node: its `{parent_form, arity, index}` position (the
   # key the literal arms consult) and what the enclosing predicate observes of it — its `:value`,
@@ -355,7 +357,8 @@ defmodule Mutare.Ecto.Fragment do
   # The tuple rule's one decision (above): a cast spec is a leaf, a value tuple descends. A map's
   # pair — a `dynamic`'s select value, `%{title: p.title}` or `%{p | title: "x"}` — is neither:
   # its key names a field of the result or the updated struct, a structural position, and its
-  # value is data.
+  # value is data, at a slot of its own (`@map_value`), so a pair inside it (`%{pair: {1, 2}}`)
+  # is a value tuple, not another map pair.
   defp tuple_children({key, value} = pair, {position, observed} = ctx) do
     cond do
       structural_position?(position) ->
@@ -364,7 +367,7 @@ defmodule Mutare.Ecto.Fragment do
       map_pair_position?(position) ->
         [
           {key, {@map_key, observed}, &{&1, value}},
-          {value, child_ctx(pair, 1, ctx), &{key, &1}}
+          {value, {@map_value, child_observed(pair, 1, observed)}, &{key, &1}}
         ]
 
       true ->
