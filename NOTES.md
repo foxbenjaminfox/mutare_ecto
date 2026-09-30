@@ -436,29 +436,52 @@ each is unimplemented.
 
 Ecto builds a query at compile time while every stage does (`Ecto.Query.Builder.apply_query/4`
 expands the query argument to an escaped struct), and at runtime from the first stage that
-does not. Its runtime filter path discards a filter whose expression is the literal `true`
-(`Ecto.Query.Builder.Filter.apply/3`), `or_where` included; the static one keeps it. So
-`from(p in Post, where: p.views > 10) |> or_where(true)` returns every row natively, and any
-instrumentation of the upstream `from` makes the `or_where` runtime: a weave, a whole-call
-selector `case` (even `:filter_drop` alone), so `condition_delivery: :static` does not help.
-The **baseline** then returns only the rows with more than 10 views.
+does not. `Ecto.Query.Builder.Filter.apply/3` discards a filter whose expression is the literal
+`true`, but only at runtime: at compile time it is handed the filter as escaped AST, which its
+`%{expr: true}` head does not match. So `from(p in Post, where: p.views > 10) |> or_where(true)`
+returns every row natively, and any instrumentation of the upstream `from` makes the `or_where`
+runtime: a weave, a whole-call selector `case` (even `:filter_drop` alone), so
+`condition_delivery: :static` does not help. The **baseline** then returns only the rows with
+more than 10 views.
+
+Only a chain that is static natively is affected: one rooted at a written `from(...)`, every
+stage built at compile time. A pipe rooted at a schema (`Post |> where(…) |> or_where(true)`) or
+a variable, or passing through a root-pin condition (`where(^dynamic)`), is runtime natively and
+discards the filter already. The discard matters where the `true` is an `or_` filter, or the
+first filter with an `or_` filter after it (`where(true) |> or_where(x)`); an `and`-ed `true`
+is the identity either way.
 
 The keyword spelling is handled: a condition followed by such a filter in its `from` is rebuilt
 (`Mutare.Ecto.StaticCondition.from_receiver/3`), and every selector branch is then a static
-`from`. The piped spelling is not, because each stage is offered to `mutate/2` alone. The
-options, none taken:
+`from`. The piped spelling is not, because each stage is offered to `mutate/2` alone, and the
+instrumented stage cannot see the filter downstream of it. The options weighed:
 
   * deliver every mutant of such a chain as a rewrite of the whole chain, which per-call
     delivery has no seam for;
-  * rewrite the downstream `true` in every branch, the baseline included, to a form the runtime
-    path keeps (`^true`), where the chain is natively static (rooted at `from(...)` through Ecto
-    macros only); where it is natively runtime, Ecto already discards the filter, and the rewrite
-    would keep it;
-  * skip instrumenting a static chain whose downstream stages hold such a filter.
+  * skip instrumenting a static chain whose downstream stages hold such a filter, which needs
+    the same downstream view;
+  * **rewrite at the `true` stage instead**, needing no view of the chain: every branch of a
+    literal-`true` filter stage (`[]` and a call that may expand to `true` included), the
+    baseline too, writes a form the runtime path keeps (`not false`, or
+    `type(^true, :boolean)`; **not** `^true`, a root pin, which Ecto builds and discards at
+    runtime even in a static chain), but only where the stage's own query argument is static
+    natively, since where it is not, Ecto discards the `true` and so must the baseline. That
+    decision can be Ecto's own rather than a copy of its builders' rules: the rewrite emits a
+    plugin macro over the original query argument (`kept_true(upstream)`), which Ecto's escape
+    expands in the caller's environment, and which asks `Macro.expand(upstream, __CALLER__)`
+    whether it is an escaped `%Ecto.Query{}`. The blocker is delivery: only a host target's
+    `:wrap` rewrites the original branch, and a target needs a mutant, but the stage's one
+    mutant (`true` → `false`) is `:boolean_literal`'s, which is opt-in. A default run would
+    need a core seam for a rewrite-only target. Its costs besides: the baseline's SQL text
+    changes (`NOT (FALSE)` for `TRUE`, loud in a test asserting SQL), and the metamutant calls
+    a plugin module at compile time.
 
-The pattern is rare: a literal `or_where(true)` (or `where: true`/`[]` before an `or_where`)
-downstream of a fully static chain. Composed at runtime from a query argument, as most
-pipelines are, the filter is discarded natively too.
+None is taken. A literal `true` beside an `or_` filter makes that filter trivially true, so the
+pattern is close to absent from written code. Where a test observes the query's rows, the
+changed baseline fails core's baseline run, and the run aborts rather than scoring mutants.
+Unobserved, it misscores only the upstream mutants of that one query (a mutant equivalent
+natively, under the `OR TRUE`, may be killed). The third option is the one to take if the
+pattern turns up.
 
 ### Stage drops: a dependency break is not told from a weakened query
 
