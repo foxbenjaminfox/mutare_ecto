@@ -133,22 +133,30 @@ defmodule Mutare.Ecto.Ordering do
   # `nulls_last`) under `:ordering_nulls` — so `# mutare:ignore[ecto:asc]` names just the asc flip.
   # The label fns are read lazily inside `tag/4` (only when a flip exists), so a non-direction key
   # never reaches them.
-  defp axis_flips({key, field}) do
-    direction = AST.atom_value(key)
-
-    # mutare:ignore[operand_swap] axis order is irrelevant — flips are consumed as a set
-    tag(:ordering, @direction_flips[direction], field, direction) ++
-      tag(:ordering_nulls, @nulls_flips[direction], field, direction)
-  end
-
-  # A bare list element — an implicitly-ascending field — re-tagged descending in place, or `[]`
-  # when it isn't a plain field we re-tag.
+  # The pair is a keyword element (`asc: x`) or an explicit tuple (`{:asc, x}`); a flip keeps
+  # the spelling, so the explicit tuple's new key is an atom literal, not a keyword key.
   defp axis_flips(element) do
-    case implicit_desc(element) do
-      nil -> []
-      pair -> [Tag.new(:ordering, pair, @implicit_label)]
+    case AST.unwrap_pair(element) do
+      {key, field} ->
+        direction = AST.atom_value(key)
+        pair = &AST.rewrap_pair(element, {direction_key(element, &1), field})
+
+        # mutare:ignore[operand_swap] axis order is irrelevant — flips are consumed as a set
+        tag(:ordering, @direction_flips[direction], pair, direction) ++
+          tag(:ordering_nulls, @nulls_flips[direction], pair, direction)
+
+      # A bare list element — an implicitly-ascending field — re-tagged descending in place, or
+      # `[]` when it isn't a plain field we re-tag.
+      nil ->
+        case implicit_desc(element) do
+          nil -> []
+          pair -> [Tag.new(:ordering, pair, @implicit_label)]
+        end
     end
   end
+
+  defp direction_key({:__block__, _meta, [_pair]}, direction), do: Mutare.AST.literal(direction)
+  defp direction_key(_keyword_pair, direction), do: Mutare.AST.keyword_key(direction)
 
   # The descending keyword pair for a bare, implicitly-ascending ordering term, or `nil` when the
   # term isn't a plain field: a `^`-pinned runtime ordering, a `fragment`, an opaque qualified
@@ -183,15 +191,13 @@ defmodule Mutare.Ecto.Ordering do
 
   defp desc_pair(term), do: {Mutare.AST.keyword_key(:desc), term}
 
-  defp tag(_family, nil, _field, _direction), do: []
+  defp tag(_family, nil, _pair, _direction), do: []
 
-  defp tag(:ordering, to, field, direction),
-    do: [Tag.new(:ordering, {Mutare.AST.keyword_key(to), field}, direction_label(direction))]
+  defp tag(:ordering, to, pair, direction),
+    do: [Tag.new(:ordering, pair.(to), direction_label(direction))]
 
-  defp tag(:ordering_nulls, to, field, direction),
-    do: [
-      Tag.new(:ordering_nulls, {Mutare.AST.keyword_key(to), field}, placement_label(direction))
-    ]
+  defp tag(:ordering_nulls, to, pair, direction),
+    do: [Tag.new(:ordering_nulls, pair.(to), placement_label(direction))]
 
   # The direction half of a sort key (`:asc_nulls_first` → `"asc"`); every flippable key starts asc/desc.
   defp direction_label(direction) do

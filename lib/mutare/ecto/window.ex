@@ -25,10 +25,14 @@ defmodule Mutare.Ecto.Window do
           [{options, :structural, & &1}]
 
         list ->
-          for {{key, value}, index} <- Enum.with_index(list),
+          for {entry, index} <- Enum.with_index(list),
+              {key, value} <- [AST.unwrap_pair(entry)],
               {child, role, rebuild} <- option(AST.atom_value(key), value) do
             {child, role,
-             &AST.rewrap_list(options, List.replace_at(list, index, {key, rebuild.(&1)}))}
+             &AST.rewrap_list(
+               options,
+               List.replace_at(list, index, AST.rewrap_pair(entry, {key, rebuild.(&1)}))
+             )}
           end
       end
 
@@ -60,15 +64,25 @@ defmodule Mutare.Ecto.Window do
     end
   end
 
-  defp field({key, value}, :ordering),
-    do:
-      Enum.map(field(value, :ordering), fn {child, role, rebuild} ->
-        {child, role, &{key, rebuild.(&1)}}
-      end)
+  # A sort entry is a bare term or a `direction => term` pair, written as a keyword element or
+  # an explicit tuple.
+  defp field(entry, :ordering) do
+    case AST.unwrap_pair(entry) do
+      {key, value} ->
+        Enum.map(field_term(value, :ordering), fn {child, role, rebuild} ->
+          {child, role, &AST.rewrap_pair(entry, {key, rebuild.(&1)})}
+        end)
 
-  defp field({:^, _, _} = value, _position), do: [{value, :structural, & &1}]
+      nil ->
+        field_term(entry, :ordering)
+    end
+  end
 
-  defp field(value, position) do
+  defp field(value, position), do: field_term(value, position)
+
+  defp field_term({:^, _, _} = value, _position), do: [{value, :structural, & &1}]
+
+  defp field_term(value, position) do
     role =
       if AST.atom_value(value) != nil,
         do: :structural,

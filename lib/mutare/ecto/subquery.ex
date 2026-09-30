@@ -792,15 +792,12 @@ defmodule Mutare.Ecto.Subquery do
   defp named_windows(entries) do
     for %Entry{key: :windows, value: value} <- entries,
         element <- AST.unwrap_list(value) || [],
-        {name, definition} <- [window_pair(element)],
-        is_atom(name) and not is_nil(name),
+        {name_node, definition} <- [AST.unwrap_pair(element)],
+        name = AST.atom_value(name_node),
+        name != nil,
         into: %{},
         do: {name, definition}
   end
-
-  defp window_pair({:__block__, _meta, [{_name, _definition} = pair]}), do: window_pair(pair)
-  defp window_pair({name, definition}), do: {AST.atom_value(name), definition}
-  defp window_pair(_element), do: {nil, nil}
 
   defp child_grammar(parent, _index, :projection),
     do: if(select_grammar?(parent), do: :projection, else: :expression)
@@ -904,15 +901,15 @@ defmodule Mutare.Ecto.Subquery do
   defp opaque_term?({:^, _meta, [_interior]}), do: true
   defp opaque_term?(term), do: Walk.opaque_call?(term)
 
-  defp grammar_term?({_key, value}, term?), do: grammar_term?(value, term?)
-
   # Ecto's escape erases `filter/1` (`group_by: filter(1)` is `GROUP BY 1`).
   defp grammar_term?({:filter, _meta, [expression]}, term?), do: grammar_term?(expression, term?)
 
+  # A list, or a `direction => term` pair in either spelling (`asc: 1`, `{:asc, 1}`).
   defp grammar_term?(value, term?) do
-    case AST.unwrap_list(value) do
-      elements when is_list(elements) -> Enum.any?(elements, &grammar_term?(&1, term?))
-      nil -> term?.(value)
+    case {AST.unwrap_list(value), AST.unwrap_pair(value)} do
+      {elements, _pair} when is_list(elements) -> Enum.any?(elements, &grammar_term?(&1, term?))
+      {nil, {_key, term}} -> grammar_term?(term, term?)
+      {nil, nil} -> term?.(value)
     end
   end
 

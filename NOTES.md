@@ -343,6 +343,13 @@ struct's `fetch/2`), and found the `having` bare-column check reading an unread 
 Round twenty-two was cut short by codex's usage limit; its one demonstrated probe showed the same
 spelling gap in `named_windows/1`, which read only keyword-syntax pairs, so an explicit-tuple
 window definition's aggregate went uncounted.
+Round twenty-three found three more readers with that gap (a `DISTINCT ON` pair, a window
+option or sort pair, an `order_by` direction flip). Every pair reader now reads through one
+helper, `Mutare.Ecto.AST.unwrap_pair/1`, and a flip keeps the spelling it found. One reader
+still takes keyword syntax only: `Mutare.Ecto.AST.KeywordList`, so a `from` whose clause list is
+written in explicit tuples (`from(p in P, [{:where, …}])`) gets only whole-call mutants. The gap
+loses mutants without pruning any, and closing it means an `Entry` that remembers its spelling,
+so that a re-key (`put_key/3`) writes an atom literal and not a keyword key into a tuple.
 
 The fourth round also found that a keyword filter's scalar value, routed `:interpolated`, reaches Ecto
 as a parameter, which the planner `cast/1`s before `dump/1`ing, where a written literal is only

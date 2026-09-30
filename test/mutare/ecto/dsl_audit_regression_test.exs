@@ -1532,4 +1532,56 @@ defmodule Mutare.Ecto.DslAuditRegressionTest do
       assert_builds(source, & &1.q(), only([:coalesce]))
     end
   end
+
+  test "a DISTINCT ON pair observes a positional projection read in either spelling" do
+    for distinct <- ["[asc: 1]", "[{:asc, 1}]"] do
+      source =
+        fixture("""
+        from p in "posts",
+          where: exists(from r in "posts", distinct: #{distinct}, select: r.views - r.views,
+            offset: 1),
+          select: p.id
+        """)
+
+      assert_rewrite(source, [:arithmetic], "r.views - r.views", "r.views + r.views")
+      assert_builds(source, & &1.q(), only([:arithmetic]))
+    end
+  end
+
+  test "a window option is walked in either pair spelling" do
+    for option <- ["partition_by: p.views + p.id", "{:partition_by, p.views + p.id}"] do
+      source = fixture(~s|from p in "posts", select: over(sum(p.id), [#{option}])|)
+
+      assert_rewrite(source, [:arithmetic], "p.views + p.id", "p.views - p.id")
+      assert_builds(source, & &1.q(), only([:arithmetic]))
+    end
+  end
+
+  test "a window sort pair is walked in either spelling, inside a dynamic too" do
+    for entry <- ["asc: p.views + p.id", "{:asc, p.views + p.id}"] do
+      source =
+        fixture("""
+        value = dynamic([p], over(sum(p.id), order_by: [#{entry}]))
+        from p in "posts", select: ^value
+        """)
+
+      assert_rewrite(source, [:arithmetic], "p.views + p.id", "p.views - p.id")
+      assert_builds(source, & &1.q(), only([:arithmetic]))
+    end
+  end
+
+  test "an explicit-tuple ordering flips its direction in its own spelling" do
+    for query <- [
+          ~s|from p in "posts", order_by: [{:asc, p.views}], select: p.id|,
+          ~s/"posts" |> order_by([p], [{:asc_nulls_first, p.views}]) |> select([p], p.id)/
+        ] do
+      source = fixture(query)
+
+      assert_rewrite(source, [:ordering], "{:asc", "{:desc")
+      assert_builds(source, & &1.q(), only([:ordering, :ordering_nulls]))
+    end
+
+    source = fixture(~s|from p in "posts", order_by: [{:asc_nulls_first, p.views}], select: p.id|)
+    assert_rewrite(source, [:ordering_nulls], "{:asc_nulls_first", "{:asc_nulls_last")
+  end
 end

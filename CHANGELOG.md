@@ -115,7 +115,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   projection mutant; it had been read as naming none.
 - Read a named window written as an explicit tuple (`windows: [{:w, [order_by: sum(x)]}]`)
   from its definition, as the keyword spelling is: its aggregate had been missed when judging
-  an `EXISTS` projection mutant.
+  an `EXISTS` projection mutant. The explicit-tuple spelling is now read everywhere the keyword
+  one is: a `DISTINCT ON` pair (`distinct: [{:asc, 1}]`), a window's options and sort pairs
+  (`over(sum(x), [{:partition_by, y + z}])`) and an `order_by` direction flip, which had each
+  been skipped, the first pruning a live `EXISTS` projection mutant.
 - Read `fragment()` as a macro Ecto expands (its fragment heads take at least the query): a
   `coalesce(fragment(), false)` drop had been woven into an `or_where`, where a `fragment()`
   expanding to `true` is discarded.

@@ -2,7 +2,7 @@ defmodule Mutare.Ecto.AST do
   @moduledoc false
   # Small AST helpers shared by the Ecto sub-mutators. Only what is genuinely this plugin's lives
   # here: typed literal *readers* (a sub-mutator usually wants "the atom, or nothing", not core's
-  # untyped `{:ok, value}`) and the list unwrap/rewrap pair. Everything a
+  # untyped `{:ok, value}`) and the list and pair unwrap/rewrap helpers. Everything a
   # mutator *emits* into existing source comes from core's `Mutare.AST` constructors —
   # `literal/1`, `keyword_key/1`, `clean_var/1`, `absolute_alias/1`/`absolute_call/3`/
   # `remote_call/3` — which own Sourceror's emission invariants (clean/derived meta, numeric
@@ -46,6 +46,27 @@ defmodule Mutare.Ecto.AST do
       _other -> nil
     end
   end
+
+  @doc """
+  The two sides of a 2-tuple node written bare (a keyword element, `asc: x`) or inside
+  Sourceror's single-element `{:__block__, _, [pair]}` wrapper (an explicit tuple, `{:asc, x}`),
+  or `nil` for anything else. Elixir quotes both spellings to the same 2-tuple, so Ecto reads
+  them alike, and so must every reader here. The wrapper-preserving inverse is `rewrap_pair/2`.
+  """
+  @spec unwrap_pair(Macro.t()) :: {Macro.t(), Macro.t()} | nil
+  def unwrap_pair(node) do
+    case Mutare.AST.unwrap_literal(node) do
+      {_left, _right} = pair -> pair
+      _other -> nil
+    end
+  end
+
+  @doc """
+  Re-wrap `pair` in the same Sourceror wrapper `node` carried, as `rewrap_list/2` does a list.
+  """
+  @spec rewrap_pair(Macro.t(), {Macro.t(), Macro.t()}) :: Macro.t()
+  def rewrap_pair({:__block__, meta, [_old]}, pair), do: {:__block__, meta, [pair]}
+  def rewrap_pair(_node, pair), do: pair
 
   @doc """
   Re-wrap `list` in the same Sourceror wrapper `node` carried: a `{:__block__, meta, [_]}` keeps its
