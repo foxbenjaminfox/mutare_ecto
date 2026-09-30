@@ -56,9 +56,10 @@ defmodule Mutare.Ecto do
       line, the rest still running (see `variants/0`).
 
     * `condition_delivery:` — `:auto` (default) weaves conditions where supported and rebuilds
-      the rest statically. `:static` forces whole-call condition rebuilds, retaining mutations
-      when an opaque author macro introduces syntax the dynamic builder rejects, such as a
-      subquery in `having`. It does not change free-standing dynamics or bound delivery.
+      the rest statically, among them any condition holding an author macro, whose expansion
+      may bring syntax the dynamic builder rejects (`Mutare.Ecto.StaticCondition`). `:static`
+      forces whole-call rebuilds of every condition. It does not change free-standing dynamics
+      or bound delivery.
 
     * `dialects:` — gate dialect-specific mutations (default `[]`, the portable core). `:postgres`
       enables `like`↔`ilike`; `:postgres`/`:mysql` enable the `LEFT`↔`RIGHT` join swap (SQLite

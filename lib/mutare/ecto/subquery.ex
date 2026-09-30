@@ -52,6 +52,14 @@ defmodule Mutare.Ecto.Subquery do
   @wrappers [:subquery, :all, :any, :exists]
 
   @doc """
+  Whether `node` is a unary call to one of `@wrappers`, whose argument Ecto evaluates as Elixir
+  (`subquery(arg)`) rather than escaping it with the enclosing expression.
+  """
+  @spec wrapper?(Macro.t()) :: boolean()
+  def wrapper?({head, _meta, [_arg]}) when head in @wrappers, do: true
+  def wrapper?(_node), do: false
+
+  @doc """
   Whether Ecto would accumulate a subquery while escaping `condition` — a unary call to one of
   `@wrappers` anywhere outside a `^` pin (a pin's interior is Elixir, never escaped). This asks
   about the wrapper alone, so it is wider than what `interior_mutants/3` recurses: `subquery(q)`
@@ -61,7 +69,7 @@ defmodule Mutare.Ecto.Subquery do
   consumer (`Mutare.Ecto.StaticCondition`) falls back to a delivery that is valid either way, so
   a false positive costs nothing while a false negative fails the query build — the traversal
   that sees more is the safe one. It reads source, so a subquery an author macro *expands* to
-  stays invisible (NOTES "A macro that expands to a subquery in a `having`").
+  stays invisible here; that consumer rebuilds a condition holding such a call anyway.
   """
   @spec present?(Macro.t()) :: boolean()
   def present?(condition) do
@@ -69,8 +77,7 @@ defmodule Mutare.Ecto.Subquery do
       Macro.prewalk(condition, false, fn
         # Prune the interior: `prewalk` descends whatever node is returned.
         {:^, _meta, _args}, found? -> {:pin, found?}
-        {head, _meta, [_arg]}, _found? when head in @wrappers -> {:wrapper, true}
-        node, found? -> {node, found?}
+        node, found? -> if wrapper?(node), do: {:wrapper, true}, else: {node, found?}
       end)
 
     found?

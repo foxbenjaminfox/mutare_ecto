@@ -57,15 +57,20 @@ defmodule Mutare.Ecto.StaticCondition do
   placeholder, so a woven `values = [1, 2]` binds four values to two placeholders and the
   baseline fails. So a condition that splices is rebuilt.
 
-  **Opaque macro expansions.** With `condition_delivery: :static`, every condition uses this
-  rebuild path, including a macro that introduces a subquery invisible in written source.
-  Registering that macro's arguments as raw does not prevent its enclosing condition from
-  weaving. An ignore directive also leaves delivery intact; it is not a baseline-safety switch.
+  **A call Ecto can only be expanding** (`Mutare.Ecto.Walk.opaque_call?/2`): an author macro,
+  registered or not, or a module attribute. Its expansion is escaped with the condition, and the
+  source does not show it: `member_sql(p.id, ^values)` may expand to the splice above, and
+  `over_threshold(p)` to a subquery the `having` rejects in a dynamic. So a condition holding one
+  is rebuilt, whatever the expansion turns out to be. A pin's interior and a subquery wrapper's
+  argument (`exists(from …)`) are not read: Ecto evaluates both as Elixir, apart from the
+  condition's escape, so a call there expands the same way on either path. An ignore directive
+  leaves delivery intact; it is not a baseline-safety switch.
 
   ## The rule
 
   `delivery/5` applies the configured policy, rebuilds a filter that is or may become the literal
-  `true`, a condition typed by its clause and one that splices (above), then `delivery/4` decides from the receiving
+  `true`, a condition typed by its clause, one that splices and one holding a call Ecto can
+  only be expanding (above), then `delivery/4` decides from the receiving
   clause, the expression, its predicate kind, and the declaration it is read under. A condition is **rebuilt** when the
   expression carries a subquery (`Mutare.Ecto.Subquery.present?/1`) that the clause rejects in a
   dynamic (`Mutare.Ecto.Surface.dynamic_subqueries?/1` — everything but `where`/`or_where`), or when
@@ -170,15 +175,32 @@ defmodule Mutare.Ecto.StaticCondition do
     originals = if kind == :root_pin, do: [], else: [condition]
     branches = originals ++ for(tag <- Catalog.own_catalog(condition, config), do: tag.node)
 
-    if splices?(condition) or Enum.any?(branches, &static_only?(clause, &1)),
+    if escapes_unseen?(condition) or Enum.any?(branches, &static_only?(clause, &1)),
       do: :rebuilt,
       else: delivery(clause, condition, kind, bindings)
   end
 
-  # A catalog mutant keeps the original's splices, so the original alone is read.
-  defp splices?(condition) do
-    {_condition, found?} =
-      Macro.prewalk(condition, false, fn
+  # Whether escaping `condition` meets a splice, written or brought by a call Ecto can only be
+  # expanding, or anything else such a call may bring (see "A fragment splice" and "A call Ecto
+  # can only be expanding"). A catalog mutant keeps the original's splices and calls, so the
+  # original alone is read.
+  defp escapes_unseen?(condition) do
+    escaped = escaped_part(condition)
+    splices?(escaped) or Walk.contains_opaque_call?(escaped)
+  end
+
+  # The part of `condition` Ecto escapes with it: a pin's interior and a subquery wrapper's
+  # argument are Elixir, evaluated apart from the escape, and are pruned.
+  defp escaped_part(condition) do
+    Macro.prewalk(condition, fn
+      {:^, _meta, [_interior]} -> :pin
+      node -> if Subquery.wrapper?(node), do: :subquery, else: node
+    end)
+  end
+
+  defp splices?(escaped) do
+    {_escaped, found?} =
+      Macro.prewalk(escaped, false, fn
         {:splice, _meta, [_value]} = node, _found? -> {node, true}
         node, found? -> {node, found?}
       end)

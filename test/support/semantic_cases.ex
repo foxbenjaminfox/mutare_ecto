@@ -310,6 +310,45 @@ defmodule Mutare.Ecto.SemanticCases do
                  {[2], [1, 2]}
       end
 
+      # A macro may expand to that splice where the source shows none, so a condition holding a
+      # call Ecto can only be expanding is rebuilt too.
+      test "audit: a condition with a macro that may splice keeps its parameters" do
+        source =
+          audit_source("""
+          import Mutare.Ecto.QueryMacros
+          values = [1, 2]
+          from p in Post, where: member_sql(p.id, ^values) and p.views > 10,
+            select: p.id, order_by: p.id
+          """)
+
+        assert H.assert_delivery(@repo, source, {"p.views > 10", "p.views >= 10"}, [:comparison]) ==
+                 {[2], [1, 2]}
+
+        refute Mutare.Ecto.TestSupport.metamutant(source, repo: @repo) =~
+                 "Query.dynamic("
+      end
+
+      # A subquery wrapper's argument is Elixir, built into its own query with its own
+      # parameters, so a splice there leaves the enclosing condition weavable.
+      test "audit: a splice inside an inline subquery keeps its parameters when woven" do
+        source =
+          audit_source("""
+          values = [1, 2]
+          from p in Post, as: :p,
+            where:
+              exists(from r in Post,
+                where: fragment("? IN (?)", r.id, splice(^values)) and r.id == parent_as(:p).id) and
+                p.views > 10,
+            select: p.id, order_by: p.id
+          """)
+
+        assert H.assert_delivery(@repo, source, {"p.views > 10", "p.views >= 10"}, [:comparison]) ==
+                 {[2], [1, 2]}
+
+        assert Mutare.Ecto.TestSupport.metamutant(source, repo: @repo) =~
+                 "Query.dynamic("
+      end
+
       # A woven condition makes the rest of its `from` runtime, where a later `or_where: true`
       # would be discarded, so no condition of a `from` holding such a filter is woven.
       test "audit: weaving a sibling condition keeps a later literal true" do

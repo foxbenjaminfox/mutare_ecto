@@ -134,7 +134,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   aggregate, so a core mutant of the list may decide existence.
 - Rebuild, instead of weaving, a condition that splices (`fragment("? IN (?)", p.id,
   splice(^values))`): the dynamic path binds the spliced list once per placeholder, and the woven
-  baseline failed with more parameters than placeholders.
+  baseline failed with more parameters than placeholders. Rebuild, likewise, a condition holding
+  a call Ecto can only be expanding (an author macro, registered or not, or a module attribute),
+  outside a pin and a subquery's argument: its expansion may splice
+  (`member_sql(p.id, ^values)`), or bring a subquery a `having` rejects in a dynamic, where the
+  source shows neither. `condition_delivery: :static` is no longer needed for such a macro. A
+  splice inside a subquery's argument no longer forces the rebuild: that query is built apart,
+  with its own parameters.
 - Hand core the pin in a named binding read through a dot (`as(^name).id`, `parent_as(^name).id`)
   and a window's pinned sort direction (`over(f, order_by: [{^direction, p.id}])`); neither had
   been reached.

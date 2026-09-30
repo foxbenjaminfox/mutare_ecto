@@ -325,9 +325,10 @@ defmodule Mutare.Ecto.StaticConditionTest do
     end
   end
 
-  describe "a subquery only an author macro's expansion reveals (NOTES, known limit)" do
-    # Reading source cannot see it, so `having: over_threshold(p) and count(p.id) > 1` is woven
-    # and fails to build. These pin the two facts the documented remedy rests on.
+  describe "a subquery only an author macro's expansion reveals" do
+    # Reading source cannot see it, so the macro call itself decides: a condition holding a call
+    # Ecto can only be expanding is rebuilt, and `having: over_threshold(p) and count(p.id) > 1`
+    # builds without `condition_delivery: :static`.
     @macros """
     defmodule Macros do
       defmacro over_threshold(p) do
@@ -359,13 +360,14 @@ defmodule Mutare.Ecto.StaticConditionTest do
       assert_builds(src, & &1.q())
     end
 
-    test "static delivery handles an opaque subquery in a larger condition" do
+    test "a larger condition holding the macro is rebuilt, under either delivery policy" do
       src = with_macro("having: over_threshold(p) and count(p.id) > 1")
-      opts = [mutators: [{Mutare.Ecto, condition_delivery: :static}]]
-      refute metamutant(src, opts) =~ "Query.dynamic("
-      assert_rewrite = {"count(p.id) > 1", "count(p.id) >= 1"}
-      assert assert_rewrite in ecto_diffs(src, opts)
-      assert_builds(src, & &1.q(), opts)
+
+      for opts <- [[], [mutators: [{Mutare.Ecto, condition_delivery: :static}]]] do
+        refute metamutant(src, opts) =~ "Query.dynamic("
+        assert {"count(p.id) > 1", "count(p.id) >= 1"} in ecto_diffs(src, opts)
+        assert_builds(src, & &1.q(), opts)
+      end
     end
 
     test "given a clause of its own, only the clause beside it weaves — and the query builds" do
@@ -374,6 +376,36 @@ defmodule Mutare.Ecto.StaticConditionTest do
       assert rendered(src) =~ "having: over_threshold(p), having: ^case mutare_active do"
       sites = assert_builds(src, & &1.q())
       assert Enum.any?(sites, &(&1.mutated_code == "count(p.id) >= 1"))
+    end
+  end
+
+  describe "a call Ecto can only be expanding, outside a pin or subquery argument" do
+    defp woven?(condition) do
+      """
+      defmodule Q do
+        import Ecto.Query
+        import Mutare.Ecto.QueryMacros
+
+        def q(values) do
+          from(p in "posts", where: #{condition}, select: p.id)
+        end
+      end
+      """
+      |> metamutant()
+      |> String.contains?("Query.dynamic(")
+    end
+
+    test "rebuilds a condition an author macro's expansion may splice into" do
+      refute woven?("member_sql(p.id, ^values) and p.views > 10")
+      refute woven?("p.views > 10 or not member_sql(p.id, ^values)")
+    end
+
+    test "reads neither a pin's interior nor a subquery wrapper's argument" do
+      assert woven?("p.views > ^Enum.count(values) and p.id > 0")
+
+      assert woven?(
+               ~s|p.id in subquery(from(r in "rows", where: member_sql(r.id, ^values), select: r.id)) and p.views > 10|
+             )
     end
   end
 

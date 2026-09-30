@@ -83,25 +83,22 @@ would need descent-propagating marks. Proven in `structural_marks_test.exs` (hel
 plugin enabled, mutating without it — plus the piped/imported spellings and a positional
 sibling-atom control).
 
-### A macro that expands to a subquery in a `having`
+### A macro that expands to a subquery in a `having` `[done]`
 
 `Mutare.Ecto.StaticCondition` declines to weave a `having` whose condition carries a subquery,
-because Ecto rejects one inside a *dynamic* `having` when the query is built. It decides by
+because Ecto rejects one inside a *dynamic* `having` when the query is built. It decided by
 reading source (`Mutare.Ecto.Subquery.present?/1`), so a subquery that appears only once an
-author macro **expands** is invisible to it:
+author macro **expands** was invisible to it:
 
     defmacro over_threshold(p), do: quote(do: count(unquote(p).id) > subquery(…))
 
     having: over_threshold(p) and count(p.id) > 1
 
-That condition is woven, and the function then raises "subqueries are not allowed in `having`
-expressions" on every call, baseline included. It takes both halves: a condition that is the
-macro call *alone* has no catalog mutants, so it is never woven and builds as written.
-
-`condition_delivery: :static` now provides an explicit plugin-side escape hatch. It preserves
-static Ecto expansion for the enclosing condition, independent of how the macro's arguments
-route. Ignore directives still do not control delivery. Splitting the opaque macro into its
-own `having:` remains another option when that clause has no catalog mutants.
+That condition was woven, and the function raised "subqueries are not allowed in `having`
+expressions" on every call, baseline included; `condition_delivery: :static` was the documented
+remedy. Round thirty-five found the same blind spot hiding a splice (below), and the rule now
+reads the macro call itself: a condition holding a call Ecto can only be expanding is rebuilt,
+whatever the expansion. `:static` remains, as a policy that rebuilds every condition.
 
 ### A binding pattern on a pipe's left: syntax-preserving delivery `[done]`
 
@@ -381,6 +378,12 @@ Round thirty-four found the literal-`true` rule applied condition by condition: 
 earlier condition made the rest of its `from` runtime, where a later `or_where: true` was
 discarded, and the baseline changed. See "A piped literal-`true` filter after an instrumented
 static chain" for the fix and the piped spelling it leaves.
+Round thirty-five found round thirty's splice rule reading only a written `splice/1`, so an
+author macro expanding to one (`member_sql(p.id, ^values)`) was woven and broke the baseline
+as before. A condition holding any call Ecto can only be expanding is now rebuilt, outside a
+pin's interior and a subquery wrapper's argument, which are Elixir built apart from the
+condition's parameters; a written splice there no longer forces the rebuild either. The same
+rule closed "A macro that expands to a subquery in a `having`".
 Round twenty-six found the binary-literal leaf rule held only by the condition catalog: the
 value walk read a bitstring's specifiers (`unsigned-integer-size(128)`) as subtraction, and the
 mutant failed the whole build. The rule now lives in `Mutare.Ecto.Walk.structural/3`, under

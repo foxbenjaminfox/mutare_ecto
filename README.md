@@ -217,11 +217,11 @@ Each `{Mutare.Ecto, …}` entry takes:
 
   `Mutare.Ecto.families/0` returns the full set and `Mutare.Ecto.default_families/0` the default
   subset.
-- **`condition_delivery:`** — `:auto` (default) chooses between weaving and static rebuilds.
-  Use `:static` when a custom macro introduces a subquery or other syntax that the receiving
-  clause rejects in a dynamic. This preserves the written builder path for all conditions in
-  that plugin instance while retaining their mutations. Making the macro's arguments raw, or
-  marking mutation sites ignored, does not by itself prevent the enclosing clause from weaving.
+- **`condition_delivery:`** — `:auto` (default) chooses between weaving and static rebuilds;
+  a condition holding a custom macro is already rebuilt, since its expansion may bring syntax
+  the receiving clause rejects in a dynamic. `:static` rebuilds every condition in that plugin
+  instance, keeping the written builder path while retaining their mutations. Marking mutation
+  sites ignored does not change how a condition is delivered.
 - **`dialects:`** — enable mutations that aren't portable across all adapters. The default `[]` is
   the portable core (safe on SQLite, Postgres, MySQL alike). `:postgres` adds `like`↔`ilike`;
   `:postgres`/`:mysql` add the `LEFT`↔`RIGHT` join swap (SQLite has no `RIGHT JOIN`).
