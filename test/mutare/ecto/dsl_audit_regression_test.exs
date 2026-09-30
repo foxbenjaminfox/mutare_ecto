@@ -1724,6 +1724,7 @@ defmodule Mutare.Ecto.DslAuditRegressionTest do
   test "a window's inputs may read the bare column an ordering aggregate picks the row of" do
     for clauses <- [
           "select: sum(r.views) + over(sum(r.id)), order_by: min(r.user_id)",
+          "select: sum(0) + over(filter(sum(r.id), true)), order_by: min(r.user_id)",
           "group_by: r.user_id, select: over(count(), partition_by: :views), order_by: min(r.id)",
           "group_by: r.user_id, windows: [w: [partition_by: r.views]], select: over(count(), :w), order_by: min(r.id)"
         ] do

@@ -1044,14 +1044,16 @@ defmodule Mutare.Ecto.Subquery do
   # `over(sum(r.y))` reads `r.y` as the query's bare column. Its options are read likewise, and
   # a shorthand field (`partition_by: :y`), a named window, or any other form may name one.
   defp window_reads_bare?({:over, _meta, [function | window]}, grouped) do
-    function_bare? =
-      case function do
-        {_name, _meta, args} when is_list(args) -> bare_column?(args, grouped)
-        _other -> false
-      end
-
-    function_bare? or Enum.any?(window, &window_options_bare?(&1, grouped))
+    bare_column?(window_inputs(function), grouped) or
+      Enum.any?(window, &window_options_bare?(&1, grouped))
   end
+
+  # A window function's arguments; a `filter/2`'s are its aggregate's and its condition.
+  defp window_inputs({:filter, _meta, [aggregate, condition]}),
+    do: [condition | window_inputs(aggregate)]
+
+  defp window_inputs({_name, _meta, args}) when is_list(args), do: args
+  defp window_inputs(_function), do: []
 
   defp window_options_bare?(options, grouped) do
     case AST.unwrap_list(options) do
