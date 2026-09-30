@@ -1603,4 +1603,36 @@ defmodule Mutare.Ecto.DslAuditRegressionTest do
       assert_builds(source, & &1.q(), only([:membership]))
     end
   end
+
+  test "a dynamic select map's keys name fields, whether written or pinned" do
+    mutators = [
+      mutators: [
+        Mutare.Mutators.AtomLiteral,
+        {Mutare.Ecto, repo: MyApp.Repo, families: [:atom_literal, :string_literal]}
+      ]
+    ]
+
+    for map <- [
+          ~s|%{p \| title: "Changed"}|,
+          ~s|%{p \| ^:title => "Changed"}|,
+          ~s|%{title: p.title, note: "Changed"}|,
+          ~s|%{^:title => p.title, note: "Changed"}|
+        ] do
+      source =
+        fixture("""
+        projection = dynamic([p], #{map})
+        from p in MyApp.Post, select: ^projection
+        """)
+
+      # The fixture's own `next_id/0` carries `[:positive]`, which core mutates.
+      mutated =
+        for {_family, original, mutated} <- diffs(source, mutators),
+            original != ":positive",
+            do: mutated
+
+      assert ~s|""| in mutated
+      refute Enum.any?(mutated, &(&1 =~ "mutare:" or &1 =~ ":mutare"))
+      assert_builds(source, & &1.q(), mutators)
+    end
+  end
 end

@@ -353,6 +353,9 @@ so that a re-key (`put_key/3`) writes an atom literal and not a keyword key into
 Round twenty-four found the in-list repeat check trusting Ecto's own vocabulary: `ago/2` and
 `from_now/2` each build on a fresh `^DateTime.utc_now()`, so two written occurrences are two
 values, and each now drops alone, as a `fragment` does.
+Round twenty-five found a `dynamic`'s select map walked as a condition: its keys, which name
+the result's fields or, in a map update, the struct's, were data to the literal arms, and a
+pinned key was a `:value` island. A map key is now a structural position.
 
 The fourth round also found that a keyword filter's scalar value, routed `:interpolated`, reaches Ecto
 as a parameter, which the planner `cast/1`s before `dump/1`ing, where a written literal is only

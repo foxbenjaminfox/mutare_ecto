@@ -119,6 +119,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   one is: a `DISTINCT ON` pair (`distinct: [{:asc, 1}]`), a window's options and sort pairs
   (`over(sum(x), [{:partition_by, y + z}])`) and an `order_by` direction flip, which had each
   been skipped, the first pruning a live `EXISTS` projection mutant.
+- Leave a `dynamic` select map's keys unmutated, written or pinned (`%{p | title: "x"}`,
+  `%{^:title => p.title}`): a key names a field of the result or of the updated struct, and
+  its atom-literal mutant raised a `KeyError` when the results were loaded.
 - Drop each occurrence of `ago/2` or `from_now/2` in an in-list alone: Ecto builds each on its
   own `DateTime.utc_now()`, so identical occurrences are distinct values, and dropping them
   together had replaced two live single-occurrence drops.

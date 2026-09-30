@@ -76,7 +76,7 @@ defmodule Mutare.Ecto.Fragment do
   A literal arm is also suppressed at a **structural position** of a known Ecto DSL form, where the
   literal shapes the SQL the builder emits rather than carrying data (a mutant would be a broken
   query, not a live one): the `fragment` template, an interval unit, a cast type, a column,
-  binding, or alias name — `structural_position?/1` is the registry, consulted off the
+  binding, or alias name, a map key — `structural_position?/1` is the registry, consulted off the
   `{parent_form, arity, index}` the walk threads down. Data literals at every *other* position
   of those forms are still mutated. A **tuple** is classified by position in the same way: at a
   structural position it is a compound cast spec (`{:array, :string}`), skipped whole; anywhere else it is
@@ -171,6 +171,9 @@ defmodule Mutare.Ecto.Fragment do
   # `"mutare"`. Reused from core's `Mutare.AST` so the survivor marker matches the built-ins.
   @atom_sentinel Mutare.AST.sentinel_atom()
   @string_sentinel Mutare.AST.sentinel_string()
+
+  # The slot of a map key (`tuple_children/2`): a map pair is no call, so it has no argument slot.
+  @map_key {:map_key, 2, 0}
 
   # The context the walk threads to every node: its `{parent_form, arity, index}` position (the
   # key the literal arms consult) and what the enclosing predicate observes of it — its `:value`,
@@ -353,12 +356,36 @@ defmodule Mutare.Ecto.Fragment do
     end
   end
 
-  # The tuple rule's one decision (above): a cast spec is a leaf, a value tuple descends.
+  # The tuple rule's one decision (above): a cast spec is a leaf, a value tuple descends. A map's
+  # pair — a `dynamic`'s select value, `%{title: p.title}` or `%{p | title: "x"}` — is neither:
+  # its key names a field of the result or the updated struct, a structural position, and its
+  # value is data.
+  defp tuple_children({key, value} = pair, {position, observed} = ctx) do
+    cond do
+      structural_position?(position) ->
+        []
+
+      map_pair_position?(position) ->
+        [
+          {key, {@map_key, observed}, &{&1, value}},
+          {value, child_ctx(pair, 1, ctx), &{key, &1}}
+        ]
+
+      true ->
+        Walk.structural(pair, ctx, &child_ctx/3)
+    end
+  end
+
   defp tuple_children(tuple, {position, _observed} = ctx) do
     if structural_position?(position),
       do: [],
       else: Walk.structural(tuple, ctx, &child_ctx/3)
   end
+
+  # A map's own pairs, and a map update's (`%{base | pairs}`, whose pairs fill `|`'s right side).
+  defp map_pair_position?({:%{}, _arity, _index}), do: true
+  defp map_pair_position?({:|, 2, 1}), do: true
+  defp map_pair_position?(_position), do: false
 
   # A child's context, from its parent: where it sits (`Mutare.Ecto.Walk.child_slot/3` — the key
   # the literal arms consult, `structural_position?/1` and `json_path_position?/1`), and what is
@@ -760,10 +787,15 @@ defmodule Mutare.Ecto.Fragment do
   #                                      alone (`local_islands/2`); `literal/1` is the same
   #                                      form's older name
   #
+  #   * a map key                    — the field a `dynamic`'s select map names in its result,
+  #                                      or its map update names in the struct (`@map_key`,
+  #                                      marked by `tuple_children/2`, not a call argument)
+  #
   # A pin is classified by the same table (`local_islands/2`). Ecto refuses one at two of these
   # positions — `count/2`'s modifier, and a template beside data arguments — so there the entry
   # only ever meets a written literal; a lone pinned `fragment(^keywords)` is Ecto's keyword
   # fragment, whose keys name fields.
+  defp structural_position?(@map_key), do: true
   defp structural_position?({:over, 2, 1}), do: true
   defp structural_position?({:fragment, _arity, 0}), do: true
   defp structural_position?({:datetime_add, 3, 2}), do: true
