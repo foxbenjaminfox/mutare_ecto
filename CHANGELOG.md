@@ -7,8 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-30
+
 ### Changed
 
+- **Mutare 0.4.3 or newer is required** (`{:mutare, "~> 0.4.3"}`).
 - Island mutations use core's `collect_expression/3` and `Mutation.map_node/2` to preserve
   their source attribution, producer, note and variants through nested query delivery.
   Hosted SQL mutations also retain their attribution: reports show the specific changed
@@ -208,7 +211,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `condition_delivery: :static` preserves static condition building for opaque custom macros
   whose expansions cannot use Ecto's dynamic path.
-- Native baseline and statically mutated query comparisons for delivery regressions.
 
 ## [0.3.0] - 2026-09-26
 
@@ -475,7 +477,8 @@ Initial release.
   templates, interval units, cast types, field/binding names) are never
   mutated, so these positions cannot cause the single metamutant build to fail.
 
-[Unreleased]: https://github.com/foxbenjaminfox/mutare_ecto/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/foxbenjaminfox/mutare_ecto/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/foxbenjaminfox/mutare_ecto/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/foxbenjaminfox/mutare_ecto/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/foxbenjaminfox/mutare_ecto/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/foxbenjaminfox/mutare_ecto/compare/v0.1.1...v0.2.0
