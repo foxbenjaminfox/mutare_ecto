@@ -12,11 +12,8 @@ defmodule Mutare.Ecto.ClauseDrop do
   A surviving mutant means **no test exercises** what that clause contributes — the primary
   motivating mutation for a query builder (NOTES "ClauseDrop: the pipe form was the common one").
 
-  Delivery is the shared stage drop (`Mutare.Ecto.StageDrop`): the call collapses to its query
-  argument, in both spellings — a pipe stage reaches the plugin as the direct call it is sugar
-  for, and the report keeps the pipe the user wrote (`q |> where(…)` → `q`). The call is
-  resolved through `Mutare.Calls`, so it matches the direct, aliased, and (common)
-  `import Ecto.Query` forms alike, and never a same-named user function.
+  `Mutare.Ecto.StageDrop` collapses the call to its query argument. Resolution through
+  `Mutare.Calls` matches direct, aliased and imported Ecto calls, never a same-named user function.
 
   ## Families
 

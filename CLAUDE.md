@@ -177,7 +177,8 @@ Each row is role + the rule(s) that module is the **home** for.
 | `host/target.ex` | the `dynamic`-wrap / `^`-pin / splice transforms core consumes; home of the root-pin rule (a condition that *is* a `^` pin — a `:root_pin` predicate — weaves pin-only over its interior, re-declaring no bindings, so under any declaration) |
 | `fragment.ex` | the SQL-semantics catalog for conditions (public family table); home of the SQL side of the ownership rule, the `is_nil` observation rule (beneath it a mutant is pruned only where the per-form NULL rules *know* it keeps the argument's NULL-ness; an unknown form — and every pin — is emitted), and the structural-position registry — which also gives a `^` pin its role (`role/0`: `:value` / `:condition` / `:structural`, reported by `islands/2`) |
 | `subquery.ex` | recurses the catalogs into an inline subquery; home of the wrapper observation modes, of what is pruned as equivalent vs. merely not composed yet, and of the interior keyword-filter rule (a pair's value is a catalog root, its key never) |
-| `island.ex` | the interpolation-island seam; home of the sub-contract and of the role policy — what of a pin's interior is still query structure, held against core's families: a `:condition` pin's keyword keys (the pin-side keyword-key rule), a `:structural` pin's literals known to be the name |
+| `island.ex` | the interpolation-island seam; home of subcontracting to core and relaying producer-attributed mutants |
+| `island/policy.ex` | the structural role policy: held keyword keys / result literals, whole-interior set comparison and its approximations, and the Ecto-producer exemption |
 | `walk.ex` | the one structural walk under every catalog; home of the author-macro rule, node-level attribution, the call-argument slot a node fills (`child_slot/3`), and of what counts as an expansion the source does not show (`opaque_call?/2`), including a call in a slot Ecto validates before escaping (`over`'s function, `type/2`'s operand: `expanded_argument?/2`) and an argument Ecto expands at compile time (a select take's field list, a fragment's template) |
 | `window.ex` | shared `over/2` grammar: structural window names, keys, directions and shorthand fields, with traversable value expressions |
 | `expression_walk.ex` | the value-expression rules over `walk.ex` (the `over/2` `order_by:` refinement) |
@@ -229,8 +230,8 @@ Each is the conclusion; the canonical statement is in the named module.
   relayed with `producer:` (`Mutare.Ecto.Island`).
 - **A pin moves a value out of the SQL, not out of the position it fills.** `field(p, ^:score)`
   still names a column, so an interior is never handed to core as unconstrained data: the walk
-  reports each pin's role (`Mutare.Ecto.Fragment`), and the seam holds the literals that role
-  makes structure while the logic computing them stays core's (`Mutare.Ecto.Island`).
+  reports each pin's role (`Mutare.Ecto.Fragment`), and `Mutare.Ecto.Island.Policy` holds the
+  literals that role makes structure while the logic computing them stays core's.
 - **A nested author macro may invent its own argument syntax — descend only into `:expression`**
   (or a non-macro node); every other routing is left raw. A reader that concludes something from
   what it did *not* see (no alias read, no aggregate, not `true`) counts any call Ecto may be

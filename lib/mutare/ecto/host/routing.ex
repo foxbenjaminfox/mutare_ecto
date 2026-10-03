@@ -5,10 +5,8 @@ defmodule Mutare.Ecto.Host.Routing do
 
   ## Query sources
 
-  A query source is the call's first argument, whichever way the call was written: core hands
-  a pipe stage over as the direct call it is sugar for, so `Post |> where(…)` is classified as
-  `where(Post, …)`. The source's shape then determines its treatment, identically for `from`
-  and the composable `where`/`join`/`limit` stages:
+  A query source is the normalized call's first argument (`Mutare.Ecto.AST.QueryCall`). Its
+  shape determines its treatment, for both `from` and composable `where`/`join`/`limit` stages:
 
     * A schema alias, table-name string (including interpolation), or `{"table", Schema}` pair
       stays `:raw`. Replacing a table/schema name makes a broken query.
@@ -140,11 +138,10 @@ defmodule Mutare.Ecto.Host.Routing do
     end
   end
 
-  # Only `:dynamic`/`:raw` (registered `:raw`, so core never calls `route_arguments/1` for
-  # them — reachable here only through a direct `treatments/2` call) and `nil` (a name the
-  # plugin doesn't own) land here. A **new** Surface kind must take a real branch above
-  # (`Surface.macro_kinds/0`).
-  defp route_macro(_kind, _name, _args, _resolve), do: []
+  # Raw registrations bypass this classifier; direct calls and unknown names yield no routes.
+  defp route_macro(:dynamic, _name, _args, _resolve), do: []
+  defp route_macro(:raw, _name, _args, _resolve), do: []
+  defp route_macro(nil, _name, _args, _resolve), do: []
 
   # `with_cte(query, name, as: ^cte)`'s options route per pair: a **pinned** `as:` value is an
   # Elixir expression computing the CTE's query — routed `:interpolated`, so Mutare mutates it

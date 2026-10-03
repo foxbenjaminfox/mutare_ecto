@@ -66,12 +66,13 @@ defmodule Mutare.Ecto.Host do
           :condition -> condition_target(macro, args, context)
           :join -> join_target(args, context)
           :clause -> bound_target(macro, args)
-          # Defensively dead: `hosted_macro_names/0` subscribes only the kinds above. A new kind
-          # must take a branch here or stay unsubscribed (`Surface.macro_kinds/0`).
-          _other -> []
+          # Unsubscribed kinds and names outside the owned surface.
+          :dynamic -> []
+          :raw -> []
+          nil -> []
         end
 
-      _ ->
+      nil ->
         []
     end
   end

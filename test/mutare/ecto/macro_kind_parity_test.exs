@@ -5,25 +5,10 @@ defmodule Mutare.Ecto.MacroKindParityTest do
 
   alias Mutare.Ecto.{Host, Surface}
 
-  # Three dispatch loops switch independently on `Surface.macro_kind/1`'s closed taxonomy, and
-  # each ends in a catch-all that silently yields nothing:
-  #
-  #   * `Mutare.Ecto.Dispatcher.query_macro_mutations/3` — which sub-mutators see the whole call
-  #   * `Mutare.Ecto.Host.host/2` — which hosted-target builder weaves the call
-  #   * `Mutare.Ecto.Host.Routing.route_macro/4` — how core treats each argument position
-  #     (`:from` short-circuits earlier, in `treatments/2`'s dedicated clause)
-  #
-  # The catch-alls are correct for today's inert cases (`:raw`-kind macros, and `nil` for a name
-  # the plugin doesn't own), but Elixir has no exhaustiveness check: add or rename a kind in
-  # `Surface` and any of the three can silently degrade a whole macro family to "no mutations" —
-  # for a mutation-testing tool, silent coverage loss, the worst failure mode. This is the
-  # taxonomy-level cousin of `fragment_descent_test.exs` (the condition walk's descent policy):
-  # every kind in
-  # `Surface.macro_kinds/0` must carry a probe below, and each probe pins observable evidence
-  # that all three loops take a real branch for that kind — or that the kind is *structurally*
-  # excluded from a loop (registered `:raw`, so core never calls `route_arguments/1`; absent
-  # from `hosted_macro_names/0`, so the host is never offered the call), which is stronger than
-  # trusting the catch-all.
+  # The three macro-kind dispatches explicitly match active and inert cases. These probes
+  # require every registered kind to produce observable behavior in each dispatch, or be
+  # structurally excluded (registered raw / never subscribed to the host). Explicit matches
+  # catch unhandled kinds at runtime; parity catches missing coverage even for unvisited paths.
   #
   # Each probe:
   #
@@ -39,7 +24,7 @@ defmodule Mutare.Ecto.MacroKindParityTest do
   #   * `routing` — `{snippet, expected}` for `Host.Routing.treatments/2` (every probe is a
   #     direct call), whose
   #     position-specific answer (a `:hosted` overlay) proves the kind matched a real routing
-  #     branch rather than the `[]` catch-all, or `:registered_raw`
+  #     branch, or `:registered_raw`
   @probes %{
     from: %{
       representative: :from,
@@ -83,7 +68,7 @@ defmodule Mutare.Ecto.MacroKindParityTest do
       hosted: [{"p.user_id == u.id", "p.user_id != u.id"}],
       # The options list routes per-pair (as the `from` clause list does), so the `on:` condition's
       # `:hosted` sits nested under `{:keyword, …}` — still the routing branch's own answer, never
-      # the `[]` catch-all.
+      # an inert branch.
       routing:
         {~s|join(query, :inner, [u], p in "posts", on: p.user_id == u.id)|,
          [:expression, :raw, :raw, :raw, {:keyword, [:hosted]}]}
@@ -138,8 +123,7 @@ defmodule Mutare.Ecto.MacroKindParityTest do
     assert Enum.sort(Map.keys(@probes)) == Enum.sort(Surface.macro_kinds()),
            """
            `Surface.macro_kinds/0` and this probe table disagree — a macro kind was added,
-           renamed, or removed. Each of the three kind dispatches ends in a silent catch-all,
-           so extend the taxonomy by first adding a probe here that decides, for the new kind,
+           renamed, or removed. Extend the taxonomy by adding a probe here that decides
            what `Dispatcher.query_macro_mutations/3`, `Host.host/2`, and
            `Host.Routing.route_macro/4` must each do with it — a real branch, or an asserted
            structural exclusion (`:registered_raw` / `:never_subscribed`).
@@ -234,7 +218,7 @@ defmodule Mutare.Ecto.MacroKindParityTest do
 
             assert Host.Routing.treatments(name, args) ==
                      unquote(Macro.escape(expected)),
-                   "treatments/2 fell through to a catch-all for: #{unquote(snippet)}"
+                   "unexpected treatments/2 routes for: #{unquote(snippet)}"
           end
       end
     end

@@ -82,10 +82,9 @@ defmodule Mutare.Ecto.Dispatcher do
     # mutare:ignore[operand_swap] equivalent — two independent sub-mutator result lists, consumed as a set
     do: Dynamic.mutations(call, context) ++ BindingReorder.mutations(call, context)
 
-  # Only the inert remainder lands here — a `:raw`-kind macro and `nil` (an `Ecto.Query` macro
-  # the plugin doesn't own); exhaustiveness is pinned by `Mutare.Ecto.Surface.macro_kinds/0`'s
-  # parity test.
-  defp query_macro_mutations(_kind, _node, _context), do: []
+  # Registered inert macros and names outside the owned surface.
+  defp query_macro_mutations(:raw, _node, _context), do: []
+  defp query_macro_mutations(nil, _node, _context), do: []
 
   # A registered Ecto.Query macro (`:condition`/`:clause`/`:join`/`:dynamic` in `Surface`) always
   # takes the branch above: core stamps the offered call's macro identity before `mutate/2`

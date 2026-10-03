@@ -18,10 +18,7 @@ defmodule Mutare.Ecto.Changeset do
       compile-safe and changeset-shape-preserving, but the gap it surfaces is "this side effect /
       concurrency guard is never asserted", a different question — so it gets its own family.
 
-  Delivery is the shared stage drop (`Mutare.Ecto.StageDrop`): the call collapses to its
-  changeset argument, in both spellings — a pipe stage reaches the plugin as the direct call it
-  is sugar for, and the report keeps the pipe the user wrote (`cs |> validate_required(…)` →
-  `cs`).
+  `Mutare.Ecto.StageDrop` collapses the call to its changeset argument.
   """
 
   alias Mutare.Ecto.{Context, StageDrop}

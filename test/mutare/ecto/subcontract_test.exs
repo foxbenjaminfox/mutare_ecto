@@ -812,7 +812,7 @@ defmodule Mutare.Ecto.SubcontractTest do
       # `^[field: value]` (and a computed `^(if …, do: [field: value], else: []))`) is Ecto's
       # interpolated shorthand filter — the key names a column. Core, handed the bare keyword list,
       # would rename the key (`:views` → `:mutare`, an unknown-field query error) or drop the pair;
-      # `Mutare.Ecto.Island.subcontracted/4` drops any mutant that changes the interior's keyword-key set,
+      # `Mutare.Ecto.Island.Policy` drops any mutant that changes the interior's keyword-key set,
       # exactly as the non-pinned shorthand routing skips keys — while the *value* mutation survives.
       for body <- [
             ~s{where(q, ^[views: 5])},
@@ -836,7 +836,7 @@ defmodule Mutare.Ecto.SubcontractTest do
   describe "roles — a pin's structure survives the interpolation boundary" do
     # A pin moves a value out of the SQL, never out of the position it fills: the interior of
     # `field(p, ^:score)` still names a column. `Mutare.Ecto.Fragment.islands/2` reports each
-    # pin's role, and `Mutare.Ecto.Island` holds, per role, the written literals that are
+    # pin's role, and `Mutare.Ecto.Island.Policy` holds, per role, the written literals that are
     # structure — so core's value families leave `^:score` alone exactly as the plugin's literal
     # arms leave the written `:score` alone, while the logic that *computes* a name stays core's.
 

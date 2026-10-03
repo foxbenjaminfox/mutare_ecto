@@ -220,7 +220,7 @@ defmodule Mutare.Ecto.Surface do
     end)
   end)
 
-  @type macro_kind :: :from | :condition | :join | :clause | :dynamic | :skip
+  @type macro_kind :: :from | :condition | :join | :clause | :dynamic | :raw
   @type mutation_capability :: :ordering | :aggregate | :scalar | :combination | :join_type
   @type from_capability ::
           :hosted
@@ -250,10 +250,9 @@ defmodule Mutare.Ecto.Surface do
   @doc """
   The closed macro-kind taxonomy `macro_kind/1` answers from. Three consumers dispatch on it
   independently — `Mutare.Ecto.Dispatcher.query_macro_mutations/3`, `Mutare.Ecto.Host.host/2`,
-  and `Mutare.Ecto.Host.Routing.route_macro/4` — each ending in a catch-all Elixir cannot
-  exhaustiveness-check, so `macro_kind_parity_test.exs` probes every kind listed here against
-  all three: adding or renaming a kind fails that test until each dispatch takes a real branch
-  for it (or is structurally excluded), instead of silently dropping the kind's mutations.
+  and `Mutare.Ecto.Host.Routing.route_macro/4` — explicitly match their active and inert cases.
+  `macro_kind_parity_test.exs` probes every kind against all three, requiring observable
+  behavior or a structural exclusion when the taxonomy changes.
   """
   @spec macro_kinds() :: [macro_kind()]
   def macro_kinds, do: @macro_kinds

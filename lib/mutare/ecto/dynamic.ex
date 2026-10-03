@@ -27,11 +27,8 @@ defmodule Mutare.Ecto.Dynamic do
   (`Mutare.Ecto.Walk`) — so a line-scoped `# mutare:ignore` reaches one comparison of a
   multi-line `dynamic`.
 
-  The written binding list is re-emitted byte-for-byte (`Mutare.Ecto.BindingReorder` handles
-  positional reordering). A `^` pin's interior — nested (`p.x > ^(min + 1)`) or the whole
-  body (`dynamic([p], ^(if params.sort, do: a, else: b))`) — is never mutated by this catalog: it is
-  passed to core through the same interface the host uses (`Mutare.Ecto.Island`), only
-  delivered as this module's whole-call rewrite instead of a weave.
+  The written binding list is preserved (`Mutare.Ecto.BindingReorder` handles reordering).
+  `Mutare.Ecto.Island` supplies pin-interior mutants, delivered here as whole-call rewrites.
   """
 
   alias Mutare.Ecto.{Context, Island, Tag}

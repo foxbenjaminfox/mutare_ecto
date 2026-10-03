@@ -20,8 +20,7 @@ defmodule Mutare.Ecto.Context do
   #     resolves the island) and the plugin's own resolution of the regions core left as written
   #     (`Mutare.Ecto.Resolved`). The plugin reads nothing else off it.
   #
-  # Nothing here says how a call was written: core offers a pipe stage as the direct call it is
-  # sugar for, so a producer reads argument positions off the call alone.
+  # Argument positions belong to the normalized call, not this context.
   #
   # The boundaries are `Mutare.Ecto.Dispatcher.mutations/2` (the `mutate/2` path),
   # `Mutare.Ecto.Host.host/2` (the selector-host path), and `Mutare.Ecto.finalize/2` (the funnel

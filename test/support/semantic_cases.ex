@@ -12,14 +12,9 @@ defmodule Mutare.Ecto.SemanticCases do
   # names never collide, with no per-test disambiguation. See `Mutare.Ecto.SemanticHarness` for the
   # flip-and-compare mechanics each helper composes.
   #
-  # **Dialect-only arms proven at the unit/config layer, not here.** Three catalog arms are
-  # non-portable, so they have no liveness test on the always-on SQLite engine — and since the
-  # Postgres module runs these *same* fixtures, it adds none either: `like`↔`ilike` (Postgres-only),
-  # the RIGHT-join arm of `:join_type` (`left`↔`right`, `full`→`right`; Postgres/MySQL), and
-  # `intersect_all`↔`except_all` (Postgres/MySQL). Each is covered at the source/routing layer by
-  # `fragment_test`/`host_test`/`query_test`/`config_test`; a Postgres-gated liveness fixture for
-  # them is a known future extension (it would need a `dialects:`-configured mutator run under a
-  # `@repo.__adapter__() == Ecto.Adapters.Postgres` runtime guard).
+  # Postgres-gated fixtures also prove the non-portable `like`↔`ilike`, LEFT→RIGHT join,
+  # and `intersect_all`↔`except_all` swaps live. They use `H.postgres?/1` and, where the
+  # mutation requires it, a `dialects: [:postgres]` configuration.
   defmacro __using__(opts) do
     # The quote is deliberately the whole suite — this module exists to inject it verbatim into each
     # per-engine test module — so the long-block heuristic doesn't apply.
@@ -1992,11 +1987,8 @@ defmodule Mutare.Ecto.SemanticCases do
       end
 
       describe "JoinType — full → left (whole-`from`, narrowing, portable)" do
-        # `full_join`→`left_join` targets a universally portable kind, so it needs no `dialects:` gate
-        # (unlike the never-offered widening direction, or `full_join`→`right_join`, gated by
-        # `@right_join_dialects` and covered only at the config layer — SQLite can't run RIGHT JOIN, so
-        # there's no live proof for it here). LEFT keeps the orphan post (user_id 99) but drops the
-        # four post-less users that FULL would have kept on the right side.
+        # `full_join`→`left_join` needs no dialect gate. LEFT keeps the orphan post
+        # (user_id 99) but drops the four post-less users FULL preserves on the right.
         test "the left-join mutant drops the post-less users the full join keeps" do
           # Runtime-guarded rather than tag-skipped: the CI matrix pins the adapter (and its bundled
           # SQLite) per Ecto line, and a SQLite below 3.39 rejects FULL JOIN at query time — which
@@ -2025,11 +2017,9 @@ defmodule Mutare.Ecto.SemanticCases do
       end
 
       describe "JoinType — left → right (dialect-only, Postgres/MySQL)" do
-        # The RIGHT-join arm the `full → left` test notes is covered only at the config layer on
-        # SQLite: `left_join`→`right_join` swaps which side is preserved. Gated by `dialects:
-        # [:postgres]` (the plugin never offers it otherwise) and by the Postgres runtime (SQLite
-        # below 3.39 can't run RIGHT JOIN at all). LEFT preserves the posts (keeping orphan P3);
-        # RIGHT preserves the users (keeping the four post-less users, dropping the orphan post).
+        # `dialects: [:postgres]` enables the swap; the runtime guard chooses the engine.
+        # LEFT preserves the posts (including orphan P3); RIGHT preserves the users
+        # (including the four post-less users, dropping the orphan post).
         test "the right-join mutant preserves the users instead of the posts" do
           if H.postgres?(@repo) do
             {mod, sites} =
@@ -3553,11 +3543,6 @@ defmodule Mutare.Ecto.SemanticCases do
           assert max == 40
         end
       end
-
-      # NOTE: the `intersect_all` ↔ `except_all` swap is NOT proven live here — SQLite has no
-      # `INTERSECT ALL` / `EXCEPT ALL` (like RIGHT JOIN and ILIKE, it's a non-portable set op the
-      # engine rejects at build). Its swap catalog is covered structurally in query_test/clause_test;
-      # live coverage of the `_all` pair belongs to a Postgres-backed semantic run.
 
       describe "BooleanLiteral — a direct `== true` flips to `== false` (opt-in arm)" do
         test "negating the boolean literal returns the unpublished posts instead" do

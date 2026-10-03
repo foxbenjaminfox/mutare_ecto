@@ -34,10 +34,8 @@ defmodule Mutare.Ecto.Clause do
   pin-only (`Mutare.Ecto.Bound`; NOTES "Bound bump: from whole-call rewrite to pin-only
   hosting").
 
-  A value capability's mutated position is always the **last argument** (the ordering / the
-  selector), and the join qualifier the call's *second* argument. Both hold in the direct form
-  (`order_by(q, binds, ordering)`) and the pipe form (`q |> order_by(binds, ordering)`) alike,
-  since a pipe stage reaches the plugin as the direct call it is sugar for.
+  In the normalized call (`Mutare.Ecto.AST.QueryCall`), a value capability mutates the
+  **last argument** (ordering or selector); a join-kind swap mutates the **second** (qualifier).
   """
 
   alias Mutare.Ecto.{AST, Combination, Context, JoinType, Surface, Tag, ValueCatalog}

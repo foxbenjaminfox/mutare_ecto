@@ -20,8 +20,7 @@ defmodule Mutare.Ecto.SurfaceTest do
   test "is_named_binding is entirely inert — its whole call is offered but yields no mutation" do
     # Unlike `dynamic`, `is_named_binding`'s `:raw` registration still offers the whole call to
     # `Mutare.Ecto.Dispatcher.mutations/2` (every `:raw`-registered macro does), but no Ecto
-    # sub-mutator claims a `:raw`-kind macro — `Dispatcher`'s `query_macro_mutations/3` catch-all
-    # degrades it to `[]` rather than crashing or accidentally delegating to some other family.
+    # sub-mutator claims a `:raw`-kind macro — the dispatcher's explicit `:raw` branch yields `[]`.
     src = """
     defmodule M do
       import Ecto.Query
