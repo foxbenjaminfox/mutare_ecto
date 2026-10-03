@@ -1,7 +1,7 @@
 defmodule Mutare.Ecto.MixProject do
   use Mix.Project
 
-  @version "0.4.0"
+  @version "0.4.1"
   @source_url "https://github.com/foxbenjaminfox/mutare_ecto"
 
   # Visible modules whose docs reference hidden plumbing, silenced on the *referencing* module
@@ -74,7 +74,7 @@ defmodule Mutare.Ecto.MixProject do
 
   defp deps do
     [
-      {:mutare, "~> 0.4.3"}
+      {:mutare, "~> 0.5.0"}
       | ecto_deps() ++
           [
             # Static-analysis tooling: lints (credo) and type/discrepancy checks (dialyxir,
